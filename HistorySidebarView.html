@@ -34,10 +34,11 @@
 
     .side { height: 100%; display: flex; flex-direction: column; }
     .main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-    .card { background: var(--card); border: 1px solid var(--card-line); border-radius: 12px; }
+    /* カードはサイドバーの左右いっぱいに広げる（左右の余白・角丸・左右の枠線なし。上下の線で区切る） */
+    .card { background: var(--card); border: solid var(--card-line); border-width: 1px 0; }
 
     /* ---------- 表示中の行 ---------- */
-    .top { flex: none; padding: 12px 12px 0; }
+    .top { flex: none; }
     .row-card { padding: 13px 14px; display: flex; flex-direction: column; gap: 5px; }
     .eyebrow { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600; color: var(--cred); letter-spacing: .04em; }
     .eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 3px rgba(54, 161, 145, .18); }
@@ -53,7 +54,7 @@
     .hint { font-size: 11.5px; line-height: 1.6; color: var(--muted); }
 
     /* ---------- タブ ---------- */
-    .tabs-wrap { flex: none; padding: 10px 12px 8px; }
+    .tabs-wrap { flex: none; padding: 8px 12px; }
     .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border-radius: 10px; background: var(--seg); }
     .tab {
       height: 34px; display: flex; align-items: center; justify-content: center; gap: 6px; border: none; border-radius: 8px;
@@ -64,7 +65,7 @@
     .tab.on .badge { background: var(--teal-soft); }
 
     .pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-    .scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px 12px; }
+    .scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 0 12px; }
 
     /* ---------- クレデンシャル ---------- */
     .pane-head { flex: none; padding: 0 12px 8px; }
@@ -99,7 +100,7 @@
     .empty span { font-size: 11px; line-height: 1.6; color: var(--faint); }
 
     /* ---------- 変更履歴：期間 ---------- */
-    .range-wrap { flex: none; position: relative; z-index: 4; padding: 0 12px 8px; }
+    .range-wrap { flex: none; position: relative; z-index: 4; padding: 0 0 8px; }
     .range-card { padding: 8px 8px 6px; display: flex; flex-direction: column; gap: 6px; }
     .range-head { display: flex; align-items: center; justify-content: space-between; padding-left: 2px; }
     .range-btn {
