@@ -45,7 +45,16 @@
     .eyebrow.busy::before, .eyebrow.muted::before { background: var(--off-day); box-shadow: none; }
     .eyebrow.error { color: var(--danger); }
     .eyebrow.error::before { background: var(--danger); box-shadow: 0 0 0 3px rgba(180, 35, 24, .15); }
-    .customer { font-size: 17px; font-weight: 700; line-height: 1.35; text-wrap: pretty; overflow-wrap: anywhere; }
+    .customer-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .customer { flex: 1; min-width: 0; font-size: 17px; font-weight: 700; line-height: 1.35; text-wrap: pretty; overflow-wrap: anywhere; }
+    .plan-btn {
+      flex: none; height: 26px; display: inline-flex; align-items: center; gap: 4px; padding: 0 9px;
+      border: 1px solid #CFE3DC; border-radius: 7px; background: var(--card); color: var(--cred);
+      font-size: 11px; font-weight: 600; white-space: nowrap; text-decoration: none;
+    }
+    .plan-btn:hover { background: var(--teal-wash); border-color: #9FCFC3; color: var(--cred); }
+    .plan-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
+    .plan-btn.off, .plan-btn.off:hover { color: var(--off-day); border-color: var(--line); background: var(--card); cursor: default; }
     .origin { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--sub); }
     .dot-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--off-day); }
     .last-edit { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 10.5px; color: var(--sub2); }
@@ -232,7 +241,12 @@
     <!-- 表示中の行（タブもこのカードの中に置く） -->
     <section class="card row-card" aria-live="polite">
       <span class="eyebrow busy" id="state">行を確認しています…</span>
-      <span class="customer" id="customer" hidden></span>
+      <div class="customer-row" id="customerRow" hidden>
+        <span class="customer" id="customer"></span>
+        <a class="plan-btn" id="planBtn" target="_blank" rel="noopener noreferrer" hidden>
+          <svg width="11" height="11" viewBox="0 0 14 14"><path d="M8.5 2.5h3v3M11.5 2.5L7 7M10.5 8.5v2.5a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1H6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>アカウントプラン
+        </a>
+      </div>
       <span class="origin" id="origin" hidden><span id="originSheet"></span><span class="dot-sep"></span><span class="mono" id="originRow"></span></span>
       <span class="last-edit" id="lastEdit" hidden>この行の最終編集<span class="mono" id="lastEditAt"></span><span id="lastEditBy"></span></span>
       <span class="hint" id="hint" hidden></span>
@@ -467,8 +481,9 @@
 
       if (current.reason) {
         setState('対象外の行', 'muted');
-        $('customer').hidden = false;
+        $('customerRow').hidden = false;
         $('customer').textContent = '行を選んでください';
+        $('planBtn').hidden = true;
         $('origin').hidden = true;
         $('lastEdit').hidden = true;
         const sheets = bundle ? bundle.sheets.join('・') : '追跡しているシート';
@@ -478,8 +493,9 @@
         return;
       }
 
-      $('customer').hidden = false;
+      $('customerRow').hidden = false;
       $('customer').textContent = current.customer || '（得意先が空欄）';
+      renderPlanButton();
       $('origin').hidden = false;
       $('originSheet').textContent = current.sheet;
       $('originRow').textContent = current.row + '行目';
@@ -510,6 +526,25 @@
 
       if (ui.tab === 'cred') renderCredentials(creds);
       else renderLogs(logs);
+    }
+
+    /** 得意先名の横の「アカウントプラン」。URL が無ければ押せない表示にする */
+    function renderPlanButton() {
+      const btn = $('planBtn');
+      if (!bundle || !current.customer) { btn.hidden = true; return; }
+      const url = (bundle.accountPlans || {})[current.key] || '';
+      btn.hidden = false;
+      if (/^https?:\/\//i.test(url)) {
+        btn.href = url;
+        btn.classList.remove('off');
+        btn.removeAttribute('aria-disabled');
+        btn.title = 'アカウントプランを新しいタブで開きます';
+      } else {
+        btn.removeAttribute('href');
+        btn.classList.add('off');
+        btn.setAttribute('aria-disabled', 'true');
+        btn.title = 'この得意先のアカウントプランはまだありません（「' + (bundle.accountPlanSheet || '') + '」に URL がありません）';
+      }
     }
 
     /* ---------- クレデンシャル・オファリング ---------- */

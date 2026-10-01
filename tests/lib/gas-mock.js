@@ -85,9 +85,12 @@ function newTextStyle() {
 
 function newRichTextValue() {
   let text = '';
+  let link = null;
   const runs = [];
   const builder = {
     setText(v) { text = String(v); return builder; },
+    /** setLinkUrl(url) で全体、setLinkUrl(start, end, url) で一部にリンク（getLinkUrl は全体のリンクだけ返す） */
+    setLinkUrl(a, b, c) { if (b === undefined) link = a; return builder; },
     setTextStyle(a, b, c) {
       if (c === undefined) runs.push({start: 0, end: text.length, style: a});
       else runs.push({start: a, end: b, style: c});
@@ -96,6 +99,7 @@ function newRichTextValue() {
     build() {
       const value = {
         getText: () => text,
+        getLinkUrl: () => link,
         runs: runs.slice(),
         /** 位置ごとの最後に指定された書式（テストで「赤の取り消し線」などを確かめる用） */
         styleAt(index) {

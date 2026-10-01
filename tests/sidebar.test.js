@@ -86,3 +86,51 @@ test('openHistorySidebar：サイドバーの名称は「得意先別の履歴�
   assert.strictEqual(gas.sidebars[0].html.file, 'HistorySidebarView');
   assert.strictEqual(gas.sidebars[0].html.title, '得意先別の履歴情報');
 });
+
+/** 33シナリオ攻略先リスト（1行目が見出し、E列が得意先、M列がアカウントプランの URL） */
+function addPlanList(gas, rows) {
+  const header = new Array(13).fill('');
+  header[4] = '得意先';
+  header[12] = 'アカウントプラン';
+  const sheet = gas.addSheet('33シナリオ攻略先リスト', [header].concat(rows.map(([customer, url]) => {
+    const row = new Array(13).fill('');
+    row[4] = customer;
+    row[12] = url || '';
+    return row;
+  })), {rows: 20, columns: 13});
+  return sheet;
+}
+
+test('getSidebarBundle：33シナリオ攻略先リストの E列（得意先）と M列（URL）から、得意先ごとのアカウントプランを返す', () => {
+  const {gas, g} = setupProject();
+  const sheet = addPlanList(gas, [
+    ['A社', 'https://docs.google.com/spreadsheets/d/a/edit'],
+    ['B 社', ' https://docs.google.com/spreadsheets/d/b/edit '],   // 空白・全角半角の違いは無視
+    ['Ｃ社', ''],                                               // まだ作っていない
+    ['D社', 'javascript:alert(1)'],                             // http(s) 以外はリンクにしない
+    ['E社', '=HYPERLINK("https://docs.google.com/spreadsheets/d/e/edit","開く")'],
+    ['F社', '開く'],                                            // セルの文字にリンクを付けたもの
+    ['A社', 'https://docs.google.com/spreadsheets/d/a2/edit']   // 同じ得意先は上の行を使う
+  ]);
+  gas.asUser(() => sheet.getRange('M7').setRichTextValues([[
+    gas.global.SpreadsheetApp.newRichTextValue().setText('開く')
+      .setLinkUrl('https://docs.google.com/spreadsheets/d/f/edit').build()
+  ]]));
+
+  const bundle = plain(g.getSidebarBundle());
+  assert.deepStrictEqual(bundle.accountPlans, {
+    'A社': 'https://docs.google.com/spreadsheets/d/a/edit',
+    'B社': 'https://docs.google.com/spreadsheets/d/b/edit',
+    'E社': 'https://docs.google.com/spreadsheets/d/e/edit',
+    'F社': 'https://docs.google.com/spreadsheets/d/f/edit'
+  });
+  assert.strictEqual(bundle.accountPlanSheet, '33シナリオ攻略先リスト');
+  // サイドバーの得意先キー（新FMT の得意先）と同じ形で照合できる
+  gas.select(gas.ss.getSheetByName('新FMT'), 'D3');
+  assert.ok(bundle.accountPlans[g.getSidebarSelection(null).key]);
+});
+
+test('getSidebarBundle：33シナリオ攻略先リストが無ければ、アカウントプランは空', () => {
+  const {g} = setupProject();
+  assert.deepStrictEqual(plain(g.getSidebarBundle()).accountPlans, {});
+});

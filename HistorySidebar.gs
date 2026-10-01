@@ -11,6 +11,8 @@
  * - 履歴は開いたときに全得意先ぶんをまとめて読み込んでおく（切り替えのたびに読まない）。
  *   その後は1分ごと、または「更新」ボタンで読み直す
  * - 登録・編集や詳しい差分は、サイドバーのボタンから各モーダルを開いて行う
+ * - 得意先名の横の「アカウントプラン」は、HS_OPTIONS.accountPlan のシート（E列：得意先、M列：URL）から
+ *   同じ得意先の URL を探して開くリンク（全角・半角と空白の違いは無視して照合する）
  */
 
 const HS_OPTIONS = {
@@ -20,7 +22,14 @@ const HS_OPTIONS = {
   textLimit: 200,          // 変更前・変更後の表示文字数（それ以上はモーダルで確認）
   cacheSeconds: 600,       // 得意先列の位置を覚えておく秒数
   autoOpenHandler: 'autoOpenHistorySidebar',   // 開いたときに自動表示するトリガーの関数名
-  autoOffPrefix: 'HS_AUTO_OFF_'                // 自動表示をオフにした人（メールアドレスごと）
+  autoOffPrefix: 'HS_AUTO_OFF_',               // 自動表示をオフにした人（メールアドレスごと）
+  // 得意先名の横の「アカウントプラン」ボタンが開く URL の読み込み元
+  accountPlan: {
+    sheet: '33シナリオ攻略先リスト',
+    customerColumn: 'E',   // 得意先名
+    urlColumn: 'M',        // アカウントプランの URL（コード.gs の作成処理が入れる列）
+    firstRow: 2            // 1行目は見出し
+  }
 };
 
 /* ---------------- 開く ---------------- */
@@ -153,6 +162,8 @@ function getSidebarBundle() {
   return {
     sheets: Object.keys(DIFF_RULES),
     credentials: hsCredentialIndex_(ss),
+    accountPlans: hsAccountPlanIndex_(ss),   // {得意先キー: URL}
+    accountPlanSheet: HS_OPTIONS.accountPlan.sheet,
     changes: changeIndex.changes,
     changesMore: changeIndex.more,   // {シート名: {得意先キー: true}}：上限を超えた古い記録がある
     eventsPerCustomer: HS_OPTIONS.eventsPerCustomer,
@@ -162,6 +173,45 @@ function getSidebarBundle() {
     today: Utilities.formatDate(new Date(), timezone, 'yyyy/MM/dd'),
     loadedAt: Utilities.formatDate(new Date(), timezone, 'HH:mm')
   };
+}
+
+/**
+ * アカウントプランの URL を得意先ごとに返す {得意先キー: URL}。シートが無ければ空。
+ * URL がそのまま入っていない行は、HYPERLINK の数式とセルのリンクも見る。
+ * http(s) の URL だけを使う（それ以外はリンクにしない）。同じ得意先が複数あれば上の行を使う。
+ */
+function hsAccountPlanIndex_(ss) {
+  const o = HS_OPTIONS.accountPlan;
+  const out = {};
+  const sheet = ss.getSheetByName(o.sheet);
+  if (!sheet) return out;
+  const last = sheet.getLastRow();
+  if (last < o.firstRow) return out;
+
+  const customers = sheet.getRange(o.customerColumn + o.firstRow + ':' + o.customerColumn + last).getDisplayValues();
+  const urlRange = sheet.getRange(o.urlColumn + o.firstRow + ':' + o.urlColumn + last);
+  const shown = urlRange.getDisplayValues();
+  let formulas = null;
+  let links = null;
+  customers.forEach((row, i) => {
+    const key = credNormalize_(row[0]);
+    if (!key || out[key]) return;
+    let url = shown[i][0].trim();
+    if (!hsIsUrl_(url)) {
+      if (!formulas) {   // 表示が URL でない行があるときだけ、数式とリンクを1回で読む
+        formulas = urlRange.getFormulas();
+        links = urlRange.getRichTextValues();
+      }
+      const m = /^=HYPERLINK\(\s*"([^"]+)"/i.exec(formulas[i][0] || '');
+      url = m ? m[1] : ((links[i][0] && links[i][0].getLinkUrl()) || '');
+    }
+    if (hsIsUrl_(url)) out[key] = url.trim();
+  });
+  return out;
+}
+
+function hsIsUrl_(text) {
+  return /^https?:\/\/\S+$/i.test(String(text || '').trim());
 }
 
 function hsCredentialIndex_(ss) {
