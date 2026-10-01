@@ -20,42 +20,31 @@ const OC_OPTIONS = {
     status: '案件ステータス',
     planLink: 'アカウントプラン（リンク）'
   },
-  // キャンバスの枠（no はキャンバスの記入順の番号、question は枠が空のときに出す問い）
+  // キャンバスの枠（no は記入順の番号、question は枠の問い）
+  // 新FMT に当てはまる列が無い枠（利用の指標・予算・ビジネス上の課題）は出さない。枠の内容と合わない列も入れない
   sections: [
-    {key: 'users', no: 2, title: 'Users & Customers', label: '顧客・ユーザー',
+    {key: 'users', no: 2, title: '顧客・ユーザー',
       question: 'この課題を抱えているのは、どんな顧客・ユーザーか',
-      headers: ['サブインダストリー', '先方部門', '先方担当役職', '先方担当氏名', '本案件におけるターゲットユーザー',
-        'クライアントとのリレーション\nクライアント内のガバナンス']},
-    {key: 'problems', no: 1, title: 'Problems', label: '課題',
+      headers: ['サブインダストリー', '先方部門', '先方担当役職', '先方担当氏名', '本案件におけるターゲットユーザー']},
+    {key: 'problems', no: 1, title: '課題',
       question: '顧客・ユーザーが今抱えている課題・ニーズは何か',
       headers: ['クライアントが置かれている状況・課題・現在の解決策']},
-    {key: 'today', no: 3, title: 'Solutions Today', label: '現在の解決策',
+    {key: 'today', no: 3, title: '現在の解決策',
       question: '顧客は今その課題にどう対処しているか（競合・代替手段）',
       headers: ['スコープに対する競合他社']},
-    {key: 'ideas', no: 1, title: 'Solution ideas', label: '解決策のアイデア',
+    {key: 'ideas', no: 1, title: '解決策のアイデア',
       question: '提供する商品・サービス・提案の内容',
-      headers: ['案件のスコープ', 'サブインシナリオ', 'マーケットに出すソリューションか']},
-    {key: 'use', no: 5, title: 'How will users use your solution?', label: '使われ方・導入効果',
+      headers: ['案件のスコープ', 'サブインシナリオ']},
+    {key: 'use', no: 4, title: '使われ方・導入効果',
       question: '解決策によって、顧客の行動や成果はどう変わるか',
       headers: ['想定される価値創出のケース／期待される導入効果']},
-    {key: 'metrics', no: 6, title: 'User Metrics', label: '利用の指標',
-      question: '顧客が試す・採用する・使い続けることを、どんな行動で測るか',
-      headers: []},
-    {key: 'adoption', no: 7, title: 'Adoption Strategy', label: '採用への道筋',
+    {key: 'adoption', no: 5, title: '導入戦略',
       question: '顧客はどうやって解決策を知り、採用するか',
-      headers: ['提案を勝ち取るための戦略・差異化要素', '提案開始日', '活動状況']},
-    {key: 'challenges', no: 4, title: 'Business Challenges', label: 'ビジネス上の課題',
-      question: '顧客の課題を解決できないと、自社のビジネスにどう影響するか',
-      headers: ['活動における課題']},
-    {key: 'budget', no: 9, title: 'Budget', label: '予算・期間',
-      question: 'この案件にかけられる費用・期間はどれくらいか',
-      headers: ['プロジェクト開始-終了']},
-    {key: 'benefits', no: 8, title: 'Business Benefits and Metrics', label: '自社への効果',
+      headers: ['提案を勝ち取るための戦略・差異化要素', '活動状況']},
+    {key: 'benefits', no: 6, title: 'ビジネス上の効果・指標',
       question: '受注によって、自社の業績指標はどう変わるか',
       headers: ['想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '売上開始月']}
-  ],
-  // キャンバスの下に出す体制
-  team: ['アカウント責任者', 'BX担当', '品質責任者', 'デリバリー担当']
+  ]
 };
 
 /* ---------------- 開く ---------------- */
@@ -102,8 +91,8 @@ function ocShowDialog_(sheet, row, email) {
 
 /**
  * 対象行の値をキャンバスの枠に分けて返す。
- * {sheetName, row, customer, header, sections: [{key, no, title, label, question, configured, items}],
- *  team, missing: [見つからなかった見出し], today}
+ * {sheetName, row, customer, header, sections: [{key, no, title, question, configured, items}],
+ *  missing: [見つからなかった見出し], today}
  */
 function getOpportunityCanvasData(sheetName, row) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -131,7 +120,7 @@ function getOpportunityCanvasData(sheetName, row) {
   const valueOf = header => { const found = pick(header); return found ? found.value : ''; };
 
   const sections = OC_OPTIONS.sections.map(section => ({
-    key: section.key, no: section.no, title: section.title, label: section.label, question: section.question,
+    key: section.key, no: section.no, title: section.title, question: section.question,
     configured: section.headers.length > 0,
     items: section.headers.map(pick).filter(Boolean)
   }));
@@ -157,7 +146,6 @@ function getOpportunityCanvasData(sheetName, row) {
       updatedAt
     },
     sections,
-    team: OC_OPTIONS.team.map(pick).filter(Boolean),
     missing: Array.from(new Set(missing)),
     today: Utilities.formatDate(new Date(), timezone, 'yyyy/MM/dd')
   };

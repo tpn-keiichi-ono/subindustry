@@ -71,24 +71,29 @@ test('getOpportunityCanvasData：見出し名で列を探し、キャンバス�
     title: 'シナリオ提案', customer: '株式会社万代', status: '提案中',
     planUrl: 'https://docs.google.com/spreadsheets/d/plan/edit', updatedAt: ''
   });
-  assert.deepStrictEqual(data.sections.map(s => s.key),
-    ['users', 'problems', 'today', 'ideas', 'use', 'metrics', 'adoption', 'challenges', 'budget', 'benefits']);
-  // 改行入りの見出しも、セルの見出しと照合できる（表示は改行を空白にする）
+  // 当てはまる列が無い枠（利用の指標・予算・ビジネス上の課題）は出さない。枠の名前は日本語
+  assert.deepStrictEqual(data.sections.map(s => [s.key, s.no, s.title]), [
+    ['users', 2, '顧客・ユーザー'], ['problems', 1, '課題'], ['today', 3, '現在の解決策'], ['ideas', 1, '解決策のアイデア'],
+    ['use', 4, '使われ方・導入効果'], ['adoption', 5, '導入戦略'], ['benefits', 6, 'ビジネス上の効果・指標']
+  ]);
+  data.sections.forEach(s => assert.ok(!/[A-Za-z]/.test(s.title), s.title));
   assert.deepStrictEqual(pairs(section(data, 'users')), [
     ['サブインダストリー', '食品小売'], ['先方部門', '営業企画部'], ['先方担当役職', '部長'], ['先方担当氏名', '原田 明博'],
-    ['本案件におけるターゲットユーザー', '店舗の販促担当'], ['クライアントとのリレーション クライアント内のガバナンス', 'テストABC']
+    ['本案件におけるターゲットユーザー', '店舗の販促担当']
   ]);
+  assert.deepStrictEqual(pairs(section(data, 'adoption')),
+    [['提案を勝ち取るための戦略・差異化要素', '他社事例の提示'], ['活動状況', '4/15初回訪問。5/27離反シナリオ紹介。']]);
   assert.deepStrictEqual(pairs(section(data, 'problems')),
     [['クライアントが置かれている状況・課題・現在の解決策', '来店客数の減少。チラシ中心の販促。']]);
+  // 改行入りの見出しも、セルの見出しと照合できる（表示は改行を空白にする）
   assert.deepStrictEqual(pairs(section(data, 'benefits')), [
     ['想定売上規模（百万）', '30'], ['期待値調整済 想定売上規模（百万）', '15'], ['受注月', '2026/12'], ['売上開始月', '']
   ]);
-  // 当てはまる列が無い枠
-  assert.strictEqual(section(data, 'metrics').configured, false);
-  assert.deepStrictEqual(section(data, 'metrics').items, []);
-  // 体制
-  assert.deepStrictEqual(data.team.map(t => [t.label, t.value]),
-    [['アカウント責任者', '佐藤'], ['BX担当', '鈴木'], ['品質責任者', ''], ['デリバリー担当', '']]);
+  // 枠と合わない列・体制は出さない
+  const text = JSON.stringify(data);
+  ['テストABC', '決裁者に会えていない', '2026/11〜2027/03', '佐藤', '鈴木'].forEach(v =>
+    assert.ok(!text.includes(v), '枠と合わない列の値が入っています: ' + v));
+  assert.strictEqual(data.team, undefined);
   assert.deepStrictEqual(data.missing, []);
   // 読み取りだけ
   assert.deepStrictEqual(gas.writes, []);
@@ -107,18 +112,18 @@ test('getOpportunityCanvasData：クレデンシャル・オファリングの�
   const text = JSON.stringify(data);
   assert.ok(!text.includes('販促DXの事例紹介') && !text.includes('離反防止施策のご提案'), '履歴の内容が入っています');
   data.sections.forEach(s => assert.deepStrictEqual(Object.keys(s).sort(),
-    ['configured', 'items', 'key', 'label', 'no', 'question', 'title']));
+    ['configured', 'items', 'key', 'no', 'question', 'title']));
   assert.deepStrictEqual(pairs(section(data, 'ideas')), [
-    ['案件のスコープ', '販促DXの全社展開'], ['サブインシナリオ', '離反防止'], ['マーケットに出すソリューションか', '']
+    ['案件のスコープ', '販促DXの全社展開'], ['サブインシナリオ', '離反防止']
   ]);
 });
 
 test('getOpportunityCanvasData：見つからない列は missing で知らせる', () => {
-  const headers = HEADERS.filter(h => h !== 'BX担当' && h !== '活動における課題');
+  const headers = HEADERS.filter(h => h !== '先方部門' && h !== '受注月');
   const {g} = setup(VALUES, {headers});
   const data = plain(g.getOpportunityCanvasData('新FMT', 3));
-  assert.deepStrictEqual(data.missing, ['活動における課題', 'BX担当']);
-  assert.deepStrictEqual(section(data, 'challenges').items, []);
+  assert.deepStrictEqual(data.missing, ['先方部門', '受注月']);
+  assert.ok(!section(data, 'users').items.some(i => i.label === '先方部門'));
 });
 
 test('getOpportunityCanvasData：行にアカウントプランの URL が無ければ、33シナリオ攻略先リストから探す', () => {
