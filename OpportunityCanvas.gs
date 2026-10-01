@@ -1,0 +1,184 @@
+/**
+ * Opportunity Canvas（案件ごとのキャンバス）
+ * 差分追跡スクリプト（test.gs）・CredentialHistory.gs・HistorySidebar.gs と同じプロジェクトに置くファイル。
+ * 画面は HTMLファイル「OpportunityCanvasDialog」。
+ *
+ * 仕組み
+ * - 追跡シート（新FMT など）の1行を1件の案件として、その行の値を Opportunity Canvas の枠に並べてモーダルで表示する
+ * - どの列をどの枠に出すかは OC_OPTIONS.sections の見出し名で決める（列の位置ではなく見出しで探すので、列を動かしても使える）
+ *   見出しの改行・空白、全角・半角の違いは無視して照合する
+ * - Solution ideas には紐づくオファリング、Adoption Strategy にはクレデンシャル（実績紹介）を、クレデンシャル履歴から足す
+ * - 読み取りだけ（シートには書き込まない）。値を自動で考えて埋めることはせず、入っている内容だけを出す
+ */
+
+const OC_OPTIONS = {
+  template: 'OpportunityCanvasDialog',   // HTMLファイル名（.gs と同じ名前は付けられないため別名）
+  // 見出しの上に出す項目
+  header: {
+    title: '案件名',
+    customer: '得意先',
+    status: '案件ステータス',
+    planLink: 'アカウントプラン（リンク）'
+  },
+  // キャンバスの枠（no はキャンバスの記入順の番号、question は枠が空のときに出す問い）
+  sections: [
+    {key: 'users', no: 2, title: 'Users & Customers', label: '顧客・ユーザー',
+      question: 'この課題を抱えているのは、どんな顧客・ユーザーか',
+      headers: ['サブインダストリー', '先方部門', '先方担当役職', '先方担当氏名', '本案件におけるターゲットユーザー',
+        'クライアントとのリレーション\nクライアント内のガバナンス']},
+    {key: 'problems', no: 1, title: 'Problems', label: '課題',
+      question: '顧客・ユーザーが今抱えている課題・ニーズは何か',
+      headers: ['クライアントが置かれている状況・課題・現在の解決策']},
+    {key: 'today', no: 3, title: 'Solutions Today', label: '現在の解決策',
+      question: '顧客は今その課題にどう対処しているか（競合・代替手段）',
+      headers: ['スコープに対する競合他社']},
+    {key: 'ideas', no: 1, title: 'Solution ideas', label: '解決策のアイデア',
+      question: '提供する商品・サービス・提案の内容',
+      headers: ['案件のスコープ', 'サブインシナリオ', 'マーケットに出すソリューションか'],
+      offerings: true},
+    {key: 'use', no: 5, title: 'How will users use your solution?', label: '使われ方・導入効果',
+      question: '解決策によって、顧客の行動や成果はどう変わるか',
+      headers: ['想定される価値創出のケース／期待される導入効果']},
+    {key: 'metrics', no: 6, title: 'User Metrics', label: '利用の指標',
+      question: '顧客が試す・採用する・使い続けることを、どんな行動で測るか',
+      headers: []},
+    {key: 'adoption', no: 7, title: 'Adoption Strategy', label: '採用への道筋',
+      question: '顧客はどうやって解決策を知り、採用するか',
+      headers: ['提案を勝ち取るための戦略・差異化要素', '提案開始日', '活動状況'],
+      credentials: true},
+    {key: 'challenges', no: 4, title: 'Business Challenges', label: 'ビジネス上の課題',
+      question: '顧客の課題を解決できないと、自社のビジネスにどう影響するか',
+      headers: ['活動における課題']},
+    {key: 'budget', no: 9, title: 'Budget', label: '予算・期間',
+      question: 'この案件にかけられる費用・期間はどれくらいか',
+      headers: ['プロジェクト開始-終了']},
+    {key: 'benefits', no: 8, title: 'Business Benefits and Metrics', label: '自社への効果',
+      question: '受注によって、自社の業績指標はどう変わるか',
+      headers: ['想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '売上開始月']}
+  ],
+  // キャンバスの下に出す体制
+  team: ['アカウント責任者', 'BX担当', '品質責任者', 'デリバリー担当']
+};
+
+/* ---------------- 開く ---------------- */
+
+/** メニューから：選んだ行の Opportunity Canvas を開く。 */
+function openOpportunityCanvas() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    const sheet = SpreadsheetApp.getActiveSheet();
+    const range = sheet.getActiveRange();
+    if (!range) throw new Error('対象行のセルを選択してください。');
+    if (range.getNumRows() > 1) throw new Error('1行だけ選択してください。');
+    ocShowDialog_(sheet, range.getRow(), credActiveEmail_());
+  } catch (error) {
+    ui.alert('Opportunity Canvas', error.message, ui.ButtonSet.OK);
+  }
+}
+
+/** サイドバーのボタンから。 */
+function openOpportunityCanvasFromSidebar(sheetName, row) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(String(sheetName));
+  if (!sheet) throw new Error('シートが見つかりません: ' + sheetName);
+  ocShowDialog_(sheet, Number(row), credActiveEmail_());
+}
+
+function ocShowDialog_(sheet, row, email) {
+  const target = credResolveTarget_(sheet, row);
+  const size = credDialogSize_(email);   // ほかのモーダルと同じ大きさ（ブラウザ幅の95%）
+
+  const template = HtmlService.createTemplateFromFile(OC_OPTIONS.template);
+  template.sheetName = target.sheet.getName();
+  template.row = target.row;
+  template.customer = target.customer;
+  template.openedWidth = size.width;
+  template.openedHeight = size.height;
+
+  SpreadsheetApp.getUi().showModalDialog(
+    template.evaluate().setWidth(size.width).setHeight(size.height),
+    ' '   // 見出しはモーダルの中に表示する
+  );
+}
+
+/* ---------------- モーダルから呼ばれる関数（読み取りのみ） ---------------- */
+
+/**
+ * 対象行の値をキャンバスの枠に分けて返す。
+ * {sheetName, row, customer, header, sections: [{key, no, title, label, question, configured, items, offerings?, credentials?}],
+ *  team, missing: [見つからなかった見出し], today}
+ */
+function getOpportunityCanvasData(sheetName, row) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(String(sheetName));
+  if (!sheet) throw new Error('シートが見つかりません: ' + sheetName);
+  const target = credResolveTarget_(sheet, Number(row));
+  const rule = target.rule;
+  const timezone = ss.getSpreadsheetTimeZone();
+
+  const width = Math.max(sheet.getLastColumn(), 1);
+  const headers = sheet.getRange(rule.headerRow, 1, 1, width).getDisplayValues()[0];
+  const values = sheet.getRange(target.row, 1, 1, width).getDisplayValues()[0];
+  const byHeader = new Map();
+  headers.forEach((h, i) => {
+    const key = ocHeaderKey_(h);
+    if (key && !byHeader.has(key)) byHeader.set(key, {label: diffCleanHeaderText_(h), value: String(values[i] || '').trim()});
+  });
+
+  const missing = [];
+  const pick = header => {
+    const found = byHeader.get(ocHeaderKey_(header));
+    if (!found) missing.push(diffCleanHeaderText_(header));
+    return found || null;
+  };
+  const valueOf = header => { const found = pick(header); return found ? found.value : ''; };
+
+  // クレデンシャル履歴（得意先ごと）
+  const L = CRED_OPTIONS.linking, S = CRED_OPTIONS.schedule;
+  const entries = (hsCredentialIndex_(ss)[credNormalize_(target.customer)] || []).map(e => ({
+    name: e.values.name || '', kind: e.values[L.kindKey] || '',
+    date: e.values[S.doneKey] || '', plan: e.values[S.planKey] || '', person: e.values.person || ''
+  }));
+  const newestFirst = (a, b) => String(b.date || b.plan).localeCompare(String(a.date || a.plan));
+
+  const sections = OC_OPTIONS.sections.map(section => {
+    const out = {
+      key: section.key, no: section.no, title: section.title, label: section.label, question: section.question,
+      configured: section.headers.length > 0 || !!section.offerings || !!section.credentials,
+      items: section.headers.map(pick).filter(Boolean)
+    };
+    if (section.offerings) out.offerings = entries.filter(e => e.kind === L.childKind).sort(newestFirst);
+    if (section.credentials) out.credentials = entries.filter(e => e.kind === L.parentKind).sort(newestFirst);
+    return out;
+  });
+
+  // アカウントプラン：行の「アカウントプラン（リンク）」、無ければ 33シナリオ攻略先リスト から
+  let planUrl = valueOf(OC_OPTIONS.header.planLink);
+  if (!hsIsUrl_(planUrl)) planUrl = hsAccountPlanIndex_(ss)[credNormalize_(target.customer)] || '';
+
+  let updatedAt = '';
+  try {
+    updatedAt = sheet.getRange(target.row, diffStampColumn_(sheet, rule)).getDisplayValue();
+  } catch (_) {}
+
+  return {
+    sheetName: sheet.getName(),
+    row: target.row,
+    customer: target.customer,
+    header: {
+      title: valueOf(OC_OPTIONS.header.title),
+      customer: target.customer,
+      status: valueOf(OC_OPTIONS.header.status),
+      planUrl: hsIsUrl_(planUrl) ? planUrl.trim() : '',
+      updatedAt
+    },
+    sections,
+    team: OC_OPTIONS.team.map(pick).filter(Boolean),
+    missing: Array.from(new Set(missing)),
+    today: Utilities.formatDate(new Date(), timezone, 'yyyy/MM/dd')
+  };
+}
+
+/** 見出しの照合用（改行・空白、全角・半角の違いを無視する）。 */
+function ocHeaderKey_(header) {
+  return credNormalize_(header);
+}

@@ -24,6 +24,8 @@ Google スプレッドシート「シナリオ攻略先リスト」に組み込�
   Loading.html                  アカウントプランシート作成の進み具合の画面
   自動入力部分のシート保護.gs   「案件_」シートの列の保護
   サンプルデータ.gs             画面確認用のサンプル履歴の追加・削除（メニューの管理者項目）
+  OpportunityCanvas.gs          Opportunity Canvas（行の内容をキャンバスの枠に並べる）のサーバー側
+  OpportunityCanvasDialog.html  Opportunity Canvas のモーダル
   appsscript.json               マニフェスト（タイムゾーン・ランタイム）
 docs/
   DESIGN.md                     設計思想・データモデル・処理の流れ・判断の理由・画面のデザイン・テスト

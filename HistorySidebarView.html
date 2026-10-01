@@ -56,7 +56,14 @@
     .plan-btn:hover { background: var(--teal-wash); border-color: #9FCFC3; color: var(--cred); }
     .plan-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
     .plan-btn.off, .plan-btn.off:hover { color: var(--off-day); border-color: var(--line); background: var(--card); cursor: default; }
-    .origin { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--sub); }
+    .origin-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .origin { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 11px; color: var(--sub); }
+    .canvas-btn {
+      flex: none; height: 24px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px;
+      border: 1px solid var(--border); border-radius: 7px; background: var(--card); color: #2b3330; font-size: 11px; font-weight: 600; white-space: nowrap;
+    }
+    .canvas-btn:hover { background: var(--hover); }
+    .canvas-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
     .dot-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--off-day); }
     /* 上の段：表示の状態とシートから取得した時刻（左）、再読み込み（右上） */
     .row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
@@ -260,7 +267,12 @@
           <svg width="11" height="11" viewBox="0 0 14 14"><path d="M8.5 2.5h3v3M11.5 2.5L7 7M10.5 8.5v2.5a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1H6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>アカウントプラン
         </a>
       </div>
-      <span class="origin" id="origin" hidden><span id="originSheet"></span><span class="dot-sep"></span><span class="mono" id="originRow"></span></span>
+      <div class="origin-row" id="originWrap" hidden>
+        <span class="origin"><span id="originSheet"></span><span class="dot-sep"></span><span class="mono" id="originRow"></span></span>
+        <button type="button" class="canvas-btn" id="openCanvas" title="この行の Opportunity Canvas を開きます">
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1" y="1.5" width="10" height="9" rx="1.5"/><path d="M4.3 1.5v6M7.7 1.5v6M1 7.5h10"/></svg>キャンバス
+        </button>
+      </div>
       <span class="hint" id="hint" hidden></span>
       <span class="last-edit" id="lastEdit" hidden>この行の最終編集<span class="mono" id="lastEditAt"></span><span id="lastEditBy"></span></span>
       <div class="tabs" id="tabs" role="tablist" hidden>
@@ -492,7 +504,7 @@
         $('customerRow').hidden = false;
         $('customer').textContent = '行を選んでください';
         $('planBtn').hidden = true;
-        $('origin').hidden = true;
+        $('originWrap').hidden = true;
         $('lastEdit').hidden = true;
         const sheets = bundle ? bundle.sheets.join('・') : '追跡しているシート';
         $('hint').textContent = current.reason === 'header'
@@ -504,7 +516,8 @@
       $('customerRow').hidden = false;
       $('customer').textContent = current.customer || '（得意先が空欄）';
       renderPlanButton();
-      $('origin').hidden = false;
+      $('originWrap').hidden = false;
+      $('openCanvas').hidden = !current.customer;
       $('originSheet').textContent = current.sheet;
       $('originRow').textContent = current.row + '行目';
       setState('表示中の行');
@@ -901,7 +914,8 @@
 
     function openModal(kind, focus) {
       if (!current || current.reason) return;
-      const method = kind === 'change' ? 'openChangeHistoryFromSidebar' : 'openCredentialFromSidebar';
+      const method = kind === 'change' ? 'openChangeHistoryFromSidebar'
+        : kind === 'canvas' ? 'openOpportunityCanvasFromSidebar' : 'openCredentialFromSidebar';
       setState('開いています…', 'busy');
       refreshUntil = Date.now() + 5 * 60 * 1000;   // 閉じたあとの変更を反映するため、しばらく読み直す
       google.script.run
@@ -910,6 +924,7 @@
     }
 
     $('openCred').addEventListener('click', () => openModal('credential'));
+    $('openCanvas').addEventListener('click', () => openModal('canvas'));
     $('openChange').addEventListener('click', () => {
       // 日・項目で絞り込んでいるときは、表示中のいちばん新しい変更の位置で開く
       let focus = '';

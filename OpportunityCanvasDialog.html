@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #1b1b1c;
+      --body: #3c4642;
+      --muted: #5a6660;
+      --faint: #8a968a;
+      --meta: #9AA59C;
+      --line: #EFF2EF;
+      --rail: #E2E7E2;
+      --border: #DDE2DD;
+      --soft: #F4F6F4;
+      --panel: #FAFBFA;
+      --teal: #36A191;
+      --teal-text: #297A6E;
+      --teal-soft: #E9F4F1;
+      --cred-text: #1F5E55;
+      --cred-soft: #EAF5F2;
+      --off-text: #6B4FB8;
+      --off-soft: #F2EEFB;
+      --danger: #B42318;
+      --mono: 'Azeret Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: 'Inter', 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic UI', Meiryo, sans-serif;
+      color: var(--ink); background: #ffffff; -webkit-font-smoothing: antialiased;
+    }
+    button, a { font-family: inherit; }
+    button { cursor: pointer; }
+
+    .modal { display: flex; flex-direction: column; height: 100%; }
+
+    /* ---------- 見出し ---------- */
+    .m-head { display: flex; align-items: flex-start; gap: 16px; padding: 16px 24px 20px 32px; border-bottom: 1px solid var(--line); }
+    .m-title { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+    .eyebrow { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .04em; }
+    .title-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .title-row h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: .01em; overflow-wrap: anywhere; }
+    .chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .chip { font-size: 11px; color: var(--muted); padding: 2px 8px; background: var(--soft); border-radius: 6px; }
+    .chip .mono { font-family: var(--mono); }
+    .chip.status { color: var(--cred-text); background: var(--cred-soft); font-weight: 600; }
+    .m-actions { display: flex; align-items: center; gap: 8px; flex: none; padding-top: 6px; }
+    .btn {
+      height: 34px; padding: 0 14px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 8px;
+      background: #ffffff; color: var(--ink); font-size: 12.5px; font-weight: 600; text-decoration: none; white-space: nowrap;
+    }
+    .btn:hover { background: var(--soft); }
+    .btn.link { color: var(--teal-text); border-color: #CFE3DC; }
+    .btn.link:hover { background: #F2F9F7; }
+    .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
+
+    /* ---------- キャンバス ---------- */
+    .body { flex: 1; min-height: 0; overflow: auto; padding: 16px 24px 20px 32px; background: var(--panel); }
+    .canvas {
+      display: grid; gap: 8px; grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-areas:
+        "users problems ideas use metrics"
+        "users today ideas adoption metrics"
+        "challenges challenges budget benefits benefits";
+    }
+    .box { min-height: 170px; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px 14px; background: #ffffff; border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+    /* 番号の右に、英語の枠名とその下に日本語の名前 */
+    .b-head { display: flex; align-items: flex-start; gap: 8px; }
+    .b-names { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .no {
+      flex: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 50%; display: inline-grid; place-items: center;
+      font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--teal-text); background: var(--teal-soft);
+    }
+    .b-title { font-size: 13.5px; font-weight: 700; line-height: 1.35; color: var(--ink); }
+    .b-label { font-size: 11px; font-weight: 600; color: var(--faint); }
+    .question { margin: -2px 0 2px; font-size: 11px; line-height: 1.6; color: var(--meta); }
+    .item { display: flex; flex-direction: column; gap: 2px; }
+    .i-label { font-size: 10.5px; font-weight: 600; color: var(--muted); }
+    .i-value { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--body); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .i-value.empty { color: var(--meta); }
+    .no-column { font-size: 11.5px; color: var(--meta); }
+    .hist { margin: 2px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+    .hist li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--body); }
+    .kind {
+      flex: none; height: 18px; padding: 0 6px; display: inline-flex; align-items: center; border-radius: 5px;
+      font-size: 10px; font-weight: 700; letter-spacing: .04em;
+    }
+    .kind.cred { color: var(--cred-text); background: var(--cred-soft); border: 1px solid #C9E4DC; }
+    .kind.off { color: var(--off-text); background: var(--off-soft); border: 1px solid #DDD3F5; }
+    .hist .when { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+    .hist .plan { font-size: 10.5px; font-weight: 600; color: var(--faint); }
+
+    .team { display: flex; align-items: center; gap: 8px 18px; flex-wrap: wrap; margin-top: 10px; padding: 10px 14px; background: #ffffff; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; }
+    .team-cap { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .04em; }
+    .team .who { display: flex; align-items: baseline; gap: 6px; }
+    .team .who span:first-child { font-size: 10.5px; color: var(--faint); }
+    .team .who span:last-child { font-weight: 600; color: var(--body); }
+    .notice { margin: 10px 0 0; font-size: 11px; line-height: 1.6; color: var(--meta); }
+
+    /* ---------- 読み込み中 ---------- */
+    .loading {
+      position: fixed; inset: 0; z-index: 20; background: rgba(255, 255, 255, .96);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+      color: var(--muted); font-size: 13px;
+    }
+    .loading p { margin: 0; }
+    .loading small { color: var(--meta); font-size: 12px; min-height: 1.2em; }
+    .spinner { width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--rail); border-top-color: var(--teal); }
+    .loading.error .spinner { display: none; }
+    .loading.error p { color: var(--danger); }
+
+    /* ---------- 印刷（PDF） ----------
+       印刷の直前に html に printing を付け、決まった幅で並べてから、A4 横1枚に収まるよう縮める（fitForPrint） */
+    @page { size: A4 landscape; margin: 8mm; }
+    html.printing, html.printing body { height: auto; }
+    html.printing .modal { display: block; width: 1400px; height: auto; }
+    html.printing .m-actions { display: none; }
+    html.printing .m-head { padding: 0 0 8px; }
+    html.printing .body { overflow: visible; padding: 8px 0 0; background: #ffffff; }
+    html.printing .box { min-height: 120px; }
+    @media print {
+      .loading, .m-actions { display: none !important; }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *:not(.spinner) { transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body data-sheet="<?= sheetName ?>" data-row="<?= row ?>" data-customer="<?= customer ?>"
+      data-opened-width="<?= openedWidth ?>" data-opened-height="<?= openedHeight ?>">
+  <div class="loading" id="loading" role="status" aria-live="polite">
+    <div class="spinner"></div>
+    <p id="loadingText">キャンバスを作成しています…</p>
+    <small id="loadingTime"></small>
+    <button type="button" class="btn" id="reload" hidden>もう一度読み込む</button>
+  </div>
+
+  <div class="modal">
+    <header class="m-head">
+      <div class="m-title">
+        <span class="eyebrow">Opportunity Canvas</span>
+        <div class="title-row"><h1 id="title"></h1></div>
+        <div class="chips" id="chips"></div>
+      </div>
+      <div class="m-actions">
+        <a class="btn link" id="planLink" target="_blank" rel="noopener noreferrer" hidden>
+          <svg width="12" height="12" viewBox="0 0 14 14"><path d="M8.5 2.5h3v3M11.5 2.5L7 7M10.5 8.5v2.5a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1H6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>アカウントプラン
+        </a>
+        <button type="button" class="btn" id="print" title="印刷画面から PDF に保存できます">
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M4 5V2h6v3M4 10H2.5V5.5h9V10H10M4 8h6v4H4z"/></svg>印刷・PDF
+        </button>
+      </div>
+    </header>
+
+    <div class="body">
+      <div class="canvas" id="canvas"></div>
+      <div class="team" id="team" hidden></div>
+      <p class="notice" id="notice" hidden></p>
+    </div>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const context = {sheetName: document.body.dataset.sheet, row: Number(document.body.dataset.row)};
+    $('title').textContent = document.body.dataset.customer || '';
+
+    /** 要素を作る小さな補助。text は文字列として入れる（HTML として解釈しない）。 */
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text != null) node.textContent = text;
+      return node;
+    }
+
+    /* ---------- 表示 ---------- */
+
+    function render(data) {
+      const h = data.header;
+      $('title').textContent = h.title || h.customer || '（案件名なし）';
+      const chips = $('chips');
+      chips.textContent = '';
+      chips.appendChild(el('span', 'chip', h.customer));
+      if (h.status) chips.appendChild(el('span', 'chip status', h.status));
+      chips.appendChild(el('span', 'chip', data.sheetName + '　' + data.row + '行目'));
+      if (h.updatedAt) {
+        const chip = el('span', 'chip', '最終更新 ');
+        chip.appendChild(el('span', 'mono', h.updatedAt));
+        chips.appendChild(chip);
+      }
+      const today = el('span', 'chip', '作成 ');
+      today.appendChild(el('span', 'mono', data.today));
+      chips.appendChild(today);
+
+      const plan = $('planLink');
+      plan.hidden = !/^https?:\/\//i.test(h.planUrl || '');
+      if (!plan.hidden) plan.href = h.planUrl;
+
+      const canvas = $('canvas');
+      canvas.textContent = '';
+      data.sections.forEach(section => canvas.appendChild(renderBox(section)));
+
+      const team = $('team');
+      team.textContent = '';
+      team.hidden = !data.team.length;
+      if (data.team.length) {
+        team.appendChild(el('span', 'team-cap', '体制'));
+        data.team.forEach(t => {
+          const who = el('span', 'who');
+          who.append(el('span', '', t.label), el('span', '', t.value || '—'));
+          team.appendChild(who);
+        });
+      }
+
+      $('notice').hidden = !data.missing.length;
+      $('notice').textContent = data.missing.length
+        ? data.sheetName + ' に見つからない列があります（その項目は表示していません）：' + data.missing.join('、')
+        : '';
+    }
+
+    function renderBox(section) {
+      const box = el('section', 'box');
+      box.style.gridArea = section.key;
+      const head = el('div', 'b-head');
+      const names = el('span', 'b-names');
+      names.append(el('span', 'b-title', section.title), el('span', 'b-label', section.label));
+      head.append(el('span', 'no', String(section.no)), names);
+      box.appendChild(head);
+      box.appendChild(el('p', 'question', section.question));
+
+      if (!section.configured) {
+        box.appendChild(el('span', 'no-column', 'この枠に当てはまる列はありません。'));
+        return box;
+      }
+      section.items.forEach(item => {
+        const node = el('div', 'item');
+        node.append(el('span', 'i-label', item.label),
+          el('p', 'i-value' + (item.value ? '' : ' empty'), item.value || '未入力'));
+        box.appendChild(node);
+      });
+      if (section.offerings) box.appendChild(renderHistory('オファリング（クレデンシャル履歴）', section.offerings, 'off', 'オファリング'));
+      if (section.credentials) box.appendChild(renderHistory('クレデンシャル（実績紹介）', section.credentials, 'cred', 'クレデン'));
+      return box;
+    }
+
+    function renderHistory(label, list, kindClass, kindText) {
+      const node = el('div', 'item');
+      node.appendChild(el('span', 'i-label', label));
+      if (!list.length) {
+        node.appendChild(el('p', 'i-value empty', 'まだ登録されていません'));
+        return node;
+      }
+      const ul = el('ul', 'hist');
+      list.forEach(e => {
+        const li = el('li');
+        li.appendChild(el('span', 'kind ' + kindClass, kindText));
+        li.appendChild(el('span', '', e.name || '（名称なし）'));
+        if (e.date) li.appendChild(el('span', 'when', e.date));
+        else if (e.plan) li.append(el('span', 'plan', '予定'), el('span', 'when', e.plan));
+        ul.appendChild(li);
+      });
+      node.appendChild(ul);
+      return node;
+    }
+
+    /* ---------- 印刷（A4 横1枚に収める） ---------- */
+
+    const PRINT_PAGE = {width: 1062, height: 720};   // A4 横から余白 8mm を除いた大きさ（96dpi の px）
+    const PRINT_LAYOUT_WIDTH = 1400;                 // 印刷用に並べる幅（html.printing .modal と同じ）
+
+    function fitForPrint() {
+      const root = document.documentElement;
+      root.style.zoom = '';
+      root.classList.add('printing');
+      const height = document.querySelector('.modal').scrollHeight;
+      const scale = Math.max(0.45, Math.min(1, PRINT_PAGE.width / PRINT_LAYOUT_WIDTH, PRINT_PAGE.height / height));
+      root.style.zoom = String(scale);
+    }
+
+    function clearPrint() {
+      document.documentElement.classList.remove('printing');
+      document.documentElement.style.zoom = '';
+    }
+
+    window.addEventListener('beforeprint', fitForPrint);
+    window.addEventListener('afterprint', clearPrint);
+    $('print').addEventListener('click', () => {
+      fitForPrint();
+      window.print();
+    });
+
+    /* ---------- モーダルの大きさ（ブラウザの窓幅の 95%） ---------- */
+
+    const DIALOG_WIDTH_RATIO = 0.95;
+
+    function targetDialogSize() {
+      const w = window.outerWidth || screen.availWidth;
+      const h = window.outerHeight || screen.availHeight;
+      return {
+        width: Math.max(720, Math.round(w * DIALOG_WIDTH_RATIO)),
+        height: Math.max(560, Math.min(h - 200, 1000))
+      };
+    }
+
+    let sizeSaved = false;
+    function rememberDialogSize(size) {
+      if (sizeSaved) return;
+      const openedW = Number(document.body.dataset.openedWidth) || 0;
+      const openedH = Number(document.body.dataset.openedHeight) || 0;
+      if (Math.abs(openedW - size.width) < 20 && Math.abs(openedH - size.height) < 20) return;
+      sizeSaved = true;
+      try {
+        google.script.run.withFailureHandler(() => {}).saveCredentialDialogSize(size.width, size.height);
+      } catch (_) {}
+    }
+
+    function fitDialog(attempt) {
+      attempt = attempt || 0;
+      const size = targetDialogSize();
+      rememberDialogSize(size);
+      try {
+        google.script.host.setWidth(size.width);
+        google.script.host.setHeight(size.height);
+      } catch (_) {}
+      if (attempt >= 6) return;
+      setTimeout(() => {
+        if (window.innerWidth < size.width - 80) fitDialog(attempt + 1);
+      }, 250 + attempt * 250);
+    }
+
+    if (document.readyState === 'complete') fitDialog();
+    else window.addEventListener('load', () => fitDialog());
+
+    /* ---------- 読み込み ---------- */
+
+    // くるくると経過秒数は JavaScript で動かす（OS の「動きを減らす」設定でも止まらない）
+    let loadingTicker = null;
+
+    function startLoadingTicker() {
+      stopLoadingTicker();
+      const spinner = document.querySelector('.spinner');
+      const began = Date.now();
+      let angle = 0;
+      loadingTicker = setInterval(() => {
+        angle = (angle + 30) % 360;
+        spinner.style.transform = 'rotate(' + angle + 'deg)';
+        const seconds = Math.floor((Date.now() - began) / 1000);
+        $('loadingTime').textContent = seconds >= 2 ? seconds + '秒経過' : '';
+      }, 70);
+    }
+
+    function stopLoadingTicker() {
+      if (loadingTicker) clearInterval(loadingTicker);
+      loadingTicker = null;
+    }
+
+    function showLoadError(error) {
+      stopLoadingTicker();
+      $('loadingTime').textContent = '';
+      $('loading').classList.add('error');
+      $('loadingText').textContent = '読み込めませんでした：' + (error && error.message || error);
+      $('reload').hidden = false;
+    }
+
+    function load() {
+      $('loading').classList.remove('error');
+      $('loading').hidden = false;
+      $('loadingText').textContent = 'キャンバスを作成しています…';
+      $('reload').hidden = true;
+      startLoadingTicker();
+      google.script.run
+        .withSuccessHandler(result => {
+          stopLoadingTicker();
+          $('loading').hidden = true;
+          render(result);
+        })
+        .withFailureHandler(showLoadError)
+        .getOpportunityCanvasData(context.sheetName, context.row);
+    }
+    $('reload').addEventListener('click', load);
+
+    load();
+  </script>
+</body>
+</html>
