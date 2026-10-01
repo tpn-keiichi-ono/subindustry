@@ -15,7 +15,7 @@
 
 const HS_OPTIONS = {
   template: 'HistorySidebarView',   // HTMLファイル名（.gs と同じ名前は付けられないため別名）
-  title: '履歴',
+  title: '得意先別の履歴情報',   // サイドバー上部に出る名称
   eventsPerCustomer: 30,   // サイドバーに読み込む変更の記録の件数（シート・得意先ごと・新しい順）。それより古いものはモーダルで見る
   textLimit: 200,          // 変更前・変更後の表示文字数（それ以上はモーダルで確認）
   cacheSeconds: 600,       // 得意先列の位置を覚えておく秒数

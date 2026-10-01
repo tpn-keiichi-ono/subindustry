@@ -78,3 +78,11 @@ test('getSidebarBundle：変更は行（シート・得意先）ごとに新し�
   assert.strictEqual(bundle.eventsPerCustomer, limit);
   assert.strictEqual(bundle.changes['新FMT']['B社'].length, 1);
 });
+
+test('openHistorySidebar：サイドバーの名称は「得意先別の履歴情報」', () => {
+  const {gas, g} = setupProject();
+  g.openHistorySidebar();
+  assert.strictEqual(gas.sidebars.length, 1);
+  assert.strictEqual(gas.sidebars[0].html.file, 'HistorySidebarView');
+  assert.strictEqual(gas.sidebars[0].html.title, '得意先別の履歴情報');
+});
