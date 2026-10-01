@@ -13,7 +13,7 @@
       --bg: #F0F4F9; --card: #ffffff; --card-line: #E3E8E4; --border: #DDE3DE; --line: #EEF1EE; --line2: #F0F2F0;
       --seg: #E9EDEA; --hover: #F3F6F4; --hover2: #F5F8F6; --hover3: #F0F3F1; --off-day: #C3CBC5;
       --teal: #36A191; --cred: #1F6E5E; --cred-hover: #185A4D; --teal-soft: #E7F4F0; --teal-wash: #F2F9F7;
-      --off-text: #7458C4; --off-line: #D6CCF1;
+      --cred-text: #1F5E55; --off-text: #6B4FB8; --off-line: #D6CCF1;   /* 種別の文字色は詳細画面（CredentialDialog）と同じ */
       --before-label: #B4534B; --before-ink: #8C4A44; --before-bg: #FBEFEE;
       --after-ink: #174F44; --empty-bg: #F3F5F3; --danger: #B42318;
       --mono: 'Azeret Mono', ui-monospace, Menlo, Consolas, monospace;
@@ -110,7 +110,9 @@
     .cred-meta .overdue { color: var(--danger); font-weight: 600; }
     .cred-meta .person { overflow: hidden; text-overflow: ellipsis; }
     .cred-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
-    .cred-tag { flex: none; font-size: 10px; font-weight: 700; color: var(--off-text); }
+    .cred-tag { flex: none; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+    .cred-tag.cred { color: var(--cred-text); }
+    .cred-tag.off { color: var(--off-text); }
     .cred-tag.other { color: var(--faint); }
     .cred-name { min-width: 0; font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cred-item.child .cred-name { font-size: 12.5px; }
@@ -354,6 +356,7 @@
     };
 
     const WK = ['日', '月', '火', '水', '木', '金', '土'];
+    const KIND_LABEL = {'クレデンシャル': 'クレデン'};   // 一覧の種別の表示（幅を取らないよう短くする）
     const PRESETS = [[7, '過去7日'], [14, '過去14日'], [30, '過去30日'], ['all', 'すべての期間']];
     const CHECK_ICON = '<svg width="11" height="11" viewBox="0 0 10 10"><path d="M2 5.2l2 2 4-4.4" fill="none" stroke="#1F6E5E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     const BOX_ICON = '<svg width="9" height="9" viewBox="0 0 10 10"><path d="M2 5.2l2 2 4-4.4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -612,8 +615,8 @@
       body.appendChild(meta);
 
       const title = el('span', 'cred-title');
-      if (kind === L.childKind) title.appendChild(el('span', 'cred-tag', kind));
-      else if (kind && kind !== L.parentKind) title.appendChild(el('span', 'cred-tag other', kind));
+      const tagClass = kind === L.parentKind ? 'cred' : kind === L.childKind ? 'off' : 'other';
+      if (kind) title.appendChild(el('span', 'cred-tag ' + tagClass, KIND_LABEL[kind] || kind));
       title.appendChild(el('span', 'cred-name', entry.values.name || '（名称なし）'));
       body.appendChild(title);
 
