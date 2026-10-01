@@ -267,6 +267,8 @@ function hsChangeIndex_(ss) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(v);
   }
+  // 行の順ではなく記録日時の順にそろえる（過去の日時の記録があとから足された場合も、新しい方から残るように）
+  groups.forEach(list => list.sort((a, b) => (a[iAt] < b[iAt] ? -1 : a[iAt] > b[iAt] ? 1 : 0)));
   const needed = new Set();
   groups.forEach((list, key) => {
     const extra = list.length - HS_OPTIONS.eventsPerCustomer;

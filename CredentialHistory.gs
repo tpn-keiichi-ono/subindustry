@@ -104,6 +104,8 @@ function credAddMenu_() {
     .addItem('（管理者）ボタン列を設定・補充', 'setupCredentialLauncher')
     .addItem('（管理者）変更履歴ボタン列を設定・補充', 'setupChangeHistoryLauncher')
     .addItem('（管理者）開いたときにサイドバーを自動表示', 'setupHistorySidebarAutoOpen')
+    .addItem('（管理者）サンプル履歴を選択行に追加', 'addSampleHistory')
+    .addItem('（管理者）サンプル履歴をすべて削除', 'removeSampleHistory')
     .addSeparator()
     .addItem('自分のサイドバー自動表示をオン／オフ', 'toggleHistorySidebarAutoOpen')
     .addToUi();

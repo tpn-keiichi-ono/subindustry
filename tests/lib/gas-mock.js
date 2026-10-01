@@ -336,6 +336,8 @@ class Sheet {
   insertColumnAfter(after) { return this.insertColumnsAfter(after, 1); }
 
   deleteRows(row, count) {
+    // Apps Script と同じく、固定行以外をすべて消すことはできない
+    if (this.maxRows - count <= this.frozenRows) throw new Error('Sorry, it is not possible to delete all non-frozen rows.');
     if (this.data.length >= row) this.data.splice(row - 1, count);
     this.maxRows -= count;
     return this;
@@ -431,6 +433,7 @@ function createGas(options) {
     activeUser: options.user === undefined ? 'user@example.com' : options.user,
     effectiveUser: options.owner || 'owner@example.com',
     lockBusy: false,          // true にすると、ほかの実行がロックを持っている状態になる
+    confirmAnswer: 'YES',     // ui.alert で「はい／いいえ」を聞かれたときの答え
     lockHolders: 0,
     userInput: 0,
     writes: [],
@@ -510,9 +513,10 @@ function createGas(options) {
     showModalDialog(html, title) { gas.dialogs.push({html, title}); },
     showModelessDialog(html, title) { gas.dialogs.push({html, title, modeless: true}); },
     showSidebar(html) { gas.sidebars.push({html}); },
+    /** YES_NO などで聞かれたときは gas.confirmAnswer（既定 'YES'）を返す */
     alert(a, b, c) {
       gas.alerts.push(b === undefined ? {message: a} : {title: a, message: b, buttons: c});
-      return 'OK';
+      return c && c !== 'OK' ? gas.confirmAnswer : 'OK';
     }
   };
 

@@ -154,6 +154,8 @@ function getChangeHistoryData(sheetName, row) {
     const v = values[r];
     if (v[iSheet] === name && credNormalize_(v[iCustomer]) === key) matches.push(v);
   }
+  // 行の順ではなく記録日時の順にそろえる（過去の日時の記録があとから足された場合も、古い順になるように）
+  matches.sort((a, b) => (a[iAt] < b[iAt] ? -1 : a[iAt] > b[iAt] ? 1 : 0));
   if (matches.length > CHG_OPTIONS.maxEvents) {
     matches = matches.slice(-CHG_OPTIONS.maxEvents);
     result.truncated = true;
