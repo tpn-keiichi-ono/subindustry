@@ -94,7 +94,7 @@ test('getOpportunityCanvasData：見出し名で列を探し、キャンバス�
   assert.deepStrictEqual(gas.writes, []);
 });
 
-test('getOpportunityCanvasData：クレデンシャル履歴のオファリングを Solution ideas、クレデンシャルを Adoption Strategy に出す', () => {
+test('getOpportunityCanvasData：クレデンシャル・オファリングの履歴は含めない（行の値だけ）', () => {
   const {g} = setup(VALUES);
   const base = {sheetName: '新FMT', row: 3, customer: '株式会社万代', customerColumn: FIRST_COLUMN + 1, linkId: ''};
   const values = extra => Object.assign({plan: '', date: '2026/09/01', kind: 'クレデンシャル', title: '', person: '原田 明博',
@@ -104,10 +104,13 @@ test('getOpportunityCanvasData：クレデンシャル履歴のオファリン�
     values: values({kind: 'オファリング', name: '離反防止施策のご提案', date: '', plan: '2026/11/01'})}));
 
   const data = plain(g.getOpportunityCanvasData('新FMT', 3));
-  assert.deepStrictEqual(section(data, 'ideas').offerings.map(e => [e.name, e.date, e.plan]),
-    [['離反防止施策のご提案', '', '2026/11/01']]);
-  assert.deepStrictEqual(section(data, 'adoption').credentials.map(e => [e.name, e.date]),
-    [['販促DXの事例紹介', '2026/09/01']]);
+  const text = JSON.stringify(data);
+  assert.ok(!text.includes('販促DXの事例紹介') && !text.includes('離反防止施策のご提案'), '履歴の内容が入っています');
+  data.sections.forEach(s => assert.deepStrictEqual(Object.keys(s).sort(),
+    ['configured', 'items', 'key', 'label', 'no', 'question', 'title']));
+  assert.deepStrictEqual(pairs(section(data, 'ideas')), [
+    ['案件のスコープ', '販促DXの全社展開'], ['サブインシナリオ', '離反防止'], ['マーケットに出すソリューションか', '']
+  ]);
 });
 
 test('getOpportunityCanvasData：見つからない列は missing で知らせる', () => {

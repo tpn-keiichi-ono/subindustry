@@ -23,8 +23,6 @@
       --teal-soft: #E9F4F1;
       --cred-text: #1F5E55;
       --cred-soft: #EAF5F2;
-      --off-text: #6B4FB8;
-      --off-soft: #F2EEFB;
       --danger: #B42318;
       --mono: 'Azeret Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
     }
@@ -85,16 +83,6 @@
     .i-value { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--body); white-space: pre-wrap; overflow-wrap: anywhere; }
     .i-value.empty { color: var(--meta); }
     .no-column { font-size: 11.5px; color: var(--meta); }
-    .hist { margin: 2px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
-    .hist li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--body); }
-    .kind {
-      flex: none; height: 18px; padding: 0 6px; display: inline-flex; align-items: center; border-radius: 5px;
-      font-size: 10px; font-weight: 700; letter-spacing: .04em;
-    }
-    .kind.cred { color: var(--cred-text); background: var(--cred-soft); border: 1px solid #C9E4DC; }
-    .kind.off { color: var(--off-text); background: var(--off-soft); border: 1px solid #DDD3F5; }
-    .hist .when { font-family: var(--mono); font-size: 11px; color: var(--faint); }
-    .hist .plan { font-size: 10.5px; font-weight: 600; color: var(--faint); }
 
     .team { display: flex; align-items: center; gap: 8px 18px; flex-wrap: wrap; margin-top: 10px; padding: 10px 14px; background: #ffffff; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; }
     .team-cap { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .04em; }
@@ -244,29 +232,7 @@
           el('p', 'i-value' + (item.value ? '' : ' empty'), item.value || '未入力'));
         box.appendChild(node);
       });
-      if (section.offerings) box.appendChild(renderHistory('オファリング（クレデンシャル履歴）', section.offerings, 'off', 'オファリング'));
-      if (section.credentials) box.appendChild(renderHistory('クレデンシャル（実績紹介）', section.credentials, 'cred', 'クレデン'));
       return box;
-    }
-
-    function renderHistory(label, list, kindClass, kindText) {
-      const node = el('div', 'item');
-      node.appendChild(el('span', 'i-label', label));
-      if (!list.length) {
-        node.appendChild(el('p', 'i-value empty', 'まだ登録されていません'));
-        return node;
-      }
-      const ul = el('ul', 'hist');
-      list.forEach(e => {
-        const li = el('li');
-        li.appendChild(el('span', 'kind ' + kindClass, kindText));
-        li.appendChild(el('span', '', e.name || '（名称なし）'));
-        if (e.date) li.appendChild(el('span', 'when', e.date));
-        else if (e.plan) li.append(el('span', 'plan', '予定'), el('span', 'when', e.plan));
-        ul.appendChild(li);
-      });
-      node.appendChild(ul);
-      return node;
     }
 
     /* ---------- 印刷（A4 横1枚に収める） ---------- */

@@ -7,7 +7,7 @@
  * - 追跡シート（新FMT など）の1行を1件の案件として、その行の値を Opportunity Canvas の枠に並べてモーダルで表示する
  * - どの列をどの枠に出すかは OC_OPTIONS.sections の見出し名で決める（列の位置ではなく見出しで探すので、列を動かしても使える）
  *   見出しの改行・空白、全角・半角の違いは無視して照合する
- * - Solution ideas には紐づくオファリング、Adoption Strategy にはクレデンシャル（実績紹介）を、クレデンシャル履歴から足す
+ * - 出すのは追跡シートの行に入力されている値だけ（クレデンシャル・オファリングの履歴は含めない）
  * - 読み取りだけ（シートには書き込まない）。値を自動で考えて埋めることはせず、入っている内容だけを出す
  */
 
@@ -34,8 +34,7 @@ const OC_OPTIONS = {
       headers: ['スコープに対する競合他社']},
     {key: 'ideas', no: 1, title: 'Solution ideas', label: '解決策のアイデア',
       question: '提供する商品・サービス・提案の内容',
-      headers: ['案件のスコープ', 'サブインシナリオ', 'マーケットに出すソリューションか'],
-      offerings: true},
+      headers: ['案件のスコープ', 'サブインシナリオ', 'マーケットに出すソリューションか']},
     {key: 'use', no: 5, title: 'How will users use your solution?', label: '使われ方・導入効果',
       question: '解決策によって、顧客の行動や成果はどう変わるか',
       headers: ['想定される価値創出のケース／期待される導入効果']},
@@ -44,8 +43,7 @@ const OC_OPTIONS = {
       headers: []},
     {key: 'adoption', no: 7, title: 'Adoption Strategy', label: '採用への道筋',
       question: '顧客はどうやって解決策を知り、採用するか',
-      headers: ['提案を勝ち取るための戦略・差異化要素', '提案開始日', '活動状況'],
-      credentials: true},
+      headers: ['提案を勝ち取るための戦略・差異化要素', '提案開始日', '活動状況']},
     {key: 'challenges', no: 4, title: 'Business Challenges', label: 'ビジネス上の課題',
       question: '顧客の課題を解決できないと、自社のビジネスにどう影響するか',
       headers: ['活動における課題']},
@@ -104,7 +102,7 @@ function ocShowDialog_(sheet, row, email) {
 
 /**
  * 対象行の値をキャンバスの枠に分けて返す。
- * {sheetName, row, customer, header, sections: [{key, no, title, label, question, configured, items, offerings?, credentials?}],
+ * {sheetName, row, customer, header, sections: [{key, no, title, label, question, configured, items}],
  *  team, missing: [見つからなかった見出し], today}
  */
 function getOpportunityCanvasData(sheetName, row) {
@@ -132,24 +130,11 @@ function getOpportunityCanvasData(sheetName, row) {
   };
   const valueOf = header => { const found = pick(header); return found ? found.value : ''; };
 
-  // クレデンシャル履歴（得意先ごと）
-  const L = CRED_OPTIONS.linking, S = CRED_OPTIONS.schedule;
-  const entries = (hsCredentialIndex_(ss)[credNormalize_(target.customer)] || []).map(e => ({
-    name: e.values.name || '', kind: e.values[L.kindKey] || '',
-    date: e.values[S.doneKey] || '', plan: e.values[S.planKey] || '', person: e.values.person || ''
+  const sections = OC_OPTIONS.sections.map(section => ({
+    key: section.key, no: section.no, title: section.title, label: section.label, question: section.question,
+    configured: section.headers.length > 0,
+    items: section.headers.map(pick).filter(Boolean)
   }));
-  const newestFirst = (a, b) => String(b.date || b.plan).localeCompare(String(a.date || a.plan));
-
-  const sections = OC_OPTIONS.sections.map(section => {
-    const out = {
-      key: section.key, no: section.no, title: section.title, label: section.label, question: section.question,
-      configured: section.headers.length > 0 || !!section.offerings || !!section.credentials,
-      items: section.headers.map(pick).filter(Boolean)
-    };
-    if (section.offerings) out.offerings = entries.filter(e => e.kind === L.childKind).sort(newestFirst);
-    if (section.credentials) out.credentials = entries.filter(e => e.kind === L.parentKind).sort(newestFirst);
-    return out;
-  });
 
   // アカウントプラン：行の「アカウントプラン（リンク）」、無ければ 33シナリオ攻略先リスト から
   let planUrl = valueOf(OC_OPTIONS.header.planLink);
