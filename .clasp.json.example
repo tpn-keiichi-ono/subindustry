@@ -1,4 +1,4 @@
 {
   "scriptId": "ここに Apps Script のスクリプトID（プロジェクトの設定 > ID）",
-  "rootDir": "src"
+  "rootDir": "."
 }

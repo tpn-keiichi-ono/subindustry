@@ -16,10 +16,12 @@
 
 ファイル名は Apps Script エディタ側の名前に合わせています（`clasp pull` で同じ名前になるように）。
 差分追跡のファイルが `test.gs` という名前なのはそのためです。
+ファイルはリポジトリ直下に置きます。フォルダに入れると、同期したときにエディタのファイル名にフォルダ名が付き（`src/HistorySidebarView` など）、
+`createTemplateFromFile('HistorySidebarView')` が HTML を見つけられなくなるためです。
 
 ### 1つのグローバルスコープ
 
-Apps Script は `src/` の全ファイルを1つのグローバルスコープに読み込みます。
+Apps Script はプロジェクトの全ファイル（リポジトリ直下の `.gs`）を1つのグローバルスコープに読み込みます。
 
 - ファイルをまたいで関数・定数を使えます。たとえば `CredentialHistory.gs` は `DIFF_RULES` や `diffAppend_()` を、
   `Changehistory.gs`・`HistorySidebar.gs` は `cred*` の関数を使います。
@@ -217,7 +219,7 @@ Apps Script は `src/` の全ファイルを1つのグローバルスコープ�
 
 ### ロジック（`npm test`）
 
-`tests/lib/gas-mock.js` が Apps Script のモックです。`src/*.gs` を Node.js の vm に1つのグローバルスコープとして読み込み、
+`tests/lib/gas-mock.js` が Apps Script のモックです。リポジトリ直下の `*.gs` を Node.js の vm に1つのグローバルスコープとして読み込み、
 `SpreadsheetApp`・`PropertiesService`・`LockService`・`ScriptApp`・`HtmlService` などをこのプロジェクトが使う範囲だけ再現します。
 
 - `createGas()` でテスト1件ぶんの環境を作ります。`tests/lib/fixture.js` の `setupProject()` は、新FMT・新FMT2 を作って管理者のセットアップまで済ませます。
@@ -229,7 +231,7 @@ Apps Script は `src/` の全ファイルを1つのグローバルスコープ�
 
 ### チェック（`npm run check`）
 
-`scripts/check-syntax.js` が、構文・`.gs` と `.html` の同名・トップレベルの名前の重複・`onOpen` の数・
+`scripts/check-syntax.js` が、`.gs`・`.html` がフォルダの中に無いか・構文・`.gs` と `.html` の同名・トップレベルの名前の重複・`onOpen` の数・
 HTML ファイル名・メニューや `google.script.run` から呼ぶ関数の有無を確かめます。
 
 ### 画面（`.html`）

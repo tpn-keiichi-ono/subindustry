@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * src/ のチェック（npm run check）
+ * Apps Script のファイル（リポジトリ直下の .gs・.html）のチェック（npm run check）
+ * - .gs・.html がフォルダの中に無いか（同期でファイル名にフォルダ名が付き、HTML が見つからなくなる）
  * - .gs と .html の <script> の構文
  * - .gs と .html の同じ名前（Apps Script では拡張子が違っても同名不可）
  * - トップレベルの関数・定数の重複（全ファイルが1つのグローバルスコープに読み込まれるため）
@@ -14,17 +15,37 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const SRC = path.join(__dirname, '..', 'src');
+const ROOT = path.join(__dirname, '..');
 const errors = [];
 const fail = message => errors.push(message);
 
-const files = fs.readdirSync(SRC).filter(name => !name.startsWith('.'));
+const files = fs.readdirSync(ROOT).filter(name => !name.startsWith('.') &&
+  fs.statSync(path.join(ROOT, name)).isFile());
 const gsFiles = files.filter(name => name.endsWith('.gs'));
 const htmlFiles = files.filter(name => name.endsWith('.html'));
-const read = name => fs.readFileSync(path.join(SRC, name), 'utf8');
+const read = name => fs.readFileSync(path.join(ROOT, name), 'utf8');
 
-if (!gsFiles.length) fail('src/ に .gs ファイルがありません。');
-if (!files.includes('appsscript.json')) fail('src/appsscript.json がありません（clasp の rootDir は src です）。');
+if (!gsFiles.length) fail('リポジトリ直下に .gs ファイルがありません。');
+if (!files.includes('appsscript.json')) fail('リポジトリ直下に appsscript.json がありません。');
+if (!fs.existsSync(path.join(ROOT, '.claspignore'))) {
+  fail('.claspignore がありません（clasp で tests/・scripts/ の .js まで Apps Script に送ってしまいます）。');
+}
+
+/* ---------- フォルダの中の .gs・.html ---------- */
+
+// 同期するとファイル名が「フォルダ名/ファイル名」になり、createTemplateFromFile('名前') で見つからなくなる
+(function findNested(dir) {
+  fs.readdirSync(dir, {withFileTypes: true}).forEach(entry => {
+    if (entry.name.startsWith('.') || entry.name === 'node_modules') return;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      findNested(full);
+    } else if (dir !== ROOT && /\.(gs|html)$/.test(entry.name)) {
+      fail(path.relative(ROOT, full) + ': Apps Script のファイルはリポジトリ直下に置いてください' +
+        '（フォルダに入れると、同期したときにファイル名にフォルダ名が付きます）。');
+    }
+  });
+})(ROOT);
 
 /* ---------- 構文 ---------- */
 
@@ -41,7 +62,7 @@ function checkSyntax(code, filename) {
 const gsCode = {};
 gsFiles.forEach(name => {
   gsCode[name] = read(name);
-  checkSyntax(gsCode[name], 'src/' + name);
+  checkSyntax(gsCode[name], name);
 });
 
 /** インラインの <script> を取り出す。テンプレートの <?= ?> は値に置き換える。 */
@@ -59,7 +80,7 @@ function inlineScripts(html) {
 const htmlScripts = {};
 htmlFiles.forEach(name => {
   htmlScripts[name] = inlineScripts(read(name));
-  htmlScripts[name].forEach((code, i) => checkSyntax(code, 'src/' + name + ' の <script> ' + (i + 1)));
+  htmlScripts[name].forEach((code, i) => checkSyntax(code, name + ' の <script> ' + (i + 1)));
 });
 
 /* ---------- ファイル名の重複 ---------- */
@@ -106,7 +127,7 @@ gsFiles.forEach(name => {
   while ((m = call.exec(code))) refs.push(m[1]);
   while ((m = option.exec(code))) refs.push(m[1]);
   refs.forEach(ref => {
-    if (!htmlNames.has(ref)) fail('src/' + name + ': HTML ファイル「' + ref + '.html」がありません。');
+    if (!htmlNames.has(ref)) fail(name + ': HTML ファイル「' + ref + '.html」がありません。');
   });
 });
 
@@ -127,7 +148,7 @@ gsFiles.forEach(name => {
   ];
   patterns.forEach(pattern => {
     let m;
-    while ((m = pattern.exec(code))) checkCallable(m[1], 'src/' + name);
+    while ((m = pattern.exec(code))) checkCallable(m[1], name);
   });
 });
 
@@ -174,7 +195,7 @@ function skipParens(code, i) {
 
 htmlFiles.forEach(name => {
   htmlScripts[name].forEach(code => {
-    runTargets(code).forEach(fn => checkCallable(fn, 'src/' + name + ' の google.script.run'));
+    runTargets(code).forEach(fn => checkCallable(fn, name + ' の google.script.run'));
   });
 });
 
@@ -185,4 +206,4 @@ if (errors.length) {
   errors.forEach(message => console.error('  - ' + message));
   process.exit(1);
 }
-console.log('✓ src/ のチェックに問題はありません（.gs ' + gsFiles.length + ' / .html ' + htmlFiles.length + ' ファイル）。');
+console.log('✓ Apps Script のファイルのチェックに問題はありません（.gs ' + gsFiles.length + ' / .html ' + htmlFiles.length + ' ファイル）。');

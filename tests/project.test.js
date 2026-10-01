@@ -3,7 +3,7 @@
 const {test, assert} = require('./lib/harness');
 const {createGas} = require('./lib/gas-mock');
 
-test('src/*.gs を1つのグローバルスコープに読み込める（同じ名前の const がない）', () => {
+test('リポジトリ直下の *.gs を1つのグローバルスコープに読み込める（同じ名前の const がない）', () => {
   const gas = createGas();
   ['DIFF_RULES', 'DIFF_OPTIONS', 'CRED_OPTIONS', 'CHG_OPTIONS', 'HS_OPTIONS'].forEach(name => {
     assert.strictEqual(typeof gas.get(name), 'object', name);

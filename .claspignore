@@ -1,0 +1,5 @@
+# clasp で push するファイルだけを残す（tests/・scripts/・docs/ などは Apps Script に送らない）
+**/**
+!appsscript.json
+!*.gs
+!*.html

@@ -12,7 +12,7 @@ Google スプレッドシート「シナリオ攻略先リスト」に組み込�
 ## フォルダ構成
 
 ```
-src/                          Apps Script のファイル（clasp の rootDir）。名前はエディタ側に合わせている
+（リポジトリ直下）            Apps Script のファイル。名前はエディタ側と同じ。フォルダに入れないこと
   test.gs                       差分追跡（v5）
   CredentialHistory.gs          クレデンシャル・オファリング履歴のサーバー側、メニュー（onOpen）、ボタン列の起動
   CredentialDialog.html         クレデンシャル・オファリング履歴のモーダル
@@ -26,21 +26,25 @@ src/                          Apps Script のファイル（clasp の rootDir）
   appsscript.json               マニフェスト（タイムゾーン・ランタイム）
 docs/
   DESIGN.md                     設計思想・データモデル・処理の流れ・判断の理由・画面のデザイン・テスト
-  OPERATIONS.md                 導入・運用・clasp での同期・トラブル対応の手順
-tests/                        Node.js で動くロジックのテスト
+  OPERATIONS.md                 導入・運用・同期・トラブル対応の手順
+tests/                        Node.js で動くロジックのテスト（Apps Script には送らない）
   lib/gas-mock.js               Apps Script のモック
   lib/fixture.js                テスト用の追跡シート（新FMT・新FMT2）
-scripts/check-syntax.js       構文・ファイル名の重複・名前の重複・onOpen の数などのチェック
+scripts/check-syntax.js       構文・ファイルの置き場所・名前の重複・onOpen の数などのチェック
+.claspignore                  clasp で push するファイルを Apps Script のファイルだけに絞る
 CLAUDE.md                     Claude Code 向けの作業ルール
 ```
+
+Apps Script のファイルをフォルダ（`src/` など）に入れると、同期したときにエディタのファイル名が `src/HistorySidebarView` のようになり、
+`createTemplateFromFile('HistorySidebarView')` で HTML が見つからなくなります。必ずリポジトリ直下に置いてください（`npm run check` で確かめられます）。
 
 ## よく使うコマンド
 
 ```bash
 npm test          # ロジックのテスト（依存パッケージなし。Node.js 18 以上）
-npm run check     # 構文・ファイル名の重複・onOpen の重複をチェック
-npx clasp pull    # Apps Script エディタの最新を src/ に取り込む
-npx clasp push    # src/ を Apps Script に反映する（必ず pull・確認してから）
+npm run check     # 構文・ファイルの置き場所・名前の重複・onOpen の数などをチェック
+npx clasp pull    # Apps Script エディタの最新を取り込む
+npx clasp push    # Apps Script に反映する（必ず pull・確認してから）
 ```
 
 clasp の準備は `docs/OPERATIONS.md` の「clasp で同期する」を参照してください。

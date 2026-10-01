@@ -1,7 +1,7 @@
 /**
  * Apps Script のモック（テスト用）
  *
- * - src/*.gs を1つのグローバルスコープ（vm のコンテキスト）に読み込む。
+ * - リポジトリ直下の *.gs を1つのグローバルスコープ（vm のコンテキスト）に読み込む。
  *   Apps Script と同じく、ファイルをまたいで関数・定数を参照でき、同じ名前の const があると読み込みで失敗する。
  * - SpreadsheetApp などは、このプロジェクトが使う範囲だけを再現している。
  *   使う API が無ければここに足すこと（無いメソッドを呼ぶと TypeError になる）。
@@ -20,7 +20,7 @@ const path = require('path');
 const vm = require('vm');
 const crypto = require('crypto');
 
-const SRC = path.join(__dirname, '..', '..', 'src');
+const ROOT = path.join(__dirname, '..', '..');   // Apps Script のファイルはリポジトリ直下
 
 const isDate = v => Object.prototype.toString.call(v) === '[object Date]';
 
@@ -418,7 +418,7 @@ class Spreadsheet {
 /* ---------------- 全体 ---------------- */
 
 /**
- * テスト1件ぶんの Apps Script 環境を作り、src/*.gs を読み込む。
+ * テスト1件ぶんの Apps Script 環境を作り、リポジトリ直下の *.gs を読み込む。
  * options = {user, owner, timeZone, files}
  */
 function createGas(options) {
@@ -528,11 +528,11 @@ function createGas(options) {
     setWidth(w) { this.width = w; return this; }
     setHeight(h) { this.height = h; return this; }
     setTitle(t) { this.title = t; return this; }
-    getContent() { return fs.readFileSync(path.join(SRC, this.file + '.html'), 'utf8'); }
+    getContent() { return fs.readFileSync(path.join(ROOT, this.file + '.html'), 'utf8'); }
   }
 
   const htmlExists = name => {
-    if (!fs.existsSync(path.join(SRC, name + '.html'))) throw new Error('No HTML file named ' + name + ' was found.');
+    if (!fs.existsSync(path.join(ROOT, name + '.html'))) throw new Error('No HTML file named ' + name + ' was found.');
   };
 
   const HtmlService = {
@@ -711,9 +711,9 @@ function createGas(options) {
   gas.global = context;
 
   const files = options.files ||
-    fs.readdirSync(SRC).filter(name => name.endsWith('.gs')).sort();
+    fs.readdirSync(ROOT).filter(name => name.endsWith('.gs')).sort();
   files.forEach(name => {
-    vm.runInContext(fs.readFileSync(path.join(SRC, name), 'utf8'), context, {filename: 'src/' + name});
+    vm.runInContext(fs.readFileSync(path.join(ROOT, name), 'utf8'), context, {filename: name});
   });
 
   /* ----- テスト用の補助 ----- */
@@ -793,4 +793,4 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-module.exports = {createGas, plain, colToNum, numToCol, SRC};
+module.exports = {createGas, plain, colToNum, numToCol, ROOT};
