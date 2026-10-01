@@ -1,0 +1,45 @@
+# subindustry
+
+Google スプレッドシート「シナリオ攻略先リスト」に組み込む Google Apps Script（コンテナバインド）です。
+次の3つの仕組みで構成されています。
+
+1. **差分追跡**：追跡シート（`新FMT`・`新FMT2`）のセルの変更を、文字単位の差分・編集者・変更時点の行全体のスナップショット付きで記録する。行の追加・削除も自動で記録して追跡を続ける。
+2. **クレデンシャル・オファリング履歴**：得意先ごとに、クレデンシャル（実績紹介）とオファリング（提案）の予定・実績を登録・編集・削除する。オファリングはクレデンシャルに紐づけられる。
+3. **履歴の閲覧**：行ごとのボタン（チェックボックス）から開くモーダル（クレデンシャル・オファリング履歴／変更履歴）と、選んだ行に合わせて表示が切り替わる履歴サイドバー。
+
+## フォルダ構成
+
+```
+src/                      Apps Script のファイル（clasp の rootDir）
+  DiffTracking.gs           差分追跡（v5）。Apps Script 上では test.gs という名前の場合がある
+  CredentialHistory.gs      クレデンシャル・オファリング履歴のサーバー側、メニュー（onOpen）、ボタン列の起動
+  CredentialDialog.html     クレデンシャル・オファリング履歴のモーダル
+  ChangeHistory.gs          変更履歴モーダルのサーバー側
+  ChangeHistoryDialog.html  変更履歴のモーダル
+  HistorySidebar.gs         履歴サイドバーのサーバー側、開いたときの自動表示
+  HistorySidebarView.html   履歴サイドバー
+docs/
+  DESIGN.md                 設計思想・データモデル・処理の流れ・判断の理由
+  OPERATIONS.md             導入・運用・トラブル対応の手順
+  design-reference/         モーダルのデザイン元（Claude Design で作成したもの）
+tests/                    Node.js で動くロジックのテスト（Apps Script のモック付き）
+scripts/check-syntax.js   構文チェック・ファイル名の重複・onOpen の重複チェック
+CLAUDE.md                 Claude Code 向けの作業ルール
+```
+
+## よく使うコマンド
+
+```bash
+npm test          # ロジックのテスト（依存パッケージなし。Node.js 18 以上）
+npm run check     # 構文・ファイル名の重複・onOpen の重複をチェック
+npx clasp pull    # Apps Script エディタの最新を src/ に取り込む
+npx clasp push    # src/ を Apps Script に反映する（必ず pull・確認してから）
+```
+
+clasp の準備は `docs/OPERATIONS.md` の「clasp で同期する」を参照してください。
+
+## ドキュメント
+
+- 設計の考え方と全体像：[docs/DESIGN.md](docs/DESIGN.md)
+- 導入・運用・トラブル対応：[docs/OPERATIONS.md](docs/OPERATIONS.md)
+- Claude Code で作業するときのルール：[CLAUDE.md](CLAUDE.md)

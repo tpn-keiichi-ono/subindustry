@@ -1,0 +1,11 @@
+{
+  "name": "subindustry",
+  "private": true,
+  "description": "Google スプレッドシート（シナリオ攻略先リスト）の変更履歴・クレデンシャル／オファリング履歴を管理する Apps Script",
+  "scripts": {
+    "test": "node tests/run.js",
+    "check": "node scripts/check-syntax.js",
+    "push": "clasp push",
+    "pull": "clasp pull"
+  }
+}
