@@ -43,6 +43,7 @@ function checkTargetCount(targetSheetName) {
 function executeCopyProcess(targetSheetName) {
   const startTime = Date.now();
   const MAX_RUNTIME_MS = 300000; // 5分で停止
+  const LOCK_WAIT_MS = 30000;    // ほかの書き込み（差分追跡・クレデンシャル履歴）を待つ時間
 
   // --- 設定項目 ---
   const TEMPLATE_FILE_ID = '17Fn7jUW7gdEtX4_Hn5PtOGX4oGLHrqeU-CI6mm49x9k';
@@ -62,6 +63,7 @@ function executeCopyProcess(targetSheetName) {
 
   let count = 0;
   let isTimeout = false;
+  let isBusy = false;
 
   for (let i = 0; i < values.length; i++) {
     // 5分経過したら中断
@@ -76,24 +78,51 @@ function executeCopyProcess(targetSheetName) {
 
     // E列に値があり、かつM列が空の場合のみ処理を実行
     if (eValue !== "" && mValue === "") {
+      // 書き込みはドキュメントロックの中で行う（差分追跡・クレデンシャル履歴の書き込みと重ならないように）。
+      // コピーの前にロックを取るので、取れずに止まっても「ファイルだけ作られて URL が入っていない行」は残らない。
+      const lock = LockService.getDocumentLock();
+      if (!lock.tryLock(LOCK_WAIT_MS)) {
+        isBusy = true;
+        break;
+      }
       try {
+        // 読み込んだあとに行の追加・削除や入力があった場合に備えて、同じ内容の行か確かめ直す
+        const current = sheet.getRange(currentRow, 5, 1, 9).getValues()[0];
+        if (String(current[0]) !== String(eValue) || current[8] !== "") continue;
+
         const newFileName = "33シナリオ起点_アカウントプラン_" + eValue;
         const newFile = templateFile.makeCopy(newFileName, destFolder);
         
         // 作成したファイルのURLをM列(13列目)に書き込む
         sheet.getRange(currentRow, 13).setValue(newFile.getUrl());
+        apMarkDiffDirty_(sheet);
         
         count++;
-        SpreadsheetApp.flush(); // 1件ごとにスプレッドシートへ反映
       } catch (e) {
         console.error(`Row ${currentRow}: ${e.message}`);
+      } finally {
+        // 1件ごとにスプレッドシートへ反映してからロックを外す
+        try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
       }
     }
   }
 
+  if (isBusy) {
+    return `【中断】他の処理が実行中のため${count}件で停止しました。少し待ってから再度実行してください。`;
+  }
   if (isTimeout) {
     return `【中断】時間が経過したため${count}件で停止しました。残りは再度実行してください。`;
   } else {
     return `${count} 件の処理が完了しました。`;
   }
+}
+
+/**
+ * 差分追跡の対象シート（DIFF_RULES）なら、取りこぼしの印を付ける。
+ * スクリプトの書き込みでは編集トリガーが動かないため、印を付けておくと
+ * 次の catchUpDiffTracking()（5分ごと）が 変更履歴_差分 に記録する。
+ */
+function apMarkDiffDirty_(sheet) {
+  if (typeof DIFF_RULES === 'undefined' || typeof diffMarkDirty_ !== 'function') return;
+  if (DIFF_RULES[sheet.getName()]) diffMarkDirty_(sheet.getSheetId());
 }

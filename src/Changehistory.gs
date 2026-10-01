@@ -23,16 +23,7 @@ const CHG_OPTIONS = {
 
 /* ---------------- 起動 ---------------- */
 
-/** CredentialHistory.gs の onCredentialLauncherEdit / credIsLauncherEdit_ から呼ばれる。 */
-function chgIsLauncherEdit_(e, rule) {
-  try {
-    if (e.range.getNumColumns() !== 1) return false;
-    return e.range.getColumn() ===
-      credColumnByHeader_(e.range.getSheet(), rule, CHG_OPTIONS.launcherHeader);
-  } catch (_) {
-    return false;
-  }
-}
+// ボタン列のチェックは CredentialHistory.gs の credLauncherKind_()（見出しが CHG_OPTIONS.launcherHeader の列）で判断する。
 
 /** メニューから開く場合（ボタンが使えないときの代替・初回の権限承認用）。 */
 function openChangeHistoryDialog() {
