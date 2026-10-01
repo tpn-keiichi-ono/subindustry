@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500&family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #1b1b1c; --body: #3c4642; --muted: #5a6660; --faint: #8a968a; --meta: #9AA59C;
+      --line: #EFF2EF; --rail: #E2E7E2; --border: #DDE2DD; --soft: #F4F6F4; --panel: #FAFBFA;
+      --teal: #36A191; --teal-hover: #2E8E80; --teal-text: #297A6E; --teal-soft: #E9F4F1;
+      --cred: #1F6E5E; --cred-text: #1F5E55; --off: #8B6FD6; --off-text: #6B4FB8;
+      --danger: #B42318; --del-bg: #FCEDEC; --add-bg: #E3F3EE;
+      --mono: 'Azeret Mono', ui-monospace, Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: 'Inter', 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic UI', Meiryo, sans-serif;
+      color: var(--ink); background: #ffffff; font-size: 12.5px; -webkit-font-smoothing: antialiased;
+      display: flex; flex-direction: column;
+    }
+    button { font-family: inherit; cursor: pointer; }
+
+    .head { padding: 14px 16px 12px; border-bottom: 1px solid var(--line); }
+    .state { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--faint); }
+    .state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--teal); }
+    .state.busy::before { background: #C9D1C9; }
+    .state.error { color: var(--danger); }
+    .state.error::before { background: var(--danger); }
+    .customer { margin: 6px 0 2px; font-size: 17px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+    .origin { font-size: 11px; color: var(--faint); }
+    .open-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+    .open-btn {
+      height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: #ffffff;
+      font-size: 11.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .open-btn:hover { background: var(--soft); }
+    .open-btn:focus-visible, .text-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
+
+    .body { flex: 1; overflow: auto; }
+    .sec { padding: 12px 16px 14px; border-bottom: 1px solid var(--line); }
+    .sec-title { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; font-size: 11.5px; font-weight: 700; color: var(--muted); letter-spacing: .03em; }
+    .sec-title .count { font-family: var(--mono); font-weight: 500; color: var(--faint); }
+    .empty-line { font-size: 11.5px; color: var(--faint); }
+
+    /* 選べる履歴項目（クリックで詳細を開く） */
+    .pick { margin: 0 -8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; outline: none; }
+    .pick:hover { background: var(--panel); }
+    .pick:focus-visible { box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
+    .pick.selected, .pick.selected:hover { background: var(--teal-soft); }
+    .ci { display: grid; grid-template-columns: 12px minmax(0, 1fr); column-gap: 8px; }
+    .ci.child { padding-left: 22px; }
+    .detail { grid-column: 1 / -1; margin-top: 8px; padding-top: 8px; border-top: 1px solid #D6E9E3; cursor: default; }
+    .detail .detail { margin: 0; padding: 0; border: 0; }
+    .d-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); column-gap: 8px; padding: 2px 0; font-size: 11.5px; }
+    .d-key { color: var(--faint); }
+    .d-val { color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .act-btn {
+      margin-top: 8px; width: 100%; height: 28px; border: 1px solid #BFE0D8; border-radius: 7px;
+      background: #ffffff; color: var(--teal-text); font-size: 11.5px; font-weight: 600;
+    }
+    .act-btn:hover { border-color: var(--teal); }
+    .act-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
+    .ci .dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; }
+    .dot.cred { background: var(--cred); }
+    .dot.off { background: #ffffff; border: 2.5px solid var(--off); }
+    .dot.other { background: #ffffff; border: 2.5px solid #B5BEB7; }
+    .ci-name { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+    .ci-meta { display: flex; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--faint); }
+    .ci-kind.cred { color: var(--cred-text); font-weight: 700; }
+    .ci-kind.off { color: var(--off-text); font-weight: 700; }
+    .ci-date { font-family: var(--mono); }
+    .ci-plan { color: var(--muted); }
+    .ci-plan.overdue { color: var(--danger); font-weight: 600; }
+
+    .ev + .ev { margin-top: 2px; }
+    .ev-head { display: flex; gap: 6px; font-size: 11px; color: var(--faint); }
+    .ev-head .mono { font-family: var(--mono); color: var(--muted); }
+    .ch { margin-top: 3px; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+    .ch-name { font-weight: 600; color: var(--body); margin-right: 4px; }
+    .ch del { color: var(--danger); background: var(--del-bg); text-decoration: line-through; border-radius: 3px; padding: 0 2px; }
+    .ch ins { color: var(--cred-text); background: var(--add-bg); text-decoration: none; border-radius: 3px; padding: 0 2px; font-weight: 600; }
+    .ch .arrow { color: var(--faint); margin: 0 3px; }
+    .ch-more { font-size: 11px; color: var(--faint); margin-top: 2px; }
+
+    .text-btn { margin-top: 6px; padding: 0; border: 0; background: none; font-size: 11.5px; font-weight: 600; color: var(--teal-text); }
+    .text-btn:hover { text-decoration: underline; }
+
+    .placeholder { padding: 28px 18px; text-align: center; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .placeholder strong { display: block; margin-bottom: 4px; color: var(--ink); font-size: 13.5px; }
+
+    .foot { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; border-top: 1px solid var(--line); font-size: 11px; color: var(--meta); }
+    .foot button { height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: #ffffff; font-size: 11px; font-weight: 600; color: var(--body); }
+    .foot button:hover { background: var(--soft); }
+  </style>
+</head>
+<body>
+  <div class="head">
+    <div class="state busy" id="state">行を確認しています…</div>
+    <div id="target" hidden>
+      <div class="customer" id="customer"></div>
+      <div class="origin" id="origin"></div>
+      <div class="open-btns">
+        <button type="button" class="open-btn" id="openCred" title="クレデンシャル・オファリング履歴のモーダルを開きます">登録・編集</button>
+        <button type="button" class="open-btn" id="openChange" title="変更履歴のモーダルを開きます">変更の詳細</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="body" id="body">
+    <div class="placeholder" id="placeholder">
+      <strong>行を選んでください</strong>
+      <span id="placeholderText">追跡しているシートのデータ行を選ぶと、その得意先の履歴を表示します。</span>
+    </div>
+    <div id="sections" hidden>
+      <div class="sec">
+        <div class="sec-title">クレデンシャル・オファリング<span class="count" id="credCount"></span></div>
+        <div id="credList"></div>
+      </div>
+      <div class="sec">
+        <div class="sec-title">変更履歴（最近の10件）<span class="count" id="chgCount"></span></div>
+        <div id="chgList"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span id="loadedAt">履歴を読み込んでいます…</span>
+    <button type="button" id="refresh">更新</button>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+
+    let bundle = null;
+    let bundleAt = 0;
+    let bundleLoading = false;
+    let current = null;               // 今表示している行 {sheet, row, customer, key}
+    let last = {sheet: null, row: null};
+    let lastChangeAt = Date.now();
+    let refreshUntil = 0;             // モーダルを開いたあと、しばらく自動で読み直す
+    let selectedKey = '';             // サイドバーで選んでいる履歴（'c:ID' / 'e:イベントID'）
+
+    const TYPE_LABEL = {EVT: '編集', REC: '回収', ROW: '行の追加・削除', DLG: 'ダイアログ'};
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text != null) node.textContent = text;
+      return node;
+    }
+
+    function setState(text, kind) {
+      $('state').textContent = text;
+      $('state').className = 'state' + (kind ? ' ' + kind : '');
+    }
+
+    /* ---------- 選択行の問い合わせ（前の問い合わせが返ってから次を送る） ---------- */
+
+    function nextDelay() {
+      const idle = Date.now() - lastChangeAt;
+      if (document.hidden) return 3000;
+      if (idle < 60 * 1000) return 250;          // 操作中はこまめに
+      if (idle < 10 * 60 * 1000) return 1200;    // しばらく動きがなければゆっくり
+      return 4000;
+    }
+
+    function poll() {
+      google.script.run
+        .withSuccessHandler(selection => {
+          handleSelection(selection);
+          setTimeout(poll, nextDelay());
+        })
+        .withFailureHandler(error => {
+          setState('行を確認できませんでした（再試行します）', 'error');
+          console.error(error);
+          setTimeout(poll, 3000);
+        })
+        .getSidebarSelection(last);
+    }
+
+    function handleSelection(selection) {
+      if (refreshUntil && Date.now() < refreshUntil && Date.now() - bundleAt > 10000) loadBundle();
+      if (selection.same) return;
+
+      last = {sheet: selection.sheet, row: selection.row};
+      lastChangeAt = Date.now();
+      if (!current || current.sheet !== selection.sheet || current.key !== selection.key) selectedKey = '';
+      current = selection;
+      render();
+      if (Date.now() - bundleAt > 20000) loadBundle();   // 古ければ裏で読み直す
+    }
+
+    /* ---------- 履歴の一括読み込み ---------- */
+
+    function loadBundle() {
+      if (bundleLoading) return;
+      bundleLoading = true;
+      if (!bundle) $('loadedAt').textContent = '履歴を読み込んでいます…';
+      google.script.run
+        .withSuccessHandler(result => {
+          bundleLoading = false;
+          bundle = result;
+          bundleAt = Date.now();
+          $('loadedAt').textContent = '履歴の読み込み ' + result.loadedAt;
+          render();
+        })
+        .withFailureHandler(error => {
+          bundleLoading = false;
+          $('loadedAt').textContent = '履歴を読み込めませんでした';
+          console.error(error);
+        })
+        .getSidebarBundle();
+    }
+
+    /* ---------- 表示 ---------- */
+
+    function render() {
+      if (!current) return;
+
+      if (current.reason) {
+        setState('対象外の行');
+        $('target').hidden = true;
+        $('sections').hidden = true;
+        $('placeholder').hidden = false;
+        const sheets = bundle ? bundle.sheets.join('・') : '追跡しているシート';
+        $('placeholderText').textContent = current.reason === 'header'
+          ? '見出し行ではなく、データ行を選んでください。'
+          : sheets + ' のデータ行を選ぶと、その得意先の履歴を表示します。';
+        return;
+      }
+
+      $('target').hidden = false;
+      $('customer').textContent = current.customer || '（得意先が空欄）';
+      $('origin').textContent = current.sheet + '　' + current.row + '行目';
+      setState('表示中');
+
+      if (!current.customer) {
+        $('sections').hidden = true;
+        $('placeholder').hidden = false;
+        $('placeholderText').textContent = 'この行は得意先が空欄のため、履歴を表示できません。';
+        return;
+      }
+
+      $('placeholder').hidden = true;
+      $('sections').hidden = false;
+      if (!bundle) {
+        $('credList').textContent = '';
+        $('chgList').textContent = '';
+        $('credList').appendChild(el('div', 'empty-line', '履歴を読み込んでいます…'));
+        return;
+      }
+      renderCredentials();
+      renderChanges();
+    }
+
+    function kindClass(kind) {
+      const index = bundle.kindOptions.indexOf(kind);
+      return index === 0 ? 'cred' : index === 1 ? 'off' : 'other';
+    }
+
+    function renderCredentials() {
+      const L = bundle.linking, S = bundle.schedule;
+      const list = (bundle.credentials[current.key] || []).slice();
+      const box = $('credList');
+      box.textContent = '';
+      $('credCount').textContent = list.length ? list.length + '件' : '';
+      if (!list.length) {
+        box.appendChild(el('div', 'empty-line', 'まだ登録はありません'));
+        return;
+      }
+
+      // 予定を先に（予定日の早い順）、実績は新しい順。オファリングは紐づくクレデンシャルの下へ
+      const order = (a, b) => {
+        const ad = a.values[S.doneKey], bd = b.values[S.doneKey];
+        if (!ad !== !bd) return ad ? 1 : -1;
+        if (!ad) return (a.values[S.planKey] || '9999').localeCompare(b.values[S.planKey] || '9999');
+        return bd.localeCompare(ad);
+      };
+      const byId = new Map(list.map(e => [e.id, e]));
+      const isParentOf = e => e.values[L.kindKey] === L.parentKind;
+      const children = new Map();
+      const top = [];
+      list.forEach(e => {
+        const parent = e.values[L.kindKey] === L.childKind && byId.get(e.linkId);
+        if (parent && isParentOf(parent)) {
+          if (!children.has(parent.id)) children.set(parent.id, []);
+          children.get(parent.id).push(e);
+        } else top.push(e);
+      });
+      top.sort(order).forEach(e => {
+        box.appendChild(credItem(e, false));
+        (children.get(e.id) || []).sort(order).forEach(c => box.appendChild(credItem(c, true)));
+      });
+    }
+
+    /**
+     * クリックで選べる項目にする（もう一度選ぶと閉じる）。
+     * キーボードでは trigger（項目の概要部分）が Enter・Space で押せるボタンになる。
+     */
+    function makePickable(node, key, trigger) {
+      node.classList.add('pick');
+      if (selectedKey === key) node.classList.add('selected');
+      trigger.tabIndex = 0;
+      trigger.setAttribute('role', 'button');
+      trigger.setAttribute('aria-expanded', selectedKey === key ? 'true' : 'false');
+      trigger.style.outline = 'none';
+      const toggle = () => { selectedKey = selectedKey === key ? '' : key; render(); };
+      node.addEventListener('click', event => { if (!event.target.closest('.detail')) toggle(); });
+      trigger.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); }
+      });
+      trigger.addEventListener('focus', () => { node.style.boxShadow = '0 0 0 3px rgba(54, 161, 145, .25)'; });
+      trigger.addEventListener('blur', () => { node.style.boxShadow = ''; });
+    }
+
+    function detailRows(rows) {
+      const box = el('div', 'detail');
+      rows.filter(([, value]) => value).forEach(([key, value]) => {
+        const line = el('div', 'd-row');
+        line.append(el('span', 'd-key', key), el('span', 'd-val', value));
+        box.appendChild(line);
+      });
+      return box;
+    }
+
+    function actionButton(label, onClick) {
+      const b = el('button', 'act-btn', label);
+      b.type = 'button';
+      b.addEventListener('click', event => { event.stopPropagation(); onClick(); });
+      return b;
+    }
+
+    function credItem(entry, isChild) {
+      const S = bundle.schedule;
+      const kind = entry.values.kind || '';
+      const item = el('div', 'ci' + (isChild ? ' child' : ''));
+      const key = 'c:' + entry.id;
+      item.appendChild(el('span', 'dot ' + kindClass(kind)));
+      const main = el('div');
+      main.appendChild(el('div', 'ci-name', entry.values.name || '（名称なし）'));
+      const meta = el('div', 'ci-meta');
+      meta.appendChild(el('span', 'ci-kind ' + kindClass(kind), kind));
+      const done = entry.values[S.doneKey], plan = entry.values[S.planKey];
+      if (done) meta.appendChild(el('span', 'ci-date', done));
+      else if (plan) {
+        const overdue = plan < bundle.today;
+        meta.appendChild(el('span', 'ci-plan' + (overdue ? ' overdue' : ''), (overdue ? '期限超過 ' : '予定 ') + plan));
+      }
+      if (entry.values.person) meta.appendChild(el('span', '', entry.values.person));
+      main.appendChild(meta);
+      item.appendChild(main);
+      makePickable(item, key, main);
+
+      if (selectedKey === key) {
+        const v = entry.values;
+        const parent = entry.linkId && (bundle.credentials[current.key] || []).find(e => e.id === entry.linkId);
+        const detail = detailRows([
+          ['予定日', v[S.planKey]],
+          ['実施日', v[S.doneKey]],
+          ['氏名', v.person],
+          ['役職', v.title],
+          ['担当者', [v.owner, v.ownerDept].filter(Boolean).join(' / ')],
+          ['紐づけ先', parent ? parent.values.name : ''],
+          ['コメント', v.note],
+          ['登録', entry.at]
+        ]);
+        detail.appendChild(actionButton('この履歴を編集', () => openModal('credential', entry.id)));
+        item.appendChild(detail);
+      }
+      return item;
+    }
+
+    function renderChanges() {
+      const events = ((bundle.changes[current.sheet] || {})[current.key]) || [];
+      const box = $('chgList');
+      box.textContent = '';
+      $('chgCount').textContent = events.length ? events.length + '件' : '';
+      if (!events.length) {
+        box.appendChild(el('div', 'empty-line', '変更の記録はありません'));
+        return;
+      }
+      events.forEach(ev => {
+        const item = el('div', 'ev');
+        const key = 'e:' + ev.eventId;
+        const selected = selectedKey === key;
+        const summary = el('div');
+        item.appendChild(summary);
+        makePickable(item, key, summary);
+        const head = el('div', 'ev-head');
+        head.append(el('span', 'mono', String(ev.at || '').slice(5)), el('span', '', TYPE_LABEL[ev.type] || ev.type), el('span', '', ev.editor || ''));
+        summary.appendChild(head);
+        // 選んでいる変更は、すべての項目を省略せずに出す
+        (selected ? ev.changes : ev.changes.slice(0, 2)).forEach(change => {
+          const line = el('div', 'ch');
+          line.appendChild(el('span', 'ch-name', change.column));
+          if (!change.before) {
+            line.append(el('span', 'arrow', '入力'), el('ins', '', change.after));
+          } else if (!change.after) {
+            line.append(el('del', '', change.before), el('span', 'arrow', '→ 空欄'));
+          } else {
+            line.append(el('del', '', change.before), el('span', 'arrow', '→'), el('ins', '', change.after));
+          }
+          summary.appendChild(line);
+        });
+        if (!selected && ev.changes.length > 2) summary.appendChild(el('div', 'ch-more', 'ほか ' + (ev.changes.length - 2) + '項目'));
+        if (!ev.changes.length) summary.appendChild(el('div', 'ch-more', '変更内容の記録はありません'));
+        if (selected) {
+          const detail = el('div', 'detail');
+          detail.appendChild(detailRows([['日時', ev.at], ['編集者', ev.editor]]));
+          detail.appendChild(actionButton('この変更を詳しく見る', () => openModal('change', ev.eventId)));
+          item.appendChild(detail);
+        }
+        box.appendChild(item);
+      });
+      const more = el('button', 'text-btn', '変更履歴をすべて見る');
+      more.type = 'button';
+      more.addEventListener('click', () => openModal('change'));
+      box.appendChild(more);
+    }
+
+    /* ---------- モーダルを開く ---------- */
+
+    function openModal(kind, focus) {
+      if (!current || current.reason) return;
+      const method = kind === 'change' ? 'openChangeHistoryFromSidebar' : 'openCredentialFromSidebar';
+      setState('開いています…', 'busy');
+      refreshUntil = Date.now() + 5 * 60 * 1000;   // 閉じたあとの変更を反映するため、しばらく読み直す
+      google.script.run
+        .withSuccessHandler(() => setState('表示中'))
+        .withFailureHandler(error => setState(error.message, 'error'))[method](current.sheet, current.row, focus || '');
+    }
+
+    $('openCred').addEventListener('click', () => openModal('credential'));
+    $('openChange').addEventListener('click', () => openModal('change'));
+    $('refresh').addEventListener('click', () => {
+      last = Object.assign({}, last, {force: true});   // 得意先名も読み直す
+      loadBundle();
+    });
+
+    // 見えている間は1分ごとに履歴を読み直す
+    setInterval(() => {
+      if (!document.hidden && Date.now() - bundleAt > 60 * 1000) loadBundle();
+    }, 15 * 1000);
+
+    loadBundle();
+    poll();
+  </script>
+</body>
+</html>
