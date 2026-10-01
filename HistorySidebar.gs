@@ -7,6 +7,7 @@
  * - メニュー「履歴サイドバーを開く」で右側にサイドバーを開く（閉じるまで出たまま）
  * - サイドバーは短い間隔で「今選ばれている行」を問い合わせ、行が変わったら
  *   その行の得意先のクレデンシャル・オファリングと変更履歴に表示を切り替える
+ *   （画面はタブで「クレデンシャル」「変更履歴」を切り替える。変更履歴は期間・項目で絞り込める）
  * - 履歴は開いたときに全得意先ぶんをまとめて読み込んでおく（切り替えのたびに読まない）。
  *   その後は1分ごと、または「更新」ボタンで読み直す
  * - 登録・編集や詳しい差分は、サイドバーのボタンから各モーダルを開いて行う
@@ -15,7 +16,7 @@
 const HS_OPTIONS = {
   template: 'HistorySidebarView',   // HTMLファイル名（.gs と同じ名前は付けられないため別名）
   title: '履歴',
-  eventsPerCustomer: 10,   // サイドバーに出す変更履歴の件数（得意先ごと・新しい順）
+  eventsPerCustomer: 30,   // サイドバーに読み込む変更の記録の件数（シート・得意先ごと・新しい順）。それより古いものはモーダルで見る
   textLimit: 200,          // 変更前・変更後の表示文字数（それ以上はモーダルで確認）
   cacheSeconds: 600,       // 得意先列の位置を覚えておく秒数
   autoOpenHandler: 'autoOpenHistorySidebar',   // 開いたときに自動表示するトリガーの関数名
@@ -148,10 +149,13 @@ function getSidebarBundle() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const timezone = ss.getSpreadsheetTimeZone();
   const kindField = CRED_OPTIONS.fields.find(f => f.key === CRED_OPTIONS.linking.kindKey);
+  const changeIndex = hsChangeIndex_(ss);
   return {
     sheets: Object.keys(DIFF_RULES),
     credentials: hsCredentialIndex_(ss),
-    changes: hsChangeIndex_(ss),
+    changes: changeIndex.changes,
+    changesMore: changeIndex.more,   // {シート名: {得意先キー: true}}：上限を超えた古い記録がある
+    eventsPerCustomer: HS_OPTIONS.eventsPerCustomer,
     linking: CRED_OPTIONS.linking,
     schedule: CRED_OPTIONS.schedule,
     kindOptions: kindField ? kindField.options : [],
@@ -189,10 +193,12 @@ function hsCredentialIndex_(ss) {
   return out;
 }
 
+/** 戻り値 {changes: {シート名: {得意先キー: [変更]}}, more: {シート名: {得意先キー: true}}} */
 function hsChangeIndex_(ss) {
   const out = {};
+  const more = {};
   const snap = ss.getSheetByName(DIFF_OPTIONS.rowSnapshotSheet);
-  if (!snap || snap.getLastRow() < 2) return out;
+  if (!snap || snap.getLastRow() < 2) return {changes: out, more};
 
   const values = snap.getRange(1, 1, snap.getLastRow(), snap.getLastColumn()).getDisplayValues();
   const headers = values[0].map(h => String(h).trim());
@@ -200,7 +206,7 @@ function hsChangeIndex_(ss) {
   const iAt = col('記録日時'), iEvent = col('イベントID'), iEditor = col('編集者メールアドレス');
   const iSheet = col('シート'), iRow = col('行番号');
   const iCustomer = col(diffCleanHeaderText_(CRED_OPTIONS.customerHeader));
-  if (iCustomer < 0) return out;
+  if (iCustomer < 0) return {changes: out, more};
 
   // シート＋得意先ごとに、新しい方から決まった件数だけ残す
   const groups = new Map();
@@ -212,8 +218,13 @@ function hsChangeIndex_(ss) {
     groups.get(key).push(v);
   }
   const needed = new Set();
-  groups.forEach(list => {
-    list.splice(0, Math.max(0, list.length - HS_OPTIONS.eventsPerCustomer));
+  groups.forEach((list, key) => {
+    const extra = list.length - HS_OPTIONS.eventsPerCustomer;
+    if (extra > 0) {
+      list.splice(0, extra);
+      const [sheetName, customerKey] = key.split('\u0001');
+      (more[sheetName] = more[sheetName] || {})[customerKey] = true;
+    }
     list.forEach(v => needed.add(v[iEvent]));
   });
 
@@ -254,5 +265,5 @@ function hsChangeIndex_(ss) {
       };
     });
   });
-  return out;
+  return {changes: out, more};
 }

@@ -5,137 +5,319 @@
   <meta charset="utf-8">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500&family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --ink: #1b1b1c; --body: #3c4642; --muted: #5a6660; --faint: #8a968a; --meta: #9AA59C;
-      --line: #EFF2EF; --rail: #E2E7E2; --border: #DDE2DD; --soft: #F4F6F4; --panel: #FAFBFA;
-      --teal: #36A191; --teal-hover: #2E8E80; --teal-text: #297A6E; --teal-soft: #E9F4F1;
-      --cred: #1F6E5E; --cred-text: #1F5E55; --off: #8B6FD6; --off-text: #6B4FB8;
-      --danger: #B42318; --del-bg: #FCEDEC; --add-bg: #E3F3EE;
+      --ink: #1b1b1c; --body: #3c4642; --muted: #5a6660; --faint: #8a968a; --sub: #6b766f; --sub2: #7d887f;
+      --bg: #F7F8F7; --card: #ffffff; --card-line: #E3E8E4; --border: #DDE3DE; --line: #EEF1EE; --line2: #F0F2F0;
+      --seg: #E9EDEA; --hover: #F3F6F4; --hover2: #F5F8F6; --hover3: #F0F3F1; --off-day: #C3CBC5;
+      --teal: #36A191; --cred: #1F6E5E; --cred-hover: #185A4D; --teal-soft: #E7F4F0; --teal-wash: #F2F9F7;
+      --off-text: #7458C4; --off-line: #D6CCF1;
+      --before-label: #B4534B; --before-ink: #8C4A44; --before-bg: #FBEFEE;
+      --after-ink: #174F44; --empty-bg: #F3F5F3; --danger: #B42318;
       --mono: 'Azeret Mono', ui-monospace, Menlo, Consolas, monospace;
+      --sans: 'Inter', 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic UI', Meiryo, sans-serif;
     }
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: #D5DBD6 transparent; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #D5DBD6; border-radius: 3px; }
     [hidden] { display: none !important; }
     html, body { margin: 0; height: 100%; }
-    body {
-      font-family: 'Inter', 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic UI', Meiryo, sans-serif;
-      color: var(--ink); background: #ffffff; font-size: 12.5px; -webkit-font-smoothing: antialiased;
-      display: flex; flex-direction: column;
+    body { font-family: var(--sans); color: var(--ink); background: var(--bg); -webkit-font-smoothing: antialiased; }
+    button, input { font-family: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, .cred-body:focus-visible, input:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
+    svg { flex: none; }
+    .mono { font-family: var(--mono); }
+
+    .side { height: 100%; display: flex; flex-direction: column; }
+    .main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .card { background: var(--card); border: 1px solid var(--card-line); border-radius: 12px; }
+
+    /* ---------- 表示中の行 ---------- */
+    .top { flex: none; padding: 12px 12px 0; }
+    .row-card { padding: 13px 14px; display: flex; flex-direction: column; gap: 5px; }
+    .eyebrow { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600; color: var(--cred); letter-spacing: .04em; }
+    .eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 3px rgba(54, 161, 145, .18); }
+    .eyebrow.busy, .eyebrow.muted { color: var(--faint); }
+    .eyebrow.busy::before, .eyebrow.muted::before { background: var(--off-day); box-shadow: none; }
+    .eyebrow.error { color: var(--danger); }
+    .eyebrow.error::before { background: var(--danger); box-shadow: 0 0 0 3px rgba(180, 35, 24, .15); }
+    .customer { font-size: 17px; font-weight: 700; line-height: 1.35; text-wrap: pretty; overflow-wrap: anywhere; }
+    .origin { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--sub); }
+    .dot-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--off-day); }
+    .last-edit { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 10.5px; color: var(--sub2); }
+    .last-edit .mono { color: var(--body); }
+    .hint { font-size: 11.5px; line-height: 1.6; color: var(--muted); }
+
+    /* ---------- タブ ---------- */
+    .tabs-wrap { flex: none; padding: 10px 12px 8px; }
+    .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border-radius: 10px; background: var(--seg); }
+    .tab {
+      height: 34px; display: flex; align-items: center; justify-content: center; gap: 6px; border: none; border-radius: 8px;
+      font-size: 12px; font-weight: 600; background: transparent; color: var(--muted);
     }
-    button { font-family: inherit; cursor: pointer; }
+    .tab .badge { font-family: var(--mono); font-size: 10.5px; font-weight: 500; padding: 1px 6px; border-radius: 9px; background: #DCE2DE; }
+    .tab.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(20, 30, 25, .10); }
+    .tab.on .badge { background: var(--teal-soft); }
 
-    .head { padding: 14px 16px 12px; border-bottom: 1px solid var(--line); }
-    .state { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--faint); }
-    .state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--teal); }
-    .state.busy::before { background: #C9D1C9; }
-    .state.error { color: var(--danger); }
-    .state.error::before { background: var(--danger); }
-    .customer { margin: 6px 0 2px; font-size: 17px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
-    .origin { font-size: 11px; color: var(--faint); }
-    .open-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
-    .open-btn {
-      height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: #ffffff;
-      font-size: 11.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    .pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px 12px; }
+
+    /* ---------- クレデンシャル ---------- */
+    .pane-head { flex: none; padding: 0 12px 8px; }
+    .wide-btn {
+      width: 100%; height: 36px; display: flex; align-items: center; justify-content: center; gap: 7px;
+      border: 1px solid #CFE3DC; border-radius: 9px; background: var(--card); color: var(--cred); font-size: 12px; font-weight: 600;
     }
-    .open-btn:hover { background: var(--soft); }
-    .open-btn:focus-visible, .text-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
-
-    .body { flex: 1; overflow: auto; }
-    .sec { padding: 12px 16px 14px; border-bottom: 1px solid var(--line); }
-    .sec-title { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; font-size: 11.5px; font-weight: 700; color: var(--muted); letter-spacing: .03em; }
-    .sec-title .count { font-family: var(--mono); font-weight: 500; color: var(--faint); }
-    .empty-line { font-size: 11.5px; color: var(--faint); }
-
-    /* 選べる履歴項目（クリックで詳細を開く） */
-    .pick { margin: 0 -8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; outline: none; }
-    .pick:hover { background: var(--panel); }
-    .pick:focus-visible { box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
-    .pick.selected, .pick.selected:hover { background: var(--teal-soft); }
-    .ci { display: grid; grid-template-columns: 12px minmax(0, 1fr); column-gap: 8px; }
-    .ci.child { padding-left: 22px; }
-    .detail { grid-column: 1 / -1; margin-top: 8px; padding-top: 8px; border-top: 1px solid #D6E9E3; cursor: default; }
-    .detail .detail { margin: 0; padding: 0; border: 0; }
-    .d-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); column-gap: 8px; padding: 2px 0; font-size: 11.5px; }
-    .d-key { color: var(--faint); }
-    .d-val { color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
-    .act-btn {
-      margin-top: 8px; width: 100%; height: 28px; border: 1px solid #BFE0D8; border-radius: 7px;
-      background: #ffffff; color: var(--teal-text); font-size: 11.5px; font-weight: 600;
+    .wide-btn:hover { background: var(--teal-wash); border-color: #9FCFC3; }
+    .cred-card { padding: 4px; }
+    .cred-item { position: relative; }
+    .cred-item.divided { border-top: 1px solid var(--line2); }
+    .cred-item.child { padding-left: 28px; margin-top: -6px; }
+    .cred-item.child::before {
+      content: ""; position: absolute; left: 20px; top: -6px; width: 12px; height: 42px;
+      border-left: 1.5px solid var(--off-line); border-bottom: 1.5px solid var(--off-line); border-bottom-left-radius: 7px;
     }
-    .act-btn:hover { border-color: var(--teal); }
-    .act-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
-    .ci .dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; }
-    .dot.cred { background: var(--cred); }
-    .dot.off { background: #ffffff; border: 2.5px solid var(--off); }
-    .dot.other { background: #ffffff; border: 2.5px solid #B5BEB7; }
-    .ci-name { font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
-    .ci-meta { display: flex; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--faint); }
-    .ci-kind.cred { color: var(--cred-text); font-weight: 700; }
-    .ci-kind.off { color: var(--off-text); font-weight: 700; }
-    .ci-date { font-family: var(--mono); }
-    .ci-plan { color: var(--muted); }
-    .ci-plan.overdue { color: var(--danger); font-weight: 600; }
+    .cred-body { display: flex; flex-direction: column; gap: 5px; padding: 11px 12px; border-radius: 8px; cursor: pointer; }
+    .cred-body:hover { background: var(--hover2); }
+    .cred-meta { display: flex; align-items: center; gap: 8px; font-size: 10.5px; line-height: 1.3; color: var(--faint); white-space: nowrap; min-width: 0; }
+    .cred-meta .vsep { width: 1px; height: 9px; background: #DDE3DE; }
+    .cred-meta .plan { font-weight: 600; }
+    .cred-meta .overdue { color: var(--danger); font-weight: 600; }
+    .cred-meta .person { overflow: hidden; text-overflow: ellipsis; }
+    .cred-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .cred-tag { flex: none; font-size: 10px; font-weight: 700; color: var(--off-text); }
+    .cred-tag.other { color: var(--faint); }
+    .cred-name { min-width: 0; font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cred-item.child .cred-name { font-size: 12.5px; }
 
-    .ev + .ev { margin-top: 2px; }
-    .ev-head { display: flex; gap: 6px; font-size: 11px; color: var(--faint); }
-    .ev-head .mono { font-family: var(--mono); color: var(--muted); }
-    .ch { margin-top: 3px; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
-    .ch-name { font-weight: 600; color: var(--body); margin-right: 4px; }
-    .ch del { color: var(--danger); background: var(--del-bg); text-decoration: line-through; border-radius: 3px; padding: 0 2px; }
-    .ch ins { color: var(--cred-text); background: var(--add-bg); text-decoration: none; border-radius: 3px; padding: 0 2px; font-weight: 600; }
-    .ch .arrow { color: var(--faint); margin: 0 3px; }
-    .ch-more { font-size: 11px; color: var(--faint); margin-top: 2px; }
+    .empty { padding: 28px 16px; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+    .empty strong { font-size: 12.5px; font-weight: 600; color: var(--body); }
+    .empty span { font-size: 11px; line-height: 1.6; color: var(--faint); }
 
-    .text-btn { margin-top: 6px; padding: 0; border: 0; background: none; font-size: 11.5px; font-weight: 600; color: var(--teal-text); }
-    .text-btn:hover { text-decoration: underline; }
+    /* ---------- 変更履歴：期間 ---------- */
+    .range-wrap { flex: none; position: relative; z-index: 4; padding: 0 12px 8px; }
+    .range-card { padding: 8px 8px 6px; display: flex; flex-direction: column; gap: 6px; }
+    .range-head { display: flex; align-items: center; justify-content: space-between; padding-left: 2px; }
+    .range-btn {
+      height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid #E1E6E2; border-radius: 7px;
+      background: var(--card); color: var(--sub);
+    }
+    .range-btn:hover { border-color: #B8C4BC; }
+    .range-btn.open { border-color: var(--teal); }
+    .range-btn span { font-size: 11.5px; font-weight: 700; color: var(--ink); white-space: nowrap; }
+    .week-nav { display: flex; gap: 2px; }
+    .icon-btn { width: 26px; height: 26px; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); }
+    .icon-btn:hover { background: var(--hover3); }
+    .icon-btn:disabled { color: var(--off-day); cursor: default; background: transparent; }
+    .days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+    .day {
+      height: 50px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+      border: none; border-radius: 8px; background: transparent; cursor: default;
+    }
+    .day.has { cursor: pointer; }
+    .day.has:hover { background: var(--hover3); }
+    .day .wk { font-size: 9.5px; font-weight: 600; color: var(--faint); }
+    .day .wk.today { color: var(--cred); }
+    .day .wk.sun { color: var(--before-label); }
+    .day .num { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--off-day); }
+    .day.has .num { color: var(--ink); }
+    .day .cnt {
+      height: 12px; min-width: 12px; padding: 0 3px; border-radius: 6px; font-family: var(--mono); font-size: 8.5px; font-weight: 600;
+      line-height: 12px; text-align: center; background: var(--teal-soft); color: var(--cred); opacity: 0;
+    }
+    .day.has .cnt { opacity: 1; }
+    .day.on, .day.on:hover { background: var(--cred); }
+    .day.on .wk { color: rgba(255, 255, 255, .8); }
+    .day.on .num { color: #ffffff; }
+    .day.on .cnt { background: rgba(255, 255, 255, .22); color: #ffffff; }
 
-    .placeholder { padding: 28px 18px; text-align: center; color: var(--muted); font-size: 12px; line-height: 1.7; }
-    .placeholder strong { display: block; margin-bottom: 4px; color: var(--ink); font-size: 13.5px; }
+    .pop {
+      position: absolute; left: 12px; right: 12px; top: 42px; background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+      box-shadow: 0 12px 30px rgba(20, 30, 25, .16); padding: 6px; display: flex; flex-direction: column; gap: 2px;
+    }
+    #presets { display: flex; flex-direction: column; gap: 2px; }
+    .preset {
+      width: 100%; min-height: 34px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; border: none; border-radius: 6px;
+      font-size: 12px; font-weight: 500; text-align: left; background: transparent; color: var(--ink);
+    }
+    .preset:hover { background: var(--hover); }
+    .preset.on { background: var(--teal-wash); color: var(--cred); }
+    .preset svg { opacity: 0; }
+    .preset.on svg { opacity: 1; }
+    .custom { margin-top: 4px; padding: 10px 8px 6px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+    .custom-cap { font-size: 10.5px; font-weight: 600; color: var(--faint); }
+    .custom-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 6px; align-items: center; }
+    .custom-row span { font-size: 11px; color: var(--faint); }
+    .date-inp {
+      min-width: 0; height: 32px; padding: 0 6px; border: 1px solid var(--border); border-radius: 7px;
+      font: 500 11.5px var(--mono); color: var(--ink); background: var(--card);
+    }
+    .apply-btn { height: 32px; border: none; border-radius: 7px; background: var(--cred); color: #ffffff; font-size: 12px; font-weight: 600; }
+    .apply-btn:hover { background: var(--cred-hover); }
 
-    .foot { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; border-top: 1px solid var(--line); font-size: 11px; color: var(--meta); }
-    .foot button { height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: #ffffff; font-size: 11px; font-weight: 600; color: var(--body); }
-    .foot button:hover { background: var(--soft); }
+    /* ---------- 変更履歴：項目 ---------- */
+    .filter-wrap { flex: none; position: relative; z-index: 3; padding: 0 12px 8px; display: flex; gap: 6px; }
+    .field-btn {
+      flex: 1; min-width: 0; height: 36px; display: flex; align-items: center; gap: 7px; padding: 0 10px;
+      border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--sub); text-align: left;
+    }
+    .field-btn:hover { border-color: #B8C4BC; }
+    .field-btn.open { border-color: var(--teal); }
+    .field-cap { flex: none; font-size: 10.5px; font-weight: 600; color: var(--faint); }
+    .field-label { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .detail-btn {
+      flex: none; height: 36px; padding: 0 11px; display: flex; align-items: center; gap: 5px; border: 1px solid var(--border);
+      border-radius: 9px; background: var(--card); color: #2b3330; font-size: 12px; font-weight: 600; white-space: nowrap;
+    }
+    .detail-btn:hover { background: var(--hover); }
+    .field-pop { gap: 0; max-height: 300px; }
+    .field-pop-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px 8px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+    .link-btn { border: none; background: none; padding: 4px 0; font-size: 11.5px; font-weight: 600; color: var(--cred); }
+    .sel-count { font-size: 10.5px; color: var(--faint); }
+    .field-opts { overflow-y: auto; display: flex; flex-direction: column; }
+    .field-opt {
+      flex: none; min-height: 36px; display: flex; align-items: center; gap: 9px; padding: 0 8px; border: none; border-radius: 6px;
+      background: transparent; font-size: 12px; font-weight: 500; color: var(--ink); text-align: left;
+    }
+    .field-opt:hover { background: var(--hover); }
+    .check { flex: none; width: 15px; height: 15px; border-radius: 4px; display: grid; place-items: center; border: 1.5px solid #C5CEC8; background: var(--card); }
+    .check svg { opacity: 0; }
+    .field-opt.on .check { border: none; background: var(--cred); }
+    .field-opt.on .check svg { opacity: 1; }
+    .opt-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .opt-count { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+    .field-empty { padding: 8px; font-size: 11px; color: var(--faint); }
+
+    /* ---------- 変更履歴：一覧 ---------- */
+    .log-card { padding: 0 14px 4px; }
+    .log-card .empty { padding: 28px 4px; }
+    .group-head { display: flex; align-items: center; gap: 8px; padding: 12px 0 2px; }
+    .group-head span { font-size: 11px; font-weight: 700; color: var(--body); white-space: pre; }
+    .group-head::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+    .log { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; }
+    .log + .log { border-top: 1px solid var(--line2); }
+    .log-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .log-field { min-width: 0; font-size: 12px; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
+    .log-when { flex: none; display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--faint); white-space: nowrap; }
+    .log-line { display: grid; grid-template-columns: 32px 1fr; gap: 6px; align-items: start; }
+    .log-label { font-size: 9.5px; font-weight: 700; color: var(--cred); padding-top: 4px; }
+    .log-label.before { color: var(--before-label); }
+    .log-text { font-size: 12px; line-height: 1.55; border-radius: 5px; padding: 3px 7px; word-break: break-all; color: var(--after-ink); background: var(--teal-soft); }
+    .log-text.before { color: var(--before-ink); background: var(--before-bg); text-decoration: line-through; text-decoration-color: rgba(180, 83, 75, .55); }
+    .log-text.blank { color: var(--faint); background: var(--empty-bg); }
+    .log-note { margin: 4px 0 8px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 10.5px; line-height: 1.6; color: var(--faint); }
+
+    /* ---------- 下の帯 ---------- */
+    .foot {
+      flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 8px 12px 8px 16px; border-top: 1px solid var(--card-line); background: var(--bg);
+    }
+    .loaded { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--sub2); }
+    .loaded .mono { color: #4a544f; }
+    .loaded.error { color: var(--danger); }
+    .refresh-btn {
+      height: 32px; padding: 0 11px; display: flex; align-items: center; gap: 5px; border: 1px solid #D5DCD7; border-radius: 8px;
+      background: var(--card); color: #2b3330; font-size: 11.5px; font-weight: 600;
+    }
+    .refresh-btn:hover { background: var(--hover); }
   </style>
 </head>
 <body>
-  <div class="head">
-    <div class="state busy" id="state">行を確認しています…</div>
-    <div id="target" hidden>
-      <div class="customer" id="customer"></div>
-      <div class="origin" id="origin"></div>
-      <div class="open-btns">
-        <button type="button" class="open-btn" id="openCred" title="クレデンシャル・オファリング履歴のモーダルを開きます">登録・編集</button>
-        <button type="button" class="open-btn" id="openChange" title="変更履歴のモーダルを開きます">変更の詳細</button>
-      </div>
+  <div class="side">
+    <div class="top">
+      <section class="card row-card" aria-live="polite">
+        <span class="eyebrow busy" id="state">行を確認しています…</span>
+        <span class="customer" id="customer" hidden></span>
+        <span class="origin" id="origin" hidden><span id="originSheet"></span><span class="dot-sep"></span><span class="mono" id="originRow"></span></span>
+        <span class="last-edit" id="lastEdit" hidden>この行の最終編集<span class="mono" id="lastEditAt"></span><span id="lastEditBy"></span></span>
+        <span class="hint" id="hint" hidden></span>
+      </section>
     </div>
-  </div>
 
-  <div class="body" id="body">
-    <div class="placeholder" id="placeholder">
-      <strong>行を選んでください</strong>
-      <span id="placeholderText">追跡しているシートのデータ行を選ぶと、その得意先の履歴を表示します。</span>
-    </div>
-    <div id="sections" hidden>
-      <div class="sec">
-        <div class="sec-title">クレデンシャル・オファリング<span class="count" id="credCount"></span></div>
-        <div id="credList"></div>
+    <div class="main">
+      <div class="tabs-wrap" id="tabsWrap" hidden>
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab" id="tabCred" role="tab">クレデンシャル<span class="badge" id="credCount">0</span></button>
+          <button type="button" class="tab" id="tabLog" role="tab">変更履歴<span class="badge" id="logCount">0</span></button>
+        </div>
       </div>
-      <div class="sec">
-        <div class="sec-title">変更履歴（最近の10件）<span class="count" id="chgCount"></span></div>
-        <div id="chgList"></div>
-      </div>
-    </div>
-  </div>
 
-  <div class="foot">
-    <span id="loadedAt">履歴を読み込んでいます…</span>
-    <button type="button" id="refresh">更新</button>
+      <!-- クレデンシャル・オファリング -->
+      <div class="pane" id="credPane" role="tabpanel" hidden>
+        <div class="pane-head">
+          <button type="button" class="wide-btn" id="openCred" title="クレデンシャル・オファリング履歴のモーダルを開きます">
+            <svg width="13" height="13" viewBox="0 0 14 14"><path d="M9.2 2.3l2.5 2.5L5 11.5H2.5V9z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>登録・編集
+          </button>
+        </div>
+        <div class="scroll"><div class="card cred-card" id="credList"></div></div>
+      </div>
+
+      <!-- 変更履歴 -->
+      <div class="pane" id="logPane" role="tabpanel" hidden>
+        <div class="range-wrap" id="rangeWrap">
+          <div class="card range-card">
+            <div class="range-head">
+              <button type="button" class="range-btn" id="rangeBtn" aria-haspopup="true" aria-expanded="false">
+                <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="2.5" width="9" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M1.5 5h9M4 1.2v2.4M8 1.2v2.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                <span id="rangeLabel">過去7日</span>
+                <svg width="10" height="10" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <span class="week-nav">
+                <button type="button" class="icon-btn" id="prevWeek" title="前の週"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M7.5 3l-3 3 3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                <button type="button" class="icon-btn" id="nextWeek" title="次の週"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M4.5 3l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              </span>
+            </div>
+            <div class="days" id="days"></div>
+          </div>
+          <div class="pop" id="rangePop" hidden>
+            <div id="presets"></div>
+            <div class="custom">
+              <span class="custom-cap">期間を指定</span>
+              <div class="custom-row">
+                <input type="date" class="date-inp" id="fromDate" aria-label="開始日">
+                <span>–</span>
+                <input type="date" class="date-inp" id="toDate" aria-label="終了日">
+              </div>
+              <button type="button" class="apply-btn" id="applyRange">この期間で表示</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="filter-wrap" id="filterWrap">
+          <button type="button" class="field-btn" id="fieldBtn" aria-haspopup="true" aria-expanded="false">
+            <span class="field-cap">項目</span>
+            <span class="field-label" id="fieldLabel">すべて</span>
+            <svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button type="button" class="detail-btn" id="openChange" title="変更履歴のモーダルを開きます">
+            <svg width="13" height="13" viewBox="0 0 14 14"><path d="M8.5 2.5h3v3M11.5 2.5L7 7M10.5 8.5v2.5a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1H6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>変更の詳細
+          </button>
+          <div class="pop field-pop" id="fieldPop" hidden>
+            <div class="field-pop-head">
+              <button type="button" class="link-btn" id="selectAll">すべて表示</button>
+              <span class="sel-count" id="selCount"></span>
+            </div>
+            <div class="field-opts" id="fieldOpts"></div>
+          </div>
+        </div>
+
+        <div class="scroll"><div class="card log-card" id="logList"></div></div>
+      </div>
+    </div>
+
+    <footer class="foot">
+      <span class="loaded" id="loaded">シートから取得中…</span>
+      <button type="button" class="refresh-btn" id="refresh" title="再読み込み">
+        <svg width="12" height="12" viewBox="0 0 12 12"><path d="M10 6a4 4 0 1 1-1.2-2.85M10 1.5V4H7.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>再読み込み
+      </button>
+    </footer>
   </div>
 
   <script>
     const $ = id => document.getElementById(id);
-
     let bundle = null;
     let bundleAt = 0;
     let bundleLoading = false;
@@ -143,10 +325,25 @@
     let last = {sheet: null, row: null};
     let lastChangeAt = Date.now();
     let refreshUntil = 0;             // モーダルを開いたあと、しばらく自動で読み直す
-    let selectedKey = '';             // サイドバーで選んでいる履歴（'c:ID' / 'e:イベントID'）
 
-    const TYPE_LABEL = {EVT: '編集', REC: '回収', ROW: '行の追加・削除', DLG: 'ダイアログ'};
+    // 画面の状態（タブ・期間・項目の絞り込み）
+    const ui = {
+      tab: 'cred',
+      span: 7,            // 7 / 14 / 30 / 'all'
+      weekOffset: 0,      // 期間いくつ分さかのぼるか
+      custom: null,       // {from, to}（yyyy-MM-dd）
+      day: null,          // 選んだ日（yyyy/MM/dd）
+      fields: [],         // 選んだ項目（空ならすべて）
+      rangeOpen: false,
+      menuOpen: false
+    };
 
+    const WK = ['日', '月', '火', '水', '木', '金', '土'];
+    const PRESETS = [[7, '過去7日'], [14, '過去14日'], [30, '過去30日'], ['all', 'すべての期間']];
+    const CHECK_ICON = '<svg width="11" height="11" viewBox="0 0 10 10"><path d="M2 5.2l2 2 4-4.4" fill="none" stroke="#1F6E5E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    const BOX_ICON = '<svg width="9" height="9" viewBox="0 0 10 10"><path d="M2 5.2l2 2 4-4.4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    /** 要素を作る小さな補助。text は文字列として入れる（HTML として解釈しない）。 */
     function el(tag, className, text) {
       const node = document.createElement(tag);
       if (className) node.className = className;
@@ -154,9 +351,39 @@
       return node;
     }
 
+    /* ---------- 日付 ---------- */
+
+    const pad = n => String(n).padStart(2, '0');
+    const dayKey = dt => dt.getFullYear() + '/' + pad(dt.getMonth() + 1) + '/' + pad(dt.getDate());
+    const iso = dt => dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate());
+    const fromIso = s => new Date(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10));
+    const addDays = (dt, n) => { const d = new Date(dt); d.setDate(d.getDate() + n); return d; };
+
+    /** '2026/10/01 09:12' などから 'yyyy/MM/dd' を取り出す（取れなければ ''） */
+    function normalizeDay(text) {
+      const m = /(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/.exec(String(text || ''));
+      return m ? m[1] + '/' + pad(m[2]) + '/' + pad(m[3]) : '';
+    }
+    function keyToDate(key) {
+      return new Date(+key.slice(0, 4), +key.slice(5, 7) - 1, +key.slice(8, 10));
+    }
+    function todayDate() {
+      const key = bundle && normalizeDay(bundle.today);
+      if (key) return keyToDate(key);
+      const now = new Date();
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    }
+    /** 月/日（今年でなければ年も付ける） */
+    function md(dt) {
+      const text = (dt.getMonth() + 1) + '/' + dt.getDate();
+      return dt.getFullYear() === todayDate().getFullYear() ? text : dt.getFullYear() + '/' + text;
+    }
+
+    /* ---------- 状態表示 ---------- */
+
     function setState(text, kind) {
       $('state').textContent = text;
-      $('state').className = 'state' + (kind ? ' ' + kind : '');
+      $('state').className = 'eyebrow' + (kind ? ' ' + kind : '');
     }
 
     /* ---------- 選択行の問い合わせ（前の問い合わせが返ってから次を送る） ---------- */
@@ -186,10 +413,13 @@
     function handleSelection(selection) {
       if (refreshUntil && Date.now() < refreshUntil && Date.now() - bundleAt > 10000) loadBundle();
       if (selection.same) return;
-
       last = {sheet: selection.sheet, row: selection.row};
       lastChangeAt = Date.now();
-      if (!current || current.sheet !== selection.sheet || current.key !== selection.key) selectedKey = '';
+      if (!current || current.sheet !== selection.sheet || current.key !== selection.key) {
+        ui.day = null;            // 選んだ日は行ごとに戻す（期間と項目はそのまま）
+        ui.menuOpen = false;
+        ui.rangeOpen = false;
+      }
       current = selection;
       render();
       if (Date.now() - bundleAt > 20000) loadBundle();   // 古ければ裏で読み直す
@@ -200,81 +430,110 @@
     function loadBundle() {
       if (bundleLoading) return;
       bundleLoading = true;
-      if (!bundle) $('loadedAt').textContent = '履歴を読み込んでいます…';
+      if (!bundle) {
+        $('loaded').textContent = 'シートから取得中…';
+        $('loaded').className = 'loaded';
+      }
       google.script.run
         .withSuccessHandler(result => {
           bundleLoading = false;
           bundle = result;
           bundleAt = Date.now();
-          $('loadedAt').textContent = '履歴の読み込み ' + result.loadedAt;
+          const loaded = $('loaded');
+          loaded.className = 'loaded';
+          loaded.textContent = 'シートから取得';
+          loaded.appendChild(el('span', 'mono', result.loadedAt));
           render();
         })
         .withFailureHandler(error => {
           bundleLoading = false;
-          $('loadedAt').textContent = '履歴を読み込めませんでした';
+          $('loaded').textContent = '履歴を読み込めませんでした';
+          $('loaded').className = 'loaded error';
           console.error(error);
         })
         .getSidebarBundle();
     }
 
-    /* ---------- 表示 ---------- */
+    /* ---------- 表示中の行 ---------- */
 
     function render() {
       if (!current) return;
+      const target = !current.reason && !!current.customer;
+      $('tabsWrap').hidden = !target;
+      $('credPane').hidden = !target || ui.tab !== 'cred';
+      $('logPane').hidden = !target || ui.tab !== 'log';
+      $('hint').hidden = target;
 
       if (current.reason) {
-        setState('対象外の行');
-        $('target').hidden = true;
-        $('sections').hidden = true;
-        $('placeholder').hidden = false;
+        setState('対象外の行', 'muted');
+        $('customer').hidden = false;
+        $('customer').textContent = '行を選んでください';
+        $('origin').hidden = true;
+        $('lastEdit').hidden = true;
         const sheets = bundle ? bundle.sheets.join('・') : '追跡しているシート';
-        $('placeholderText').textContent = current.reason === 'header'
+        $('hint').textContent = current.reason === 'header'
           ? '見出し行ではなく、データ行を選んでください。'
           : sheets + ' のデータ行を選ぶと、その得意先の履歴を表示します。';
         return;
       }
 
-      $('target').hidden = false;
+      $('customer').hidden = false;
       $('customer').textContent = current.customer || '（得意先が空欄）';
-      $('origin').textContent = current.sheet + '　' + current.row + '行目';
-      setState('表示中');
+      $('origin').hidden = false;
+      $('originSheet').textContent = current.sheet;
+      $('originRow').textContent = current.row + '行目';
+      setState('表示中の行');
 
       if (!current.customer) {
-        $('sections').hidden = true;
-        $('placeholder').hidden = false;
-        $('placeholderText').textContent = 'この行は得意先が空欄のため、履歴を表示できません。';
+        $('lastEdit').hidden = true;
+        $('hint').textContent = 'この行は得意先が空欄のため、履歴を表示できません。';
         return;
       }
 
-      $('placeholder').hidden = true;
-      $('sections').hidden = false;
-      if (!bundle) {
-        $('credList').textContent = '';
-        $('chgList').textContent = '';
-        $('credList').appendChild(el('div', 'empty-line', '履歴を読み込んでいます…'));
-        return;
+      const logs = currentLogs();
+      const latest = currentEvents()[0];
+      $('lastEdit').hidden = !latest;
+      if (latest) {
+        const [d, t] = String(latest.at || '').split(' ');
+        $('lastEditAt').textContent = (normalizeDay(d).slice(5) + ' ' + (t || '')).trim();
+        $('lastEditBy').textContent = latest.editor || '';
       }
-      renderCredentials();
-      renderChanges();
+
+      const creds = currentCredentials();
+      $('credCount').textContent = bundle ? creds.length : '–';
+      $('logCount').textContent = bundle ? logs.length : '–';
+      $('tabCred').classList.toggle('on', ui.tab === 'cred');
+      $('tabLog').classList.toggle('on', ui.tab === 'log');
+      $('tabCred').setAttribute('aria-selected', ui.tab === 'cred' ? 'true' : 'false');
+      $('tabLog').setAttribute('aria-selected', ui.tab === 'log' ? 'true' : 'false');
+
+      if (ui.tab === 'cred') renderCredentials(creds);
+      else renderLogs(logs);
     }
 
-    function kindClass(kind) {
-      const index = bundle.kindOptions.indexOf(kind);
-      return index === 0 ? 'cred' : index === 1 ? 'off' : 'other';
+    /* ---------- クレデンシャル・オファリング ---------- */
+
+    function currentCredentials() {
+      return bundle ? (bundle.credentials[current.key] || []) : [];
     }
 
-    function renderCredentials() {
-      const L = bundle.linking, S = bundle.schedule;
-      const list = (bundle.credentials[current.key] || []).slice();
+    function renderCredentials(list) {
       const box = $('credList');
       box.textContent = '';
-      $('credCount').textContent = list.length ? list.length + '件' : '';
+      if (!bundle) {
+        box.appendChild(emptyBox('履歴を読み込んでいます…', ''));
+        return;
+      }
       if (!list.length) {
-        box.appendChild(el('div', 'empty-line', 'まだ登録はありません'));
+        const empty = emptyBox('まだ登録されていません', '');
+        const body = empty.querySelector('span');
+        body.append('上のボタンから、この行に紐づく', el('br'), 'クレデンシャル・オファリングを登録できます');
+        box.appendChild(empty);
         return;
       }
 
       // 予定を先に（予定日の早い順）、実績は新しい順。オファリングは紐づくクレデンシャルの下へ
+      const L = bundle.linking, S = bundle.schedule;
       const order = (a, b) => {
         const ad = a.values[S.doneKey], bd = b.values[S.doneKey];
         if (!ad !== !bd) return ad ? 1 : -1;
@@ -282,146 +541,317 @@
         return bd.localeCompare(ad);
       };
       const byId = new Map(list.map(e => [e.id, e]));
-      const isParentOf = e => e.values[L.kindKey] === L.parentKind;
       const children = new Map();
       const top = [];
       list.forEach(e => {
         const parent = e.values[L.kindKey] === L.childKind && byId.get(e.linkId);
-        if (parent && isParentOf(parent)) {
+        if (parent && parent.values[L.kindKey] === L.parentKind) {
           if (!children.has(parent.id)) children.set(parent.id, []);
           children.get(parent.id).push(e);
         } else top.push(e);
       });
-      top.sort(order).forEach(e => {
-        box.appendChild(credItem(e, false));
-        (children.get(e.id) || []).sort(order).forEach(c => box.appendChild(credItem(c, true)));
+      top.sort(order).forEach((e, i) => {
+        box.appendChild(credItem(e, false, i > 0));
+        (children.get(e.id) || []).sort(order).forEach(c => box.appendChild(credItem(c, true, false)));
       });
     }
 
-    /**
-     * クリックで選べる項目にする（もう一度選ぶと閉じる）。
-     * キーボードでは trigger（項目の概要部分）が Enter・Space で押せるボタンになる。
-     */
-    function makePickable(node, key, trigger) {
-      node.classList.add('pick');
-      if (selectedKey === key) node.classList.add('selected');
-      trigger.tabIndex = 0;
-      trigger.setAttribute('role', 'button');
-      trigger.setAttribute('aria-expanded', selectedKey === key ? 'true' : 'false');
-      trigger.style.outline = 'none';
-      const toggle = () => { selectedKey = selectedKey === key ? '' : key; render(); };
-      node.addEventListener('click', event => { if (!event.target.closest('.detail')) toggle(); });
-      trigger.addEventListener('keydown', event => {
-        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); }
-      });
-      trigger.addEventListener('focus', () => { node.style.boxShadow = '0 0 0 3px rgba(54, 161, 145, .25)'; });
-      trigger.addEventListener('blur', () => { node.style.boxShadow = ''; });
-    }
+    function credItem(entry, isChild, divided) {
+      const L = bundle.linking, S = bundle.schedule;
+      const kind = entry.values[L.kindKey] || '';
+      const item = el('div', 'cred-item' + (isChild ? ' child' : '') + (divided ? ' divided' : ''));
+      const body = el('div', 'cred-body');
+      body.tabIndex = 0;
+      body.setAttribute('role', 'button');
+      body.title = 'この履歴を編集します';
 
-    function detailRows(rows) {
-      const box = el('div', 'detail');
-      rows.filter(([, value]) => value).forEach(([key, value]) => {
-        const line = el('div', 'd-row');
-        line.append(el('span', 'd-key', key), el('span', 'd-val', value));
-        box.appendChild(line);
-      });
-      return box;
-    }
-
-    function actionButton(label, onClick) {
-      const b = el('button', 'act-btn', label);
-      b.type = 'button';
-      b.addEventListener('click', event => { event.stopPropagation(); onClick(); });
-      return b;
-    }
-
-    function credItem(entry, isChild) {
-      const S = bundle.schedule;
-      const kind = entry.values.kind || '';
-      const item = el('div', 'ci' + (isChild ? ' child' : ''));
-      const key = 'c:' + entry.id;
-      item.appendChild(el('span', 'dot ' + kindClass(kind)));
-      const main = el('div');
-      main.appendChild(el('div', 'ci-name', entry.values.name || '（名称なし）'));
-      const meta = el('div', 'ci-meta');
-      meta.appendChild(el('span', 'ci-kind ' + kindClass(kind), kind));
+      const meta = el('span', 'cred-meta');
       const done = entry.values[S.doneKey], plan = entry.values[S.planKey];
-      if (done) meta.appendChild(el('span', 'ci-date', done));
-      else if (plan) {
+      if (!done && plan) {
         const overdue = plan < bundle.today;
-        meta.appendChild(el('span', 'ci-plan' + (overdue ? ' overdue' : ''), (overdue ? '期限超過 ' : '予定 ') + plan));
+        meta.appendChild(el('span', overdue ? 'overdue' : 'plan', overdue ? '期限超過' : '予定'));
       }
-      if (entry.values.person) meta.appendChild(el('span', '', entry.values.person));
-      main.appendChild(meta);
-      item.appendChild(main);
-      makePickable(item, key, main);
+      meta.appendChild(el('span', 'mono', done || plan || '—'));
+      if (entry.values.person) meta.append(el('span', 'vsep'), el('span', 'person', entry.values.person));
+      body.appendChild(meta);
 
-      if (selectedKey === key) {
-        const v = entry.values;
-        const parent = entry.linkId && (bundle.credentials[current.key] || []).find(e => e.id === entry.linkId);
-        const detail = detailRows([
-          ['予定日', v[S.planKey]],
-          ['実施日', v[S.doneKey]],
-          ['氏名', v.person],
-          ['役職', v.title],
-          ['担当者', [v.owner, v.ownerDept].filter(Boolean).join(' / ')],
-          ['紐づけ先', parent ? parent.values.name : ''],
-          ['コメント', v.note],
-          ['登録', entry.at]
-        ]);
-        detail.appendChild(actionButton('この履歴を編集', () => openModal('credential', entry.id)));
-        item.appendChild(detail);
-      }
+      const title = el('span', 'cred-title');
+      if (kind === L.childKind) title.appendChild(el('span', 'cred-tag', kind));
+      else if (kind && kind !== L.parentKind) title.appendChild(el('span', 'cred-tag other', kind));
+      title.appendChild(el('span', 'cred-name', entry.values.name || '（名称なし）'));
+      body.appendChild(title);
+
+      const open = () => openModal('credential', entry.id);
+      body.addEventListener('click', open);
+      body.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); }
+      });
+      item.appendChild(body);
       return item;
     }
 
-    function renderChanges() {
-      const events = ((bundle.changes[current.sheet] || {})[current.key]) || [];
-      const box = $('chgList');
+    function emptyBox(title, text) {
+      const box = el('div', 'empty');
+      box.append(el('strong', '', title), el('span', '', text));
+      return box;
+    }
+
+    /* ---------- 変更履歴 ---------- */
+
+    function currentEvents() {
+      if (!bundle || !current) return [];
+      return ((bundle.changes[current.sheet] || {})[current.key]) || [];
+    }
+
+    /** 変更を項目ごとに並べる（新しい順） */
+    function currentLogs() {
+      const out = [];
+      currentEvents().forEach(ev => {
+        const parts = String(ev.at || '').split(' ');
+        const d = normalizeDay(parts[0]);
+        ev.changes.forEach(change => out.push({
+          d,
+          time: parts[1] || '',
+          user: ev.editor || '不明',
+          field: change.column || '（項目なし）',
+          before: change.before || '',
+          after: change.after || '',
+          eventId: ev.eventId
+        }));
+      });
+      return out;
+    }
+
+    /** 表示する期間 {start, end}。start が null なら下限なし */
+    function rangeOf() {
+      const today = todayDate();
+      if (ui.custom) return {start: fromIso(ui.custom.from), end: fromIso(ui.custom.to)};
+      if (ui.span === 'all') return {start: null, end: today};
+      const end = addDays(today, -ui.weekOffset * ui.span);
+      return {start: addDays(end, -(ui.span - 1)), end};
+    }
+
+    function rangeLabel(range) {
+      const preset = PRESETS.find(p => p[0] === ui.span);
+      if (!ui.custom && preset && (!ui.weekOffset || ui.span === 'all')) return preset[1];
+      return md(range.start) + ' – ' + md(range.end);
+    }
+
+    const matchField = log => !ui.fields.length || ui.fields.indexOf(log.field) >= 0;
+
+    function renderLogs(logs) {
+      const range = rangeOf();
+      const startKey = range.start ? dayKey(range.start) : '';
+      const endKey = dayKey(range.end);
+      const todayKey = dayKey(todayDate());
+
+      // 期間
+      $('rangeLabel').textContent = rangeLabel(range);
+      $('rangeBtn').classList.toggle('open', ui.rangeOpen);
+      $('rangeBtn').setAttribute('aria-expanded', ui.rangeOpen ? 'true' : 'false');
+      $('rangePop').hidden = !ui.rangeOpen;
+      const unit = ui.span === 7 || ui.custom ? '週' : '期間';
+      $('prevWeek').title = '前の' + unit;
+      $('nextWeek').title = '次の' + unit;
+      $('nextWeek').disabled = !(ui.weekOffset || ui.custom);
+      renderPresets();
+
+      // 7日ぶんの帯（期間の最後の日まで）
+      const days = $('days');
+      days.textContent = '';
+      for (let i = 6; i >= 0; i--) {
+        const dt = addDays(range.end, -i);
+        const k = dayKey(dt);
+        const cnt = logs.filter(l => l.d === k && matchField(l)).length;
+        const on = ui.day === k;
+        const isToday = k === todayKey;
+        const b = el('button', 'day' + (cnt ? ' has' : '') + (on ? ' on' : ''));
+        b.type = 'button';
+        b.title = md(dt) + '（' + WK[dt.getDay()] + '）' + (cnt ? '：' + cnt + '件' : '');
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        b.append(
+          el('span', 'wk' + (isToday ? ' today' : dt.getDay() === 0 ? ' sun' : ''), isToday ? '今日' : WK[dt.getDay()]),
+          el('span', 'num', String(dt.getDate())),
+          el('span', 'cnt', cnt ? String(cnt) : '0')
+        );
+        if (cnt) b.addEventListener('click', () => { ui.day = ui.day === k ? null : k; render(); });
+        days.appendChild(b);
+      }
+
+      // 項目
+      renderFieldMenu(logs);
+
+      // 一覧（日ごと）
+      const shown = logs.filter(l => matchField(l) &&
+        (ui.day ? l.d === ui.day : (!startKey || l.d >= startKey) && l.d <= endKey));
+      const box = $('logList');
       box.textContent = '';
-      $('chgCount').textContent = events.length ? events.length + '件' : '';
-      if (!events.length) {
-        box.appendChild(el('div', 'empty-line', '変更の記録はありません'));
+      if (!bundle) {
+        box.appendChild(emptyBox('履歴を読み込んでいます…', ''));
         return;
       }
-      events.forEach(ev => {
-        const item = el('div', 'ev');
-        const key = 'e:' + ev.eventId;
-        const selected = selectedKey === key;
-        const summary = el('div');
-        item.appendChild(summary);
-        makePickable(item, key, summary);
-        const head = el('div', 'ev-head');
-        head.append(el('span', 'mono', String(ev.at || '').slice(5)), el('span', '', TYPE_LABEL[ev.type] || ev.type), el('span', '', ev.editor || ''));
-        summary.appendChild(head);
-        // 選んでいる変更は、すべての項目を省略せずに出す
-        (selected ? ev.changes : ev.changes.slice(0, 2)).forEach(change => {
-          const line = el('div', 'ch');
-          line.appendChild(el('span', 'ch-name', change.column));
-          if (!change.before) {
-            line.append(el('span', 'arrow', '入力'), el('ins', '', change.after));
-          } else if (!change.after) {
-            line.append(el('del', '', change.before), el('span', 'arrow', '→ 空欄'));
-          } else {
-            line.append(el('del', '', change.before), el('span', 'arrow', '→'), el('ins', '', change.after));
-          }
-          summary.appendChild(line);
-        });
-        if (!selected && ev.changes.length > 2) summary.appendChild(el('div', 'ch-more', 'ほか ' + (ev.changes.length - 2) + '項目'));
-        if (!ev.changes.length) summary.appendChild(el('div', 'ch-more', '変更内容の記録はありません'));
-        if (selected) {
-          const detail = el('div', 'detail');
-          detail.appendChild(detailRows([['日時', ev.at], ['編集者', ev.editor]]));
-          detail.appendChild(actionButton('この変更を詳しく見る', () => openModal('change', ev.eventId)));
-          item.appendChild(detail);
+      if (!shown.length) {
+        box.appendChild(!logs.length
+          ? emptyBox('まだ変更はありません', 'この行が編集されると、ここに表示されます')
+          : ui.fields.length
+            ? emptyBox('該当する変更はありません', '表示する項目を見直してください')
+            : emptyBox('この期間の変更はありません', '期間を広げて確認してください'));
+      }
+      let lastDay = null;
+      shown.forEach(log => {
+        if (log.d !== lastDay) {
+          lastDay = log.d;
+          const head = el('div', 'group-head');
+          head.appendChild(el('span', '', groupLabel(log.d, todayKey)));
+          box.appendChild(head);
         }
-        box.appendChild(item);
+        box.appendChild(logItem(log));
       });
-      const more = el('button', 'text-btn', '変更履歴をすべて見る');
-      more.type = 'button';
-      more.addEventListener('click', () => openModal('change'));
-      box.appendChild(more);
+      const more = ((bundle.changesMore || {})[current.sheet] || {})[current.key];
+      if (more && shown.length) {
+        box.appendChild(el('p', 'log-note', '最近の' + bundle.eventsPerCustomer +
+          '回の変更を表示しています。それより前は「変更の詳細」で確認できます。'));
+      }
     }
+
+    function groupLabel(key, todayKey) {
+      if (!key) return '日付不明';
+      const dt = keyToDate(key);
+      return (key === todayKey ? '今日　' : '') + md(dt) + '（' + WK[dt.getDay()] + '）';
+    }
+
+    function logItem(log) {
+      const item = el('div', 'log');
+      const head = el('div', 'log-head');
+      const when = el('span', 'log-when');
+      when.append(el('span', 'mono', log.time), el('span', '', log.user));
+      head.append(el('span', 'log-field', log.field), when);
+      item.appendChild(head);
+      if (log.before) {
+        const line = el('div', 'log-line');
+        line.append(el('span', 'log-label before', '変更前'), el('span', 'log-text before', log.before));
+        item.appendChild(line);
+      }
+      const line = el('div', 'log-line');
+      line.append(
+        el('span', 'log-label', log.before ? '変更後' : '入力'),
+        el('span', 'log-text' + (log.after ? '' : ' blank'), log.after || '空欄')
+      );
+      item.appendChild(line);
+      return item;
+    }
+
+    function renderPresets() {
+      const box = $('presets');
+      box.textContent = '';
+      PRESETS.forEach(([value, label]) => {
+        const on = !ui.custom && ui.span === value;
+        const b = el('button', 'preset' + (on ? ' on' : ''));
+        b.type = 'button';
+        b.appendChild(el('span', '', label));
+        b.insertAdjacentHTML('beforeend', CHECK_ICON);   // 固定のアイコンだけ
+        b.addEventListener('click', () => {
+          Object.assign(ui, {span: value, custom: null, weekOffset: 0, day: null, rangeOpen: false});
+          render();
+        });
+        box.appendChild(b);
+      });
+    }
+
+    function renderFieldMenu(logs) {
+      const counts = new Map();
+      logs.forEach(l => counts.set(l.field, (counts.get(l.field) || 0) + 1));
+      ui.fields.forEach(f => { if (!counts.has(f)) counts.set(f, 0); });   // 選んだ項目はこの行に無くても出す
+
+      const sel = ui.fields;
+      $('fieldLabel').textContent = !sel.length ? 'すべて' : sel.length === 1 ? sel[0] : sel[0] + ' 他' + (sel.length - 1) + '件';
+      $('selCount').textContent = sel.length ? sel.length + '件選択中' : '';
+      $('fieldBtn').classList.toggle('open', ui.menuOpen);
+      $('fieldBtn').setAttribute('aria-expanded', ui.menuOpen ? 'true' : 'false');
+      $('fieldPop').hidden = !ui.menuOpen;
+
+      const box = $('fieldOpts');
+      box.textContent = '';
+      if (!counts.size) box.appendChild(el('span', 'field-empty', 'まだ変更がありません'));
+      counts.forEach((count, label) => {
+        const on = sel.indexOf(label) >= 0;
+        const b = el('button', 'field-opt' + (on ? ' on' : ''));
+        b.type = 'button';
+        b.setAttribute('role', 'menuitemcheckbox');
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+        const check = el('span', 'check');
+        check.insertAdjacentHTML('beforeend', BOX_ICON);   // 固定のアイコンだけ
+        b.append(check, el('span', 'opt-label', label), el('span', 'opt-count', String(count)));
+        b.addEventListener('click', () => {
+          ui.fields = on ? ui.fields.filter(f => f !== label) : ui.fields.concat(label);
+          ui.day = null;
+          render();
+        });
+        box.appendChild(b);
+      });
+    }
+
+    /* ---------- 操作 ---------- */
+
+    $('tabCred').addEventListener('click', () => {
+      Object.assign(ui, {tab: 'cred', menuOpen: false, rangeOpen: false});
+      render();
+    });
+    $('tabLog').addEventListener('click', () => { ui.tab = 'log'; render(); });
+
+    $('rangeBtn').addEventListener('click', () => {
+      ui.rangeOpen = !ui.rangeOpen;
+      ui.menuOpen = false;
+      if (ui.rangeOpen) {
+        // 入力欄は、今の期間で始める
+        const range = rangeOf();
+        const logs = currentLogs();
+        const oldest = logs.length ? keyToDate(logs[logs.length - 1].d || dayKey(range.end)) : range.end;
+        $('fromDate').value = iso(range.start || oldest);
+        $('toDate').value = iso(range.end);
+        $('fromDate').max = $('toDate').max = iso(todayDate());
+      }
+      render();
+    });
+    $('applyRange').addEventListener('click', () => {
+      let from = $('fromDate').value, to = $('toDate').value;
+      if (!from || !to) return;
+      if (from > to) [from, to] = [to, from];
+      Object.assign(ui, {custom: {from, to}, day: null, rangeOpen: false, weekOffset: 0});
+      render();
+    });
+    $('prevWeek').addEventListener('click', () => {
+      if (ui.custom) Object.assign(ui, {custom: null, weekOffset: 1, span: 7});
+      else Object.assign(ui, {weekOffset: ui.weekOffset + 1, span: ui.span === 'all' ? 7 : ui.span});
+      ui.day = null;
+      render();
+    });
+    $('nextWeek').addEventListener('click', () => {
+      Object.assign(ui, {custom: null, weekOffset: Math.max(0, ui.weekOffset - 1), day: null});
+      render();
+    });
+
+    $('fieldBtn').addEventListener('click', () => {
+      ui.menuOpen = !ui.menuOpen;
+      ui.rangeOpen = false;
+      render();
+    });
+    $('selectAll').addEventListener('click', () => { ui.fields = []; ui.day = null; render(); });
+
+    // メニューの外を押したとき・Esc で閉じる
+    document.addEventListener('click', event => {
+      const closeRange = ui.rangeOpen && !event.target.closest('#rangeWrap');
+      const closeMenu = ui.menuOpen && !event.target.closest('#filterWrap');
+      if (closeRange) ui.rangeOpen = false;
+      if (closeMenu) ui.menuOpen = false;
+      if (closeRange || closeMenu) render();
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && (ui.rangeOpen || ui.menuOpen)) {
+        ui.rangeOpen = ui.menuOpen = false;
+        render();
+      }
+    });
 
     /* ---------- モーダルを開く ---------- */
 
@@ -431,12 +861,23 @@
       setState('開いています…', 'busy');
       refreshUntil = Date.now() + 5 * 60 * 1000;   // 閉じたあとの変更を反映するため、しばらく読み直す
       google.script.run
-        .withSuccessHandler(() => setState('表示中'))
+        .withSuccessHandler(() => setState('表示中の行'))
         .withFailureHandler(error => setState(error.message, 'error'))[method](current.sheet, current.row, focus || '');
     }
 
     $('openCred').addEventListener('click', () => openModal('credential'));
-    $('openChange').addEventListener('click', () => openModal('change'));
+    $('openChange').addEventListener('click', () => {
+      // 日・項目で絞り込んでいるときは、表示中のいちばん新しい変更の位置で開く
+      let focus = '';
+      if (ui.day || ui.fields.length) {
+        const range = rangeOf();
+        const startKey = range.start ? dayKey(range.start) : '';
+        const first = currentLogs().find(l => matchField(l) &&
+          (ui.day ? l.d === ui.day : (!startKey || l.d >= startKey) && l.d <= dayKey(range.end)));
+        focus = first ? first.eventId : '';
+      }
+      openModal('change', focus);
+    });
     $('refresh').addEventListener('click', () => {
       last = Object.assign({}, last, {force: true});   // 得意先名も読み直す
       loadBundle();

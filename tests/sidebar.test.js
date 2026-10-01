@@ -62,3 +62,19 @@ test('自動表示：トリガーは1つだけ。オフにした人には開か�
   g.autoOpenHistorySidebar({user: {getEmail: () => 'other@example.com'}});
   assert.strictEqual(gas.sidebars.length, 2);
 });
+
+test('getSidebarBundle：変更は行（シート・得意先）ごとに新しい方から上限まで。超えた行には印を付ける', () => {
+  const {gas, g, sheet} = setupProject();
+  const limit = gas.get('HS_OPTIONS').eventsPerCustomer;
+  for (let i = 0; i <= limit; i++) g.recordDiffEdit(gas.edit(sheet, 'F3', '状況' + i));   // A社に limit + 1 回
+  g.recordDiffEdit(gas.edit(sheet, 'F4', '保留'));                                        // B社に1回
+
+  const bundle = plain(g.getSidebarBundle());
+  const events = bundle.changes['新FMT']['A社'];
+  assert.strictEqual(events.length, limit);
+  assert.strictEqual(events[0].changes[0].after, '状況' + limit, '新しい順になっていません');
+  assert.strictEqual(events[limit - 1].changes[0].after, '状況1', '最も古い1回が残っています');
+  assert.deepStrictEqual(bundle.changesMore, {'新FMT': {'A社': true}});
+  assert.strictEqual(bundle.eventsPerCustomer, limit);
+  assert.strictEqual(bundle.changes['新FMT']['B社'].length, 1);
+});
