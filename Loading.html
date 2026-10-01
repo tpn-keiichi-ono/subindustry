@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body { font-family: sans-serif; text-align: center; padding: 20px; color: #333; }
+      .loader {
+        border: 5px solid #f3f3f3;
+        border-top: 5px solid #4285f4;
+        border-radius: 50%;
+        width: 35px;
+        height: 35px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 15px;
+      }
+      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+      #status { font-size: 13px; line-height: 1.6; }
+    </style>
+  </head>
+  <body>
+    <div id="loaderAnim" class="loader" style="display:none;"></div>
+    <div id="status">準備中...</div>
+
+    <script>
+      window.onload = function() {
+        // 1. シート名の入力
+        const sheetName = prompt("処理対象のシート名を入力してください");
+        if (!sheetName) { google.script.host.close(); return; }
+
+        document.getElementById('status').innerText = "対象件数を確認しています...";
+
+        // 2. 件数確認の呼び出し
+        google.script.run
+          .withSuccessHandler(function(count) {
+            if (count === 0) {
+              alert("処理対象（E列入力済かつH列空欄）の行はありませんでした。");
+              google.script.host.close();
+              return;
+            }
+
+            // 3. ユーザーへ確認メッセージを表示
+            const msg = "対象が " + count + " 件見つかりました。\n「アカウントプラン」の作成を開始しますか？";
+            if (confirm(msg)) {
+              startCopy(sheetName);
+            } else {
+              google.script.host.close();
+            }
+          })
+          .withFailureHandler(onFailure)
+          .checkTargetCount(sheetName);
+      };
+
+      // 4. 実際のコピー処理を開始
+      function startCopy(sheetName) {
+        document.getElementById('loaderAnim').style.display = "block";
+        document.getElementById('status').innerHTML = "<b>コピーを実行中...</b><br>このまましばらくお待ちください。";
+
+        google.script.run
+          .withSuccessHandler(onSuccess)
+          .withFailureHandler(onFailure)
+          .executeCopyProcess(sheetName);
+      }
+
+      function onSuccess(result) {
+        alert(result);
+        google.script.host.close();
+      }
+
+      function onFailure(error) {
+        alert("エラーが発生しました:\n" + error.message);
+        google.script.host.close();
+      }
+    </script>
+  </body>
+</html>
