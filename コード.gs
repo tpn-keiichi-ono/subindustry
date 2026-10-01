@@ -1,7 +1,8 @@
 /**
- * メニューを追加
+ * メニューを追加（CredentialHistory.gs の onOpen() から呼ばれる）
+ * onOpen() はプロジェクトに1つだけにするため、ここには置かない。
  */
-function onOpen() {
+function apAddMenu_() {
   SpreadsheetApp.getUi()
     .createMenu('アカウントプランシート作成')
     .addItem('作成開始', 'showLoadingDialog')

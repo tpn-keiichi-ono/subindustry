@@ -84,11 +84,13 @@ const CRED_OPTIONS = {
 /* ---------------- メニュー ---------------- */
 
 /**
- * 単純トリガー。プロジェクト内に別の onOpen() がある場合は、
- * この関数を削除し、既存の onOpen() から credAddMenu_() を呼ぶこと。
+ * 単純トリガー。onOpen() はプロジェクト全体でこの1つだけにすること
+ * （同じ名前の関数が2つあると、どちらか一方しか動かない）。
+ * 別のメニューを増やすときは、そのメニューを作る関数をここから呼ぶ。
  */
 function onOpen() {
   credAddMenu_();
+  if (typeof apAddMenu_ === 'function') apAddMenu_();   // コード.gs（アカウントプランシート作成）
 }
 
 function credAddMenu_() {
