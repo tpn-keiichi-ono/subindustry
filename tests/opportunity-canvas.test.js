@@ -169,3 +169,22 @@ test('サンプルデータ（samples/新FMT_サンプルデータ.tsv）：見�
     data.sections.forEach(s => assert.ok(s.items.some(i => i.value), row[1] + ' の「' + s.title + '」が空です'));
   });
 });
+
+test('画面：見出し・メニューは日本語（英語の「Opportunity Canvas」を出さない）。拡大・縮小のボタンがある', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'OpportunityCanvasDialog.html'), 'utf8');
+  const markup = html.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '');
+  assert.ok(!/Opportunity Canvas/i.test(markup), 'モーダルに英語の見出しがあります');
+  assert.match(markup, /<span class="eyebrow">オポチュニティキャンバス<\/span>/);
+  ['zoomOut', 'zoomLevel', 'zoomIn', 'zoomFit'].forEach(id => assert.ok(markup.includes('id="' + id + '"'), id + ' がありません'));
+  // 印刷のときは画面の倍率を持ち込まない
+  assert.match(html, /html\.printing \.canvas \{ zoom: 1 !important; \}/);
+
+  const {gas, g} = setup(VALUES);
+  g.onOpen({source: gas.ss});
+  const labels = [].concat(...gas.menus.map(m => m.items)).filter(i => i.fn === 'openOpportunityCanvas').map(i => i.label);
+  assert.deepStrictEqual(labels, ['選択行のオポチュニティキャンバスを開く…']);
+  const sidebar = fs.readFileSync(path.join(__dirname, '..', 'HistorySidebarView.html'), 'utf8');
+  assert.ok(!/Opportunity Canvas/i.test(sidebar), 'サイドバーに英語の見出しがあります');
+});

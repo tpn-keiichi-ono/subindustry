@@ -100,7 +100,7 @@ function credAddMenu_() {
     .addSeparator()
     .addItem('選択行の得意先の履歴を開く…', 'openCredentialDialog')
     .addItem('選択行の変更履歴を開く…', 'openChangeHistoryDialog')
-    .addItem('選択行の Opportunity Canvas を開く…', 'openOpportunityCanvas')
+    .addItem('選択行のオポチュニティキャンバスを開く…', 'openOpportunityCanvas')
     .addSeparator()
     .addItem('（管理者）ボタン列を設定・補充', 'setupCredentialLauncher')
     .addItem('（管理者）変更履歴ボタン列を設定・補充', 'setupChangeHistoryLauncher')

@@ -1,10 +1,10 @@
 /**
- * Opportunity Canvas（案件ごとのキャンバス）
+ * オポチュニティキャンバス（案件ごとのキャンバス）
  * 差分追跡スクリプト（test.gs）・CredentialHistory.gs・HistorySidebar.gs と同じプロジェクトに置くファイル。
  * 画面は HTMLファイル「OpportunityCanvasDialog」。
  *
  * 仕組み
- * - 追跡シート（新FMT など）の1行を1件の案件として、その行の値を Opportunity Canvas の枠に並べてモーダルで表示する
+ * - 追跡シート（新FMT など）の1行を1件の案件として、その行の値をキャンバスの枠に並べてモーダルで表示する
  * - どの列をどの枠に出すかは OC_OPTIONS.sections の見出し名で決める（列の位置ではなく見出しで探すので、列を動かしても使える）
  *   見出しの改行・空白、全角・半角の違いは無視して照合する
  * - 出すのは追跡シートの行に入力されている値だけ（クレデンシャル・オファリングの履歴は含めない）
@@ -49,7 +49,7 @@ const OC_OPTIONS = {
 
 /* ---------------- 開く ---------------- */
 
-/** メニューから：選んだ行の Opportunity Canvas を開く。 */
+/** メニューから：選んだ行のオポチュニティキャンバスを開く。 */
 function openOpportunityCanvas() {
   const ui = SpreadsheetApp.getUi();
   try {
@@ -59,7 +59,7 @@ function openOpportunityCanvas() {
     if (range.getNumRows() > 1) throw new Error('1行だけ選択してください。');
     ocShowDialog_(sheet, range.getRow(), credActiveEmail_());
   } catch (error) {
-    ui.alert('Opportunity Canvas', error.message, ui.ButtonSet.OK);
+    ui.alert('オポチュニティキャンバス', error.message, ui.ButtonSet.OK);
   }
 }
 

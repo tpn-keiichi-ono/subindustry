@@ -57,6 +57,19 @@
     .btn.link { color: var(--teal-text); border-color: #CFE3DC; }
     .btn.link:hover { background: #F2F9F7; }
     .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
+    .btn[aria-pressed="true"] { color: var(--teal-text); background: var(--teal-soft); border-color: #CFE3DC; }
+
+    /* 拡大・縮小（− 倍率 ＋ をひとまとまりにする。倍率を押すと 100% に戻る） */
+    .zoom { display: inline-flex; align-items: stretch; height: 34px; border: 1px solid var(--border); border-radius: 8px; background: #ffffff; overflow: hidden; }
+    .zoom button { border: 0; padding: 0; background: transparent; color: var(--ink); display: inline-grid; place-items: center; }
+    .zoom button:hover:not(:disabled) { background: var(--soft); }
+    .zoom button:disabled { opacity: .35; cursor: default; }
+    .zoom button:focus-visible { outline: none; box-shadow: inset 0 0 0 2px rgba(54, 161, 145, .35); }
+    .zoom .z-step { width: 32px; }
+    .zoom .z-level {
+      min-width: 58px; padding: 0 6px; border-left: 1px solid var(--line); border-right: 1px solid var(--line);
+      font-family: var(--mono); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums;
+    }
 
     /* ---------- キャンバス ---------- */
     .body { flex: 1; min-height: 0; overflow: auto; padding: 16px 24px 20px 32px; background: var(--panel); }
@@ -108,6 +121,7 @@
     html.printing .m-head { padding: 0 0 8px; }
     html.printing .body { overflow: visible; padding: 8px 0 0; background: #ffffff; }
     html.printing .box { min-height: 120px; }
+    html.printing .canvas { zoom: 1 !important; }   /* 画面の拡大・縮小は印刷に持ち込まない */
     @media print {
       .loading, .m-actions { display: none !important; }
       * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -129,7 +143,7 @@
   <div class="modal">
     <header class="m-head">
       <div class="m-title">
-        <span class="eyebrow">Opportunity Canvas</span>
+        <span class="eyebrow">オポチュニティキャンバス</span>
         <div class="title-row"><h1 id="title"></h1></div>
         <div class="chips" id="chips"></div>
       </div>
@@ -137,6 +151,18 @@
         <a class="btn link" id="planLink" target="_blank" rel="noopener noreferrer" hidden>
           <svg width="12" height="12" viewBox="0 0 14 14"><path d="M8.5 2.5h3v3M11.5 2.5L7 7M10.5 8.5v2.5a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1H6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>アカウントプラン
         </a>
+        <div class="zoom" role="group" aria-label="キャンバスの拡大・縮小">
+          <button type="button" class="z-step" id="zoomOut" title="縮小" aria-label="縮小">
+            <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 6h7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+          <button type="button" class="z-level" id="zoomLevel" title="100% に戻す">100%</button>
+          <button type="button" class="z-step" id="zoomIn" title="拡大" aria-label="拡大">
+            <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 6h7M6 2.5v7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <button type="button" class="btn" id="zoomFit" aria-pressed="false" title="キャンバス全体がスクロールせずに見える大きさにします">
+          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5.5V2h3.5M8.5 2H12v3.5M12 8.5V12H8.5M5.5 12H2V8.5"/></svg>全体を表示
+        </button>
         <button type="button" class="btn" id="print" title="印刷画面から PDF に保存できます">
           <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M4 5V2h6v3M4 10H2.5V5.5h9V10H10M4 8h6v4H4z"/></svg>印刷・PDF
         </button>
@@ -193,6 +219,7 @@
       $('notice').textContent = data.missing.length
         ? data.sheetName + ' に見つからない列があります（その項目は表示していません）：' + data.missing.join('、')
         : '';
+      if (zoomFitMode) fitZoom();   // 「全体を表示」中は、中身に合わせて倍率を決め直す
     }
 
     const WIDE_SECTIONS = new Set(['benefits']);   // 下の段で横いっぱいに広がる枠（.canvas の grid-template-areas と合わせる）
@@ -220,6 +247,86 @@
       box.appendChild(items);
       return box;
     }
+
+    /* ---------- 拡大・縮小 ----------
+       キャンバス（#canvas）だけに CSS の zoom をかける（見出しと操作ボタンの大きさは変えない）。
+       文字が大きくなるぶん枠の中で折り返すので、横にはスクロールしない。印刷のときは html.printing で 100% に戻す */
+
+    const ZOOM_STEPS = [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+    const ZOOM_MIN = ZOOM_STEPS[0];
+    const ZOOM_MAX = ZOOM_STEPS[ZOOM_STEPS.length - 1];
+    const ZOOM_STORAGE_KEY = 'opportunityCanvas.zoom';   // 倍率はこのブラウザに覚える（保存できない環境では毎回 100%）
+    let zoomLevel = 1;
+    let zoomFitMode = false;   // 「全体を表示」中は、モーダルの大きさや中身が変わったら倍率を合わせ直す
+
+    function setZoom(level, options) {
+      const o = options || {};
+      zoomLevel = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(level * 100) / 100));
+      zoomFitMode = !!o.fit;
+      $('canvas').style.zoom = String(zoomLevel);
+      const percent = Math.round(zoomLevel * 100) + '%';
+      $('zoomLevel').textContent = percent;
+      $('zoomLevel').setAttribute('aria-label', '表示倍率 ' + percent + '（押すと 100% に戻します）');
+      $('zoomOut').disabled = zoomLevel <= ZOOM_MIN;
+      $('zoomIn').disabled = zoomLevel >= ZOOM_MAX;
+      $('zoomFit').setAttribute('aria-pressed', String(zoomFitMode));
+      if (!o.silent) {
+        try { localStorage.setItem(ZOOM_STORAGE_KEY, zoomFitMode ? 'fit' : String(zoomLevel)); } catch (_) {}
+      }
+    }
+
+    /** 段階の1つ上・1つ下へ（「全体を表示」で半端な倍率になっていても、次の段階へ進む）。 */
+    function stepZoom(direction) {
+      const next = direction > 0
+        ? ZOOM_STEPS.find(step => step > zoomLevel + 0.001)
+        : ZOOM_STEPS.slice().reverse().find(step => step < zoomLevel - 0.001);
+      if (next != null) setZoom(next);
+    }
+
+    /** キャンバス全体が縦にスクロールせずに見える、いちばん大きい倍率（100% まで）にする。 */
+    function fitZoom() {
+      const body = document.querySelector('.body');
+      const canvas = $('canvas');
+      const fits = level => {
+        canvas.style.zoom = String(level);
+        return body.scrollHeight <= body.clientHeight + 1;
+      };
+      let level = 1;
+      if (!fits(1)) {
+        // 倍率を上げるほど縦に長くなるので、二分探索で探す
+        let low = ZOOM_MIN, high = 1;
+        for (let i = 0; i < 8; i++) {
+          const middle = (low + high) / 2;
+          if (fits(middle)) low = middle; else high = middle;
+        }
+        level = Math.floor(low * 100) / 100;
+      }
+      setZoom(level, {fit: true});
+    }
+
+    $('zoomOut').addEventListener('click', () => stepZoom(-1));
+    $('zoomIn').addEventListener('click', () => stepZoom(1));
+    $('zoomLevel').addEventListener('click', () => setZoom(1));
+    $('zoomFit').addEventListener('click', () => {
+      if (zoomFitMode) setZoom(1);   // もう一度押すと 100% に戻す
+      else fitZoom();
+    });
+
+    let zoomResizeTimer = null;
+    window.addEventListener('resize', () => {
+      if (!zoomFitMode || document.documentElement.classList.contains('printing')) return;
+      clearTimeout(zoomResizeTimer);
+      zoomResizeTimer = setTimeout(fitZoom, 150);
+    });
+
+    // 前回の倍率に戻す（「全体を表示」は、描いたあとの render で合わせる）
+    (function restoreZoom() {
+      let saved = null;
+      try { saved = localStorage.getItem(ZOOM_STORAGE_KEY); } catch (_) {}
+      const level = Number(saved);
+      if (saved === 'fit') setZoom(1, {fit: true, silent: true});
+      else setZoom(level >= ZOOM_MIN && level <= ZOOM_MAX ? level : 1, {silent: true});
+    })();
 
     /* ---------- 印刷（A4 横1枚に収める） ---------- */
 
