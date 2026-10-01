@@ -12,14 +12,14 @@ Google スプレッドシートにバインドされた Google Apps Script（V8�
 ## 守ること
 
 1. **`.gs` と `.html` に同じ名前を付けない**（Apps Script では拡張子違いでも同名不可）。HTML を増やすときは `XxxDialog` / `XxxView` のように別名にし、`createTemplateFromFile()` の名前と一致させる。
-2. **`onOpen` はプロジェクト全体で1つだけ**（現在は `CredentialHistory.gs`）。メニュー項目は `credAddMenu_()` に足す。
+2. **`onOpen` はプロジェクト全体で1つだけ**（現在は `CredentialHistory.gs`）。メニュー項目は `credAddMenu_()` に足す。別のメニューは、メニューを作る関数（例：`コード.gs` の `apAddMenu_()`）を `onOpen` から呼ぶ。
 3. **`DIFF_RULES` の `ranges` にボタン列（チェックボックスの列）を含めない**。範囲を変えたら `setupDiffTracking()` の実行が必要（運用側の作業として必ず伝える）。
-4. **差分追跡の記録を壊さない**：`変更履歴_差分`・`変更時点スナップショット`・非表示の `__CHAR_DIFF_*` シートの列構成や書き方を変えるときは、既存の読み手（`ChangeHistory.gs`・`HistorySidebar.gs`）も合わせて直す。記録は追記のみで、過去の行を書き換えない。
+4. **差分追跡の記録を壊さない**：`変更履歴_差分`・`変更時点スナップショット`・非表示の `__CHAR_DIFF_*` シートの列構成や書き方を変えるときは、既存の読み手（`Changehistory.gs`・`HistorySidebar.gs`）も合わせて直す。記録は追記のみで、過去の行を書き換えない。
 5. **シートへの文字列の書き込みは数式にならない方法で**：差分ログはリッチテキスト、クレデンシャル記録は先頭に `'` を付けた値（`credText_()`）。`setValue(ユーザー入力)` をそのまま使わない。
 6. **書き込みはドキュメントロックの中で**：`LockService.getDocumentLock()`。差分追跡は `diff*`、クレデンシャルは `credWithLock_()` を使う。読み取りだけの処理（サイドバー・変更履歴の表示）はロックを取らない。
 7. **トリガーの所有者は1人**（管理者アカウント）。インストール型トリガーを増やすときは `diffInstallTriggers_()` / `credInstallTrigger_()` のように「1つだけ存在する」ことを保証する関数を通す。ボタン列のチェック検知は `onCredentialLauncherEdit` 1つで全ボタン列をまかなう（トリガーを増やさない）。
 8. **UI はデザインの決まりに従う**（`docs/DESIGN.md` の「画面のデザイン」）。色・フォント・余白はモーダル間でそろえる。
-9. **`clasp push` の前に必ず `clasp pull` と差分の確認**。push はエディタ側にしかないファイルを消す。
+9. **`clasp push` の前に必ず `clasp pull` と差分の確認**。push はエディタ側にしかないファイルを消す。`src/` のファイル名はエディタ側に合わせてある（`test.gs`・`Changehistory.gs` など）ので、勝手に変えない（`clasp pull` で古い名前も戻り、同じ関数が2つになる）。
 
 ## 確認のしかた
 
@@ -30,6 +30,6 @@ Google スプレッドシートにバインドされた Google Apps Script（V8�
 
 ## 命名
 
-- 接頭辞でファイル（機能）を表す：`diff*`（差分追跡）、`cred*`（クレデンシャル）、`chg*`（変更履歴）、`hs*`（サイドバー）。
+- 接頭辞でファイル（機能）を表す：`diff*`（差分追跡）、`cred*`（クレデンシャル）、`chg*`（変更履歴）、`hs*`（サイドバー）、`ap*`（アカウントプラン作成。`コード.gs` の既存の関数は接頭辞なし）。
 - 末尾 `_` の関数は内部用（メニューや `google.script.run` から直接呼ばない）。
 - 設定は各ファイル先頭の `DIFF_OPTIONS` / `CRED_OPTIONS` / `CHG_OPTIONS` / `HS_OPTIONS` に集める。

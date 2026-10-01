@@ -1,6 +1,6 @@
 /**
  * 履歴サイドバー
- * CredentialHistory.gs・ChangeHistory.gs・差分追跡スクリプトと同じプロジェクトに置くファイル。
+ * CredentialHistory.gs・Changehistory.gs・差分追跡スクリプト（test.gs）と同じプロジェクトに置くファイル。
  * 画面は HTMLファイル「HistorySidebarView」。
  *
  * 仕組み

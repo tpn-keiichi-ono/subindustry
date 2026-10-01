@@ -7,24 +7,31 @@ Google スプレッドシート「シナリオ攻略先リスト」に組み込�
 2. **クレデンシャル・オファリング履歴**：得意先ごとに、クレデンシャル（実績紹介）とオファリング（提案）の予定・実績を登録・編集・削除する。オファリングはクレデンシャルに紐づけられる。
 3. **履歴の閲覧**：行ごとのボタン（チェックボックス）から開くモーダル（クレデンシャル・オファリング履歴／変更履歴）と、選んだ行に合わせて表示が切り替わる履歴サイドバー。
 
+ほかに、アカウントプランシートの作成（テンプレートのコピー）と、「案件_」シートの列の保護も同じプロジェクトに入っています。
+
 ## フォルダ構成
 
 ```
-src/                      Apps Script のファイル（clasp の rootDir）
-  DiffTracking.gs           差分追跡（v5）。Apps Script 上では test.gs という名前の場合がある
-  CredentialHistory.gs      クレデンシャル・オファリング履歴のサーバー側、メニュー（onOpen）、ボタン列の起動
-  CredentialDialog.html     クレデンシャル・オファリング履歴のモーダル
-  ChangeHistory.gs          変更履歴モーダルのサーバー側
-  ChangeHistoryDialog.html  変更履歴のモーダル
-  HistorySidebar.gs         履歴サイドバーのサーバー側、開いたときの自動表示
-  HistorySidebarView.html   履歴サイドバー
+src/                          Apps Script のファイル（clasp の rootDir）。名前はエディタ側に合わせている
+  test.gs                       差分追跡（v5）
+  CredentialHistory.gs          クレデンシャル・オファリング履歴のサーバー側、メニュー（onOpen）、ボタン列の起動
+  CredentialDialog.html         クレデンシャル・オファリング履歴のモーダル
+  Changehistory.gs              変更履歴モーダルのサーバー側
+  ChangeHistoryDialog.html      変更履歴のモーダル
+  HistorySidebar.gs             履歴サイドバーのサーバー側、開いたときの自動表示
+  HistorySidebarView.html       履歴サイドバー
+  コード.gs                     アカウントプランシートの作成（メニューは onOpen から追加）
+  Loading.html                  アカウントプランシート作成の進み具合の画面
+  自動入力部分のシート保護.gs   「案件_」シートの列の保護
+  appsscript.json               マニフェスト（タイムゾーン・ランタイム）
 docs/
-  DESIGN.md                 設計思想・データモデル・処理の流れ・判断の理由
-  OPERATIONS.md             導入・運用・トラブル対応の手順
-  design-reference/         モーダルのデザイン元（Claude Design で作成したもの）
-tests/                    Node.js で動くロジックのテスト（Apps Script のモック付き）
-scripts/check-syntax.js   構文チェック・ファイル名の重複・onOpen の重複チェック
-CLAUDE.md                 Claude Code 向けの作業ルール
+  DESIGN.md                     設計思想・データモデル・処理の流れ・判断の理由・画面のデザイン・テスト
+  OPERATIONS.md                 導入・運用・clasp での同期・トラブル対応の手順
+tests/                        Node.js で動くロジックのテスト
+  lib/gas-mock.js               Apps Script のモック
+  lib/fixture.js                テスト用の追跡シート（新FMT・新FMT2）
+scripts/check-syntax.js       構文・ファイル名の重複・名前の重複・onOpen の数などのチェック
+CLAUDE.md                     Claude Code 向けの作業ルール
 ```
 
 ## よく使うコマンド
