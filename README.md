@@ -33,6 +33,7 @@ docs/
 tests/                        Node.js で動くロジックのテスト（Apps Script には送らない）
   lib/gas-mock.js               Apps Script のモック
   lib/fixture.js                テスト用の追跡シート（新FMT・新FMT2）
+samples/新FMT_サンプルデータ.tsv  新FMT に貼り付けられるサンプルの5行（Opportunity Canvas の確認用。Apps Script には送らない）
 scripts/check-syntax.js       構文・ファイルの置き場所・名前の重複・onOpen の数などのチェック
 .claspignore                  clasp で push するファイルを Apps Script のファイルだけに絞る
 CLAUDE.md                     Claude Code 向けの作業ルール

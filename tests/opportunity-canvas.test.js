@@ -151,3 +151,21 @@ test('openOpportunityCanvas：選んだ行のキャンバスをモーダルで�
   assert.strictEqual(gas.dialogs.length, 1);
   assert.match(gas.alerts[gas.alerts.length - 1].message, /データ行（3行目以降）を選んでください/);
 });
+
+test('サンプルデータ（samples/新FMT_サンプルデータ.tsv）：見出しの並びどおりで、どの行もキャンバスの全部の枠に値が入る', () => {
+  const file = require('path').join(__dirname, '..', 'samples', '新FMT_サンプルデータ.tsv');
+  const rows = require('fs').readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => line.split('\t'));
+  assert.strictEqual(rows.length, 5);
+  rows.forEach(row => {
+    assert.strictEqual(row.length, HEADERS.length, '列の数が見出しと合いません: ' + row[1]);
+    row.forEach(v => assert.ok(!/^[=+\-@]/.test(v), '数式になる値があります: ' + v));
+    const values = {};
+    HEADERS.forEach((h, i) => { values[h] = row[i]; });
+    const {g} = setup(values);
+    const data = plain(g.getOpportunityCanvasData('新FMT', 3));
+    assert.strictEqual(data.header.customer, row[1]);
+    assert.strictEqual(data.header.title, row[6]);
+    assert.deepStrictEqual(data.missing, []);
+    data.sections.forEach(s => assert.ok(s.items.some(i => i.value), row[1] + ' の「' + s.title + '」が空です'));
+  });
+});
