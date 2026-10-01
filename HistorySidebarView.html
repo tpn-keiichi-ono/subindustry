@@ -13,7 +13,8 @@
       --bg: #F0F4F9; --card: #ffffff; --card-line: #E3E8E4; --border: #DDE3DE; --line: #EEF1EE; --line2: #F0F2F0;
       --seg: #E9EDEA; --hover: #F3F6F4; --hover2: #F5F8F6; --hover3: #F0F3F1; --off-day: #C3CBC5;
       --teal: #36A191; --cred: #1F6E5E; --cred-hover: #185A4D; --teal-soft: #E7F4F0; --teal-wash: #F2F9F7;
-      --cred-text: #1F5E55; --off-text: #6B4FB8; --off-line: #D6CCF1;   /* 種別の文字色は詳細画面（CredentialDialog）と同じ */
+      /* 種別の色は詳細画面（CredentialDialog）と同じ */
+      --cred-text: #1F5E55; --cred-soft: #EAF5F2; --off-text: #6B4FB8; --off-soft: #F2EEFB; --off-line: #D6CCF1;
       --before-label: #B4534B; --before-ink: #8C4A44; --before-bg: #FBEFEE;
       --after-ink: #174F44; --empty-bg: #F3F5F3; --danger: #B42318;
       --mono: 'Azeret Mono', ui-monospace, Menlo, Consolas, monospace;
@@ -110,10 +111,14 @@
     .cred-meta .overdue { color: var(--danger); font-weight: 600; }
     .cred-meta .person { overflow: hidden; text-overflow: ellipsis; }
     .cred-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
-    .cred-tag { flex: none; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
-    .cred-tag.cred { color: var(--cred-text); }
-    .cred-tag.off { color: var(--off-text); }
-    .cred-tag.other { color: var(--faint); }
+    /* 種別のバッジ（薄い地色＋同じ系統の文字色と枠線） */
+    .cred-tag {
+      flex: none; height: 18px; padding: 0 7px; display: inline-flex; align-items: center; border-radius: 5px; border: 1px solid transparent;
+      font-size: 10px; font-weight: 700; letter-spacing: .04em; line-height: 1;
+    }
+    .cred-tag.cred { color: var(--cred-text); background: var(--cred-soft); border-color: #C9E4DC; }
+    .cred-tag.off { color: var(--off-text); background: var(--off-soft); border-color: #DDD3F5; }
+    .cred-tag.other { color: var(--muted); background: var(--hover); border-color: var(--border); }
     .cred-name { min-width: 0; font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cred-item.child .cred-name { font-size: 12.5px; }
 
