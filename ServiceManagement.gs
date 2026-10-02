@@ -8,10 +8,12 @@
  * - 「リクエスト」シート：1行が1件のリクエスト。importServiceRequests() をエディタから実行すると、
  *   新FMT のリクエストのうち、まだ一覧に無いもの（得意先・案件名・リクエストの組で見分ける）だけを追記する。
  *   「サービス」でまとめる先のサービスを選び、「判断」（未判断・サービス化検討・棄却）を付ける
- * - タスク管理シートの「サービス」の列で、タスクをサービス（の開発）に紐づける
+ * - サービスの検討の進捗は、タスク管理シート（TaskManagement.gs）でタスクとして管理する。
+ *   タスクの「サービス」を選ぶと、案件の選択肢がそのサービスにまとめたリクエストの案件に絞られる（svcRequestRecordsByService_）
  * - サービスを選ぶ列のプルダウンは、サービス シートのサービス名の列を範囲で参照する（サービスを足すと自動で選べる）
  * - 単純トリガーの onEdit（TaskManagement.gs）から：
- *   - リクエストでサービスを選んだとき、判断が未判断なら「サービス化検討」にする
+ *   - リクエストでサービスを選んだとき、判断が未判断なら「サービス化検討」にする。
+ *     リクエストのサービス・判断を変えたら、タスク管理の案件の選択肢も作り直す
  *   - サービス名を変えたとき、リクエスト・タスク管理の同じ名前も変える（同じ名前が2つあるときは変えずに知らせる）
  * - 取り込み元から消えた・書き換えられたリクエストは、行を消さずに「リクエスト」のセルに注を付ける
  */
@@ -41,6 +43,7 @@ const SVC_OPTIONS = {
     {key: 'importedAt', label: '取り込み日', width: 100}
   ],
   defaultDecision: '未判断',             // 取り込んだときの判断
+  rejectedDecision: '棄却',              // この判断のリクエストは、タスクの案件の選択肢に入れない
   decisionWithService: 'サービス化検討',  // サービスを選んだとき、判断が未判断（または空）ならこれにする
   missingNote: '取り込み元に見つかりません',   // 取り込み元から消えた・書き換えられたリクエストに付ける注の先頭
   lockWaitMs: 30000                       // エディタから実行する処理のロックの待ち時間
@@ -110,8 +113,9 @@ function svcApplyRules_(ss, sheets) {
   if (task) {
     taskAdded = taskEnsureHeader_(task, taskAllColumns_(), TASK_OPTIONS.headerRow);
     const rows = task.getMaxRows() - TASK_OPTIONS.headerRow;
-    const serviceColumns = TASK_OPTIONS.columns.filter(c => c.type === 'service');
-    if (rows > 0) taskApplyColumnRules_(task, serviceColumns, taskColumns_(task).others, TASK_OPTIONS.headerRow + 1, rows);
+    if (rows > 0) {
+      taskApplyColumnRules_(task, [TASK_OPTIONS.service], {service: taskColumns_(task).service}, TASK_OPTIONS.headerRow + 1, rows);
+    }
   }
   return {warnings, taskAdded};
 }
@@ -139,6 +143,34 @@ function svcServiceRule_(ss) {
     .setAllowInvalid(false)
     .setHelpText('「' + SVC_OPTIONS.serviceSheet + '」シートのサービス名から選んでください（空欄でもかまいません）。')
     .build();
+}
+
+/**
+ * サービス名（credNormalize_）ごとに、そのサービスにまとめたリクエストの案件 [サブインダストリー, 得意先, 案件名] を返す
+ * （棄却したリクエストは除く）。タスク管理の連動プルダウン（TaskManagement.gs の taskSources_）で使う。
+ */
+function svcRequestRecordsByService_(ss) {
+  const out = new Map();
+  const sheet = ss.getSheetByName(SVC_OPTIONS.requestSheet);
+  if (!sheet) return out;
+  const count = sheet.getLastRow() - SVC_OPTIONS.headerRow;
+  if (count < 1) return out;
+  const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
+  if (!cols.service) return out;
+
+  const keys = ['subIndustry', 'customer', 'project', 'service', 'decision'].filter(k => cols[k]);
+  const left = Math.min.apply(null, keys.map(k => cols[k]));
+  const right = Math.max.apply(null, keys.map(k => cols[k]));
+  sheet.getRange(SVC_OPTIONS.headerRow + 1, left, count, right - left + 1).getDisplayValues().forEach(line => {
+    const get = key => (cols[key] ? String(line[cols[key] - left]).trim() : '');
+    const service = get('service');
+    if (!service || get('decision') === SVC_OPTIONS.rejectedDecision) return;
+    const values = [get('subIndustry'), get('customer'), get('project')];
+    const key = credNormalize_(service);
+    if (!out.has(key)) out.set(key, []);
+    out.get(key).push({values, keys: values.map(credNormalize_)});
+  });
+  return out;
 }
 
 /* ---------------- リクエストの取り込み ---------------- */
@@ -223,25 +255,41 @@ function svcImport_(ss, sheet) {
 
 /* ---------------- 編集したとき（TaskManagement.gs の onEdit から） ---------------- */
 
-/** リクエストでサービスを選んだ行は、判断が未判断（または空）なら「サービス化検討」にする。 */
+/**
+ * リクエストのサービス・判断を変えたとき：
+ * サービスを選んだ行は、判断が未判断（または空）なら「サービス化検討」にする。
+ * まとめ方が変わるので、タスク管理の案件の選択肢も作り直す（値は空にしない）。
+ */
 function svcHandleRequestEdit_(sheet, range) {
   const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
-  if (!cols.service || !cols.decision) return;
-  if (cols.service < range.getColumn() || cols.service > range.getLastColumn()) return;
+  const edited = col => col > 0 && col >= range.getColumn() && col <= range.getLastColumn();
+  if (!edited(cols.service) && !edited(cols.decision)) return;
 
   const first = Math.max(range.getRow(), SVC_OPTIONS.headerRow + 1);
   const last = Math.min(range.getLastRow(), first + TASK_OPTIONS.maxEditRows - 1);
   const rows = last - first + 1;
   taskWithLock_(() => {
-    const services = sheet.getRange(first, cols.service, rows, 1).getDisplayValues();
-    const decisions = sheet.getRange(first, cols.decision, rows, 1).getDisplayValues();
-    services.forEach((service, i) => {
-      const decision = String(decisions[i][0]).trim();
-      if (String(service[0]).trim() && (!decision || decision === SVC_OPTIONS.defaultDecision)) {
-        sheet.getRange(first + i, cols.decision).setValue(SVC_OPTIONS.decisionWithService);
-      }
-    });
+    if (edited(cols.service) && cols.decision) {
+      const services = sheet.getRange(first, cols.service, rows, 1).getDisplayValues();
+      const decisions = sheet.getRange(first, cols.decision, rows, 1).getDisplayValues();
+      services.forEach((service, i) => {
+        const decision = String(decisions[i][0]).trim();
+        if (String(service[0]).trim() && (!decision || decision === SVC_OPTIONS.defaultDecision)) {
+          sheet.getRange(first + i, cols.decision).setValue(SVC_OPTIONS.decisionWithService);
+        }
+      });
+    }
+    svcRefreshTaskRows_(sheet.getParent());
   });
+}
+
+/** タスク管理の入力済みの行（最後の行まで）の連動プルダウンを作り直す。値は空にしない。 */
+function svcRefreshTaskRows_(ss) {
+  const task = ss.getSheetByName(TASK_OPTIONS.sheet);
+  if (!task) return;
+  const rows = task.getLastRow() - TASK_OPTIONS.headerRow;
+  if (rows < 1) return;
+  taskRefreshRows_(task, taskColumns_(task), taskSources_(ss), TASK_OPTIONS.headerRow + 1, rows, Infinity);
 }
 
 /**

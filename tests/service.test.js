@@ -128,6 +128,52 @@ test('タスク管理シートにも「サービス」の列ができ、サー�
   assert.doesNotMatch(gas.toasts[gas.toasts.length - 1].message, /setupServiceSheets/);
 });
 
+test('タスクでサービスを選ぶと、案件の選択肢がそのサービスにまとめたリクエストの案件に絞られる（棄却は除く）', () => {
+  const {gas, g} = setup([
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい'],
+    ['食品スーパー', 'B社', '店舗什器', '什器の在庫を見える化したい'],
+    ['ドラッグストア', 'C社', 'EC立ち上げ', '会員データを活用したい'],
+    ['ドラッグストア', 'D社', '物流見直し', '在庫を店舗と共有したい']
+  ]);
+  g.importServiceRequests();
+  g.setupTaskSheet();
+  edit(gas, 'サービス', 'A2', '会員分析基盤');
+  edit(gas, 'サービス', 'A3', '在庫共有');
+  edit(gas, 'サービス', 'A4', 'まだリクエストの無いサービス');
+  // 複数のリクエストを1つのサービスにまとめる
+  edit(gas, 'リクエスト', 'E2', '会員分析基盤');
+  edit(gas, 'リクエスト', 'E4', '会員分析基盤');
+  edit(gas, 'リクエスト', 'E3', '在庫共有');
+  edit(gas, 'リクエスト', 'E5', '在庫共有');
+  edit(gas, 'リクエスト', 'F5', '棄却');
+
+  let task = edit(gas, 'タスク管理', 'A2', '会員分析基盤');
+  assert.deepStrictEqual(listOf(task.getRange('B2')), ['食品スーパー', 'ドラッグストア']);
+  assert.deepStrictEqual(listOf(task.getRange('C2')), ['A社', 'C社']);
+  assert.deepStrictEqual(listOf(task.getRange('D2')), ['アプリ刷新', 'EC立ち上げ']);
+
+  task = edit(gas, 'タスク管理', 'A3', '在庫共有');
+  assert.deepStrictEqual(listOf(task.getRange('C3')), ['B社'], '棄却したリクエストの案件は出さない');
+
+  task = edit(gas, 'タスク管理', 'A4', 'まだリクエストの無いサービス');
+  assert.deepStrictEqual(listOf(task.getRange('C4')), ['A社', 'B社', 'C社', 'D社'], 'まだまとめていなければ新FMT のすべての案件');
+
+  // サービスを選び直すと、合わなくなった案件は空にする
+  edit(gas, 'タスク管理', 'B2', 'ドラッグストア');
+  edit(gas, 'タスク管理', 'C2', 'C社');
+  edit(gas, 'タスク管理', 'D2', 'EC立ち上げ');
+  edit(gas, 'タスク管理', 'E2', '要件を聞く');
+  task = edit(gas, 'タスク管理', 'A2', '在庫共有');
+  assert.deepStrictEqual(gas.dump(task, 'A2:E2')[0], ['在庫共有', '', '', '', '要件を聞く']);
+  assert.deepStrictEqual(listOf(task.getRange('C2')), ['B社']);
+
+  // リクエストのまとめ方を変えると、タスクの行を触らなくても選択肢が変わる
+  edit(gas, 'リクエスト', 'E4', '在庫共有');
+  assert.deepStrictEqual(listOf(task.getRange('C2')), ['B社', 'C社']);
+  edit(gas, 'リクエスト', 'F5', 'サービス化検討');
+  assert.deepStrictEqual(listOf(task.getRange('C3')), ['B社', 'C社', 'D社'], '棄却をやめたリクエストの案件が戻る');
+});
+
 test('サービス名を変えると、リクエスト・タスク管理の同じ名前も変わる', () => {
   const {gas, g} = setup();
   g.setupTaskSheet();
@@ -136,11 +182,11 @@ test('サービス名を変えると、リクエスト・タスク管理の同�
   edit(gas, 'サービス', 'A3', '在庫共有');
   edit(gas, 'リクエスト', 'E2', '会員分析基盤');
   edit(gas, 'リクエスト', 'E3', '在庫共有');
-  edit(gas, 'タスク管理', 'D2', '会員分析基盤');
+  edit(gas, 'タスク管理', 'A2', '会員分析基盤');
 
   edit(gas, 'サービス', 'A2', '会員データ分析');
   assert.deepStrictEqual(gas.dump('リクエスト', 'E2:E3'), [['会員データ分析'], ['在庫共有']]);
-  assert.strictEqual(gas.dump('タスク管理', 'D2')[0][0], '会員データ分析');
+  assert.strictEqual(gas.dump('タスク管理', 'A2')[0][0], '会員データ分析');
   assert.match(gas.toasts[gas.toasts.length - 1].message, /リクエスト 1件・タスク 1件に反映しました/);
 });
 

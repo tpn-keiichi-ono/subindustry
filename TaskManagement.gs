@@ -1,16 +1,17 @@
 /**
  * タスク管理
- * 追跡シート（新FMT）の行（案件）ごとのタスクを、別のシート「タスク管理」で管理する。
+ * サービスの検討（ServiceManagement.gs。リクエストをまとめたサービス）の進捗を、タスクで管理するシート「タスク管理」。
  * 差分追跡スクリプト（test.gs）・CredentialHistory.gs と同じプロジェクトに置くファイル。
  *
  * 仕組み
- * - 今は手で行を追加する。1行が1件のタスクで、左から「サブインダストリー」「得意先」「案件名」を
+ * - 今は手で行を追加する。1行が1件のタスクで、左から「サービス」を選び、続けて「サブインダストリー」「得意先」「案件名」を
  *   連動するプルダウンで選ぶ（得意先はサブインダストリーで、案件名はサブインダストリーと得意先で絞り込む）
- * - 選択肢は TASK_OPTIONS.sourceSheets（新FMT）の値から作る。タスク管理シートの行を編集するたびに、
- *   その行のプルダウンを作り直す（単純トリガーの onEdit。承認していない人の編集でも動き、トリガーの設置は要らない）
- * - 左の列を選び直して、右の列の値が選択肢から外れたときは、右の列を空にする
- * - 「サービス」の列で、タスクが紐づくサービス（ServiceManagement.gs のサービス シート）も選べる。
- *   案件だけ・サービスだけ・両方のどれでもよい
+ * - サービスを選んだ行の連動プルダウンは、そのサービスにまとめたリクエスト（リクエスト シート。棄却したものは除く）の案件に絞る。
+ *   サービスが空、またはまだリクエストをまとめていないサービスの行は、TASK_OPTIONS.sourceSheets（新FMT）のすべての案件から選ぶ
+ * - タスク管理シートの行を編集するたびに、その行のプルダウンを作り直す
+ *   （単純トリガーの onEdit。承認していない人の編集でも動き、トリガーの設置は要らない）
+ * - サービスや左の列を選び直して、右の列の値が選択肢から外れたときは、その値を空にする
+ * - サービスだけのタスク（案件を選ばない）でもよい
  * - 管理者が setupTaskSheet() をエディタから実行して、シート・見出し・プルダウンを用意する
  *   （新FMT にサブインダストリー・得意先・案件名が増えたときも、もう一度実行すると全行の選択肢を作り直す。
  *   見出しが入っているシートに足りない列があれば、右端に足す）
@@ -23,15 +24,16 @@ const TASK_OPTIONS = {
   // 選択肢を作るシート。見出しの行は DIFF_RULES の headerRow（DIFF_RULES に無いシートは sourceHeaderRow）
   sourceSheets: ['新FMT'],
   sourceHeaderRow: 2,
+  // タスクを紐づけるサービス（サービス シートのサービス名から選ぶ）。選ぶと、右の連動プルダウンがそのサービスの案件に絞られる
+  service: {key: 'service', label: 'サービス', width: 200, type: 'service'},
   // 連動するプルダウン（左から順に絞り込む）。label はタスク管理シートの見出し、source は選択肢を作るシートの見出し
   cascade: [
     {key: 'subIndustry', label: 'サブインダストリー', source: 'サブインダストリー', width: 160},
     {key: 'customer', label: '得意先', source: '得意先', width: 200},
     {key: 'project', label: '案件名', source: '案件名', width: 240}
   ],
-  // そのほかの列（手で入力する）。type: 'service' はサービス シートのサービス名から選ぶ列
+  // そのほかの列（手で入力する）
   columns: [
-    {key: 'service', label: 'サービス', width: 200, type: 'service'},
     {key: 'task', label: 'タスク', width: 280},
     {key: 'owner', label: '担当者', width: 120},
     {key: 'due', label: '期限', width: 100, type: 'date'},
@@ -59,10 +61,11 @@ function setupTaskSheet() {
     const rows = sheet.getMaxRows() - TASK_OPTIONS.headerRow;
     if (rows < 1) throw new Error(TASK_OPTIONS.sheet + ' にデータの行がありません。行を追加してから実行してください。');
 
-    const warnings = taskApplyColumnRules_(sheet, TASK_OPTIONS.columns, cols.others, first, rows);
-    const records = taskSourceRecords_(ss);
-    const cascadeWarnings = taskRefreshRows_(sheet, cols.cascade, records, first, rows, -1);
-    const counts = TASK_OPTIONS.cascade.map((c, i) => c.label + ' ' + taskOptionsFor_(records, i, []).length + '件');
+    const warnings = taskApplyColumnRules_(sheet, [TASK_OPTIONS.service].concat(TASK_OPTIONS.columns),
+      Object.assign({service: cols.service}, cols.others), first, rows);
+    const sources = taskSources_(ss);
+    const cascadeWarnings = taskRefreshRows_(sheet, cols, sources, first, rows, Infinity);
+    const counts = TASK_OPTIONS.cascade.map((c, i) => c.label + ' ' + taskOptionsFor_(sources.all, i, []).length + '件');
     return {created, added, counts, warnings: warnings.concat(cascadeWarnings)};
   });
 
@@ -105,16 +108,21 @@ function taskHandleEdit_(sheet, range) {
   const first = Math.max(range.getRow(), TASK_OPTIONS.headerRow + 1);
   const last = Math.min(range.getLastRow(), first + TASK_OPTIONS.maxEditRows - 1);
   const cols = taskColumns_(sheet);
+  const edited = col => col > 0 && col >= range.getColumn() && col <= range.getLastColumn();
 
-  // 選び直した連動列のうち、いちばん左のもの（連動列以外の編集なら -1：空にはせず、選択肢だけ作り直す）
-  let changed = -1;
-  cols.cascade.forEach((col, i) => {
-    if (changed < 0 && col >= range.getColumn() && col <= range.getLastColumn()) changed = i;
-  });
+  // 選択肢から外れた値を空にし始める連動の列：サービスを選び直したら連動の3列すべて、
+  // 連動の列を選び直したらその右から（それ以外の編集では空にせず、選択肢だけ作り直す）
+  let clearFrom = Infinity;
+  if (edited(cols.service)) {
+    clearFrom = 0;
+  } else {
+    const level = cols.cascade.findIndex(edited);
+    if (level >= 0) clearFrom = level + 1;
+  }
 
   taskWithLock_(() => {
-    const records = taskSourceRecords_(sheet.getParent());
-    const warnings = taskRefreshRows_(sheet, cols.cascade, records, first, last - first + 1, changed);
+    const sources = taskSources_(sheet.getParent());
+    const warnings = taskRefreshRows_(sheet, cols, sources, first, last - first + 1, clearFrom);
     if (warnings.length) sheet.getParent().toast(warnings.join('\n'), 'タスク管理', 10);
   });
 }
@@ -128,6 +136,17 @@ function taskHandleEdit_(sheet, range) {
 function taskSourceRecords_(ss) {
   return taskReadSource_(ss, TASK_OPTIONS.cascade.map(c => c.source))
     .map(values => ({values, keys: values.map(credNormalize_)}));
+}
+
+/**
+ * 連動プルダウンの選択肢の元。
+ * all：新FMT のすべての案件。byService：サービス名（credNormalize_）ごとの、そのサービスにまとめたリクエストの案件。
+ */
+function taskSources_(ss) {
+  return {
+    all: taskSourceRecords_(ss),
+    byService: typeof svcRequestRecordsByService_ === 'function' ? svcRequestRecordsByService_(ss) : new Map()
+  };
 }
 
 /**
@@ -181,21 +200,29 @@ function taskOptionsFor_(records, level, selected, memo) {
 }
 
 /**
- * startRow から numRows 行の連動プルダウンを作り直す。
- * changedLevel より右の列で、値が新しい選択肢に無いものは空にする（-1 なら空にしない）。
+ * startRow から numRows 行の連動プルダウンを作り直す（cols は taskColumns_、sources は taskSources_）。
+ * 連動の列のうち clearFrom 番目（0 から）より右の列で、値が新しい選択肢に無いものは空にする（Infinity なら空にしない）。
  * 戻り値は利用者に知らせる文（選択肢が多すぎて付けられなかった列など）。
  */
-function taskRefreshRows_(sheet, cascadeCols, records, startRow, numRows, changedLevel) {
+function taskRefreshRows_(sheet, cols, sources, startRow, numRows, clearFrom) {
+  const cascadeCols = cols.cascade;
   const levels = cascadeCols.length;
-  const current = cascadeCols.map(col => sheet.getRange(startRow, col, numRows, 1).getDisplayValues().map(r => String(r[0]).trim()));
+  const read = col => sheet.getRange(startRow, col, numRows, 1).getDisplayValues().map(r => String(r[0]).trim());
+  const current = cascadeCols.map(read);
+  const services = cols.service ? read(cols.service) : [];
   const rules = cascadeCols.map(() => []);
   const cleared = cascadeCols.map(() => []);
-  const optionsMemo = new Map();
+  const optionsMemos = new Map();   // 選択肢の元（records）ごとの、絞り込みの結果
   const ruleMemo = new Map();
   const tooMany = new Set();
 
   for (let r = 0; r < numRows; r++) {
     const selected = current.map(column => column[r]);
+    // サービスを選んでいて、そのサービスにまとめたリクエストがあれば、その案件だけから選ぶ
+    const service = credNormalize_(services[r] || '');
+    const records = service && sources.byService.has(service) ? sources.byService.get(service) : sources.all;
+    if (!optionsMemos.has(records)) optionsMemos.set(records, new Map());
+    const optionsMemo = optionsMemos.get(records);
     for (let level = 0; level < levels; level++) {
       let options = taskOptionsFor_(records, level, selected, optionsMemo);
       // 全角・半角と空白の違いは同じ値とみなす。入っている値の書き方が選択肢と違えば、その行の選択肢を入っている書き方にする
@@ -205,7 +232,7 @@ function taskRefreshRows_(sheet, cascadeCols, records, startRow, numRows, change
         options = options.slice();
         options[index] = selected[level];
       }
-      if (level > changedLevel && changedLevel >= 0 && selected[level] && index < 0) {
+      if (level >= clearFrom && selected[level] && index < 0) {
         selected[level] = '';
         cleared[level].push(startRow + r);
       }
@@ -244,9 +271,11 @@ function taskListRule_(options, level, memo) {
 
 /* ---------------- シートの形（サービス管理と共通） ---------------- */
 
-/** タスク管理シートの列（連動の3列は必須）。 */
+/** タスク管理シートの列（サービス・連動の3列・そのほか。連動の3列は必須）。 */
 function taskAllColumns_() {
-  return TASK_OPTIONS.cascade.map(c => Object.assign({required: true}, c)).concat(TASK_OPTIONS.columns);
+  return [TASK_OPTIONS.service]
+    .concat(TASK_OPTIONS.cascade.map(c => Object.assign({required: true}, c)))
+    .concat(TASK_OPTIONS.columns);
 }
 
 /** シートが無ければ作り、見出しを用意する。{sheet, created, added: 右端に足した列の見出し} */
@@ -295,12 +324,12 @@ function taskColumnMap_(sheet, columns, headerRow) {
   return out;
 }
 
-/** タスク管理シートの列の位置。連動する3列は見出しがちょうど1つずつ必要。 */
+/** タスク管理シートの列の位置 {service, cascade: [3列], others}。連動する3列は見出しがちょうど1つずつ必要。 */
 function taskColumns_(sheet) {
   const map = taskColumnMap_(sheet, taskAllColumns_(), TASK_OPTIONS.headerRow);
   const others = {};
   TASK_OPTIONS.columns.forEach(c => { others[c.key] = map[c.key]; });
-  return {cascade: TASK_OPTIONS.cascade.map(c => map[c.key]), others};
+  return {service: map[TASK_OPTIONS.service.key], cascade: TASK_OPTIONS.cascade.map(c => map[c.key]), others};
 }
 
 /**
