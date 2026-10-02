@@ -26,7 +26,7 @@ const rangeOf = cell => {
 
 test('setupTaskSheet：サービス案に対応付けるタスク管理シートを作る', () => {
   const {gas, g} = setup();
-  g.importServiceRequests();
+  g.setupRequestSheet();
   g.setupTaskSheet();
   const sheet = gas.ss.getSheetByName('タスク管理');
   assert.deepStrictEqual(gas.dump(sheet, 'A1:F1')[0], ['サービス案', 'タスク', '担当者', '期限', '状況', 'メモ']);
@@ -45,7 +45,7 @@ test('setupTaskSheet：リクエスト シートが無いうちは、サービ�
   const {gas, g} = setup();
   g.setupTaskSheet();
   assert.strictEqual(gas.ss.getSheetByName('タスク管理').getRange('A2').getDataValidation(), null);
-  assert.match(gas.toasts[0].message, /importServiceRequests\(\) を実行してください/);
+  assert.match(gas.toasts[0].message, /setupRequestSheet\(\) を実行してください/);
 });
 
 /** 前の版のタスク管理シート（A〜C が案件の連動プルダウン。サービスは右端に足されていた） */
@@ -58,7 +58,7 @@ function addOldTaskSheet(gas, withService) {
 
 test('setupTaskSheet：前の版のシートは、確認してから A〜C を削除し、サービス案を左端に置く（D列以降の値は残す）', () => {
   const {gas, g} = setup();
-  g.importServiceRequests();
+  g.setupRequestSheet();
   const sheet = addOldTaskSheet(gas, true);
   gas.confirmAnswer = 'YES';
   g.setupTaskSheet();
@@ -97,7 +97,7 @@ test('setupTaskSheet：削除しないと答えたら A〜C は残し、サー�
 
 test('setupTaskSheet：何度実行しても入力済みのタスクは消えない', () => {
   const {gas, g} = setup();
-  g.importServiceRequests();
+  g.setupRequestSheet();
   g.setupTaskSheet();
   const sheet = gas.ss.getSheetByName('タスク管理');
   gas.asUser(() => sheet.getRange('A2:E2').setValues([['会員分析基盤', '要件を聞く', '佐藤', '2026/11/01', '未着手']]));
@@ -108,7 +108,7 @@ test('setupTaskSheet：何度実行しても入力済みのタスクは消えな
 
 test('タスク管理シートの編集では何もしない（プルダウンはリクエストのサービス案を参照するだけ）', () => {
   const {gas, g} = setup();
-  g.importServiceRequests();
+  g.setupRequestSheet();
   g.setupTaskSheet();
   gas.writes.length = 0;
   g.onEdit(gas.edit(gas.ss.getSheetByName('タスク管理'), 'B2', '要件を聞く'));

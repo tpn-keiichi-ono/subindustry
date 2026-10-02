@@ -168,7 +168,7 @@ function taskApplyColumnRules_(sheet, columns, cols, first, rows) {
     } else if (column.type === 'service') {
       rule = typeof svcServiceRule_ === 'function' ? svcServiceRule_(sheet.getParent()) : null;
       if (!rule) {
-        warnings.push('リクエスト シートが無いため、「' + column.label + '」の列にプルダウンを付けていません。importServiceRequests() を実行してください。');
+        warnings.push('リクエスト シートが無いため、「' + column.label + '」の列にプルダウンを付けていません。setupRequestSheet() を実行してください。');
         return;
       }
     } else if (column.options) {
