@@ -116,7 +116,7 @@ function newRichTextValue() {
 
 /* ---------------- 入力規則（プルダウン・日付） ---------------- */
 
-const DataValidationCriteria = {VALUE_IN_LIST: 'VALUE_IN_LIST', DATE_IS_VALID_DATE: 'DATE_IS_VALID_DATE'};
+const DataValidationCriteria = {VALUE_IN_LIST: 'VALUE_IN_LIST', VALUE_IN_RANGE: 'VALUE_IN_RANGE', DATE_IS_VALID_DATE: 'DATE_IS_VALID_DATE'};
 
 function newDataValidation() {
   const rule = {type: null, values: [], showDropdown: true, allowInvalid: true, helpText: ''};
@@ -128,6 +128,12 @@ function newDataValidation() {
       rule.showDropdown = showDropdown !== false;
       return builder;
     },
+    requireValueInRange(range, showDropdown) {
+      rule.type = DataValidationCriteria.VALUE_IN_RANGE;
+      rule.values = [range];
+      rule.showDropdown = showDropdown !== false;
+      return builder;
+    },
     requireDate() { rule.type = DataValidationCriteria.DATE_IS_VALID_DATE; rule.values = []; return builder; },
     setAllowInvalid(allow) { rule.allowInvalid = !!allow; return builder; },
     setHelpText(text) { rule.helpText = String(text); return builder; },
@@ -136,7 +142,11 @@ function newDataValidation() {
       const built = Object.assign({}, rule, {values: rule.values.slice()});
       return {
         getCriteriaType: () => built.type,
-        getCriteriaValues: () => (built.type === DataValidationCriteria.VALUE_IN_LIST ? [built.values.slice(), built.showDropdown] : []),
+        getCriteriaValues: () => {
+          if (built.type === DataValidationCriteria.VALUE_IN_LIST) return [built.values.slice(), built.showDropdown];
+          if (built.type === DataValidationCriteria.VALUE_IN_RANGE) return [built.values[0], built.showDropdown];
+          return [];
+        },
         getAllowInvalid: () => built.allowInvalid,
         getHelpText: () => built.helpText
       };
@@ -244,6 +254,13 @@ class Range {
 
   setNumberFormat(format) { this.each(cell => { cell.nf = format; }); return this; }
   setNote(note) { this.each(cell => { cell.note = String(note); }); return this; }
+  getNotes() { return this.map(cell => (cell && cell.note) || ''); }
+  setNotes(matrix) {
+    this.checkShape(matrix);
+    this.write('setNotes');
+    this.each((cell, r, c) => { cell.note = String(matrix[r][c] == null ? '' : matrix[r][c]); });
+    return this;
+  }
   setFontWeight() { return this; }
   setBackground() { return this; }
   setVerticalAlignment() { return this; }

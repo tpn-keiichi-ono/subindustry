@@ -9,8 +9,12 @@
  * - 選択肢は TASK_OPTIONS.sourceSheets（新FMT）の値から作る。タスク管理シートの行を編集するたびに、
  *   その行のプルダウンを作り直す（単純トリガーの onEdit。承認していない人の編集でも動き、トリガーの設置は要らない）
  * - 左の列を選び直して、右の列の値が選択肢から外れたときは、右の列を空にする
+ * - 「サービス」の列で、タスクが紐づくサービス（ServiceManagement.gs のサービス シート）も選べる。
+ *   案件だけ・サービスだけ・両方のどれでもよい
  * - 管理者が setupTaskSheet() をエディタから実行して、シート・見出し・プルダウンを用意する
- *   （新FMT にサブインダストリー・得意先・案件名が増えたときも、もう一度実行すると全行の選択肢を作り直す）
+ *   （新FMT にサブインダストリー・得意先・案件名が増えたときも、もう一度実行すると全行の選択肢を作り直す。
+ *   見出しが入っているシートに足りない列があれば、右端に足す）
+ * - onEdit・見出しの用意・ロックなどの共通の処理は、ServiceManagement.gs からも使う
  */
 
 const TASK_OPTIONS = {
@@ -25,8 +29,9 @@ const TASK_OPTIONS = {
     {key: 'customer', label: '得意先', source: '得意先', width: 200},
     {key: 'project', label: '案件名', source: '案件名', width: 240}
   ],
-  // そのほかの列（手で入力する）
+  // そのほかの列（手で入力する）。type: 'service' はサービス シートのサービス名から選ぶ列
   columns: [
+    {key: 'service', label: 'サービス', width: 200, type: 'service'},
     {key: 'task', label: 'タスク', width: 280},
     {key: 'owner', label: '担当者', width: 120},
     {key: 'due', label: '期限', width: 100, type: 'date'},
@@ -48,38 +53,22 @@ const TASK_OPTIONS = {
 function setupTaskSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const result = taskWithLock_(() => {
-    let sheet = ss.getSheetByName(TASK_OPTIONS.sheet);
-    const created = !sheet;
-    if (!sheet) sheet = ss.insertSheet(TASK_OPTIONS.sheet);
-    taskEnsureHeader_(sheet);
-
+    const {sheet, created, added} = taskEnsureSheet_(ss, TASK_OPTIONS.sheet, taskAllColumns_(), TASK_OPTIONS.headerRow);
     const cols = taskColumns_(sheet);
     const first = TASK_OPTIONS.headerRow + 1;
     const rows = sheet.getMaxRows() - TASK_OPTIONS.headerRow;
     if (rows < 1) throw new Error(TASK_OPTIONS.sheet + ' にデータの行がありません。行を追加してから実行してください。');
 
-    TASK_OPTIONS.columns.forEach(column => {
-      const col = cols.others[column.key];
-      if (!col) return;
-      const range = sheet.getRange(first, col, rows, 1);
-      if (column.type === 'date') {
-        range.setDataValidation(SpreadsheetApp.newDataValidation()
-          .requireDate().setAllowInvalid(false).setHelpText('日付を入力してください。').build());
-      } else if (column.options) {
-        range.setDataValidation(SpreadsheetApp.newDataValidation()
-          .requireValueInList(column.options, true).setAllowInvalid(false)
-          .setHelpText(column.label + 'は一覧から選んでください。').build());
-      }
-    });
-
+    const warnings = taskApplyColumnRules_(sheet, TASK_OPTIONS.columns, cols.others, first, rows);
     const records = taskSourceRecords_(ss);
-    const warnings = taskRefreshRows_(sheet, cols.cascade, records, first, rows, -1);
+    const cascadeWarnings = taskRefreshRows_(sheet, cols.cascade, records, first, rows, -1);
     const counts = TASK_OPTIONS.cascade.map((c, i) => c.label + ' ' + taskOptionsFor_(records, i, []).length + '件');
-    return {created, counts, warnings};
+    return {created, added, counts, warnings: warnings.concat(cascadeWarnings)};
   });
 
   ss.toast(
     (result.created ? TASK_OPTIONS.sheet + ' シートを作りました。' : TASK_OPTIONS.sheet + ' シートのプルダウンを作り直しました。') +
+    (result.added.length ? '右端に「' + result.added.join('」「') + '」の列を足しました。' : '') +
     '（選択肢：' + result.counts.join('・') + '）' + (result.warnings.length ? '\n' + result.warnings.join('\n') : ''),
     'タスク管理', 10);
 }
@@ -88,19 +77,26 @@ function setupTaskSheet() {
 
 /**
  * 単純トリガー。onEdit() はプロジェクト全体でこの1つだけにすること。
- * タスク管理シートの編集だけを扱い、ほかのシートではすぐ戻る（差分追跡はインストール型の recordDiffEdit が別に動く）。
+ * タスク管理・リクエスト・サービスのシートの編集だけを扱い、ほかのシートではすぐ戻る
+ * （差分追跡はインストール型の recordDiffEdit が別に動く）。
  * 編集した本人として動くので、まだ承認していない人の編集でもプルダウンが切り替わる。
  */
 function onEdit(e) {
   if (!e || !e.range) return;
   const sheet = e.range.getSheet();
-  if (sheet.getName() !== TASK_OPTIONS.sheet) return;
-  if (e.range.getLastRow() <= TASK_OPTIONS.headerRow) return;
+  const name = sheet.getName();
+  const handlers = [{sheet: TASK_OPTIONS.sheet, title: 'タスク管理', fn: taskHandleEdit_}];
+  if (typeof SVC_OPTIONS !== 'undefined') {
+    handlers.push({sheet: SVC_OPTIONS.requestSheet, title: 'サービス管理', fn: svcHandleRequestEdit_});
+    handlers.push({sheet: SVC_OPTIONS.serviceSheet, title: 'サービス管理', fn: svcHandleServiceEdit_});
+  }
+  const handler = handlers.find(h => h.sheet === name);
+  if (!handler || e.range.getLastRow() <= TASK_OPTIONS.headerRow) return;
   try {
-    taskHandleEdit_(sheet, e.range);
+    handler.fn(sheet, e.range, e);
   } catch (error) {
-    console.warn('Task sheet edit skipped: ' + (error && error.stack || error));
-    try { sheet.getParent().toast(error.message, 'タスク管理', 10); } catch (_) {}
+    console.warn(name + ' edit skipped: ' + (error && error.stack || error));
+    try { sheet.getParent().toast(error.message, handler.title, 10); } catch (_) {}
   }
 }
 
@@ -130,13 +126,22 @@ function taskHandleEdit_(sheet, range) {
  * 見比べ用に、全角・半角と空白の違いを無くしたキー（credNormalize_）も持たせる。
  */
 function taskSourceRecords_(ss) {
-  const records = [];
+  return taskReadSource_(ss, TASK_OPTIONS.cascade.map(c => c.source))
+    .map(values => ({values, keys: values.map(credNormalize_)}));
+}
+
+/**
+ * TASK_OPTIONS.sourceSheets（新FMT）から、指定した見出しの列の値を行の順に返す（前後の空白は除く。すべて空の行は除く）。
+ * サービスのリクエストの取り込み（ServiceManagement.gs）でも使う。
+ */
+function taskReadSource_(ss, sourceHeaders) {
+  const rows = [];
   TASK_OPTIONS.sourceSheets.forEach(name => {
     const sheet = ss.getSheetByName(name);
-    if (!sheet) throw new Error('選択肢を作るシート「' + name + '」が見つかりません。');
+    if (!sheet) throw new Error('読み込むシート「' + name + '」が見つかりません。');
     const headerRow = DIFF_RULES[name] ? DIFF_RULES[name].headerRow : TASK_OPTIONS.sourceHeaderRow;
     const headers = sheet.getRange(headerRow, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
-    const cols = TASK_OPTIONS.cascade.map(c => taskFindColumn_(headers, c.source, name + ' の ' + headerRow + '行目', true));
+    const cols = sourceHeaders.map(h => taskFindColumn_(headers, h, name + ' の ' + headerRow + '行目', true));
     const count = sheet.getLastRow() - headerRow;
     if (count < 1) return;
 
@@ -144,10 +149,10 @@ function taskSourceRecords_(ss) {
     const right = Math.max.apply(null, cols);
     sheet.getRange(headerRow + 1, left, count, right - left + 1).getDisplayValues().forEach(line => {
       const values = cols.map(col => String(line[col - left] == null ? '' : line[col - left]).trim());
-      if (values.some(Boolean)) records.push({values, keys: values.map(credNormalize_)});
+      if (values.some(Boolean)) rows.push(values);
     });
   });
-  return records;
+  return rows;
 }
 
 /**
@@ -237,34 +242,99 @@ function taskListRule_(options, level, memo) {
   return rule;
 }
 
-/* ---------------- シートの形 ---------------- */
+/* ---------------- シートの形（サービス管理と共通） ---------------- */
 
-/** 見出しの行が空なら見出しを書き、形を整える。空でなければ書き換えない（違う見出しは taskColumns_ で止める）。 */
-function taskEnsureHeader_(sheet) {
-  const labels = TASK_OPTIONS.cascade.concat(TASK_OPTIONS.columns).map(c => c.label);
-  const widths = TASK_OPTIONS.cascade.concat(TASK_OPTIONS.columns).map(c => c.width);
-  if (sheet.getMaxColumns() < labels.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), labels.length - sheet.getMaxColumns());
+/** タスク管理シートの列（連動の3列は必須）。 */
+function taskAllColumns_() {
+  return TASK_OPTIONS.cascade.map(c => Object.assign({required: true}, c)).concat(TASK_OPTIONS.columns);
+}
 
-  const header = sheet.getRange(TASK_OPTIONS.headerRow, 1, 1, Math.max(sheet.getLastColumn(), labels.length));
-  if (header.getDisplayValues()[0].some(v => String(v).trim())) return;
+/** シートが無ければ作り、見出しを用意する。{sheet, created, added: 右端に足した列の見出し} */
+function taskEnsureSheet_(ss, name, columns, headerRow) {
+  let sheet = ss.getSheetByName(name);
+  const created = !sheet;
+  if (!sheet) sheet = ss.insertSheet(name);
+  return {sheet, created, added: taskEnsureHeader_(sheet, columns, headerRow)};
+}
 
-  const range = sheet.getRange(TASK_OPTIONS.headerRow, 1, 1, labels.length);
-  range.setValues([labels]);
-  range.setFontWeight('bold').setBackground(TASK_OPTIONS.headerBackground);
-  sheet.setFrozenRows(TASK_OPTIONS.headerRow);
-  widths.forEach((width, i) => { if (width) sheet.setColumnWidth(i + 1, width); });
+/**
+ * 見出しの行が空なら見出しを書き、形を整える。
+ * 見出しが入っているシートは書き換えない：必須の列（required）が無ければ止め、足りない列だけを右端に足す。
+ * 戻り値は右端に足した列の見出し。
+ */
+function taskEnsureHeader_(sheet, columns, headerRow) {
+  const where = sheet.getName() + ' の ' + headerRow + '行目';
+  const headers = sheet.getRange(headerRow, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
+  let last = headers.length;
+  while (last > 0 && !String(headers[last - 1]).trim()) last--;
+
+  let start = 1;
+  let targets = columns;
+  if (last > 0) {
+    columns.filter(c => c.required).forEach(c => taskFindColumn_(headers, c.label, where, true));
+    targets = columns.filter(c => !c.required && taskHeaderCount_(headers, c.label) === 0);
+    start = last + 1;
+  }
+  if (!targets.length) return [];
+
+  const needed = start + targets.length - 1;
+  if (sheet.getMaxColumns() < needed) sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+  sheet.getRange(headerRow, start, 1, targets.length).setValues([targets.map(c => c.label)])
+    .setFontWeight('bold').setBackground(TASK_OPTIONS.headerBackground);
+  targets.forEach((c, i) => { if (c.width) sheet.setColumnWidth(start + i, c.width); });
+  if (last === 0) sheet.setFrozenRows(headerRow);
+  return last > 0 ? targets.map(c => c.label) : [];
+}
+
+/** 見出しから {key: 列番号} を作る（見つからない列は 0。required の列はちょうど1つ必要）。 */
+function taskColumnMap_(sheet, columns, headerRow) {
+  const headers = sheet.getRange(headerRow, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
+  const where = sheet.getName() + ' の ' + headerRow + '行目';
+  const out = {};
+  columns.forEach(c => { out[c.key] = taskFindColumn_(headers, c.label, where, !!c.required); });
+  return out;
 }
 
 /** タスク管理シートの列の位置。連動する3列は見出しがちょうど1つずつ必要。 */
 function taskColumns_(sheet) {
-  const headers = sheet.getRange(TASK_OPTIONS.headerRow, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
-  const where = TASK_OPTIONS.sheet + ' の ' + TASK_OPTIONS.headerRow + '行目';
+  const map = taskColumnMap_(sheet, taskAllColumns_(), TASK_OPTIONS.headerRow);
   const others = {};
-  TASK_OPTIONS.columns.forEach(c => { others[c.key] = taskFindColumn_(headers, c.label, where, false); });
-  return {
-    cascade: TASK_OPTIONS.cascade.map(c => taskFindColumn_(headers, c.label, where, true)),
-    others
-  };
+  TASK_OPTIONS.columns.forEach(c => { others[c.key] = map[c.key]; });
+  return {cascade: TASK_OPTIONS.cascade.map(c => map[c.key]), others};
+}
+
+/**
+ * 日付・一覧（options）・サービス（type: 'service'）の列に、first 行目から rows 行の入力規則を付ける。
+ * 戻り値は利用者に知らせる文（サービス シートが無いときなど）。
+ */
+function taskApplyColumnRules_(sheet, columns, cols, first, rows) {
+  const warnings = [];
+  columns.forEach(column => {
+    const col = cols[column.key];
+    if (!col) return;
+    let rule = null;
+    if (column.type === 'date') {
+      rule = SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(false).setHelpText('日付を入力してください。').build();
+    } else if (column.type === 'service') {
+      rule = typeof svcServiceRule_ === 'function' ? svcServiceRule_(sheet.getParent()) : null;
+      if (!rule) {
+        warnings.push('サービス シートが無いため、「' + column.label + '」の列にプルダウンを付けていません。setupServiceSheets() を実行してください。');
+        return;
+      }
+    } else if (column.options) {
+      rule = SpreadsheetApp.newDataValidation().requireValueInList(column.options, true).setAllowInvalid(false)
+        .setHelpText(column.label + 'は一覧から選んでください。').build();
+    } else {
+      return;
+    }
+    sheet.getRange(first, col, rows, 1).setDataValidation(rule);
+  });
+  return warnings;
+}
+
+function taskHeaderCount_(headers, label) {
+  const normalize = v => String(v == null ? '' : v).replace(/\s/g, '');
+  return headers.filter(h => normalize(h) === normalize(label)).length;
 }
 
 /** 見出しの列番号（改行・空白の違いは無視）。required なら、ちょうど1つでないときに止める。 */
@@ -278,10 +348,11 @@ function taskFindColumn_(headers, label, where, required) {
   throw new Error(where + 'に「' + label + '」の見出しがちょうど1つ必要です（見つかった数: ' + matches.length + '）。');
 }
 
-function taskWithLock_(fn) {
+/** ドキュメントロックの中で fn を実行する。waitMs を省くと単純トリガー向けの短い待ち時間。 */
+function taskWithLock_(fn, waitMs) {
   const lock = LockService.getDocumentLock();
-  if (!lock.tryLock(TASK_OPTIONS.lockWaitMs)) {
-    throw new Error('他の処理が実行中のため、プルダウンを更新できませんでした。少し待ってから選び直してください。');
+  if (!lock.tryLock(waitMs || TASK_OPTIONS.lockWaitMs)) {
+    throw new Error('他の処理が実行中です。少し待ってからもう一度お試しください（選び直した値は反映されていません）。');
   }
   try {
     return fn();
