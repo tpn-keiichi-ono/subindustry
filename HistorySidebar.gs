@@ -6,7 +6,9 @@
  * 仕組み
  * - 開いたときに自動で表示する（autoOpenHistorySidebar）。メニュー「履歴機能」＞「権限を承認する（初回のみ）」や、
  *   エディタから openHistorySidebar() を実行しても開く（閉じるまで出たまま）
- * - サイドバーから呼ぶ関数は、開いた本人の権限で動く。まだ承認していない人はサイドバーに承認の手順を出す
+ * - サイドバーから呼ぶ関数は、開いた本人の権限で動く。まだ承認していない人はサイドバーに「承認する」ボタンを出す。
+ *   ボタンは承認用のウェブアプリ（doGet。HS_OPTIONS.authorizeUrl）を新しいタブで開き、そこで Google の承認画面が出る
+ *   （サイドバーの中からは承認画面を出せないため）。URL が未設定のときはメニューでの承認を案内する
  * - サイドバーは短い間隔で「今選ばれている行」を問い合わせ、行が変わったら
  *   その行の得意先のクレデンシャル・オファリングと変更履歴に表示を切り替える
  *   （画面はタブで「クレデンシャル」「変更履歴」を切り替える。変更履歴は期間・項目で絞り込める）
@@ -25,6 +27,9 @@ const HS_OPTIONS = {
   cacheSeconds: 600,       // 得意先列の位置を覚えておく秒数
   autoOpenHandler: 'autoOpenHistorySidebar',   // 開いたときに自動表示するトリガーの関数名
   autoOffPrefix: 'HS_AUTO_OFF_',               // 自動表示をオフにした人（メールアドレスごと）
+  // 承認用のウェブアプリの URL（「デプロイ」→「ウェブアプリ」で作った …/exec。docs/OPERATIONS.md）。
+  // 空のときは、サイドバーにボタンを出さず、メニュー「履歴機能」での承認を案内する
+  authorizeUrl: '',
   // 得意先名の横の「アカウントプラン」ボタンが開く URL の読み込み元
   accountPlan: {
     sheet: '33シナリオ攻略先リスト',
@@ -37,10 +42,34 @@ const HS_OPTIONS = {
 /* ---------------- 開く ---------------- */
 
 function openHistorySidebar() {
-  const html = HtmlService.createTemplateFromFile(HS_OPTIONS.template)
-    .evaluate()
-    .setTitle(HS_OPTIONS.title);
+  const template = HtmlService.createTemplateFromFile(HS_OPTIONS.template);
+  template.authorizeUrl = hsAuthorizeUrl_();
+  const html = template.evaluate().setTitle(HS_OPTIONS.title);
   SpreadsheetApp.getUi().showSidebar(html);
+}
+
+/* ---------------- 権限の承認（ウェブアプリ） ---------------- */
+
+/** 承認用のウェブアプリの URL。https://script.google.com/…/exec の形でなければ使わない（空を返す）。 */
+function hsAuthorizeUrl_() {
+  const url = String(HS_OPTIONS.authorizeUrl || '').trim();
+  return /^https:\/\/script\.google\.com\/\S+\/exec$/.test(url) ? url : '';
+}
+
+/**
+ * 承認用のウェブアプリ（サイドバーの「承認する」ボタンが開く）。
+ * 「ウェブアプリにアクセスしているユーザー」として実行するようにデプロイしておくと、
+ * まだ承認していない人には Google の承認画面が出て、承認が済むとこのページが表示される。
+ * 承認の状態を表示するだけで、シートは読み書きしない。
+ */
+function doGet() {
+  const info = ScriptApp.getAuthorizationInfo(ScriptApp.AuthMode.FULL);
+  // 承認画面で一部の権限のチェックを外した人には、もう一度承認するためのリンクを出す
+  const missing = info.getAuthorizationStatus() === ScriptApp.AuthorizationStatus.REQUIRED;
+  const template = HtmlService.createTemplateFromFile('AuthorizeView');
+  template.status = missing ? 'missing' : 'done';
+  template.retryUrl = missing ? (info.getAuthorizationUrl() || '') : '';
+  return template.evaluate().setTitle('履歴機能の権限の承認');
 }
 
 /* ---------------- 開いたときに自動で表示 ---------------- */

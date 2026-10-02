@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- 承認用のウェブアプリ（HistorySidebar.gs の doGet）が出すページ。色・フォントはサイドバーと同じ -->
+  <style>
+    :root {
+      --ink: #1b1b1c; --body: #3c4642; --muted: #5a6660;
+      --bg: #F0F4F9; --card: #ffffff; --card-line: #E3E8E4;
+      --teal: #36A191; --cred: #1F6E5E; --cred-hover: #185A4D; --danger: #B42318;
+      --sans: 'Inter', 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic UI', Meiryo, sans-serif;
+    }
+    [hidden] { display: none !important; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px;
+      font-family: var(--sans); color: var(--ink); background: var(--bg); -webkit-font-smoothing: antialiased;
+    }
+    .card { width: 100%; max-width: 440px; padding: 24px 28px; background: var(--card); border: 1px solid var(--card-line); border-radius: 12px; }
+    .eyebrow { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600; color: var(--cred); letter-spacing: .04em; }
+    .eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 3px rgba(54, 161, 145, .18); }
+    .eyebrow.error { color: var(--danger); }
+    .eyebrow.error::before { background: var(--danger); box-shadow: 0 0 0 3px rgba(180, 35, 24, .15); }
+    h1 { margin: 10px 0 10px; font-size: 17px; font-weight: 700; }
+    p { margin: 0 0 8px; font-size: 13px; line-height: 1.7; color: var(--body); }
+    .note { font-size: 11.5px; line-height: 1.6; color: var(--muted); }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; height: 34px; margin: 6px 0 12px; padding: 0 18px;
+      border-radius: 7px; background: var(--cred); color: #ffffff; font-size: 12.5px; font-weight: 600; text-decoration: none;
+    }
+    .btn:hover { background: var(--cred-hover); }
+    .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
+  </style>
+</head>
+<body data-status="<?= status ?>" data-retry-url="<?= retryUrl ?>">
+  <main class="card" id="done" hidden>
+    <span class="eyebrow">履歴機能</span>
+    <h1>権限の承認が済みました</h1>
+    <p>このタブを閉じて、スプレッドシートに戻ってください。数秒でサイドバーに履歴が表示されます。</p>
+    <p class="note">表示されないときは、スプレッドシートを開き直してください。</p>
+  </main>
+
+  <main class="card" id="missing" hidden>
+    <span class="eyebrow error">履歴機能</span>
+    <h1>一部の権限が承認されていません</h1>
+    <p>履歴機能を使うには、承認画面のすべての項目にチェックを入れて承認する必要があります。下のボタンから、もう一度承認してください。</p>
+    <a class="btn" id="retry" target="_blank" rel="noopener noreferrer">もう一度承認する</a>
+    <p class="note">承認が済んだら、このページを再読み込みしてください。スプレッドシートのメニュー「履歴機能」＞「権限を承認する（初回のみ）」からも承認できます。</p>
+  </main>
+
+  <script>
+    (() => {
+      const data = document.body.dataset;
+      const missing = data.status === 'missing';
+      document.getElementById(missing ? 'missing' : 'done').hidden = false;
+      const retry = document.getElementById('retry');
+      if (missing && /^https:\/\//.test(data.retryUrl || '')) retry.href = data.retryUrl;
+      else retry.hidden = true;
+    })();
+  </script>
+</body>
+</html>

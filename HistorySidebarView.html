@@ -79,6 +79,16 @@
     .loaded .mono, .last-edit .mono { color: var(--body); }
     .loaded.error { color: var(--danger); }
     .hint { font-size: 11.5px; line-height: 1.6; color: var(--muted); }
+    /* 権限の承認（まだ承認していない人だけに出す） */
+    .auth { display: flex; flex-direction: column; gap: 8px; }
+    .auth-text { font-size: 12px; line-height: 1.65; color: var(--body); }
+    .auth-btn {
+      height: 32px; display: flex; align-items: center; justify-content: center; gap: 6px;
+      border-radius: 7px; background: var(--cred); color: #ffffff; font-size: 12px; font-weight: 600; text-decoration: none;
+    }
+    .auth-btn:hover { background: var(--cred-hover); }
+    .auth-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
+    .auth-note { font-size: 10.5px; line-height: 1.6; color: var(--muted); }
 
     /* ---------- タブ ---------- */
     .tabs { margin-top: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border-radius: 10px; background: var(--seg); }
@@ -248,7 +258,8 @@
 
   </style>
 </head>
-<body>
+<!-- data-authorize-url：承認用のウェブアプリの URL（HistorySidebar.gs の openHistorySidebar が入れる。未設定なら空） -->
+<body data-authorize-url="<?= authorizeUrl ?>">
   <div class="side">
     <!-- 表示中の行（タブもこのカードの中に置く） -->
     <section class="card row-card" aria-live="polite">
@@ -274,6 +285,13 @@
         </button>
       </div>
       <span class="hint" id="hint" hidden></span>
+      <div class="auth" id="auth" hidden>
+        <span class="auth-text" id="authText">初めて使うときは、権限の承認が必要です。下のボタンを押し、開いたタブで承認してください。承認が済むと、ここに履歴が表示されます。</span>
+        <a class="auth-btn" id="authBtn" target="_blank" rel="noopener noreferrer">
+          <svg width="13" height="13" viewBox="0 0 14 14"><rect x="2.5" y="6" width="9" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.5 6V4.5a2.5 2.5 0 0 1 5 0V6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>承認する
+        </a>
+        <span class="auth-note" id="authNote">ボタンで開けないときは、メニュー「履歴機能」＞「権限を承認する（初回のみ）」からも承認できます。</span>
+      </div>
       <span class="last-edit" id="lastEdit" hidden>この行の最終編集<span class="mono" id="lastEditAt"></span><span id="lastEditBy"></span></span>
       <div class="tabs" id="tabs" role="tablist" hidden>
         <button type="button" class="tab" id="tabCred" role="tab">クレデンシャル<span class="badge" id="credCount">0</span></button>
@@ -424,20 +442,46 @@
     /* ---------- 権限の承認 ---------- */
 
     // サイドバーは開いたときのトリガー（管理者の権限）で開くが、ここから呼ぶ関数は開いた本人の権限で動く。
-    // まだ承認していない人は呼び出しが失敗するので、承認の手順を出す（メニューの名前は CredentialHistory.gs と合わせる）。
-    const AUTH_HINT = '初めて使うときは、メニュー「履歴機能」＞「権限を承認する（初回のみ）」を実行し、表示される画面で承認してください。承認が済むと、サイドバーが開き直して履歴を表示します。';
+    // まだ承認していない人は呼び出しが失敗するので、「承認する」ボタンを出す。
+    // サイドバーの中からは承認画面を出せないため、ボタンは承認用のウェブアプリ（doGet）を新しいタブで開く。
+    // ウェブアプリの URL が未設定なら、メニューでの承認を案内する（メニューの名前は CredentialHistory.gs と合わせる）。
+    const AUTHORIZE_URL = /^https:\/\//.test(document.body.dataset.authorizeUrl || '') ? document.body.dataset.authorizeUrl : '';
+    const AUTH_MENU_TEXT = '初めて使うときは、権限の承認が必要です。メニュー「履歴機能」＞「権限を承認する（初回のみ）」を実行し、表示される画面で承認してください。承認が済むと、サイドバーが開き直して履歴を表示します。';
+    let authClickedAt = 0;   // 「承認する」を押した時刻（しばらくは問い合わせを早める）
+
+    if (AUTHORIZE_URL) {
+      $('authBtn').href = AUTHORIZE_URL;
+      $('authBtn').addEventListener('click', () => {
+        authClickedAt = Date.now();
+        setState('承認が済むのを待っています…', 'busy');
+        if (!polling) schedulePoll(authDelay());   // 予約済みの問い合わせ（10秒後）を早める
+      });
+    } else {
+      $('authText').textContent = AUTH_MENU_TEXT;
+      $('authBtn').hidden = true;
+      $('authNote').hidden = true;
+    }
 
     function isAuthError(error) {
       return /authoriz|permission|承認|権限/i.test(String((error && error.message) || error || ''));
     }
 
     function showAuthHint() {
-      setState('権限の承認が必要です', 'error');
       $('loaded').textContent = '';
       $('loaded').className = 'loaded';
-      if (current) return;   // 表示中の行があるときはそのまま（承認の取り消しなど、途中で失敗した場合）
-      $('hint').textContent = AUTH_HINT;
-      $('hint').hidden = false;
+      if (current) {   // 表示中の行があるときはそのまま（承認の取り消しなど、途中で失敗した場合）
+        setState('権限の承認が必要です', 'error');
+        return;
+      }
+      const waiting = authClickedAt && Date.now() - authClickedAt < 5 * 60 * 1000;
+      setState(waiting ? '承認が済むのを待っています…' : '権限の承認が必要です', waiting ? 'busy' : 'error');
+      $('hint').hidden = true;
+      $('auth').hidden = false;
+    }
+
+    /** 承認を待つ間の問い合わせの間隔。ボタンを押してから5分間は短くする */
+    function authDelay() {
+      return authClickedAt && Date.now() - authClickedAt < 5 * 60 * 1000 ? 3000 : 10000;
     }
 
     /* ---------- 選択行の問い合わせ（前の問い合わせが返ってから次を送る） ---------- */
@@ -450,21 +494,32 @@
       return 4000;
     }
 
+    let pollTimer = 0;
+    let polling = false;   // 問い合わせの返事を待っている間は true（次の予約は返事のあとに入れる）
+
+    function schedulePoll(delay) {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(poll, delay);
+    }
+
     function poll() {
+      polling = true;
       google.script.run
         .withSuccessHandler(selection => {
+          polling = false;
           handleSelection(selection);
-          setTimeout(poll, nextDelay());
+          schedulePoll(nextDelay());
         })
         .withFailureHandler(error => {
+          polling = false;
           console.error(error);
           if (isAuthError(error)) {
             showAuthHint();
-            setTimeout(poll, 10000);   // 承認が済めば、開き直さなくても表示が始まる
+            schedulePoll(authDelay());   // 承認が済めば、開き直さなくても表示が始まる
             return;
           }
           setState('行を確認できませんでした（再試行します）', 'error');
-          setTimeout(poll, 3000);
+          schedulePoll(3000);
         })
         .getSidebarSelection(last);
     }
@@ -521,6 +576,7 @@
 
     function render() {
       if (!current) return;
+      $('auth').hidden = true;
       const target = !current.reason && !!current.customer;
       $('tabs').hidden = !target;
       $('credPane').hidden = !target || ui.tab !== 'cred';

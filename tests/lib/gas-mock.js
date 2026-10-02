@@ -448,6 +448,7 @@ function createGas(options) {
     logs: [],
     triggers: [],
     scopeChecks: [],          // ScriptApp.requireAllScopes に渡された AuthMode
+    authRequired: false,      // true にすると、getAuthorizationInfo が「承認が足りない」を返す
     driveCopies: [],
     selection: null,
     props: {document: new Map(), user: new Map(), script: new Map()},
@@ -658,6 +659,11 @@ function createGas(options) {
     AuthMode: {NONE: 'NONE', CUSTOM_FUNCTION: 'CUSTOM_FUNCTION', LIMITED: 'LIMITED', FULL: 'FULL'},
     // 本物は、承認が足りなければ実行を止めて承認の画面を出す。モックは呼ばれたことだけを残す
     requireAllScopes(authMode) { gas.scopeChecks.push(authMode); },
+    AuthorizationStatus: {REQUIRED: 'REQUIRED', NOT_REQUIRED: 'NOT_REQUIRED'},
+    getAuthorizationInfo: () => ({
+      getAuthorizationStatus: () => (gas.authRequired ? 'REQUIRED' : 'NOT_REQUIRED'),
+      getAuthorizationUrl: () => (gas.authRequired ? 'https://script.google.com/macros/d/script-id/authorize' : null)
+    }),
     getProjectTriggers: () => gas.triggers.slice(),
     deleteTrigger(trigger) { gas.triggers = gas.triggers.filter(t => t !== trigger); },
     newTrigger(handler) {

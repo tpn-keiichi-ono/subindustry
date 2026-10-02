@@ -145,3 +145,45 @@ test('画面：まだ承認していない人への案内は、実際のメニ�
   const item = menu.items.find(i => i.fn === 'authorizeHistoryFeatures');
   assert.ok(html.includes('メニュー「' + menu.title + '」＞「' + item.label + '」'), 'サイドバーの案内とメニューの名前が違います');
 });
+
+test('openHistorySidebar：承認用のウェブアプリの URL（…/exec）だけをサイドバーに渡す', () => {
+  const {gas, g} = setupProject();
+  const options = gas.get('HS_OPTIONS');
+  const open = url => {
+    options.authorizeUrl = url;
+    gas.sidebars.length = 0;
+    g.openHistorySidebar();
+    return gas.sidebars[0].html.data.authorizeUrl;
+  };
+  assert.strictEqual(open(''), '', '未設定なら空（サイドバーはメニューでの承認を案内する）');
+  const url = 'https://script.google.com/a/macros/example.com/s/AKfycbx123/exec';
+  assert.strictEqual(open('  ' + url + '  '), url);
+  assert.strictEqual(open('https://script.google.com/macros/s/AKfycbx123/dev'), '', 'テスト用の …/dev は使わない');
+  assert.strictEqual(open('http://script.google.com/macros/s/AKfycbx123/exec'), '');
+  assert.strictEqual(open('https://example.com/exec'), '');
+  options.authorizeUrl = '';
+});
+
+test('doGet：承認が済んでいれば完了のページ、足りなければもう一度承認するリンクを出す（シートは読み書きしない）', () => {
+  const {gas, g} = setupProject();
+  gas.writes.length = 0;
+  const done = g.doGet({});
+  assert.strictEqual(done.file, 'AuthorizeView');
+  assert.deepStrictEqual(plain(done.data), {status: 'done', retryUrl: ''});
+
+  gas.authRequired = true;
+  const missing = g.doGet({});
+  assert.strictEqual(missing.data.status, 'missing');
+  assert.match(missing.data.retryUrl, /^https:\/\/script\.google\.com\//);
+  assert.deepStrictEqual(gas.writes, []);
+});
+
+test('画面：サイドバーは承認用の URL を data-authorize-url で受け取り、承認のページは状態を data-status で受け取る', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const sidebar = fs.readFileSync(path.join(__dirname, '..', 'HistorySidebarView.html'), 'utf8');
+  assert.ok(sidebar.includes('<body data-authorize-url="<?= authorizeUrl ?>">'));
+  ['auth', 'authText', 'authBtn', 'authNote'].forEach(id => assert.ok(sidebar.includes('id="' + id + '"'), id + ' がありません'));
+  const page = fs.readFileSync(path.join(__dirname, '..', 'AuthorizeView.html'), 'utf8');
+  assert.ok(page.includes('data-status="<?= status ?>"') && page.includes('data-retry-url="<?= retryUrl ?>"'));
+});

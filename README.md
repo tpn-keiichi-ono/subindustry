@@ -20,6 +20,7 @@ Google スプレッドシート「シナリオ攻略先リスト」に組み込�
   ChangeHistoryDialog.html      変更履歴のモーダル
   HistorySidebar.gs             履歴サイドバーのサーバー側、開いたときの自動表示
   HistorySidebarView.html       履歴サイドバー
+  AuthorizeView.html            承認用のウェブアプリ（HistorySidebar.gs の doGet）のページ
   コード.gs                     アカウントプランシートの作成（メニューは onOpen から追加）
   Loading.html                  アカウントプランシート作成の進み具合の画面
   自動入力部分のシート保護.gs   「案件_」シートの列の保護
