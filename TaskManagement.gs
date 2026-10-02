@@ -83,7 +83,7 @@ function setupTaskSheet() {
 
 /**
  * 単純トリガー。onEdit() はプロジェクト全体でこの1つだけにすること。
- * タスク管理・リクエストのシートの編集だけを扱い、ほかのシートではすぐ戻る
+ * タスク管理・リクエスト・取り込み元（新FMT）のシートの編集だけを扱い、ほかのシートではすぐ戻る
  * （差分追跡はインストール型の recordDiffEdit が別に動く）。
  * 編集した本人として動くので、まだ承認していない人の編集でもプルダウンが切り替わる。
  */
@@ -94,6 +94,8 @@ function onEdit(e) {
   const handlers = [{sheet: TASK_OPTIONS.sheet, title: 'タスク管理', fn: taskHandleEdit_}];
   if (typeof SVC_OPTIONS !== 'undefined') {
     handlers.push({sheet: SVC_OPTIONS.requestSheet, title: 'サービス管理', fn: svcHandleRequestEdit_});
+    // 新FMT のサブインダストリー・得意先・案件名・リクエストの変更を、リクエスト シートに転記する
+    TASK_OPTIONS.sourceSheets.forEach(name => handlers.push({sheet: name, title: 'サービス管理', fn: svcHandleSourceEdit_}));
   }
   const handler = handlers.find(h => h.sheet === name);
   if (!handler || e.range.getLastRow() <= TASK_OPTIONS.headerRow) return;
@@ -151,6 +153,11 @@ function taskSources_(ss) {
   };
 }
 
+/** 取り込み元のシートの見出しの行（DIFF_RULES の headerRow。DIFF_RULES に無いシートは TASK_OPTIONS.sourceHeaderRow）。 */
+function taskSourceHeaderRow_(name) {
+  return DIFF_RULES[name] ? DIFF_RULES[name].headerRow : TASK_OPTIONS.sourceHeaderRow;
+}
+
 /**
  * TASK_OPTIONS.sourceSheets（新FMT）から、指定した見出しの列の値を行の順に返す（前後の空白は除く。すべて空の行は除く）。
  * サービスのリクエストの取り込み（ServiceManagement.gs）でも使う。
@@ -160,7 +167,7 @@ function taskReadSource_(ss, sourceHeaders) {
   TASK_OPTIONS.sourceSheets.forEach(name => {
     const sheet = ss.getSheetByName(name);
     if (!sheet) throw new Error('読み込むシート「' + name + '」が見つかりません。');
-    const headerRow = DIFF_RULES[name] ? DIFF_RULES[name].headerRow : TASK_OPTIONS.sourceHeaderRow;
+    const headerRow = taskSourceHeaderRow_(name);
     const headers = sheet.getRange(headerRow, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
     const cols = sourceHeaders.map(h => taskFindColumn_(headers, h, name + ' の ' + headerRow + '行目', true));
     const count = sheet.getLastRow() - headerRow;
@@ -347,7 +354,7 @@ function taskApplyColumnRules_(sheet, columns, cols, first, rows) {
     if (column.type === 'date') {
       rule = SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(false).setHelpText('日付を入力してください。').build();
     } else if (column.type === 'service') {
-      rule = typeof svcServiceRule_ === 'function' ? svcServiceRule_(sheet.getParent(), !!column.allowNew) : null;
+      rule = typeof svcServiceRule_ === 'function' ? svcServiceRule_(sheet.getParent()) : null;
       if (!rule) {
         warnings.push('リクエスト シートが無いため、「' + column.label + '」の列にプルダウンを付けていません。importServiceRequests() を実行してください。');
         return;

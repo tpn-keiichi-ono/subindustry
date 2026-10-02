@@ -24,12 +24,12 @@ const listOf = cell => {
   const rule = ruleOf(cell);
   return rule && rule.getCriteriaType() === 'VALUE_IN_LIST' ? plain(rule.getCriteriaValues()[0]) : null;
 };
-/** 範囲を参照する入力規則なら「シート!範囲（新しい値を入力できるか）」 */
+/** 範囲を参照し、範囲に無い値は入力できない入力規則なら「シート!範囲」 */
 const rangeOf = cell => {
   const rule = ruleOf(cell);
-  if (!rule || rule.getCriteriaType() !== 'VALUE_IN_RANGE') return null;
+  if (!rule || rule.getCriteriaType() !== 'VALUE_IN_RANGE' || rule.getAllowInvalid()) return null;
   const range = rule.getCriteriaValues()[0];
-  return range.getSheet().getName() + '!' + range.getA1Notation() + (rule.getAllowInvalid() ? '（新しい名前も可）' : '');
+  return range.getSheet().getName() + '!' + range.getA1Notation();
 };
 
 /** シートでセルを編集したことにして、単純トリガーの onEdit を呼ぶ */
@@ -54,11 +54,16 @@ test('importServiceRequests：リクエスト シートを作り、新FMT のリ
     ['', '', '', '', '', '', '', '']
   ], 'リクエストが空の行は取り込まない。全角・半角だけが違う同じリクエストは1件');
   assert.strictEqual(request.getRange('D3').getFormula(), '', '数式にしない');
-  assert.strictEqual(rangeOf(request.getRange('E2')), 'リクエスト!E2:E1000（新しい名前も可）',
-    'サービスは新しい名前を入力するか、同じ列のほかのリクエストに付けた名前から選ぶ');
+  assert.strictEqual(request.getRange('E2').getDataValidation(), null, 'サービスは自由に入力する（プルダウンにしない）');
   assert.deepStrictEqual(listOf(request.getRange('F2')), ['未判断', 'サービス化検討', '棄却']);
+  // 転記する4列は、手で変えると警告が出る（警告だけ）
+  const protections = request.getProtections().filter(p => p.getDescription() === 'リクエスト：新FMT から自動で転記する列');
+  assert.deepStrictEqual(protections.map(p => p.range.getA1Notation()), ['A2:A1000', 'B2:B1000', 'C2:C1000', 'D2:D1000']);
+  assert.ok(protections.every(p => p.isWarningOnly()));
+  g.importServiceRequests();
+  assert.strictEqual(request.getProtections().length, 4, '2回目は保護を増やさない');
   assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
-  assert.match(gas.toasts[0].message, /2件追加しました/);
+  assert.match(gas.toasts[0].message, /2件追加し/);
 });
 
 test('importServiceRequests：もう一度実行しても重複させず、新しいリクエストだけを足す（判断・サービスは残す）', () => {
@@ -74,7 +79,7 @@ test('importServiceRequests：もう一度実行しても重複させず、新�
     ['ドラッグストア', 'C社', 'EC立ち上げ', '=在庫を店舗と共有したい', '', '未判断'],
     ['食品スーパー', 'B社', '店舗什器', '什器の在庫を見える化したい', '', '未判断']
   ]);
-  assert.match(gas.toasts[gas.toasts.length - 1].message, /1件追加しました/);
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /1件追加し/);
 });
 
 test('importServiceRequests：取り込み元から消えた・書き換えられたリクエストは行を残して注を付け、戻ったら外す', () => {
@@ -94,6 +99,64 @@ test('importServiceRequests：取り込み元から消えた・書き換えら�
   gas.asUser(() => source.getRange('F3').setValue('会員の購買分析をしたい'));
   g.importServiceRequests();
   assert.strictEqual(request.getRange('D2').getNote(), '', '取り込み元に戻ったら注を外す');
+});
+
+test('新FMT でリクエストなどを編集すると、リクエスト シートに自動で転記する', () => {
+  const {gas, g, source} = setup();
+  const sourceEdit = (a1, value) => g.onEdit(gas.edit(source, a1, value));
+
+  sourceEdit('C3', '食品スーパー');
+  assert.strictEqual(gas.ss.getSheetByName('リクエスト'), null, 'リクエスト シートを用意するまでは何もしない');
+
+  g.importServiceRequests();
+  const request = gas.ss.getSheetByName('リクエスト');
+  gas.writes.length = 0;
+  sourceEdit('B3', 'メモを書く');
+  assert.deepStrictEqual(gas.writes, [], '転記する列以外の編集では何もしない');
+
+  // リクエストを書いた行は、末尾に足す
+  sourceEdit('F4', '店舗の在庫を見たい');
+  assert.deepStrictEqual(gas.dump(request, 'A4:F4')[0], ['食品スーパー', 'B社', '店舗什器', '店舗の在庫を見たい', '', '未判断']);
+
+  // リクエストを書き換えると、同じ行を直す（サービス・判断を付けたあとなら注を付ける）
+  edit(gas, 'リクエスト', 'E2', '会員分析基盤');
+  sourceEdit('F3', '会員の購買データを分析したい');
+  assert.deepStrictEqual(gas.dump(request, 'D2:F2')[0], ['会員の購買データを分析したい', '会員分析基盤', 'サービス化検討']);
+  assert.match(request.getRange('D2').getNote(), /^新FMT でリクエストが書き換えられました/);
+  sourceEdit('F4', '店舗ごとの在庫を見たい');
+  assert.strictEqual(gas.dump(request, 'D4')[0][0], '店舗ごとの在庫を見たい');
+  assert.strictEqual(request.getRange('D4').getNote(), '', 'サービス・判断を付ける前なら注は付けない');
+
+  // 得意先・案件名・サブインダストリーを変えても同じ行を直す
+  sourceEdit('D4', 'B社（本社）');
+  sourceEdit('E4', '店舗什器の入れ替え');
+  sourceEdit('C4', 'ホームセンター');
+  assert.deepStrictEqual(gas.dump(request, 'A4:D5'), [
+    ['ホームセンター', 'B社（本社）', '店舗什器の入れ替え', '店舗ごとの在庫を見たい'],
+    ['', '', '', '']
+  ]);
+
+  // リクエストを消すと、行は残して注を付ける
+  sourceEdit('F4', '');
+  assert.match(request.getRange('D4').getNote(), /^取り込み元に見つかりません/);
+
+  // 貼り付けで何行も変えても転記する
+  g.onEdit(gas.edit(source, 'C7:F7', [['ドラッグストア', 'E社', '店頭サイネージ', '売場の案内を変えたい']]));
+  assert.deepStrictEqual(gas.dump(request, 'A5:D5')[0], ['ドラッグストア', 'E社', '店頭サイネージ', '売場の案内を変えたい']);
+  assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
+});
+
+test('新FMT で得意先を変えると、そのサービスのタスクの案件の選択肢も変わる', () => {
+  const {gas, g, source} = setup();
+  g.importServiceRequests();
+  g.setupTaskSheet();
+  edit(gas, 'リクエスト', 'E2', '会員分析基盤');
+  const task = edit(gas, 'タスク管理', 'A2', '会員分析基盤');
+  const listOfTask = () => listOf(task.getRange('C2'));
+  assert.deepStrictEqual(listOfTask(), ['A社']);
+  g.onEdit(gas.edit(source, 'D3', 'A社（本社）'));
+  assert.deepStrictEqual(gas.dump('リクエスト', 'B2')[0][0], 'A社（本社）');
+  assert.deepStrictEqual(listOfTask(), ['A社（本社）']);
 });
 
 test('リクエストにサービス名を付けると、判断が未判断なら「サービス化検討」にする（棄却などはそのまま）', () => {

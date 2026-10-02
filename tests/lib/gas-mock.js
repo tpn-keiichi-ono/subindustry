@@ -317,6 +317,8 @@ class Protection {
   }
   setDescription(text) { this.description = text; return this; }
   getDescription() { return this.description; }
+  setWarningOnly(warningOnly) { this.warningOnly = !!warningOnly; return this; }
+  isWarningOnly() { return !!this.warningOnly; }
   addEditor(user) { this.editors.push(typeof user === 'string' ? user : user.getEmail()); return this; }
   removeEditors(users) {
     const emails = users.map(u => (typeof u === 'string' ? u : u.getEmail()));
