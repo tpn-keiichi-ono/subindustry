@@ -28,7 +28,7 @@ Google スプレッドシート「シナリオ攻略先リスト」に組み込�
   OpportunityCanvas.gs          オポチュニティキャンバス（行の内容をキャンバスの枠に並べる）のサーバー側
   OpportunityCanvasDialog.html  オポチュニティキャンバスのモーダル
   TaskManagement.gs             タスク管理シート（サービス検討の進捗。サービス → 案件の連動プルダウン。onEdit）
-  ServiceManagement.gs          サービス管理（新FMT のリクエストの取り込み・サービスへのとりまとめ）
+  ServiceManagement.gs          リクエスト シート（新FMT のリクエストの取り込み。リクエストにサービス名を付けてまとめる）
   appsscript.json               マニフェスト（タイムゾーン・ランタイム）
 docs/
   DESIGN.md                     設計思想・データモデル・処理の流れ・判断の理由・画面のデザイン・テスト

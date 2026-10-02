@@ -1,13 +1,15 @@
 /**
  * タスク管理
- * サービスの検討（ServiceManagement.gs。リクエストをまとめたサービス）の進捗を、タスクで管理するシート「タスク管理」。
+ * サービスの検討（ServiceManagement.gs。リクエストをもとに考え、リクエストに名前を付けてまとめたサービス）の進捗を、
+ * タスクで管理するシート「タスク管理」。
  * 差分追跡スクリプト（test.gs）・CredentialHistory.gs と同じプロジェクトに置くファイル。
  *
  * 仕組み
- * - 今は手で行を追加する。1行が1件のタスクで、左から「サービス」を選び、続けて「サブインダストリー」「得意先」「案件名」を
+ * - 今は手で行を追加する。1行が1件のタスクで、左から「サービス」（リクエストに付けたサービス名）を選び、
+ *   続けて「サブインダストリー」「得意先」「案件名」を
  *   連動するプルダウンで選ぶ（得意先はサブインダストリーで、案件名はサブインダストリーと得意先で絞り込む）
  * - サービスを選んだ行の連動プルダウンは、そのサービスにまとめたリクエスト（リクエスト シート。棄却したものは除く）の案件に絞る。
- *   サービスが空、またはまだリクエストをまとめていないサービスの行は、TASK_OPTIONS.sourceSheets（新FMT）のすべての案件から選ぶ
+ *   サービスが空、またはリクエストに無いサービス名の行は、TASK_OPTIONS.sourceSheets（新FMT）のすべての案件から選ぶ
  * - タスク管理シートの行を編集するたびに、その行のプルダウンを作り直す
  *   （単純トリガーの onEdit。承認していない人の編集でも動き、トリガーの設置は要らない）
  * - サービスや左の列を選び直して、右の列の値が選択肢から外れたときは、その値を空にする
@@ -24,7 +26,8 @@ const TASK_OPTIONS = {
   // 選択肢を作るシート。見出しの行は DIFF_RULES の headerRow（DIFF_RULES に無いシートは sourceHeaderRow）
   sourceSheets: ['新FMT'],
   sourceHeaderRow: 2,
-  // タスクを紐づけるサービス（サービス シートのサービス名から選ぶ）。選ぶと、右の連動プルダウンがそのサービスの案件に絞られる
+  // タスクを紐づけるサービス（リクエスト シートでリクエストに付けたサービス名から選ぶ）。
+  // 選ぶと、右の連動プルダウンがそのサービスにまとめたリクエストの案件に絞られる
   service: {key: 'service', label: 'サービス', width: 200, type: 'service'},
   // 連動するプルダウン（左から順に絞り込む）。label はタスク管理シートの見出し、source は選択肢を作るシートの見出し
   cascade: [
@@ -80,7 +83,7 @@ function setupTaskSheet() {
 
 /**
  * 単純トリガー。onEdit() はプロジェクト全体でこの1つだけにすること。
- * タスク管理・リクエスト・サービスのシートの編集だけを扱い、ほかのシートではすぐ戻る
+ * タスク管理・リクエストのシートの編集だけを扱い、ほかのシートではすぐ戻る
  * （差分追跡はインストール型の recordDiffEdit が別に動く）。
  * 編集した本人として動くので、まだ承認していない人の編集でもプルダウンが切り替わる。
  */
@@ -91,7 +94,6 @@ function onEdit(e) {
   const handlers = [{sheet: TASK_OPTIONS.sheet, title: 'タスク管理', fn: taskHandleEdit_}];
   if (typeof SVC_OPTIONS !== 'undefined') {
     handlers.push({sheet: SVC_OPTIONS.requestSheet, title: 'サービス管理', fn: svcHandleRequestEdit_});
-    handlers.push({sheet: SVC_OPTIONS.serviceSheet, title: 'サービス管理', fn: svcHandleServiceEdit_});
   }
   const handler = handlers.find(h => h.sheet === name);
   if (!handler || e.range.getLastRow() <= TASK_OPTIONS.headerRow) return;
@@ -334,7 +336,7 @@ function taskColumns_(sheet) {
 
 /**
  * 日付・一覧（options）・サービス（type: 'service'）の列に、first 行目から rows 行の入力規則を付ける。
- * 戻り値は利用者に知らせる文（サービス シートが無いときなど）。
+ * 戻り値は利用者に知らせる文（リクエスト シートが無いときなど）。
  */
 function taskApplyColumnRules_(sheet, columns, cols, first, rows) {
   const warnings = [];
@@ -345,9 +347,9 @@ function taskApplyColumnRules_(sheet, columns, cols, first, rows) {
     if (column.type === 'date') {
       rule = SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(false).setHelpText('日付を入力してください。').build();
     } else if (column.type === 'service') {
-      rule = typeof svcServiceRule_ === 'function' ? svcServiceRule_(sheet.getParent()) : null;
+      rule = typeof svcServiceRule_ === 'function' ? svcServiceRule_(sheet.getParent(), !!column.allowNew) : null;
       if (!rule) {
-        warnings.push('サービス シートが無いため、「' + column.label + '」の列にプルダウンを付けていません。setupServiceSheets() を実行してください。');
+        warnings.push('リクエスト シートが無いため、「' + column.label + '」の列にプルダウンを付けていません。importServiceRequests() を実行してください。');
         return;
       }
     } else if (column.options) {

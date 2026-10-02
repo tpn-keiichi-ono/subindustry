@@ -52,10 +52,10 @@ test('setupTaskSheet：シート・見出しを作り、全行に連動プルダ
   assert.deepStrictEqual(listOf(sheet.getRange('H2')), ['未着手', '対応中', '完了']);
   assert.strictEqual(sheet.getRange('G2').getDataValidation().getCriteriaType(), 'DATE_IS_VALID_DATE');
   assert.strictEqual(sheet.getRange('E2').getDataValidation(), null, 'タスクの列は自由に入力できる');
-  assert.strictEqual(sheet.getRange('A2').getDataValidation(), null, 'サービス シートが無ければサービスの列にはまだ付けない');
+  assert.strictEqual(sheet.getRange('A2').getDataValidation(), null, 'リクエスト シートが無ければサービスの列にはまだ付けない');
   assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
   assert.match(gas.toasts[0].message, /作りました/);
-  assert.match(gas.toasts[0].message, /setupServiceSheets\(\) を実行してください/);
+  assert.match(gas.toasts[0].message, /importServiceRequests\(\) を実行してください/);
 });
 
 test('サブインダストリーを選ぶと、その行の得意先・案件名がそのサブインダストリーのものに絞られる', () => {
