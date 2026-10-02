@@ -10,10 +10,34 @@ test('リポジトリ直下の *.gs を1つのグローバルスコープに読�
   });
 });
 
-test('onOpen で「クレデンシャル」と「アカウントプランシート作成」の両方のメニューが出る', () => {
+test('onOpen で「履歴機能」と「アカウントプランシート作成」の両方のメニューが出る', () => {
   const gas = createGas();
   gas.global.onOpen({source: gas.ss});
-  assert.deepStrictEqual(gas.menus.map(m => m.title), ['クレデンシャル', 'アカウントプランシート作成']);
+  assert.deepStrictEqual(gas.menus.map(m => m.title), ['履歴機能', 'アカウントプランシート作成']);
+});
+
+test('「履歴機能」のメニューは「権限を承認する（初回のみ）」だけ（ほかの処理はエディタから実行する）', () => {
+  const gas = createGas();
+  gas.global.onOpen({source: gas.ss});
+  const menu = gas.menus.find(m => m.title === '履歴機能');
+  assert.deepStrictEqual(menu.items, [{label: '権限を承認する（初回のみ）', fn: 'authorizeHistoryFeatures'}]);
+  // メニューから外した関数も、エディタから実行できるよう残っている
+  ['openHistorySidebar', 'openCredentialDialog', 'openChangeHistoryDialog', 'openOpportunityCanvas',
+    'setupCredentialLauncher', 'setupChangeHistoryLauncher', 'setupHistorySidebarAutoOpen',
+    'addSampleHistory', 'removeSampleHistory', 'toggleHistorySidebarAutoOpen'].forEach(fn => {
+    assert.strictEqual(typeof gas.global[fn], 'function', fn + ' がありません');
+  });
+});
+
+test('権限を承認する：すべての権限の承認を確かめてから、サイドバーを開き直す', () => {
+  const gas = createGas();
+  gas.global.authorizeHistoryFeatures();
+  assert.deepStrictEqual(gas.scopeChecks, ['FULL']);
+  assert.strictEqual(gas.sidebars.length, 1);
+  assert.strictEqual(gas.sidebars[0].html.file, 'HistorySidebarView');
+  assert.strictEqual(gas.toasts.length, 1);
+  assert.strictEqual(gas.toasts[0].title, '履歴機能');
+  assert.strictEqual(gas.writes.length, 0, 'シートに書き込まない');
 });
 
 test('メニュー項目の関数がすべて存在し、内部用（末尾 _）ではない', () => {

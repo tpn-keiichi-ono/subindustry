@@ -447,6 +447,7 @@ function createGas(options) {
     alerts: [],
     logs: [],
     triggers: [],
+    scopeChecks: [],          // ScriptApp.requireAllScopes に渡された AuthMode
     driveCopies: [],
     selection: null,
     props: {document: new Map(), user: new Map(), script: new Map()},
@@ -654,6 +655,9 @@ function createGas(options) {
   const ScriptApp = {
     EventType: {CLOCK: 'CLOCK', ON_EDIT: 'ON_EDIT', ON_CHANGE: 'ON_CHANGE', ON_OPEN: 'ON_OPEN', ON_FORM_SUBMIT: 'ON_FORM_SUBMIT'},
     TriggerSource: {SPREADSHEETS: 'SPREADSHEETS', CLOCK: 'CLOCK'},
+    AuthMode: {NONE: 'NONE', CUSTOM_FUNCTION: 'CUSTOM_FUNCTION', LIMITED: 'LIMITED', FULL: 'FULL'},
+    // 本物は、承認が足りなければ実行を止めて承認の画面を出す。モックは呼ばれたことだけを残す
+    requireAllScopes(authMode) { gas.scopeChecks.push(authMode); },
     getProjectTriggers: () => gas.triggers.slice(),
     deleteTrigger(trigger) { gas.triggers = gas.triggers.filter(t => t !== trigger); },
     newTrigger(handler) {

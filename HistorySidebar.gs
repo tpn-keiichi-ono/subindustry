@@ -4,7 +4,9 @@
  * 画面は HTMLファイル「HistorySidebarView」。
  *
  * 仕組み
- * - メニュー「履歴サイドバーを開く」で右側にサイドバーを開く（閉じるまで出たまま）
+ * - 開いたときに自動で表示する（autoOpenHistorySidebar）。メニュー「履歴機能」＞「権限を承認する（初回のみ）」や、
+ *   エディタから openHistorySidebar() を実行しても開く（閉じるまで出たまま）
+ * - サイドバーから呼ぶ関数は、開いた本人の権限で動く。まだ承認していない人はサイドバーに承認の手順を出す
  * - サイドバーは短い間隔で「今選ばれている行」を問い合わせ、行が変わったら
  *   その行の得意先のクレデンシャル・オファリングと変更履歴に表示を切り替える
  *   （画面はタブで「クレデンシャル」「変更履歴」を切り替える。変更履歴は期間・項目で絞り込める）
@@ -81,7 +83,7 @@ function removeHistorySidebarAutoOpen() {
   ss.toast('履歴サイドバーの自動表示を止めました。', '履歴サイドバー', 8);
 }
 
-/** 各自がメニューから実行する：自分だけ自動表示をオン／オフする。 */
+/** 各自がエディタから実行する：自分だけ自動表示をオン／オフする。 */
 function toggleHistorySidebarAutoOpen() {
   const ui = SpreadsheetApp.getUi();
   const email = credActiveEmail_();
@@ -94,7 +96,7 @@ function toggleHistorySidebarAutoOpen() {
   const nowOff = !props.getProperty(key);
   if (nowOff) props.setProperty(key, '1'); else props.deleteProperty(key);
   ui.alert('履歴サイドバー', nowOff
-    ? '次回から、開いたときにサイドバーを自動で表示しません。メニューからはいつでも開けます。'
+    ? '次回から、開いたときにサイドバーを自動で表示しません。メニュー「' + CRED_OPTIONS.menuTitle + '」＞「権限を承認する（初回のみ）」からも開けます。'
     : '次回から、開いたときにサイドバーを自動で表示します。', ui.ButtonSet.OK);
 }
 

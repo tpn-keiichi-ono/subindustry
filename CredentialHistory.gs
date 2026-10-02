@@ -29,7 +29,7 @@ const CRED_OPTIONS = {
   launcherHeader: 'クレデンシャル\nオファリング登録',
   customerHeader: '得意先',               // 照合に使う列の見出し
   logSheet: 'クレデンシャル履歴_記録',
-  menuTitle: 'クレデンシャル',
+  menuTitle: '履歴機能',     // メニューの項目は「権限を承認する（初回のみ）」だけ（ほかの処理はエディタから実行する）
   dialogTitle: 'クレデンシャル・オファリング履歴',   // モーダル上部に「タイトル：得意先名」で表示
   dialogWidth: 1280,        // 開いた直後の大きさ（表示後、ブラウザの広さに合わせて自動で広がる）
   dialogHeight: 760,
@@ -93,26 +93,32 @@ function onOpen() {
   if (typeof apAddMenu_ === 'function') apAddMenu_();   // コード.gs（アカウントプランシート作成）
 }
 
+/**
+ * 利用者向けのメニューは、権限の承認だけにする。
+ * 管理者の作業（ボタン列の設定・自動表示の設置・サンプル履歴など）や、選んだ行のモーダルを開く処理は、
+ * Apps Script エディタから関数を直接実行する（docs/OPERATIONS.md）。
+ */
 function credAddMenu_() {
   SpreadsheetApp.getUi()
     .createMenu(CRED_OPTIONS.menuTitle)
-    .addItem('履歴サイドバーを開く', 'openHistorySidebar')
-    .addSeparator()
-    .addItem('選択行の得意先の履歴を開く…', 'openCredentialDialog')
-    .addItem('選択行の変更履歴を開く…', 'openChangeHistoryDialog')
-    .addItem('選択行のオポチュニティキャンバスを開く…', 'openOpportunityCanvas')
-    .addSeparator()
-    .addItem('（管理者）ボタン列を設定・補充', 'setupCredentialLauncher')
-    .addItem('（管理者）変更履歴ボタン列を設定・補充', 'setupChangeHistoryLauncher')
-    .addItem('（管理者）開いたときにサイドバーを自動表示', 'setupHistorySidebarAutoOpen')
-    .addItem('（管理者）サンプル履歴を選択行に追加', 'addSampleHistory')
-    .addItem('（管理者）サンプル履歴をすべて削除', 'removeSampleHistory')
-    .addSeparator()
-    .addItem('自分のサイドバー自動表示をオン／オフ', 'toggleHistorySidebarAutoOpen')
+    .addItem('権限を承認する（初回のみ）', 'authorizeHistoryFeatures')
     .addToUi();
 }
 
-/** メニューから開く場合（ボタンが使えないときの代替・初回の権限承認用）。 */
+/**
+ * メニュー「権限を承認する（初回のみ）」。
+ * まだ承認していない人がメニューから実行すると、Apps Script が承認の画面を出す。
+ * 開いたときのトリガー（管理者の権限で動く）やサイドバーからは承認の画面を出せないため、ここが入口になる。
+ * 承認が済んだら、サイドバーを開き直して履歴を読み込ませる。
+ */
+function authorizeHistoryFeatures() {
+  // 承認の画面で一部の権限のチェックを外した人には、足りない権限の承認の画面をもう一度出す
+  ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);
+  openHistorySidebar();
+  SpreadsheetApp.getActiveSpreadsheet().toast('権限は承認済みです。履歴サイドバーを開きました。', CRED_OPTIONS.menuTitle, 8);
+}
+
+/** エディタから実行して、選んでいる行のモーダルを開く（ボタンが使えないときの代替）。 */
 function openCredentialDialog() {
   const ui = SpreadsheetApp.getUi();
   try {

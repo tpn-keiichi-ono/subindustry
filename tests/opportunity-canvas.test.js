@@ -183,8 +183,10 @@ test('画面：見出し・メニューは日本語（英語の「Opportunity Ca
 
   const {gas, g} = setup(VALUES);
   g.onOpen({source: gas.ss});
-  const labels = [].concat(...gas.menus.map(m => m.items)).filter(i => i.fn === 'openOpportunityCanvas').map(i => i.label);
-  assert.deepStrictEqual(labels, ['選択行のオポチュニティキャンバスを開く…']);
+  const labels = [].concat(...gas.menus.map(m => m.items)).map(i => i.label || '');
+  assert.ok(labels.length > 0);
+  labels.forEach(label => assert.ok(!/Opportunity Canvas/i.test(label), 'メニューに英語の名前があります：' + label));
+  assert.strictEqual(typeof g.openOpportunityCanvas, 'function', 'エディタから実行する関数がありません');
   const sidebar = fs.readFileSync(path.join(__dirname, '..', 'HistorySidebarView.html'), 'utf8');
   assert.ok(!/Opportunity Canvas/i.test(sidebar), 'サイドバーに英語の見出しがあります');
 });

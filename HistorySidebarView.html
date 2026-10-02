@@ -421,6 +421,25 @@
       $('state').className = 'eyebrow' + (kind ? ' ' + kind : '');
     }
 
+    /* ---------- 権限の承認 ---------- */
+
+    // サイドバーは開いたときのトリガー（管理者の権限）で開くが、ここから呼ぶ関数は開いた本人の権限で動く。
+    // まだ承認していない人は呼び出しが失敗するので、承認の手順を出す（メニューの名前は CredentialHistory.gs と合わせる）。
+    const AUTH_HINT = '初めて使うときは、メニュー「履歴機能」＞「権限を承認する（初回のみ）」を実行し、表示される画面で承認してください。承認が済むと、サイドバーが開き直して履歴を表示します。';
+
+    function isAuthError(error) {
+      return /authoriz|permission|承認|権限/i.test(String((error && error.message) || error || ''));
+    }
+
+    function showAuthHint() {
+      setState('権限の承認が必要です', 'error');
+      $('loaded').textContent = '';
+      $('loaded').className = 'loaded';
+      if (current) return;   // 表示中の行があるときはそのまま（承認の取り消しなど、途中で失敗した場合）
+      $('hint').textContent = AUTH_HINT;
+      $('hint').hidden = false;
+    }
+
     /* ---------- 選択行の問い合わせ（前の問い合わせが返ってから次を送る） ---------- */
 
     function nextDelay() {
@@ -438,8 +457,13 @@
           setTimeout(poll, nextDelay());
         })
         .withFailureHandler(error => {
-          setState('行を確認できませんでした（再試行します）', 'error');
           console.error(error);
+          if (isAuthError(error)) {
+            showAuthHint();
+            setTimeout(poll, 10000);   // 承認が済めば、開き直さなくても表示が始まる
+            return;
+          }
+          setState('行を確認できませんでした（再試行します）', 'error');
           setTimeout(poll, 3000);
         })
         .getSidebarSelection(last);
@@ -482,9 +506,13 @@
         })
         .withFailureHandler(error => {
           bundleLoading = false;
+          console.error(error);
+          if (isAuthError(error)) {
+            showAuthHint();
+            return;
+          }
           $('loaded').textContent = '履歴を読み込めませんでした';
           $('loaded').className = 'loaded error';
-          console.error(error);
         })
         .getSidebarBundle();
     }

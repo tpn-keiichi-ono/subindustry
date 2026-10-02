@@ -12,7 +12,7 @@ Google スプレッドシートにバインドされた Google Apps Script（V8�
 ## 守ること
 
 1. **`.gs` と `.html` に同じ名前を付けない**（Apps Script では拡張子違いでも同名不可）。HTML を増やすときは `XxxDialog` / `XxxView` のように別名にし、`createTemplateFromFile()` の名前と一致させる。
-2. **`onOpen` はプロジェクト全体で1つだけ**（現在は `CredentialHistory.gs`）。メニュー項目は `credAddMenu_()` に足す。別のメニューは、メニューを作る関数（例：`コード.gs` の `apAddMenu_()`）を `onOpen` から呼ぶ。
+2. **`onOpen` はプロジェクト全体で1つだけ**（現在は `CredentialHistory.gs`）。メニュー「履歴機能」（`credAddMenu_()`）は利用者向けの「権限を承認する（初回のみ）」だけにし、管理者の作業などはエディタから関数を実行する（メニューに項目を足さない）。別のメニューは、メニューを作る関数（例：`コード.gs` の `apAddMenu_()`）を `onOpen` から呼ぶ。
 3. **`DIFF_RULES` の `ranges` にボタン列（チェックボックスの列）を含めない**。範囲を変えたら `setupDiffTracking()` の実行が必要（運用側の作業として必ず伝える）。
 4. **差分追跡の記録を壊さない**：`変更履歴_差分`・`変更時点スナップショット`・非表示の `__CHAR_DIFF_*` シートの列構成や書き方を変えるときは、既存の読み手（`Changehistory.gs`・`HistorySidebar.gs`）も合わせて直す。記録は追記のみで、過去の行を書き換えない。
 5. **シートへの文字列の書き込みは数式にならない方法で**：差分ログはリッチテキスト、クレデンシャル記録は先頭に `'` を付けた値（`credText_()`）。`setValue(ユーザー入力)` をそのまま使わない。

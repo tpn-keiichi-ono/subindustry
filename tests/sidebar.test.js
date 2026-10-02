@@ -134,3 +134,14 @@ test('getSidebarBundle：33シナリオ攻略先リストが無ければ、ア�
   const {g} = setupProject();
   assert.deepStrictEqual(plain(g.getSidebarBundle()).accountPlans, {});
 });
+
+test('画面：まだ承認していない人への案内は、実際のメニュー名・項目名と一致する', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'HistorySidebarView.html'), 'utf8');
+  const {gas, g} = setupProject();
+  g.onOpen({source: gas.ss});
+  const menu = gas.menus.find(m => m.title === gas.get('CRED_OPTIONS').menuTitle);
+  const item = menu.items.find(i => i.fn === 'authorizeHistoryFeatures');
+  assert.ok(html.includes('メニュー「' + menu.title + '」＞「' + item.label + '」'), 'サイドバーの案内とメニューの名前が違います');
+});

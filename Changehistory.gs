@@ -25,7 +25,7 @@ const CHG_OPTIONS = {
 
 // ボタン列のチェックは CredentialHistory.gs の credLauncherKind_()（見出しが CHG_OPTIONS.launcherHeader の列）で判断する。
 
-/** メニューから開く場合（ボタンが使えないときの代替・初回の権限承認用）。 */
+/** エディタから実行して、選んでいる行のモーダルを開く（ボタンが使えないときの代替）。 */
 function openChangeHistoryDialog() {
   const ui = SpreadsheetApp.getUi();
   try {

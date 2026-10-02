@@ -49,7 +49,7 @@ const OC_OPTIONS = {
 
 /* ---------------- 開く ---------------- */
 
-/** メニューから：選んだ行のオポチュニティキャンバスを開く。 */
+/** エディタから実行：選んでいる行のオポチュニティキャンバスを開く（サイドバーの「キャンバス」と同じ）。 */
 function openOpportunityCanvas() {
   const ui = SpreadsheetApp.getUi();
   try {
