@@ -1,54 +1,77 @@
 /**
  * サービス管理（リクエストのとりまとめ）
- * 新FMT の「サービスのリクエスト」（Z列）を「リクエスト」シートに転記し、リクエストをもとにサービスを考える。
- * TaskManagement.gs と同じプロジェクトに置くファイル（見出しの用意・ロック・onEdit は TaskManagement.gs と共通）。
+ * 新FMT の「サービスのリクエスト」（Z列）を「リクエスト」シートに転記し、リクエストをもとにサービス案を考える。
+ * TaskManagement.gs と同じプロジェクトに置くファイル（見出しの用意・ロックは TaskManagement.gs と共通）。
  *
  * 仕組み
  * - サービスは最初から決まっているものではなく、リクエストをもとに考える。サービスの一覧のシートは持たず、
- *   リクエストの「サービス」の列に入力した名前がサービスになる（同じ名前を付けたリクエストが1つのサービスにまとまる）
+ *   リクエストの「サービス案」の列に入力した名前がサービス案になる（同じ名前を付けたリクエストが1つのサービス案にまとまる）
  * - リクエスト シートの左の4列（サブインダストリー・得意先・案件名・リクエスト）は、新FMT から自動で転記する：
- *   新FMT のこの4列を編集すると、単純トリガーの onEdit（TaskManagement.gs）が svcHandleSourceEdit_ で転記する。
+ *   新FMT のこの4列を編集すると、単純トリガーの onEdit（このファイル）が svcHandleSourceEdit_ で転記する。
  *   まだ無いリクエスト（得意先・案件名・リクエストの組で見分ける）は末尾に足し、サブインダストリーは新FMT に合わせる。
  *   1つのセルで得意先・案件名・リクエストを書き換えたときは、新しい行を足さずに同じ行を直す
  * - 管理者が importServiceRequests() をエディタから実行すると、シートを用意し、まとめて転記し直す（最初の1回・漏れたとき）
  * - 転記する4列は、手で変えると警告が出るように保護する（警告だけ。転記は止まらない）
- * - サービスの検討の進捗は、タスク管理シート（TaskManagement.gs）でタスクとして管理する。
- *   タスクの「サービス」はリクエストに付けたサービス名から選び、選ぶと案件の選択肢がそのサービスにまとめたリクエストの案件に絞られる
- * - リクエストでサービスを付けたとき、判断が未判断なら「サービス化検討」にする。
- *   リクエストのサービス・判断を変えたら、タスク管理の案件の選択肢も作り直す
+ * - サービス案の検討の進捗は、タスク管理シート（TaskManagement.gs）でタスクとして管理する（タスクをサービス案に対応付ける）
+ * - リクエストでサービス案を付けたとき、判断が未判断なら「サービス化検討」にする
  * - 新FMT から消えた・書き換えられたリクエストは、行を消さずに「リクエスト」のセルに注を付ける
  */
 
 const SVC_OPTIONS = {
   requestSheet: 'リクエスト',
   headerRow: 1,
-  // 取り込み元（TASK_OPTIONS.sourceSheets。新FMT）でリクエストが書かれた列の見出し（Z列）。1つのセルに1件
-  requestHeader: 'サービスのリクエスト',
-  // 左の4列（copied）は新FMT から転記する。サービス・判断・メモを手で入れる
+  // 転記元のシート。見出しの行は DIFF_RULES の headerRow（DIFF_RULES に無いシートは sourceHeaderRow）。新FMT2 も使うときは足す
+  sourceSheets: ['新FMT'],
+  sourceHeaderRow: 2,
+  // 転記元で読む列の見出し（リクエスト シートの左の4列の順）。リクエストは Z列。1つのセルに1件
+  sourceHeaders: ['サブインダストリー', '得意先', '案件名', 'サービスのリクエスト'],
+  // 左の4列（copied）は新FMT から転記する。サービス案・判断・メモを手で入れる。aliases は前の版の見出し
   requestColumns: [
     {key: 'subIndustry', label: 'サブインダストリー', width: 160, required: true, copied: true},
     {key: 'customer', label: '得意先', width: 200, required: true, copied: true},
     {key: 'project', label: '案件名', width: 240, required: true, copied: true},
     {key: 'request', label: 'リクエスト', width: 360, required: true, copied: true},
-    {key: 'service', label: 'サービス', width: 200},   // まとめる先のサービス名（自由に入力する）
+    {key: 'service', label: 'サービス案', width: 220, aliases: ['サービス']},   // まとめる先のサービス案の名前（自由に入力する）
     {key: 'decision', label: '判断', width: 130, options: ['未判断', 'サービス化検討', '棄却']},
     {key: 'note', label: 'メモ', width: 280},
     {key: 'importedAt', label: '取り込み日', width: 100}
   ],
   defaultDecision: '未判断',             // 取り込んだときの判断
-  rejectedDecision: '棄却',              // この判断のリクエストは、タスクの案件の選択肢に入れない
-  decisionWithService: 'サービス化検討',  // サービスを付けたとき、判断が未判断（または空）ならこれにする
+  decisionWithService: 'サービス化検討',  // サービス案を付けたとき、判断が未判断（または空）ならこれにする
   missingNote: '取り込み元に見つかりません',   // 新FMT から消えた・書き換えられたリクエストに付ける注の先頭
-  changedNote: '新FMT でリクエストが書き換えられました',   // サービス・判断を付けたあとで書き換えられたときの注
+  changedNote: '新FMT でリクエストが書き換えられました',   // サービス案・判断を付けたあとで書き換えられたときの注
   protectDescription: 'リクエスト：新FMT から自動で転記する列',
   lockWaitMs: 30000                       // エディタから実行する処理のロックの待ち時間
 };
+
+/* ---------------- 編集したとき（単純トリガー） ---------------- */
+
+/**
+ * 単純トリガー。onEdit() はプロジェクト全体でこの1つだけにすること。
+ * 転記元（新FMT）とリクエスト シートの編集だけを扱い、ほかのシートではすぐ戻る
+ * （差分追跡はインストール型の recordDiffEdit が別に動く）。編集した本人として、承認なしで動く。
+ */
+function onEdit(e) {
+  if (!e || !e.range) return;
+  const sheet = e.range.getSheet();
+  const name = sheet.getName();
+  let handler = null;
+  if (name === SVC_OPTIONS.requestSheet) handler = svcHandleRequestEdit_;
+  else if (SVC_OPTIONS.sourceSheets.indexOf(name) >= 0) handler = svcHandleSourceEdit_;
+  if (!handler || e.range.getLastRow() <= SVC_OPTIONS.headerRow) return;
+  try {
+    handler(sheet, e.range, e);
+  } catch (error) {
+    console.warn(name + ' edit skipped: ' + (error && error.stack || error));
+    try { sheet.getParent().toast(error.message, 'サービス管理', 10); } catch (_) {}
+  }
+}
 
 /* ---------------- 管理者がエディタから実行する ---------------- */
 
 /**
  * リクエスト シートを用意する（無ければ作る）。見出し・プルダウン・転記する列の保護を付ける。
- * タスク管理シートがあれば「サービス」の列（無ければ右端に足す）にもプルダウンを付ける。何度実行してもよい。
+ * タスク管理シートがあれば「サービス案」の列（無ければ右端に足す）にもプルダウンを付ける。何度実行してもよい。
  */
 function setupRequestSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -84,8 +107,8 @@ function svcEnsureSheet_(ss) {
 }
 
 /**
- * 全行のプルダウン（判断）を付け、転記する列を保護する。サービスの列は自由に入力するので、プルダウンを付けない（前の版で付けたものは外す）。
- * タスク管理シートがあれば、その「サービス」の列（リクエストに付けたサービス名から選ぶ）にもプルダウンを付ける。
+ * 全行のプルダウン（判断）を付け、転記する列を保護する。サービス案の列は自由に入力するので、プルダウンを付けない（前の版で付けたものは外す）。
+ * タスク管理シートがあれば、その「サービス案」の列（リクエストに付けたサービス案から選ぶ）にもプルダウンを付ける。
  */
 function svcApplyRules_(ss, sheet) {
   const warnings = [];
@@ -102,10 +125,11 @@ function svcApplyRules_(ss, sheet) {
   let taskAdded = [];
   const task = ss.getSheetByName(TASK_OPTIONS.sheet);
   if (task) {
-    taskAdded = taskEnsureHeader_(task, taskAllColumns_(), TASK_OPTIONS.headerRow);
+    taskAdded = taskEnsureHeader_(task, TASK_OPTIONS.columns, TASK_OPTIONS.headerRow);
     const taskRows = task.getMaxRows() - TASK_OPTIONS.headerRow;
     if (taskRows > 0) {
-      taskApplyColumnRules_(task, [TASK_OPTIONS.service], {service: taskColumns_(task).service}, TASK_OPTIONS.headerRow + 1, taskRows);
+      taskApplyColumnRules_(task, TASK_OPTIONS.columns.filter(c => c.type === 'service'),
+        taskColumnMap_(task, TASK_OPTIONS.columns, TASK_OPTIONS.headerRow), TASK_OPTIONS.headerRow + 1, taskRows);
     }
   }
   return {warnings, taskAdded};
@@ -134,7 +158,7 @@ function svcSetupMessage_(result) {
 }
 
 /**
- * タスク管理の「サービス」の列の入力規則。リクエスト シートの「サービス」の列（リクエストに付けたサービス名）を範囲で参照し、
+ * タスク管理の「サービス案」の列の入力規則。リクエスト シートの「サービス案」の列を範囲で参照し、
  * そこに無い名前は入力できないようにする。リクエスト シートが無ければ null。
  */
 function svcServiceRule_(ss) {
@@ -146,36 +170,8 @@ function svcServiceRule_(ss) {
   return SpreadsheetApp.newDataValidation()
     .requireValueInRange(sheet.getRange(letter + (SVC_OPTIONS.headerRow + 1) + ':' + letter), true)
     .setAllowInvalid(false)
-    .setHelpText('「' + SVC_OPTIONS.requestSheet + '」シートでリクエストに付けたサービス名から選んでください。')
+    .setHelpText('「' + SVC_OPTIONS.requestSheet + '」シートでリクエストに付けたサービス案から選んでください。')
     .build();
-}
-
-/**
- * サービス名（credNormalize_）ごとに、そのサービスにまとめたリクエストの案件 [サブインダストリー, 得意先, 案件名] を返す
- * （棄却したリクエストは除く）。タスク管理の連動プルダウン（TaskManagement.gs の taskSources_）で使う。
- */
-function svcRequestRecordsByService_(ss) {
-  const out = new Map();
-  const sheet = ss.getSheetByName(SVC_OPTIONS.requestSheet);
-  if (!sheet) return out;
-  const count = sheet.getLastRow() - SVC_OPTIONS.headerRow;
-  if (count < 1) return out;
-  const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
-  if (!cols.service) return out;
-
-  const keys = ['subIndustry', 'customer', 'project', 'service', 'decision'].filter(k => cols[k]);
-  const left = Math.min.apply(null, keys.map(k => cols[k]));
-  const right = Math.max.apply(null, keys.map(k => cols[k]));
-  sheet.getRange(SVC_OPTIONS.headerRow + 1, left, count, right - left + 1).getDisplayValues().forEach(line => {
-    const get = key => (cols[key] ? String(line[cols[key] - left]).trim() : '');
-    const service = get('service');
-    if (!service || get('decision') === SVC_OPTIONS.rejectedDecision) return;
-    const values = [get('subIndustry'), get('customer'), get('project')];
-    const key = credNormalize_(service);
-    if (!out.has(key)) out.set(key, []);
-    out.get(key).push({values, keys: values.map(credNormalize_)});
-  });
-  return out;
 }
 
 /* ---------------- 新FMT からの転記 ---------------- */
@@ -185,9 +181,34 @@ function svcRequestKey_(customer, project, request) {
   return [customer, project, request].map(credNormalize_).join('\u0001');
 }
 
-/** 取り込み元で読む列の見出し [サブインダストリー, 得意先, 案件名, リクエスト]。 */
-function svcSourceHeaders_() {
-  return TASK_OPTIONS.cascade.map(c => c.source).concat([SVC_OPTIONS.requestHeader]);
+/** 転記元のシートの見出しの行（DIFF_RULES の headerRow。DIFF_RULES に無いシートは SVC_OPTIONS.sourceHeaderRow）。 */
+function svcSourceHeaderRow_(name) {
+  return DIFF_RULES[name] ? DIFF_RULES[name].headerRow : SVC_OPTIONS.sourceHeaderRow;
+}
+
+/**
+ * 転記元のすべてのシートから、SVC_OPTIONS.sourceHeaders の列の値を行の順に返す（前後の空白は除く。すべて空の行は除く）。
+ * 見出しが足りないときは止める。
+ */
+function svcReadSource_(ss) {
+  const rows = [];
+  SVC_OPTIONS.sourceSheets.forEach(name => {
+    const sheet = ss.getSheetByName(name);
+    if (!sheet) throw new Error('転記元のシート「' + name + '」が見つかりません。');
+    const headerRow = svcSourceHeaderRow_(name);
+    const headers = sheet.getRange(headerRow, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
+    const cols = SVC_OPTIONS.sourceHeaders.map(h => taskFindColumn_(headers, h, name + ' の ' + headerRow + '行目', true));
+    const count = sheet.getLastRow() - headerRow;
+    if (count < 1) return;
+
+    const left = Math.min.apply(null, cols);
+    const right = Math.max.apply(null, cols);
+    sheet.getRange(headerRow + 1, left, count, right - left + 1).getDisplayValues().forEach(line => {
+      const values = cols.map(col => String(line[col - left] == null ? '' : line[col - left]).trim());
+      if (values.some(Boolean)) rows.push(values);
+    });
+  });
+  return rows;
 }
 
 /**
@@ -205,7 +226,7 @@ function svcSync_(ss, sheet, renamed) {
   const today = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyy/MM/dd');
 
   const source = new Map();
-  taskReadSource_(ss, svcSourceHeaders_()).forEach(values => {
+  svcReadSource_(ss).forEach(values => {
     if (!values[3]) return;
     const key = svcRequestKey_(values[1], values[2], values[3]);
     if (!source.has(key)) source.set(key, values);
@@ -258,7 +279,7 @@ function svcSync_(ss, sheet, renamed) {
       if (source.has(key)) {
         if (changedRows.has(i) && (!notes[i] || missingNote)) {
           notesChanged = true;
-          return SVC_OPTIONS.changedNote + '（' + today + '）。サービス・判断を見直してください。';
+          return SVC_OPTIONS.changedNote + '（' + today + '）。サービス案・判断を見直してください。';
         }
         if (!missingNote) return notes[i];
         notesChanged = true;
@@ -268,7 +289,7 @@ function svcSync_(ss, sheet, renamed) {
       if (notes[i]) return notes[i];   // 前回から見つからないまま、または利用者が書いた注
       notesChanged = true;
       return SVC_OPTIONS.missingNote + '（' + today + ' に気づきました）。' +
-        TASK_OPTIONS.sourceSheets.join('・') + ' で書き換えか削除された可能性があります。';
+        SVC_OPTIONS.sourceSheets.join('・') + ' で書き換えか削除された可能性があります。';
     });
     if (notesChanged) noteRange.setNotes(next.map(n => [n]));
   }
@@ -294,7 +315,7 @@ function svcSync_(ss, sheet, renamed) {
   return {added: fresh.length, updated, missing, total: source.size};
 }
 
-/* ---------------- 編集したとき（TaskManagement.gs の onEdit から） ---------------- */
+/* ---------------- 編集したとき（onEdit から） ---------------- */
 
 /**
  * 新FMT（取り込み元）を編集したとき：サブインダストリー・得意先・案件名・リクエストの列を変えたら、リクエスト シートに転記する。
@@ -304,11 +325,11 @@ function svcHandleSourceEdit_(sheet, range, e) {
   const ss = sheet.getParent();
   const request = ss.getSheetByName(SVC_OPTIONS.requestSheet);
   if (!request) return;
-  const headerRow = taskSourceHeaderRow_(sheet.getName());
+  const headerRow = svcSourceHeaderRow_(sheet.getName());
   if (range.getLastRow() <= headerRow) return;
 
   const headers = sheet.getRange(headerRow, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
-  const cols = svcSourceHeaders_().map(h => (taskHeaderCount_(headers, h) === 1 ? taskFindColumn_(headers, h, '', true) : 0));
+  const cols = SVC_OPTIONS.sourceHeaders.map(h => (taskHeaderCount_(headers, h) === 1 ? taskFindColumn_(headers, h, '', true) : 0));
   if (cols.some(col => !col)) return;
   if (!cols.some(col => col >= range.getColumn() && col <= range.getLastColumn())) return;
 
@@ -332,50 +353,29 @@ function svcHandleSourceEdit_(sheet, range, e) {
   }
 
   try {
-    taskWithLock_(() => {
-      const result = svcSync_(ss, request, renamed);
-      // 得意先・案件名などを直したときは、タスク管理の案件の選択肢も作り直す（値は空にしない）
-      if (result.updated) svcRefreshTaskRows_(ss);
-    });
+    taskWithLock_(() => svcSync_(ss, request, renamed));
   } catch (error) {
     throw new Error('リクエスト シートへの転記ができませんでした（' + error.message + '）。' +
       'あとで importServiceRequests() を実行するか、もう一度編集してください。');
   }
 }
 
-/**
- * リクエストのサービス・判断を変えたとき：
- * サービスを付けた行は、判断が未判断（または空）なら「サービス化検討」にする。
- * まとめ方が変わるので、タスク管理の案件の選択肢も作り直す（値は空にしない）。
- */
+/** リクエストでサービス案を付けた行は、判断が未判断（または空）なら「サービス化検討」にする。 */
 function svcHandleRequestEdit_(sheet, range) {
   const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
-  const edited = col => col > 0 && col >= range.getColumn() && col <= range.getLastColumn();
-  if (!edited(cols.service) && !edited(cols.decision)) return;
+  if (!cols.service || !cols.decision) return;
+  if (cols.service < range.getColumn() || cols.service > range.getLastColumn()) return;
 
   const first = Math.max(range.getRow(), SVC_OPTIONS.headerRow + 1);
-  const last = Math.min(range.getLastRow(), first + TASK_OPTIONS.maxEditRows - 1);
-  const rows = last - first + 1;
+  const rows = range.getLastRow() - first + 1;
   taskWithLock_(() => {
-    if (edited(cols.service) && cols.decision) {
-      const services = sheet.getRange(first, cols.service, rows, 1).getDisplayValues();
-      const decisions = sheet.getRange(first, cols.decision, rows, 1).getDisplayValues();
-      services.forEach((service, i) => {
-        const decision = String(decisions[i][0]).trim();
-        if (String(service[0]).trim() && (!decision || decision === SVC_OPTIONS.defaultDecision)) {
-          sheet.getRange(first + i, cols.decision).setValue(SVC_OPTIONS.decisionWithService);
-        }
-      });
-    }
-    svcRefreshTaskRows_(sheet.getParent());
+    const services = sheet.getRange(first, cols.service, rows, 1).getDisplayValues();
+    const decisions = sheet.getRange(first, cols.decision, rows, 1).getDisplayValues();
+    services.forEach((service, i) => {
+      const decision = String(decisions[i][0]).trim();
+      if (String(service[0]).trim() && (!decision || decision === SVC_OPTIONS.defaultDecision)) {
+        sheet.getRange(first + i, cols.decision).setValue(SVC_OPTIONS.decisionWithService);
+      }
+    });
   });
-}
-
-/** タスク管理の入力済みの行（最後の行まで）の連動プルダウンを作り直す。値は空にしない。 */
-function svcRefreshTaskRows_(ss) {
-  const task = ss.getSheetByName(TASK_OPTIONS.sheet);
-  if (!task) return;
-  const rows = task.getLastRow() - TASK_OPTIONS.headerRow;
-  if (rows < 1) return;
-  taskRefreshRows_(task, taskColumns_(task), taskSources_(ss), TASK_OPTIONS.headerRow + 1, rows, Infinity);
 }

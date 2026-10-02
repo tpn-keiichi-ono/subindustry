@@ -417,6 +417,22 @@ class Sheet {
     this.maxCols -= count;
     return this;
   }
+  deleteColumn(col) { return this.deleteColumns(col, 1); }
+
+  /** destinationIndex は動かす前の列番号で数える（Apps Script と同じ）。 */
+  moveColumns(columnSpec, destinationIndex) {
+    const from = columnSpec.getColumn();
+    const count = columnSpec.getNumColumns();
+    const at = destinationIndex > from ? destinationIndex - 1 - count : destinationIndex - 1;
+    this.data.forEach((line, i) => {
+      if (!line) return;
+      while (line.length < from - 1 + count) line.push(undefined);
+      const moved = line.splice(from - 1, count);
+      while (line.length < at) line.push(undefined);
+      line.splice(at, 0, ...moved);
+      this.data[i] = line;
+    });
+  }
 
   appendRow(values) {
     const row = this.getLastRow() + 1;
