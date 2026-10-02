@@ -114,6 +114,37 @@ function newRichTextValue() {
   return builder;
 }
 
+/* ---------------- 入力規則（プルダウン・日付） ---------------- */
+
+const DataValidationCriteria = {VALUE_IN_LIST: 'VALUE_IN_LIST', DATE_IS_VALID_DATE: 'DATE_IS_VALID_DATE'};
+
+function newDataValidation() {
+  const rule = {type: null, values: [], showDropdown: true, allowInvalid: true, helpText: ''};
+  const builder = {
+    requireValueInList(values, showDropdown) {
+      if (!Array.isArray(values) || !values.length) throw new Error('The list of values must contain at least one item.');
+      rule.type = DataValidationCriteria.VALUE_IN_LIST;
+      rule.values = values.map(String);
+      rule.showDropdown = showDropdown !== false;
+      return builder;
+    },
+    requireDate() { rule.type = DataValidationCriteria.DATE_IS_VALID_DATE; rule.values = []; return builder; },
+    setAllowInvalid(allow) { rule.allowInvalid = !!allow; return builder; },
+    setHelpText(text) { rule.helpText = String(text); return builder; },
+    build() {
+      if (!rule.type) throw new Error('A data validation rule needs criteria.');
+      const built = Object.assign({}, rule, {values: rule.values.slice()});
+      return {
+        getCriteriaType: () => built.type,
+        getCriteriaValues: () => (built.type === DataValidationCriteria.VALUE_IN_LIST ? [built.values.slice(), built.showDropdown] : []),
+        getAllowInvalid: () => built.allowInvalid,
+        getHelpText: () => built.helpText
+      };
+    }
+  };
+  return builder;
+}
+
 /* ---------------- Range ---------------- */
 
 class Range {
@@ -233,7 +264,23 @@ class Range {
     return this;
   }
 
-  clearDataValidations() { this.each(cell => { cell.checkbox = false; }); return this; }
+  clearDataValidations() { this.each(cell => { cell.checkbox = false; cell.validation = null; }); return this; }
+
+  setDataValidation(rule) {
+    this.write('setDataValidation');
+    this.each(cell => { cell.validation = rule || null; });
+    return this;
+  }
+
+  setDataValidations(matrix) {
+    this.checkShape(matrix);
+    this.write('setDataValidations');
+    this.each((cell, r, c) => { cell.validation = matrix[r][c] || null; });
+    return this;
+  }
+
+  getDataValidation() { return this.getDataValidations()[0][0]; }
+  getDataValidations() { return this.map(cell => (cell && cell.validation) || null); }
   getMergedRanges() { return []; }
 
   protect() {
@@ -536,6 +583,8 @@ function createGas(options) {
 
   const SpreadsheetApp = {
     ProtectionType: {RANGE: 'RANGE', SHEET: 'SHEET'},
+    DataValidationCriteria,
+    newDataValidation,
     getActiveSpreadsheet: () => ss,
     getActive: () => ss,
     getActiveSheet: () => ss.getActiveSheet(),
