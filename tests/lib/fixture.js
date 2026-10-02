@@ -71,4 +71,4 @@ function setupProject(options) {
   return {gas, g, sheet};
 }
 
-module.exports = {COL, WIDTH, addTrackedSheets, setupProject};
+module.exports = {COL, WIDTH, headerRow, dataRow, addTrackedSheets, setupProject};

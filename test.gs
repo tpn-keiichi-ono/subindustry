@@ -1,9 +1,25 @@
 /**
  * Character-level differences for Google Sheets (container-bound Apps Script).
  * Revision: event IDs + editor email + row snapshots + source column names
- *           + lock-busy deferral + catch-up scan + automatic row resync.
+ *           + lock-busy deferral + catch-up scan + automatic row resync
+ *           + row shift detection.
  *
- * CHANGES IN THIS REVISION (v5):
+ * CHANGES IN THIS REVISION (v6)：行のずれで履歴が崩れないようにする
+ * - 行数が変わらない「ずれ」にも気づく。行の削除と追加がトリガーより先に両方起きて行数が元に戻った場合・
+ *   並べ替え・ドラッグでの移動のあとは、比較基準の行と今の行が食い違い、「変更前」に別の行の値が出ていた。
+ *   見分け列（DIFF_ROW_OPTIONS.keyHeaders：得意先・案件名）の値が、比較基準では別の行にあった値なら
+ *   「ずれた」とみなし、行の突き合わせ（diffResyncRows_）をしてから記録する。
+ *   調べるのは、編集トリガー（編集したシート）・変更トリガー（行数が変わったシートと、操作したシート）・
+ *   取りこぼし回収（印の付いたシート）だけ。追跡シートが多くても、全シートは読まない。
+ * - 突き合わせで、見分け列が同じ行は同じ行として組にする。行がずれたあとの編集は「行削除＋行追加」ではなく、
+ *   その行の変更として記録する。移動しただけの行は何も記録しない。
+ * - 編集トリガーから突き合わせたとき、編集した範囲の変更はふつうの編集（EVT・編集者つき）として記録し、
+ *   それ以外の未記録の変更は編集者「不明」で記録する（編集した人の変更にしない）。
+ * - 変更トリガーがロックを取れなかったとき、全シートを「全セル比較」の印にせず、
+ *   行数・列数が変わったシートと操作したシートだけに「行の確かめ」の印を付ける（取りこぼし回収で軽く処理する）。
+ * - 行の突き合わせ・取りこぼし回収は、データのある最後の行までだけを読む。
+ *
+ * CHANGES IN v5:
  * - 行の追加・削除で追跡を止めない。行数だけが変わった場合は、自動で
  *   ①比較基準と現在の行を突き合わせ、②削除された行（行全体の内容）・追加された行・
  *   その間に変わったセルを 変更履歴_差分 に記録し、③比較基準を取り直す。
@@ -35,9 +51,11 @@
  *    Only ONE designated account should install these triggers.
  *
  * Re-running setupDiffTracking() takes a NEW baseline. Existing logs remain.
- * Run it after changing tracked ranges or after column changes/sorting.
- * Do not delete/edit the hidden __CHAR_DIFF_* sheets or sort the source while
- * tracking. Source cell CONTENT/FORMATTING is never rewritten; only the
+ * Run it after changing tracked ranges or after column changes.
+ * Do not delete/edit the hidden __CHAR_DIFF_* sheets while tracking.
+ * Sorting/moving rows is detected at the next edit (v6), but rows whose
+ * 得意先 and 案件名 are both the same cannot be told apart; avoid sorting.
+ * Source cell CONTENT/FORMATTING is never rewritten; only the
  * dedicated timestamp column is written. Differences appear in the log.
  *
  * If the script's required permissions change (e.g. after a code update),
@@ -98,7 +116,12 @@ const DIFF_ROW_OPTIONS = {
   structureLockWaitMs: 30000,
   maxAlignCells: 4000000,      // 行の突き合わせ（LCS）の上限。超えたら変化した範囲をまとめて扱う
   readChunkCells: 5000,
-  maxSummaryCharacters: 40000
+  maxSummaryCharacters: 40000,
+  // 行を見分ける列の見出し（追跡範囲の中の列）。行のずれの検知と、突き合わせで同じ行を見つけるのに使う。
+  // 見つからない見出しは使わない（1つも見つからないシートでは、ずれの検知はしない）
+  keyHeaders: ['得意先', '案件名'],
+  // 「行の確かめ」だけが必要なシートの印（取りこぼし回収で、全セルは比べずに行数・ずれだけを確かめる）
+  checkPrefix: 'CHAR_DIFF_ROWCHECK_V1_'
 };
 
 const DIFF_HEADERS = [
@@ -215,7 +238,10 @@ function setupDiffTracking() {
 
     // Clear dirty flags BEFORE reading the baseline. Any edit deferred while
     // this setup holds the lock sets a new flag and is caught up afterwards.
-    plans.forEach(plan => diffClearDirty_(plan.sheet.getSheetId()));
+    plans.forEach(plan => {
+      diffClearDirty_(plan.sheet.getSheetId());
+      diffClearRowCheck_(plan.sheet.getSheetId());
+    });
 
     const state = {};
     // Mark tracking as paused until the complete baseline is saved.
@@ -266,8 +292,9 @@ function setupDiffTracking() {
  * - differences are recorded per actually changed cell
  * - row snapshot = one record per event ID x changed row
  * - if the lock is busy, the edit is deferred to catchUpDiffTracking()
- * - if only the number of rows changed (row insert/delete), the sheet is
- *   resynchronized first (the edit is recorded as part of that)
+ * - if only the number of rows changed (row insert/delete), or the rows are
+ *   shifted (v6), the sheet is resynchronized first. The edited cells are
+ *   still recorded as a normal edit (EVT) with the editor.
  */
 function recordDiffEdit(e) {
   console.log('recordDiffEdit fired: ' + (e && e.range
@@ -293,16 +320,31 @@ function recordDiffEdit(e) {
   }
 
   try {
+    const edit = {
+      r1: e.range.getRow(), r2: e.range.getLastRow(),
+      c1: e.range.getColumn(), c2: e.range.getLastColumn()
+    };
+    const resync = () => diffResyncRows_(e.source, sheet, rule, {
+      structure: DIFF_ROW_OPTIONS.unknownEditor,
+      changes: diffEditorEmail_(e),
+      others: DIFF_ROW_OPTIONS.unknownEditor,
+      edit
+    });
+
     // 行の追加・削除の直後で、変更トリガーより先にこの編集が届いた場合
     if (diffRowCountOnlyChanged_(sheet, rule)) {
-      diffResyncRows_(e.source, sheet, rule, {
-        structure: DIFF_ROW_OPTIONS.unknownEditor,
-        changes: diffEditorEmail_(e)
-      });
+      resync();
       return;
     }
 
     const ctx = diffContext_(e.source, sheet, rule);
+
+    // 行数は同じでも行がずれている（削除と追加が続いた・並べ替え・移動）なら、突き合わせ直してから記録する
+    // （そのまま比べると、別の行の値が「変更前」になる）
+    if (diffRowsShifted_(sheet, rule, ctx.baseline, ctx.stampColumn, edit)) {
+      resync();
+      return;
+    }
 
     const blocks = diffBlocks_(sheet, rule, e.range, ctx.stampColumn, false);
     if (!blocks.length) return;
@@ -350,20 +392,18 @@ function recordDiffEdit(e) {
 
 /**
  * Installed time-driven trigger (every DIFF_OPTIONS.catchUpMinutes minutes).
- * Does nothing unless a sheet was marked dirty by a deferred edit.
- * For each dirty sheet, compares the entire tracked range with the baseline
- * and records every difference found.
+ * Does nothing unless a sheet was marked by a deferred edit (dirty) or by a
+ * deferred structure change (row check).
+ * - 行数の変化・行のずれがあれば、行の突き合わせ（diffResyncRows_）で処理する（変わったセルもここで記録される）
+ * - 「行の確かめ」の印だけなら、全セルは比べない
+ * - dirty の印なら、データのある最後の行までを比較基準と比べ、見つかった違いをすべて記録する
+ * 印は全シートぶんを1回で読むので、追跡シートが多くても、印が無ければすぐに終わる。
  */
 function catchUpDiffTracking() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const props = PropertiesService.getDocumentProperties();
 
-  const pending = Object.entries(DIFF_RULES)
-    .map(([name, rule]) => ({name, rule, sheet: ss.getSheetByName(name)}))
-    .filter(p => p.sheet &&
-      props.getProperty(DIFF_OPTIONS.dirtyPrefix + p.sheet.getSheetId()));
-
-  if (!pending.length) return;
+  if (!diffPendingSheetIds_(props.getProperties()).length) return;
 
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(DIFF_OPTIONS.catchUpLockWaitMs)) {
@@ -372,34 +412,49 @@ function catchUpDiffTracking() {
   }
 
   try {
-    const state = JSON.parse(props.getProperty(DIFF_OPTIONS.stateKey) || '{}');
+    const all = props.getProperties();   // ロックを取ったあとで読み直す
+    const state = JSON.parse(all[DIFF_OPTIONS.stateKey] || '{}');
 
-    for (const p of pending) {
-      const sheetId = p.sheet.getSheetId();
-      const key = DIFF_OPTIONS.dirtyPrefix + sheetId;
-      const token = props.getProperty(key);
-      if (!token) continue;
-
-      const saved = state[sheetId];
-      if (!saved || saved.paused) {
-        // setupDiffTracking() will take a fresh baseline and clear the flag.
-        console.warn('Tracking paused; catch-up skipped: ' + p.name);
+    for (const id of diffPendingSheetIds_(all)) {
+      const saved = state[id];
+      const rule = DIFF_RULES[saved.name];
+      const sheet = ss.getSheetByName(saved.name);
+      if (!sheet || String(sheet.getSheetId()) !== id) {
+        console.warn('Source sheet not found; catch-up skipped: ' + saved.name);
         continue;
       }
+      const dirtyKey = DIFF_OPTIONS.dirtyPrefix + id;
+      const checkKey = DIFF_ROW_OPTIONS.checkPrefix + id;
+      const dirtyToken = all[dirtyKey];
+      const checkToken = all[checkKey];
 
       try {
-        // 行の追加・削除を変更トリガーが処理しきれていなければ、ここで処理する
-        if (diffRowCountOnlyChanged_(p.sheet, p.rule)) {
-          diffResyncRows_(ss, p.sheet, p.rule, {
+        // 列の追加・削除など（変更トリガーがロックを取れずに処理できなかった場合）は停止する
+        if (!diffSameLayout_(sheet, rule, saved)) {
+          throw new Error('Structure/configuration changed. Reinitialize the baseline before editing.');
+        }
+
+        // 行の追加・削除・ずれを変更トリガーが処理しきれていなければ、ここで処理する
+        const baseline = diffBaseline_(ss, saved);
+        if (saved.gridRows !== sheet.getMaxRows() ||
+            diffRowsShifted_(sheet, rule, baseline, saved.stampColumn, null)) {
+          diffResyncRows_(ss, sheet, rule, {
             structure: DIFF_ROW_OPTIONS.unknownEditor,
             changes: DIFF_OPTIONS.catchUpEditor
           });
           continue;
         }
 
-        const ctx = diffContext_(ss, p.sheet, p.rule);
+        if (!dirtyToken) {
+          // 行の確かめだけだった（行数もずれも変わっていない）
+          if (props.getProperty(checkKey) === checkToken) props.deleteProperty(checkKey);
+          continue;
+        }
+
+        const ctx = diffContext_(ss, sheet, rule);
+        const lastRow = Math.max(sheet.getLastRow(), ctx.baseline.getLastRow());
         const blocks = diffSplitBlocks_(
-          diffBlocks_(p.sheet, p.rule, null, ctx.stampColumn, false),
+          diffLimitBlocks_(diffBlocks_(sheet, rule, null, ctx.stampColumn, false), lastRow),
           DIFF_OPTIONS.catchUpChunkCells
         );
         const now = new Date();
@@ -409,13 +464,14 @@ function catchUpDiffTracking() {
           editorEmail: DIFF_OPTIONS.catchUpEditor,
           kindSuffix: DIFF_OPTIONS.catchUpKindSuffix
         });
-        console.log('Catch-up done: ' + p.name + ' / recovered cells=' + count);
+        console.log('Catch-up done: ' + saved.name + ' / recovered cells=' + count);
 
         // Clear only if no newer deferral happened during this scan.
-        if (props.getProperty(key) === token) props.deleteProperty(key);
+        if (props.getProperty(dirtyKey) === dirtyToken) props.deleteProperty(dirtyKey);
+        if (checkToken && props.getProperty(checkKey) === checkToken) props.deleteProperty(checkKey);
 
       } catch (error) {
-        diffPause_(ss, sheetId);
+        diffPause_(ss, id);
         console.error(error.stack || String(error));
         throw error;
       }
@@ -430,16 +486,38 @@ function catchUpDiffTracking() {
 }
 
 /**
+ * 取りこぼし回収が必要なシートの ID（追跡中で、dirty か「行の確かめ」の印があるもの）。
+ * all = ドキュメントのプロパティすべて（getProperties() を1回だけ呼んで渡す）
+ */
+function diffPendingSheetIds_(all) {
+  const state = JSON.parse(all[DIFF_OPTIONS.stateKey] || '{}');
+  return Object.keys(state).filter(id => {
+    const saved = state[id];
+    return saved && !saved.paused && DIFF_RULES[saved.name] &&
+      !!(all[DIFF_OPTIONS.dirtyPrefix + id] || all[DIFF_ROW_OPTIONS.checkPrefix + id]);
+  });
+}
+
+/** 範囲を lastRow 行目までに切り詰める（その下はシートも比較基準も空なので比べなくてよい）。 */
+function diffLimitBlocks_(blocks, lastRow) {
+  return blocks
+    .map(([row, col, rows, cols]) => [row, col, Math.min(rows, lastRow - row + 1), cols])
+    .filter(block => block[2] > 0);
+}
+
+/**
  * Installed change trigger.
  *
  * - 行の追加・削除（行数だけが変わった場合）：追跡は止めずに diffResyncRows_() で
  *   削除・追加された行を記録し、そのシートの比較基準を取り直す。
+ * - 行の追加・削除の通知なのに、操作したシートの行数が変わっていない（削除と追加が続いて行数が戻った）：
+ *   そのシートだけ見分け列で行のずれを確かめ、ずれていれば同じように突き合わせ直す（v6）。
+ *   通知にはシートの情報が無いため、操作したシートはアクティブなシートで判断する。ほかのシートのずれは、
+ *   次の編集・取りこぼし回収のときに気づく。
  * - 列の追加・削除、シートの削除：これまでどおり、そのシートの追跡を停止する。
  *   DIFF_RULES の列指定がずれるため、確認のうえ setupDiffTracking() を手動で実行する。
- * - ロックが取れないときは「取りこぼし」として印を付け、catchUpDiffTracking() で処理する。
- *
- * Note: row sorting or drag-moving rows does not change the grid size and
- * cannot be detected here.
+ * - ロックが取れないときは、行数・列数が変わったシートと操作したシートだけに「行の確かめ」の印を付け、
+ *   catchUpDiffTracking() で処理する（全シートの全セル比較はしない）。
  */
 function pauseDiffOnStructureChange(e) {
   if (!e || !e.source) return;
@@ -453,14 +531,12 @@ function pauseDiffOnStructureChange(e) {
     'REMOVE_GRID'
   ];
   if (!watched.includes(type)) return;
+  const rowEvent = type === 'INSERT_ROW' || type === 'REMOVE_ROW';
 
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(DIFF_ROW_OPTIONS.structureLockWaitMs)) {
-    // 取りこぼし回収に任せる（行数の変化は catchUpDiffTracking() でも処理される）
-    Object.keys(DIFF_RULES).forEach(name => {
-      const sheet = e.source.getSheetByName(name);
-      if (sheet) diffMarkDirty_(sheet.getSheetId());
-    });
+    // 取りこぼし回収に任せる（行数の変化・行のずれは catchUpDiffTracking() でも処理される）
+    diffFlagStructureChange_(e.source, rowEvent);
     console.warn('Lock busy; structure change deferred to catch-up (' + type + ').');
     return;
   }
@@ -495,12 +571,33 @@ function pauseDiffOnStructureChange(e) {
       );
     }
 
+    // 行数が変わっていなくても、操作したシートの行がずれていれば突き合わせ直す
+    const shifted = [];
+    if (rowEvent) {
+      const active = diffActiveTrackedSheet_(e.source);
+      const id = active ? String(active.getSheetId()) : '';
+      const saved = state[id];
+      try {
+        if (active && saved && !saved.paused && !rowChanged.some(s => String(s.getSheetId()) === id) &&
+            diffSameLayout_(active, DIFF_RULES[active.getName()], saved) &&
+            diffRowsShifted_(active, DIFF_RULES[active.getName()], diffBaseline_(e.source, saved),
+              saved.stampColumn, null)) {
+          shifted.push(active);
+        }
+      } catch (error) {
+        // 確かめられなかったときは、次の編集・取りこぼし回収に任せる
+        console.error(error.stack || String(error));
+        diffMarkRowCheck_(id);
+      }
+    }
+
     const editor = diffEditorEmail_(e);
     const structureEditor = editor === '取得不可' ? DIFF_ROW_OPTIONS.unknownEditor : editor;
 
-    for (const sheet of rowChanged) {
+    for (const sheet of rowChanged.concat(shifted)) {
       const rule = DIFF_RULES[sheet.getName()];
-      if (!rule || !diffRowCountOnlyChanged_(sheet, rule)) {
+      const saved = state[String(sheet.getSheetId())];
+      if (!rule || !diffSameLayout_(sheet, rule, saved)) {
         diffPause_(e.source, sheet.getSheetId());
         e.source.toast(
           sheet.getName() + ' の構成が変わったため差分追跡を停止しました。setupDiffTracking()を再実行してください。',
@@ -543,18 +640,52 @@ function pauseDiffOnStructureChange(e) {
   }
 }
 
+/**
+ * 変更トリガーがロックを取れなかったときの印。行数・列数が変わったシートと、
+ * 行の追加・削除の通知なら操作したシート（アクティブなシート）だけに「行の確かめ」の印を付ける。
+ * ロックの外で読むだけ（印はプロパティに書くだけで、シートには書き込まない）。
+ */
+function diffFlagStructureChange_(ss, rowEvent) {
+  const state = JSON.parse(
+    PropertiesService.getDocumentProperties().getProperty(DIFF_OPTIONS.stateKey) || '{}');
+  const sheetsById = new Map(ss.getSheets().map(s => [String(s.getSheetId()), s]));
+  const active = rowEvent ? diffActiveTrackedSheet_(ss) : null;
+  const activeId = active ? String(active.getSheetId()) : '';
+
+  Object.entries(state).forEach(([id, saved]) => {
+    if (!saved || saved.paused || !DIFF_RULES[saved.name]) return;
+    const sheet = sheetsById.get(id);
+    if (!sheet) return;
+    if (id === activeId ||
+        saved.gridRows !== sheet.getMaxRows() ||
+        saved.gridColumns !== sheet.getMaxColumns()) {
+      diffMarkRowCheck_(id);
+    }
+  });
+}
+
+/** 操作したシート（アクティブなシート）が追跡シートならそれを、違えば null。 */
+function diffActiveTrackedSheet_(ss) {
+  try {
+    const sheet = ss.getActiveSheet();
+    return sheet && DIFF_RULES[sheet.getName()] ? sheet : null;
+  } catch (_) {
+    return null;
+  }
+}
 
 /* ---------------- Row insert/delete: record and rebaseline (v5) ---------------- */
 
-/**
- * 行数だけが比較基準と違う（列・設定・シート名は同じ）なら true。
- * このときは停止せず diffResyncRows_() で処理できる。
- */
-function diffRowCountOnlyChanged_(sheet, rule) {
+/** 追跡の状態（setupDiffTracking() が保存したもの）。 */
+function diffSavedState_(sheet) {
   const state = JSON.parse(
     PropertiesService.getDocumentProperties().getProperty(DIFF_OPTIONS.stateKey) || '{}');
-  const saved = state[sheet.getSheetId()];
-  if (!saved || saved.paused || saved.gridRows === sheet.getMaxRows()) return false;
+  return state[sheet.getSheetId()];
+}
+
+/** 列・設定・シート名が比較基準と同じ（行数は問わない）で、追跡中なら true。 */
+function diffSameLayout_(sheet, rule, saved) {
+  if (!rule || !saved || saved.paused) return false;
 
   let stampColumn;
   try { stampColumn = diffStampColumn_(sheet, rule); } catch (_) { return false; }
@@ -566,9 +697,98 @@ function diffRowCountOnlyChanged_(sheet, rule) {
 }
 
 /**
- * ロック取得中に呼ぶこと。比較基準（行が増減する前）と現在の行を突き合わせて、
+ * 行数だけが比較基準と違う（列・設定・シート名は同じ）なら true。
+ * このときは停止せず diffResyncRows_() で処理できる。
+ */
+function diffRowCountOnlyChanged_(sheet, rule) {
+  const saved = diffSavedState_(sheet);
+  return !!saved && saved.gridRows !== sheet.getMaxRows() && diffSameLayout_(sheet, rule, saved);
+}
+
+/** 比較基準のシート（非表示の __CHAR_DIFF_*）。 */
+function diffBaseline_(ss, saved) {
+  const baseline = ss.getSheets().find(s => s.getSheetId() === saved.snapshotId);
+  if (!baseline) throw new Error('Comparison snapshot is missing.');
+  return baseline;
+}
+
+/**
+ * 見分け列（DIFF_ROW_OPTIONS.keyHeaders のうち、追跡範囲にある列）の列番号。
+ * 見出しの改行・空白は無視して照合する。
+ */
+function diffKeyColumns_(sheet, rule, blocks) {
+  const normalize = v => String(v == null ? '' : v).replace(/\s/g, '');
+  const headers = sheet
+    .getRange(rule.headerRow, 1, 1, Math.max(sheet.getLastColumn(), 1))
+    .getDisplayValues()[0]
+    .map(normalize);
+  const tracked = column => blocks.some(b => column >= b[1] && column < b[1] + b[3]);
+
+  const columns = [];
+  DIFF_ROW_OPTIONS.keyHeaders.forEach(header => {
+    const index = headers.indexOf(normalize(header));
+    if (index >= 0 && tracked(index + 1) && !columns.includes(index + 1)) columns.push(index + 1);
+  });
+  return columns;
+}
+
+/**
+ * 行のずれを調べる（ロック取得中に呼ぶこと）。比較基準の行と今の行が食い違っていれば true。
+ * ある行の見分け列の値が、比較基準では別の行にあった値なら「ずれた」とみなす
+ * （行数が変わらない行の削除と追加・並べ替え・ドラッグでの移動）。
+ * 比較基準のどこにも無い値（新しく入力した・書き換えた値）は、ふつうの変更として扱う。
+ * edit（今回の編集の範囲 {r1, r2, c1, c2}）で見分け列が変わった行は、手がかりにしない。
+ * 読むのは、見分け列をまたぐ1つの範囲（シート・比較基準）を、データのある最後の行までだけ。
+ */
+function diffRowsShifted_(sheet, rule, baseline, stampColumn, edit) {
+  const blocks = diffBlocks_(sheet, rule, null, stampColumn, false);
+  if (!blocks.length) return false;
+  const keys = diffKeyColumns_(sheet, rule, blocks);
+  if (!keys.length) return false;
+
+  const first = Math.min(...blocks.map(b => b[0]));
+  const last = Math.max(sheet.getLastRow(), baseline.getLastRow());
+  if (last < first) return false;
+  const count = last - first + 1;
+  const left = Math.min(...keys);
+  const width = Math.max(...keys) - left + 1;
+
+  // 1行を1つの文字列にする（見分け列がすべて空なら ''）
+  const read = (target, isBaseline) => {
+    const rows = Math.max(0, Math.min(count, target.getMaxRows() - first + 1));
+    let values = [];
+    if (rows && left + width - 1 <= target.getMaxColumns()) {
+      const range = target.getRange(first, left, rows, width);
+      values = isBaseline
+        ? range.getValues().map(row => row.map(v => String(v || '')))
+        : diffTokens_(range);
+    }
+    const list = values.map(row => keys.some(c => row[c - left])
+      ? keys.map(c => row[c - left]).join('\u0001')
+      : '');
+    while (list.length < count) list.push('');
+    return list;
+  };
+  const before = read(baseline, true);
+  const after = read(sheet, false);
+
+  const known = new Set(before.filter(Boolean));
+  const keyEdited = row => !!edit && row >= edit.r1 && row <= edit.r2 &&
+    keys.some(c => c >= edit.c1 && c <= edit.c2);
+  for (let i = 0; i < count; i++) {
+    if (after[i] === before[i] || !after[i] || keyEdited(first + i)) continue;
+    if (known.has(after[i])) return true;   // 比較基準では別の行にあった値が、この行に来ている
+  }
+  return false;
+}
+
+/**
+ * ロック取得中に呼ぶこと。比較基準と現在の行を突き合わせて、
  * 削除された行・追加された行・その間に変わったセルを記録し、比較基準を取り直す。
- * who = {structure: 行の追加・削除をした人, changes: セルを変えた人}
+ * 行数が変わった場合のほか、行数が同じまま行がずれた場合（v6）にも使う。
+ * who = {structure: 行の追加・削除をした人, changes: セルを変えた人,
+ *        edit: 編集トリガーから呼ぶときの編集範囲 {r1, r2, c1, c2}, others: 編集範囲の外の変更の編集者}
+ * edit があれば、編集範囲の変更はふつうの編集（EVT・changes）として、それ以外とは別のイベントで記録する。
  * 戻り値 {deleted, inserted, changedCells}
  */
 function diffResyncRows_(ss, sheet, rule, who) {
@@ -578,8 +798,7 @@ function diffResyncRows_(ss, sheet, rule, who) {
   const saved = state[sheetId];
   if (!saved) throw new Error('Tracking is not initialized. Run setupDiffTracking().');
 
-  const baseline = ss.getSheets().find(s => s.getSheetId() === saved.snapshotId);
-  if (!baseline) throw new Error('Comparison snapshot is missing.');
+  const baseline = diffBaseline_(ss, saved);
   diffLogSheet_(ss);
   diffRowSnapshotSheet_(ss);
 
@@ -590,6 +809,7 @@ function diffResyncRows_(ss, sheet, rule, who) {
 
   // 読み込みより前に印を消す（このあと届いた編集は印が付き、取りこぼし回収される）
   diffClearDirty_(sheetId);
+  diffClearRowCheck_(sheetId);
 
   if (blocks.length) {
     for (const block of blocks) {
@@ -598,9 +818,10 @@ function diffResyncRows_(ss, sheet, rule, who) {
       }
     }
 
+    // データのある最後の行までを読む（その下は、シートも比較基準も空なので比べなくてよい）
     const rowStart = Math.min(...blocks.map(b => b[0]));
-    const newEnd = Math.max(...blocks.map(b => b[0] + b[2] - 1));
-    const oldEnd = newEnd + (saved.gridRows - sheet.getMaxRows());
+    const newEnd = Math.min(sheet.getMaxRows(), sheet.getLastRow());
+    const oldEnd = baseline.getLastRow();
     const newCount = Math.max(0, newEnd - rowStart + 1);
     const oldCount = Math.max(0, oldEnd - rowStart + 1);
     const specs = blocks.map(b => ({r1: b[0], col: b[1], cols: b[3]}));
@@ -616,18 +837,32 @@ function diffResyncRows_(ss, sheet, rule, who) {
       diffColumnNames_(sheet, rule, spec.col, spec.cols).forEach(n => columnNames.push(n));
       for (let c = 0; c < spec.cols; c++) columnNumbers.push(spec.col + c);
     });
+    const keyIndexes = diffKeyColumns_(sheet, rule, blocks)
+      .map(column => columnNumbers.indexOf(column))
+      .filter(index => index >= 0);
 
-    const gaps = diffAlignRows_(
-      oldRows.map(r => r.join('\u0001')),
-      newRows.map(r => r.join('\u0001'))
+    const matched = diffPairRows_(
+      diffAlignRows_(
+        oldRows.map(r => r.join('\u0001')),
+        newRows.map(r => r.join('\u0001'))
+      ),
+      oldRows,
+      newRows,
+      keyIndexes
     );
 
     const now = new Date();
-    const eventId = diffCreateEventId_(now, timezone, DIFF_ROW_OPTIONS.eventPrefix);
+    const rowEventId = diffCreateEventId_(now, timezone, DIFF_ROW_OPTIONS.eventPrefix);
+    // 編集トリガーから呼ばれたときは、編集した範囲の変更を、ふつうの編集として別のイベントにする
+    const editEventId = who.edit ? diffCreateEventId_(now, timezone, 'EVT') : '';
+    const otherEditor = who.edit ? (who.others || DIFF_ROW_OPTIONS.unknownEditor) : who.changes;
+    const inEdit = (rowNumber, column) => !!who.edit &&
+      rowNumber >= who.edit.r1 && rowNumber <= who.edit.r2 &&
+      (column == null || (column >= who.edit.c1 && column <= who.edit.c2));
+
     const budget = {remaining: DIFF_OPTIONS.maxLcsCellsPerEdit};
     const records = [];
-    const changedRows = new Set();
-    const changedCellsByRow = new Map();
+    const groups = new Map();   // スナップショットを取る行（イベントID・編集者ごと）
     const isEmpty = row => row.every(token => !token);
     const summary = row => {
       const text = row
@@ -637,85 +872,87 @@ function diffResyncRows_(ss, sheet, rule, who) {
         ? text.slice(0, DIFF_ROW_OPTIONS.maxSummaryCharacters) + '…（省略）'
         : text;
     };
-    const markRow = (rowNumber, cell) => {
-      changedRows.add(rowNumber);
-      if (!changedCellsByRow.has(rowNumber)) changedCellsByRow.set(rowNumber, new Set());
-      changedCellsByRow.get(rowNumber).add(cell);
+    const markRow = (eventId, editor, rowNumber, cell) => {
+      const key = eventId + '\u0001' + editor;
+      if (!groups.has(key)) groups.set(key, {eventId, editor, cellsByRow: new Map()});
+      const cells = groups.get(key).cellsByRow;
+      if (!cells.has(rowNumber)) cells.set(rowNumber, new Set());
+      cells.get(rowNumber).add(cell);
     };
 
-    for (const gap of gaps) {
-      if (gap.old.length === gap.new.length) {
-        // 同じ数だけ入れ替わった行 = 行はそのままで中身が変わった（取りこぼしていた編集）
-        gap.old.forEach((oldIndex, k) => {
-          const newIndex = gap.new[k];
-          const before = oldRows[oldIndex];
-          const after = newRows[newIndex];
-          const rowNumber = rowStart + newIndex;
-          after.forEach((token, c) => {
-            if (token === before[c]) return;
-            const b = diffDecode_(before[c], timezone);
-            const a = diffDecode_(token, timezone);
-            const diff = diffCharacters_(b.text, a.text, budget);
-            const cell = diffA1_(rowNumber, columnNumbers[c]);
-            records.push({
-              eventId,
-              editorEmail: who.changes,
-              sheet: sheet.getName(),
-              cell,
-              columnName: columnNames[c],
-              kind: b.type + ' -> ' + a.type + (diff.coarse ? ' / ブロック差分' : '') +
-                DIFF_ROW_OPTIONS.kindSuffix,
-              before: b.text,
-              after: a.text,
-              parts: diff.parts
-            });
-            markRow(rowNumber, cell);
-            result.changedCells++;
-          });
-        });
-        continue;
-      }
+    matched.deleted.forEach(oldIndex => {
+      const row = oldRows[oldIndex];
+      if (isEmpty(row)) return;
+      const text = summary(row);
+      records.push({
+        eventId: rowEventId,
+        editorEmail: who.structure,
+        sheet: sheet.getName(),
+        cell: (rowStart + oldIndex) + '行（削除前の行番号）',
+        columnName: '（行全体）',
+        kind: DIFF_ROW_OPTIONS.kindDelete,
+        before: text,
+        after: '',
+        parts: [{kind: 'del', text}]
+      });
+      result.deleted++;
+    });
 
-      gap.old.forEach(oldIndex => {
-        const row = oldRows[oldIndex];
-        if (isEmpty(row)) return;
-        const text = summary(row);
+    // 組になった行 = 同じ行（移動していても）。変わったセルだけを記録する
+    matched.pairs.forEach(([oldIndex, newIndex]) => {
+      const before = oldRows[oldIndex];
+      const after = newRows[newIndex];
+      const rowNumber = rowStart + newIndex;
+      after.forEach((token, c) => {
+        if (token === before[c]) return;
+        const b = diffDecode_(before[c], timezone);
+        const a = diffDecode_(token, timezone);
+        const diff = diffCharacters_(b.text, a.text, budget);
+        const cell = diffA1_(rowNumber, columnNumbers[c]);
+        const edited = inEdit(rowNumber, columnNumbers[c]);
+        const eventId = edited ? editEventId : rowEventId;
+        const editor = edited ? who.changes : otherEditor;
         records.push({
           eventId,
-          editorEmail: who.structure,
+          editorEmail: editor,
           sheet: sheet.getName(),
-          cell: (rowStart + oldIndex) + '行（削除前の行番号）',
-          columnName: '（行全体）',
-          kind: DIFF_ROW_OPTIONS.kindDelete,
-          before: text,
-          after: '',
-          parts: [{kind: 'del', text}]
+          cell,
+          columnName: columnNames[c],
+          kind: b.type + ' -> ' + a.type + (diff.coarse ? ' / ブロック差分' : '') +
+            (edited ? '' : DIFF_ROW_OPTIONS.kindSuffix),
+          before: b.text,
+          after: a.text,
+          parts: diff.parts
         });
-        result.deleted++;
+        markRow(eventId, editor, rowNumber, cell);
+        result.changedCells++;
       });
+    });
 
-      gap.new.forEach(newIndex => {
-        const row = newRows[newIndex];
-        if (isEmpty(row)) return;
-        const text = summary(row);
-        const rowNumber = rowStart + newIndex;
-        records.push({
-          eventId,
-          editorEmail: who.changes,
-          sheet: sheet.getName(),
-          cell: rowNumber + '行',
-          columnName: '（行全体）',
-          kind: DIFF_ROW_OPTIONS.kindInsert,
-          before: '',
-          after: text,
-          parts: [{kind: 'add', text}]
-        });
-        markRow(rowNumber, rowNumber + '行');
-        result.inserted++;
+    matched.inserted.forEach(newIndex => {
+      const row = newRows[newIndex];
+      if (isEmpty(row)) return;
+      const text = summary(row);
+      const rowNumber = rowStart + newIndex;
+      const editor = inEdit(rowNumber) ? who.changes : otherEditor;
+      records.push({
+        eventId: rowEventId,
+        editorEmail: editor,
+        sheet: sheet.getName(),
+        cell: rowNumber + '行',
+        columnName: '（行全体）',
+        kind: DIFF_ROW_OPTIONS.kindInsert,
+        before: '',
+        after: text,
+        parts: [{kind: 'add', text}]
       });
-    }
+      markRow(rowEventId, editor, rowNumber, rowNumber + '行');
+      result.inserted++;
+    });
 
     if (records.length) {
+      const changedRows = new Set();
+      groups.forEach(group => group.cellsByRow.forEach((_, rowNumber) => changedRows.add(rowNumber)));
       const sortedRows = Array.from(changedRows).sort((a, b) => a - b);
       let schema = null;
       if (sortedRows.length) {
@@ -726,8 +963,11 @@ function diffResyncRows_(ss, sheet, rule, who) {
       diffAppend_(ss, records, now);
       if (sortedRows.length) {
         if (sortedRows.length * schema.items.length <= DIFF_OPTIONS.maxSnapshotCellsPerEdit) {
-          diffAppendRowSnapshots_(
-            ss, sheet, rule, sortedRows, changedCellsByRow, eventId, who.changes, now, schema);
+          groups.forEach(group => {
+            const rows = Array.from(group.cellsByRow.keys()).sort((a, b) => a - b);
+            diffAppendRowSnapshots_(
+              ss, sheet, rule, rows, group.cellsByRow, group.eventId, group.editor, now, schema);
+          });
         } else {
           console.warn('Row snapshot skipped (too many rows): ' + sortedRows.length);
         }
@@ -761,6 +1001,64 @@ function diffResyncRows_(ss, sheet, rule, who) {
   SpreadsheetApp.flush();
   console.log('Row resync done: ' + sheet.getName() + ' / ' + JSON.stringify(result));
   return result;
+}
+
+/**
+ * 行の突き合わせ（diffAlignRows_）で一致しなかった行を組にする。
+ * 1. 見分け列の値が同じ行（その値の行が、削除側・追加側とも1行だけ）は、離れていても同じ行とみなす
+ *    （移動・並べ替え・行がずれたあとの編集）
+ * 2. 残りは、すき間ごとに同じ数なら位置で組にする（行はそのままで中身が変わった）。数が違えば削除・追加
+ * 戻り値 {pairs: [[旧の番号, 新の番号]]（新の番号の順）, deleted: [旧の番号], inserted: [新の番号]}
+ */
+function diffPairRows_(gaps, oldRows, newRows, keyIndexes) {
+  const keyOf = row => keyIndexes.length && keyIndexes.some(i => row[i])
+    ? keyIndexes.map(i => row[i]).join('\u0001')
+    : '';
+  const tally = (indexes, rows) => {
+    const counts = new Map();
+    indexes.forEach(i => {
+      const key = keyOf(rows[i]);
+      if (key) counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return counts;
+  };
+  const oldAll = [].concat(...gaps.map(g => g.old));
+  const newAll = [].concat(...gaps.map(g => g.new));
+  const oldCounts = tally(oldAll, oldRows);
+  const newCounts = tally(newAll, newRows);
+
+  const oldByKey = new Map();
+  oldAll.forEach(i => {
+    const key = keyOf(oldRows[i]);
+    if (key && oldCounts.get(key) === 1 && newCounts.get(key) === 1) oldByKey.set(key, i);
+  });
+
+  const pairs = [];
+  const pairedOld = new Set();
+  const pairedNew = new Set();
+  newAll.forEach(j => {
+    const i = oldByKey.get(keyOf(newRows[j]));
+    if (i === undefined) return;
+    pairs.push([i, j]);
+    pairedOld.add(i);
+    pairedNew.add(j);
+  });
+
+  const deleted = [];
+  const inserted = [];
+  gaps.forEach(gap => {
+    const o = gap.old.filter(i => !pairedOld.has(i));
+    const n = gap.new.filter(j => !pairedNew.has(j));
+    if (o.length === n.length) {
+      o.forEach((i, k) => pairs.push([i, n[k]]));
+    } else {
+      o.forEach(i => deleted.push(i));
+      n.forEach(j => inserted.push(j));
+    }
+  });
+
+  pairs.sort((a, b) => a[1] - b[1]);
+  return {pairs, deleted, inserted};
 }
 
 /**
@@ -1014,6 +1312,17 @@ function diffMarkDirty_(sheetId) {
 function diffClearDirty_(sheetId) {
   PropertiesService.getDocumentProperties()
     .deleteProperty(DIFF_OPTIONS.dirtyPrefix + sheetId);
+}
+
+/** 「行の確かめ」の印（行数・ずれだけを取りこぼし回収で確かめる。全セルは比べない）。 */
+function diffMarkRowCheck_(sheetId) {
+  PropertiesService.getDocumentProperties()
+    .setProperty(DIFF_ROW_OPTIONS.checkPrefix + sheetId, Utilities.getUuid());
+}
+
+function diffClearRowCheck_(sheetId) {
+  PropertiesService.getDocumentProperties()
+    .deleteProperty(DIFF_ROW_OPTIONS.checkPrefix + sheetId);
 }
 
 function diffPause_(ss, sheetId) {
@@ -1828,6 +2137,7 @@ function diagnoseDiffState() {
     catch (err) { console.log('✗ ' + name + ': ' + err.message); continue; }
 
     const dirty = props.getProperty(DIFF_OPTIONS.dirtyPrefix + sheet.getSheetId());
+    const rowCheck = props.getProperty(DIFF_ROW_OPTIONS.checkPrefix + sheet.getSheetId());
 
     const checks = [
       ['停止していない', saved.paused === false, saved.paused],
@@ -1837,7 +2147,8 @@ function diagnoseDiffState() {
       ['行数（違う場合は次の編集・回収で自動反映）', saved.gridRows === sheet.getMaxRows(), saved.gridRows + ' / ' + sheet.getMaxRows()],
       ['列数', saved.gridColumns === sheet.getMaxColumns(), saved.gridColumns + ' / ' + sheet.getMaxColumns()],
       ['比較用シート', ss.getSheets().some(s => s.getSheetId() === saved.snapshotId), saved.snapshotId],
-      ['未回収の取りこぼしなし', !dirty, '回収待ち（次回の catchUpDiffTracking で処理）']
+      ['未回収の取りこぼしなし', !dirty, '回収待ち（次回の catchUpDiffTracking で処理）'],
+      ['行の確かめ待ちなし', !rowCheck, '確かめ待ち（次回の catchUpDiffTracking で行数・ずれを確かめる）']
     ];
     checks.forEach(([label, ok, detail]) =>
       console.log((ok ? '○ ' : '✗ ') + name + ' / ' + label +

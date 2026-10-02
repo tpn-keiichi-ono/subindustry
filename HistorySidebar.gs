@@ -302,11 +302,7 @@ function hsChangeIndex_(ss) {
     out[sheetName][customerKey] = list.slice().reverse().map(v => {
       const rowNumber = Number(v[iRow]);
       const changes = (records.get(v[iEvent]) || [])
-        .filter(rec => {
-          if (rec.sheet !== sheetName) return false;
-          const m = String(rec.cell).match(/^[A-Z]+(\d+)$/);
-          return !m || Number(m[1]) === rowNumber;
-        })
+        .filter(rec => rec.sheet === sheetName && chgRecordOfRow_(rec.cell, rowNumber))
         .map(rec => ({column: rec.column, before: cut(rec.before), after: cut(rec.after)}));
       return {
         eventId: v[iEvent],

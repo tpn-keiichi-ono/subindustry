@@ -160,9 +160,11 @@ class Range {
 
   write(kind) { this.sheet.gas.recordWrite(this, kind); }
 
-  getValues() { return this.map(cell => (cell ? cell.v : '')); }
-  getDisplayValues() { return this.map(cell => this.sheet.gas.display(cell)); }
-  getFormulas() { return this.map(cell => (cell ? cell.f : '')); }
+  read(kind) { this.sheet.gas.recordRead(this, kind); }
+
+  getValues() { this.read('getValues'); return this.map(cell => (cell ? cell.v : '')); }
+  getDisplayValues() { this.read('getDisplayValues'); return this.map(cell => this.sheet.gas.display(cell)); }
+  getFormulas() { this.read('getFormulas'); return this.map(cell => (cell ? cell.f : '')); }
   getRichTextValues() {
     return this.map(cell => (cell && cell.rich) ||
       newRichTextValue().setText(this.sheet.gas.display(cell)).build());
@@ -437,6 +439,7 @@ function createGas(options) {
     lockHolders: 0,
     userInput: 0,
     writes: [],
+    reads: [],                // 値の読み取り（getValues・getDisplayValues・getFormulas）。どのシートをどれだけ読んだか
     toasts: [],
     menus: [],
     dialogs: [],
@@ -483,6 +486,15 @@ function createGas(options) {
     }
     if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
     return String(v);
+  };
+
+  gas.recordRead = (range, kind) => {
+    gas.reads.push({
+      sheet: range.getSheet().getName(),
+      a1: range.getA1Notation(),
+      kind,
+      cells: range.getNumRows() * range.getNumColumns()
+    });
   };
 
   gas.recordWrite = (range, kind) => {

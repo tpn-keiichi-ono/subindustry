@@ -190,10 +190,7 @@ function getChangeHistoryData(sheetName, row) {
     const rowNumber = Number(v[iRow]);
     const snapshot = snapshotOf(v);
     let changes = (recordsByEvent.get(v[iEvent]) || [])
-      .filter(rec => {
-        const m = String(rec.cell).match(/^[A-Z]+(\d+)$/);
-        return !m || Number(m[1]) === rowNumber;   // 「5行」などの行全体の記録も含める
-      })
+      .filter(rec => chgRecordOfRow_(rec.cell, rowNumber))
       .map(rec => withParts({
         column: rec.column, cell: rec.cell, kind: rec.kind,
         before: unmark(rec.before), after: unmark(rec.after)
@@ -226,4 +223,17 @@ function getChangeHistoryData(sheetName, row) {
 
   result.events = events.reverse();
   return result;
+}
+/**
+ * 変更履歴_差分 の記録（セル）が、スナップショットの行（rowNumber）のものか。
+ * 同じイベントに複数の行の記録があるため、行で分ける（HistorySidebar.gs も使う）。
+ * - 「F5」：その行のセル / 「5行」：追加された行
+ * - 「5行（削除前の行番号）」：削除された行。残っている行の履歴には出さない
+ * - それ以外の書き方（以前の版など）は、その行のものとして扱う
+ */
+function chgRecordOfRow_(cell, rowNumber) {
+  const text = String(cell);
+  if (/（削除前の行番号）$/.test(text)) return false;
+  const m = text.match(/^[A-Z]+(\d+)$/) || text.match(/^(\d+)行$/);
+  return !m || Number(m[1]) === rowNumber;
 }
