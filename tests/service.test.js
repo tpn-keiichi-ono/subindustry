@@ -522,3 +522,39 @@ test('新FMT のリクエストの列の見出しが無ければ、止めて知�
   gas.asUser(() => source.getRange('F2').setValue('要望'));
   assert.throws(() => g.setupRequestSheet(), /「サービスのリクエスト」の見出しがちょうど1つ必要です/);
 });
+
+test('diagnoseRequestSources：シートごとに、リクエストの件数と候補に出ない理由を出す（読むだけ）', () => {
+  const {gas, g} = setup([
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい'],
+    ['', 'B社', '店舗什器', '什器の在庫を見たい'],                     // サブインダストリーが空
+    ['食品スーパー', 'C社', '', '配送を早めたい'],                       // 案件名が空
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい']      // 同じリクエスト
+  ]);
+  g.setupRequestSheet();
+  choose(gas, 2, ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい']);
+  gas.writes.length = 0;
+  gas.alerts.length = 0;
+  g.diagnoseRequestSources();
+  assert.deepStrictEqual(gas.writes, [], '何も書き換えない');
+  const lines = gas.alerts[0].message.split('\n');
+  assert.deepStrictEqual(lines, [
+    '「新FMT」：リクエストのある行 4件 → 候補に出る 0件（出ないもの：選択済み 1件、サブインダストリー・得意先・案件名のどれかが空 2件' +
+      '（サブインダストリーが空 1件、案件名が空 1件）、ほかの行・シートと同じリクエスト 1件）。',
+    '「新FMT2」：読みません（test.gs の DIFF_RULES に requests: true がありません）。',
+    '候補のシートとプルダウンは、今の内容で作られています。'
+  ]);
+});
+
+test('diagnoseRequestSources：候補のシートが古い・プルダウンが前の版のままなら、setupRequestSheet() を案内する', () => {
+  const {gas, g, source} = setup();
+  g.setupRequestSheet();
+  // スクリプトを通さずに新FMT にリクエストを足す（onEdit が動かなかったときと同じ）
+  gas.asUser(() => source.getRange('C8:F8').setValues([['食品スーパー', 'D社', '新店', '売場を見直したい']]));
+  const request = gas.ss.getSheetByName('リクエスト');
+  gas.asUser(() => request.getRange('A2').setDataValidation(g.SpreadsheetApp.newDataValidation().requireValueInList(['食品スーパー'], true).build()));
+  g.diagnoseRequestSources();
+  const message = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(message, /「新FMT」：リクエストのある行 5件 → 候補に出る 4件/);
+  assert.match(message, /候補のシート（__REQUEST_LISTS）が古くなっています（今の案件 4件、候補のシート 3件）。setupRequestSheet\(\) を実行してください。/);
+  assert.match(message, /「リクエスト」のプルダウンが前の版のままです。setupRequestSheet\(\) を実行してください。/);
+});

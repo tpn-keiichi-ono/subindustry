@@ -314,6 +314,124 @@ function svcServiceRule_(ss) {
     .build();
 }
 
+/* ---------------- 候補に出ないときの確認（管理者がエディタから実行する） ---------------- */
+
+/**
+ * サービスリクエストのプルダウンに案件が出ない理由を調べて、画面に出す（読むだけ。何も書き換えない）。
+ * DIFF_RULES の各シートについて、読む対象か・見出しがあるか・リクエストの件数と、候補に出ない件数とその理由。
+ * あわせて、候補のシート（__REQUEST_LISTS）とプルダウンが今の内容で作られているかを確かめる。
+ */
+function diagnoseRequestSources() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const lines = svcDiagnoseLines_(ss);
+  console.log(lines.join('\n'));
+  const ui = SpreadsheetApp.getUi();
+  ui.alert('サービスリクエストの候補の確認', lines.join('\n'), ui.ButtonSet.OK);
+}
+
+/** diagnoseRequestSources() の中身。画面に出す文（行ごと）を返す。 */
+function svcDiagnoseLines_(ss) {
+  const lines = [];
+  const levels = svcCascadeKeys_().length;
+  const labels = svcCascadeLabels_();
+
+  // サービスリクエストで選んでいる案件
+  const used = new Set();
+  const request = ss.getSheetByName(SVC_OPTIONS.requestSheet);
+  let requestCols = null;
+  if (!request) {
+    lines.push('「' + SVC_OPTIONS.requestSheet + '」シートがありません。setupRequestSheet() を実行してください。');
+  } else {
+    try {
+      requestCols = taskColumnMap_(request, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
+      const count = request.getLastRow() - SVC_OPTIONS.headerRow;
+      if (count > 0) {
+        const read = key => request.getRange(SVC_OPTIONS.headerRow + 1, requestCols[key], count, 1).getDisplayValues().map(r => String(r[0]).trim());
+        const customers = read('customer');
+        const projects = read('project');
+        read('request').forEach((value, i) => { if (value) used.add(svcRequestKey_(customers[i], projects[i], value)); });
+      }
+    } catch (error) {
+      lines.push(error.message);
+    }
+  }
+
+  // 読むシートごとの件数
+  const seen = new Set();
+  let listed = 0;
+  Object.keys(DIFF_RULES).forEach(name => {
+    const rule = DIFF_RULES[name];
+    if (!rule.requests) {
+      lines.push('「' + name + '」：読みません（test.gs の DIFF_RULES に requests: true がありません）。');
+      return;
+    }
+    const sheet = ss.getSheetByName(name);
+    if (!sheet) {
+      lines.push('「' + name + '」：シートがありません。');
+      return;
+    }
+    const headers = sheet.getRange(rule.headerRow, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
+    const cols = SVC_OPTIONS.sourceHeaders.map(h => (taskHeaderCount_(headers, h) === 1 ? taskFindColumn_(headers, h, '', true) : 0));
+    const missing = SVC_OPTIONS.sourceHeaders.filter((h, i) => !cols[i]);
+    if (missing.length) {
+      lines.push('「' + name + '」：' + rule.headerRow + '行目に「' + missing.join('」「') + '」の見出しがちょうど1つずつ必要です。');
+      return;
+    }
+    const count = sheet.getLastRow() - rule.headerRow;
+    const values = count > 0
+      ? sheet.getRange(rule.headerRow + 1, 1, count, Math.max.apply(null, cols)).getDisplayValues()
+        .map(line => cols.map(col => String(line[col - 1]).trim()))
+      : [];
+    const withRequest = values.filter(v => v[levels - 1]);
+    const blanks = labels.slice(0, levels - 1).map(() => 0);
+    let incomplete = 0;
+    let duplicate = 0;
+    let selected = 0;
+    let candidates = 0;
+    // svcSourceRecords_・svcListRecords_ と同じ順に見る（同じリクエストは最初の行だけ。そのあと左の列が空の行を外す）
+    withRequest.forEach(v => {
+      const key = svcRequestKey_(v[1], v[2], v[3]);
+      if (seen.has(key)) { duplicate++; return; }
+      seen.add(key);
+      const empty = v.slice(0, levels - 1).map(value => !value);
+      if (empty.some(Boolean)) {
+        incomplete++;
+        empty.forEach((e, i) => { if (e) blanks[i]++; });
+        return;
+      }
+      listed++;
+      if (used.has(key)) selected++; else candidates++;
+    });
+    const reasons = [];
+    if (selected) reasons.push('選択済み ' + selected + '件');
+    if (incomplete) {
+      reasons.push(labels.slice(0, levels - 1).join('・') + 'のどれかが空 ' + incomplete + '件（' +
+        labels.slice(0, levels - 1).map((label, i) => label + 'が空 ' + blanks[i] + '件').filter((_, i) => blanks[i]).join('、') + '）');
+    }
+    if (duplicate) reasons.push('ほかの行・シートと同じリクエスト ' + duplicate + '件');
+    lines.push('「' + name + '」：リクエストのある行 ' + withRequest.length + '件 → 候補に出る ' + candidates + '件' +
+      (reasons.length ? '（出ないもの：' + reasons.join('、') + '）' : '') + '。');
+  });
+
+  // 候補のシートとプルダウン
+  const lists = svcReadLists_(ss);
+  if (!lists) {
+    lines.push('候補のシート（' + SVC_OPTIONS.listSheet + '）がありません。setupRequestSheet() を実行してください。');
+  } else if (lists.list.length !== listed) {
+    lines.push('候補のシート（' + SVC_OPTIONS.listSheet + '）が古くなっています（今の案件 ' + listed + '件、候補のシート ' + lists.list.length + '件）。' +
+      'setupRequestSheet() を実行してください。');
+  }
+  if (request && requestCols) {
+    const rule = request.getRange(SVC_OPTIONS.headerRow + 1, requestCols[svcCascadeKeys_()[0]]).getDataValidation();
+    const range = rule && rule.getCriteriaType() === SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE ? rule.getCriteriaValues()[0] : null;
+    if (!range || range.getSheet().getName() !== SVC_OPTIONS.listSheet) {
+      lines.push('「' + SVC_OPTIONS.requestSheet + '」のプルダウンが前の版のままです。setupRequestSheet() を実行してください。');
+    }
+  }
+  if (lines.every(line => /^「[^」]*」：/.test(line))) lines.push('候補のシートとプルダウンは、今の内容で作られています。');
+  return lines;
+}
+
 /* ---------------- 新FMT のリクエスト ---------------- */
 
 /** リクエストを見分けるキー（得意先・案件名・リクエスト。全角・半角と空白の違いは無視）。 */
