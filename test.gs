@@ -73,10 +73,14 @@
  * Source formulas are compared as expressions, not as calculated results.
  */
 
+// 追跡するシート（キーがシート名）。ほかの機能もこのシート名と headerRow を使う：
+// requests: true を付けたシートは、リクエスト シート（ServiceManagement.gs）がサービスのリクエストを読む。
+// シート名を変えると、差分追跡の記録（シート名で残る）と過去の行がつながらなくなるので変えない（docs/OPERATIONS.md「シート名の一覧」）。
 const DIFF_RULES = {
   '新FMT': {
     headerRow: 2,
-    ranges: ['D3:AF']
+    ranges: ['D3:AF'],
+    requests: true      // リクエスト シートの候補にする（「サービスのリクエスト」の列を読む）
     // Optional: capture an explicit row span in the row snapshot.
     // , snapshotColumns: 'A:Z'
   }

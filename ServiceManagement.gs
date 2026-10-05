@@ -25,9 +25,8 @@
 const SVC_OPTIONS = {
   requestSheet: 'リクエスト',
   headerRow: 1,
-  // リクエストを読むシート。見出しの行は DIFF_RULES の headerRow（DIFF_RULES に無いシートは sourceHeaderRow）。新FMT2 も使うときは足す
-  sourceSheets: ['新FMT'],
-  sourceHeaderRow: 2,
+  // リクエストを読むシートは、test.gs の DIFF_RULES で requests: true を付けたシート（見出しの行も DIFF_RULES の headerRow）。
+  // 新FMT2 も読むときは、DIFF_RULES の新FMT2 に requests: true を足す（svcSourceSheets_）
   // 読む列の見出し（リクエスト シートの A〜D の順）。リクエストは Z列。1つのセルに1件
   sourceHeaders: ['サブインダストリー', '得意先', '案件名', 'サービスのリクエスト'],
   // cascade：連動プルダウンの順（0 から）。aliases は前の版の見出し
@@ -59,6 +58,11 @@ const SVC_OPTIONS = {
   // リクエスト シートの編集（onEdit）でロックを待つ時間。続けて選ぶと前の選択の処理を待つので長めにする（単純トリガーは30秒で止まる）
   editLockWaitMs: 20000
 };
+
+/** リクエストを読むシートの名前（test.gs の DIFF_RULES で requests: true を付けたシート。DIFF_RULES の順）。 */
+function svcSourceSheets_() {
+  return Object.keys(DIFF_RULES).filter(name => DIFF_RULES[name] && DIFF_RULES[name].requests);
+}
 
 /** 連動プルダウンの列の key（左から）。 */
 function svcCascadeKeys_() {
@@ -98,7 +102,7 @@ function onEdit(e) {
   const name = sheet.getName();
   let handler = null;
   if (name === SVC_OPTIONS.requestSheet) handler = svcHandleRequestEdit_;
-  else if (SVC_OPTIONS.sourceSheets.indexOf(name) >= 0) handler = svcHandleSourceEdit_;
+  else if (svcSourceSheets_().indexOf(name) >= 0) handler = svcHandleSourceEdit_;
   if (!handler || e.range.getLastRow() <= SVC_OPTIONS.headerRow) return;
   try {
     handler(sheet, e.range, e);
@@ -307,19 +311,23 @@ function svcRequestKey_(customer, project, request) {
   return [customer, project, request].map(credNormalize_).join('\u0001');
 }
 
-/** 読むシートの見出しの行（DIFF_RULES の headerRow。DIFF_RULES に無いシートは SVC_OPTIONS.sourceHeaderRow）。 */
+/** 読むシートの見出しの行（DIFF_RULES の headerRow）。 */
 function svcSourceHeaderRow_(name) {
-  return DIFF_RULES[name] ? DIFF_RULES[name].headerRow : SVC_OPTIONS.sourceHeaderRow;
+  return DIFF_RULES[name].headerRow;
 }
 
 /**
- * 新FMT（SVC_OPTIONS.sourceSheets）でリクエストが入っている行を、行の順に返す（同じキーは1つ）。
+ * 新FMT（読むシート。svcSourceSheets_）でリクエストが入っている行を、シート・行の順に返す（同じキーは1つ）。
  * [{values: [サブインダストリー, 得意先, 案件名, リクエスト], keys: 見比べ用（credNormalize_）, key}]。見出しが足りないときは止める。
  */
 function svcSourceRecords_(ss) {
   const records = [];
   const seen = new Set();
-  SVC_OPTIONS.sourceSheets.forEach(name => {
+  const names = svcSourceSheets_();
+  if (!names.length) {
+    throw new Error('リクエストを読むシートがありません。test.gs の DIFF_RULES で、読むシート（新FMT など）に requests: true を付けてください。');
+  }
+  names.forEach(name => {
     const sheet = ss.getSheetByName(name);
     if (!sheet) throw new Error('リクエストを読むシート「' + name + '」が見つかりません。');
     const headerRow = svcSourceHeaderRow_(name);
@@ -412,7 +420,7 @@ function svcSync_(ss, sheet, renamed, records) {
     if (missingNote || (notes[i] && !ours)) return notes[i];   // 前回から見つからないまま、または利用者が書いた注
     notesChanged = true;
     return SVC_OPTIONS.missingNote + '（' + today + ' に気づきました）。' +
-      SVC_OPTIONS.sourceSheets.join('・') + ' で書き換えか削除された可能性があります。';
+      svcSourceSheets_().join('・') + ' で書き換えか削除された可能性があります。';
   });
   if (notesChanged) noteRange.setNotes(next.map(n => [n]));
   return {updated, missing};

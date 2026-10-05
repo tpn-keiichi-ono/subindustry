@@ -482,6 +482,31 @@ test('removeUntouchedRequests：データの行をすべて消すときも止ま
   assert.deepStrictEqual(listOf(sheet.getRange('A2')), ['食品スーパー', 'ドラッグストア']);
 });
 
+test('読むシートは DIFF_RULES で requests: true を付けたシート：新FMT2 に付けると、新FMT2 のリクエストも候補にする', () => {
+  const {gas, g} = setup();
+  gas.get('DIFF_RULES')['新FMT2'].requests = true;
+  const header = ['No', 'メモ', 'サブインダストリー', '得意先', '案件名', 'サービスのリクエスト'];
+  const fmt2 = gas.addSheet('新FMT2', [['新FMT2'], header,
+    ['1', '', 'ホームセンター', 'D社', '会員アプリ', 'ポイントを統合したい'],
+    ['2', '', '食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい']   // 新FMT と同じリクエストは1件とみなす
+  ], {rows: 20, columns: 6});
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  assert.deepStrictEqual(listOf(request.getRange('A2')), ['食品スーパー', 'ドラッグストア', 'ホームセンター']);
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /新FMT のリクエスト 4件のうち 0件/);
+
+  // 新FMT2 の編集でも候補を作り直す
+  g.onEdit(gas.edit(fmt2, 'C5:F5', [['ホームセンター', 'E社', '店舗DX', '在庫を見える化したい']]));
+  edit(gas, 'リクエスト', 'A2', 'ホームセンター');
+  assert.deepStrictEqual(listOf(request.getRange('B2')), ['D社', 'E社']);
+});
+
+test('requests: true を付けたシートが DIFF_RULES に無ければ、止めて知らせる', () => {
+  const {gas, g} = setup();
+  delete gas.get('DIFF_RULES')['新FMT'].requests;
+  assert.throws(() => g.setupRequestSheet(), /DIFF_RULES で、読むシート（新FMT など）に requests: true を付けてください/);
+});
+
 test('新FMT のリクエストの列の見出しが無ければ、止めて知らせる', () => {
   const {gas, g, source} = setup();
   gas.asUser(() => source.getRange('F2').setValue('要望'));

@@ -247,6 +247,8 @@ G 列から右が `リクエスト` の行ごとの候補（同じ行番号。�
   前からあるシートに足す列は、`insertAfter` の見出しのすぐ右に差し込みます（`taskEnsureHeader_`。フィードバックは判断の右、担当者はサービス案の右）。
   差し込んだ列は左の列の入力規則を引き継ぐことがあるので、自由に入力する列の入力規則は `svcApplyRules_` で外します。
   使わなくなった列（`removedColumns`：`メモ`・`追加日`・前の版の `取り込み日`）は、`setupRequestSheet()` が確認してから削除します（`taskDeleteColumns_`）。
+- 読むシート（`svcSourceSheets_`）：`DIFF_RULES` で `requests: true` を付けたシートです。新FMT の名前と見出しの行を `DIFF_RULES` の1か所に置くため、
+  `SVC_OPTIONS` には読むシートを書きません（シート名が2か所にあると、片方だけ直す間違いが起きるため）。
 - 候補：新FMT でリクエストが入っている案件（`svcSourceRecords_`。得意先・案件名・リクエストの組で1つ）のうち、
   ほかの行でまだ選んでいないものだけです。行ごとに、左の列で選んでいる値で絞り込みます。
   候補はスクリプトではなく、非表示の `__REQUEST_LISTS` シートの数式で作ります（`svcBuildLists_`・`svcListFormula_`）。
