@@ -68,7 +68,7 @@ test('開いたときの自動表示はやめた：前の版のトリガーが�
   assert.match(gas.toasts[gas.toasts.length - 1].message, /自動表示のトリガーはありません/);
 });
 
-test('メニュー「RXビジネスMTG用」＞「履歴サイドバーを開く」で開く（対象のシートのときだけ）', () => {
+test('メニュー「🟩RXビジネスMTG用」＞「履歴サイドバーを開く」で開く（対象のシートのときだけ）', () => {
   const {gas, g, sheet} = setupProject();
   gas.select(sheet, 'E3');
   assert.strictEqual(g.openHistorySidebar(), true);

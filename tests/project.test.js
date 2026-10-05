@@ -10,17 +10,25 @@ test('リポジトリ直下の *.gs を1つのグローバルスコープに読�
   });
 });
 
-test('onOpen で「RXビジネスMTG用」「アカウントプランシート作成」「RXサービスMTG用」のメニューが出る', () => {
+test('onOpen のメニューは左から「🟩RXビジネスMTG用」「🟪RXサービスMTG用」（アカウントプランシート作成は出さない）', () => {
   const gas = createGas();
   gas.global.onOpen({source: gas.ss});
-  assert.deepStrictEqual(gas.menus.map(m => m.title), ['RXビジネスMTG用', 'アカウントプランシート作成', 'RXサービスMTG用']);
-  assert.deepStrictEqual(gas.menus[2].items, [{label: 'リクエストを追加', fn: 'openRequestPicker'}]);
+  assert.deepStrictEqual(gas.menus.map(m => m.title), ['🟩RXビジネスMTG用', '🟪RXサービスMTG用']);
+  assert.strictEqual(typeof gas.global.showLoadingDialog, 'function', 'アカウントプランシート作成はエディタから実行できる');
 });
 
-test('「RXビジネスMTG用」のメニューは「履歴サイドバーを開く」「権限を承認する（初回のみ）」だけ（ほかの処理はエディタから実行する）', () => {
+test('CRED_OPTIONS.accountPlanMenu を true にすると、アカウントプランシート作成のメニューを右端に出す', () => {
+  const gas = createGas();
+  gas.get('CRED_OPTIONS').accountPlanMenu = true;
+  gas.global.onOpen({source: gas.ss});
+  assert.deepStrictEqual(gas.menus.map(m => m.title), ['🟩RXビジネスMTG用', '🟪RXサービスMTG用', 'アカウントプランシート作成']);
+  assert.deepStrictEqual(gas.menus[2].items, [{label: '作成開始', fn: 'showLoadingDialog'}]);
+});
+
+test('「🟩RXビジネスMTG用」のメニューは「履歴サイドバーを開く」「権限を承認する（初回のみ）」だけ（ほかの処理はエディタから実行する）', () => {
   const gas = createGas();
   gas.global.onOpen({source: gas.ss});
-  const menu = gas.menus.find(m => m.title === 'RXビジネスMTG用');
+  const menu = gas.menus.find(m => m.title === '🟩RXビジネスMTG用');
   assert.deepStrictEqual(menu.items, [
     {label: '履歴サイドバーを開く', fn: 'openHistorySidebar'},
     {label: '権限を承認する（初回のみ）', fn: 'authorizeHistoryFeatures'}
@@ -41,7 +49,7 @@ test('権限を承認する：すべての権限の承認を確かめてから�
   assert.strictEqual(gas.sidebars.length, 1);
   assert.strictEqual(gas.sidebars[0].html.file, 'HistorySidebarView');
   assert.strictEqual(gas.toasts.length, 1);
-  assert.strictEqual(gas.toasts[0].title, 'RXビジネスMTG用');
+  assert.strictEqual(gas.toasts[0].title, '🟩RXビジネスMTG用');
   assert.match(gas.toasts[0].message, /履歴サイドバーを開きました/);
   assert.strictEqual(gas.writes.length, 0, 'シートに書き込まない');
 });

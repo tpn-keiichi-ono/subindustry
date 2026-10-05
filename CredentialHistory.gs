@@ -30,7 +30,9 @@ const CRED_OPTIONS = {
   customerHeader: '得意先',               // 照合に使う列の見出し
   logSheet: 'クレデンシャル履歴_記録',
   // メニューの名前（画面の案内にもこの名前を出す）。項目は「履歴サイドバーを開く」「権限を承認する（初回のみ）」だけ
-  menuTitle: 'RXビジネスMTG用',
+  menuTitle: '🟩RXビジネスMTG用',
+  // アカウントプランシート作成（コード.gs）のメニューを出すか。出さないときは、エディタから showLoadingDialog() を実行する
+  accountPlanMenu: false,
   dialogTitle: 'クレデンシャル・オファリング履歴',   // モーダル上部に「タイトル：得意先名」で表示
   dialogWidth: 1280,        // 開いた直後の大きさ（表示後、ブラウザの広さに合わせて自動で広がる）
   dialogHeight: 760,
@@ -90,9 +92,11 @@ const CRED_OPTIONS = {
  * 別のメニューを増やすときは、そのメニューを作る関数をここから呼ぶ。
  */
 function onOpen() {
+  // メニューは追加した順に左から並ぶ：🟩RXビジネスMTG用 → 🟪RXサービスMTG用（→ アカウントプランシート作成）
   credAddMenu_();
-  if (typeof apAddMenu_ === 'function') apAddMenu_();   // コード.gs（アカウントプランシート作成）
   if (typeof svcAddMenu_ === 'function') svcAddMenu_();   // ServiceManagement.gs（サービスリクエストの選択パネル）
+  // コード.gs（アカウントプランシート作成）。CRED_OPTIONS.accountPlanMenu が true のときだけ出す
+  if (CRED_OPTIONS.accountPlanMenu && typeof apAddMenu_ === 'function') apAddMenu_();
 }
 
 /**
