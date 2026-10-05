@@ -5,6 +5,7 @@
  *
  * 仕組み
  * - 利用者がメニュー「履歴機能」＞「履歴サイドバーを開く」で開く（閉じるまで出たまま）。
+ *   開いているシートが対象（DIFF_RULES のシート）でなければ開かずに知らせる。
  *   開いたときの自動表示（前の版の autoOpenHistorySidebar）はやめた。トリガーが残っていれば removeHistorySidebarAutoOpen() で外す
  * - サイドバーから呼ぶ関数は、開いた本人の権限で動く。まだ承認していない人はサイドバーに「承認する」ボタンを出す。
  *   ボタンは承認用のウェブアプリ（doGet。HS_OPTIONS.authorizeUrl）を新しいタブで開き、そこで Google の承認画面が出る
@@ -42,7 +43,36 @@ const HS_OPTIONS = {
 
 /* ---------------- 開く ---------------- */
 
+/**
+ * メニュー「履歴機能」＞「履歴サイドバーを開く」。
+ * 開いているシートが対象（DIFF_RULES のシート）でなければ開かず、対象のシートを知らせる。開いたら true。
+ */
 function openHistorySidebar() {
+  if (!hsIsTargetSheet_(SpreadsheetApp.getActiveSheet())) {
+    const ui = SpreadsheetApp.getUi();
+    ui.alert(CRED_OPTIONS.menuTitle, hsTargetSheetMessage_(), ui.ButtonSet.OK);
+    return false;
+  }
+  hsShowSidebar_();
+  return true;
+}
+
+/** 開いているシートが、履歴を出すシート（DIFF_RULES のシート）か。 */
+function hsIsTargetSheet_(sheet) {
+  return !!sheet && Object.prototype.hasOwnProperty.call(DIFF_RULES, sheet.getName());
+}
+
+/** 対象外のシートで開こうとしたときの知らせ。 */
+function hsTargetSheetMessage_() {
+  return 'このシートでは開けません。' + hsTargetSheetsLabel_() + 'のシートで開いてください。';
+}
+
+/** 履歴を出すシートの名前を知らせる文に入れる形（「スーパー・GMS」「コンビニ」）。 */
+function hsTargetSheetsLabel_() {
+  return '「' + Object.keys(DIFF_RULES).join('」「') + '」';
+}
+
+function hsShowSidebar_() {
   const template = HtmlService.createTemplateFromFile(HS_OPTIONS.template);
   template.authorizeUrl = hsAuthorizeUrl_();
   const html = template.evaluate().setTitle(HS_OPTIONS.title);

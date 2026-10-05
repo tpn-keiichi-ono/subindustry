@@ -33,15 +33,27 @@ test('「履歴機能」のメニューは「履歴サイドバーを開く」�
   });
 });
 
-test('権限を承認する：すべての権限の承認を確かめてから、サイドバーを開き直す', () => {
+test('権限を承認する：すべての権限の承認を確かめてから、対象のシートならサイドバーを開き直す', () => {
   const gas = createGas();
+  gas.select(gas.addSheet('新FMT', [['新FMT']], {rows: 5, columns: 3}), 'A2');
   gas.global.authorizeHistoryFeatures();
   assert.deepStrictEqual(gas.scopeChecks, ['FULL']);
   assert.strictEqual(gas.sidebars.length, 1);
   assert.strictEqual(gas.sidebars[0].html.file, 'HistorySidebarView');
   assert.strictEqual(gas.toasts.length, 1);
   assert.strictEqual(gas.toasts[0].title, '履歴機能');
+  assert.match(gas.toasts[0].message, /履歴サイドバーを開きました/);
   assert.strictEqual(gas.writes.length, 0, 'シートに書き込まない');
+});
+
+test('権限を承認する：対象外のシートでは、承認だけしてサイドバーは開かない', () => {
+  const gas = createGas();
+  gas.select(gas.addSheet('メモ用', [['']], {rows: 5, columns: 3}), 'A1');
+  gas.global.authorizeHistoryFeatures();
+  assert.deepStrictEqual(gas.scopeChecks, ['FULL']);
+  assert.strictEqual(gas.sidebars.length, 0);
+  assert.strictEqual(gas.alerts.length, 0, '承認のときは画面を止めない（トーストで知らせる）');
+  assert.strictEqual(gas.toasts[0].message, '権限は承認済みです。履歴サイドバーは「新FMT」「新FMT2」のシートで開いてください。');
 });
 
 test('メニュー項目の関数がすべて存在し、内部用（末尾 _）ではない', () => {

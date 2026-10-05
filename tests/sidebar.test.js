@@ -68,11 +68,20 @@ test('開いたときの自動表示はやめた：前の版のトリガーが�
   assert.match(gas.toasts[gas.toasts.length - 1].message, /自動表示のトリガーはありません/);
 });
 
-test('メニュー「履歴機能」＞「履歴サイドバーを開く」で開く', () => {
-  const {gas, g} = setupProject();
-  g.openHistorySidebar();
+test('メニュー「履歴機能」＞「履歴サイドバーを開く」で開く（対象のシートのときだけ）', () => {
+  const {gas, g, sheet} = setupProject();
+  gas.select(sheet, 'E3');
+  assert.strictEqual(g.openHistorySidebar(), true);
   assert.strictEqual(gas.sidebars.length, 1);
   assert.strictEqual(gas.sidebars[0].html.file, 'HistorySidebarView');
+  assert.strictEqual(gas.alerts.length, 0);
+
+  // 対象外のシート（DIFF_RULES に無い）では開かず、対象のシートを知らせる
+  gas.select(gas.addSheet('集計', [['']], {rows: 5, columns: 3}), 'A1');
+  assert.strictEqual(g.openHistorySidebar(), false);
+  assert.strictEqual(gas.sidebars.length, 1, '開かない');
+  assert.strictEqual(gas.alerts[0].message, 'このシートでは開けません。「新FMT」「新FMT2」のシートで開いてください。');
+  assert.strictEqual(gas.writes.length, 0);
 });
 
 test('getSidebarBundle：変更は行（シート・得意先）ごとに新しい方から上限まで。超えた行には印を付ける', () => {

@@ -111,13 +111,18 @@ function credAddMenu_() {
  * メニュー「権限を承認する（初回のみ）」。
  * まだ承認していない人がメニューから実行すると、Apps Script が承認の画面を出す。
  * サイドバーからは承認の画面を出せないため、ここ（とメニューの「履歴サイドバーを開く」）が入口になる。
- * 承認が済んだら、サイドバーを開き直して履歴を読み込ませる。
+ * 承認が済んだら、対象のシートならサイドバーを開き直して履歴を読み込ませる（対象外のシートでは開かない）。
  */
 function authorizeHistoryFeatures() {
   // 承認の画面で一部の権限のチェックを外した人には、足りない権限の承認の画面をもう一度出す
   ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);
-  openHistorySidebar();
-  SpreadsheetApp.getActiveSpreadsheet().toast('権限は承認済みです。履歴サイドバーを開きました。', CRED_OPTIONS.menuTitle, 8);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (hsIsTargetSheet_(ss.getActiveSheet())) {
+    hsShowSidebar_();
+    ss.toast('権限は承認済みです。履歴サイドバーを開きました。', CRED_OPTIONS.menuTitle, 8);
+  } else {
+    ss.toast('権限は承認済みです。履歴サイドバーは' + hsTargetSheetsLabel_() + 'のシートで開いてください。', CRED_OPTIONS.menuTitle, 8);
+  }
 }
 
 /** エディタから実行して、選んでいる行のモーダルを開く（ボタンが使えないときの代替）。 */
