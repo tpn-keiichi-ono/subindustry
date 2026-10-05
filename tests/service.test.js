@@ -76,6 +76,26 @@ test('A から順に選ぶと、1つに決まる列は自動で入り、選ん�
   assert.deepStrictEqual(listOf(request.getRange('C2')), ['アプリ刷新', 'チラシのデジタル化'], '自分の行には残る');
 });
 
+test('A〜C を選ぶたびに、その行のリクエストの候補が絞られる（編集した行のプルダウンを先に反映する）', () => {
+  const {gas, g} = setup([
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい'],
+    ['食品スーパー', 'A社', 'アプリ刷新', 'クーポンを配りたい'],
+    ['食品スーパー', 'B社', '店舗什器', '什器の在庫を見たい'],
+    ['ドラッグストア', 'C社', 'EC立ち上げ', '在庫を店舗と共有したい']
+  ]);
+  g.setupRequestSheet();
+  gas.writes.length = 0;
+  let request = edit(gas, 'リクエスト', 'A3', '食品スーパー');
+  const validations = gas.writes.filter(w => w.kind === 'setDataValidations').map(w => w.a1);
+  assert.deepStrictEqual(validations.slice(0, 4), ['A3', 'B3', 'C3', 'D3'], '編集した行を先に');
+  assert.deepStrictEqual(listOf(request.getRange('D3')), ['会員の購買分析をしたい', 'クーポンを配りたい', '什器の在庫を見たい']);
+  request = edit(gas, 'リクエスト', 'B3', 'A社');
+  assert.deepStrictEqual(listOf(request.getRange('D3')), ['会員の購買分析をしたい', 'クーポンを配りたい']);
+  assert.deepStrictEqual(gas.dump(request, 'C3:D3')[0], ['アプリ刷新', ''], '案件名は1つなので入る。リクエストは2つあるので選ぶ');
+  assert.deepStrictEqual(listOf(request.getRange('D2')), ['会員の購買分析をしたい', 'クーポンを配りたい', '什器の在庫を見たい', '在庫を店舗と共有したい'],
+    'ほかの行は絞らない');
+});
+
 test('案件名やリクエストを先に選ぶと、ほかの列も入る。すべて選ぶと候補は「（すべて選択済み）」だけになる', () => {
   const {gas, g} = setup();
   g.setupRequestSheet();

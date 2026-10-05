@@ -47,7 +47,9 @@ const SVC_OPTIONS = {
   changedNote: '新FMT でリクエストが書き換えられました',   // サービス案・判断を付けたあとで書き換えられたときの注
   // 前の版で付けた保護（外す）
   legacyProtectDescriptions: ['リクエスト：新FMT から自動で転記する列', 'リクエスト：案件を選ぶと自動で入る列'],
-  lockWaitMs: 30000                       // エディタから実行する処理のロックの待ち時間
+  lockWaitMs: 30000,                      // エディタから実行する処理のロックの待ち時間
+  // リクエスト シートの編集（onEdit）でロックを待つ時間。続けて選ぶと前の選択の処理を待つので長めにする（単純トリガーは30秒で止まる）
+  editLockWaitMs: 20000
 };
 
 /** 連動プルダウンの列の key（左から）。 */
@@ -518,6 +520,17 @@ function svcRefreshRequestRows_(sheet, records, edited) {
       rules[level].push([ruleFor(options, level)]);
     });
   }
+  // 編集した行のプルダウンを先に反映する（全行の付け直しを待たずに、続けて選べるように）
+  if (edited && count > 0) {
+    const from = Math.max(edited.first, first) - first;
+    const to = Math.min(edited.last, lastRow) - first;
+    if (from <= to) {
+      cascadeKeys.forEach((key, level) => {
+        sheet.getRange(first + from, cols[key], to - from + 1, 1).setDataValidations(rules[level].slice(from, to + 1));
+      });
+      SpreadsheetApp.flush();
+    }
+  }
   if (count > 0) cascadeKeys.forEach((key, level) => sheet.getRange(first, cols[key], count, 1).setDataValidations(rules[level]));
 
   const rest = sheet.getMaxRows() - lastRow;
@@ -620,5 +633,5 @@ function svcHandleRequestEdit_(sheet, range) {
         }
       });
     }
-  });
+  }, SVC_OPTIONS.editLockWaitMs);
 }
