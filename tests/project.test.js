@@ -57,3 +57,32 @@ test('onOpen が単純トリガーとして動く（承認前でも失敗しな�
   assert.strictEqual(gas.writes.length, 0, 'onOpen ではシートに書き込まない');
   assert.strictEqual(gas.triggers.length, 0, 'onOpen ではトリガーを作らない');
 });
+
+test('本物のシート名の設定：DIFF_RULES・前の名前（formerNames）・リクエスト・タスク管理のシート名が重ならない', () => {
+  const gas = createGas({realSheetNames: true});
+  const rules = gas.get('DIFF_RULES');
+  const diff = gas.get('DIFF_OPTIONS');
+  const svc = gas.get('SVC_OPTIONS');
+  const names = Object.keys(rules);
+  assert.ok(names.length > 0);
+  names.forEach(name => {
+    const rule = rules[name];
+    assert.ok(Number.isInteger(rule.headerRow) && rule.headerRow >= 1, name + ' の headerRow');
+    assert.ok(Array.isArray(rule.ranges) && rule.ranges.length > 0, name + ' の ranges');
+    assert.ok(!rule.formerNames || Array.isArray(rule.formerNames), name + ' の formerNames は配列');
+  });
+  assert.ok(names.some(name => rules[name].requests), 'リクエストを読むシート（requests: true）が1つ以上ある');
+
+  const former = [].concat(...names.map(name => rules[name].formerNames || []));
+  former.forEach(f => assert.ok(!names.includes(f), '前の名前「' + f + '」が今のシート名と同じ'));
+  assert.strictEqual(new Set(former).size, former.length, '同じ前の名前が2つのシートにある');
+
+  // 機能ごとのシート名は、追跡するシートやほかの機能のシートと重ならない
+  const others = [diff.logSheet, diff.rowSnapshotSheet, gas.get('CRED_OPTIONS').logSheet,
+    svc.requestSheet, svc.listSheet, gas.get('TASK_OPTIONS').sheet];
+  assert.strictEqual(new Set(others).size, others.length, '機能ごとのシート名が重なっている');
+  others.forEach(name => {
+    assert.ok(!names.includes(name) && !former.includes(name), '「' + name + '」が追跡するシートと同じ名前');
+    assert.ok(!name.startsWith(diff.snapshotPrefix) || name === diff.snapshotPrefix, name);
+  });
+});

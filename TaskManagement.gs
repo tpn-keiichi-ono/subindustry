@@ -13,7 +13,7 @@
  */
 
 const TASK_OPTIONS = {
-  sheet: 'タスク管理',
+  sheet: 'サービス案タスク管理',
   headerRow: 1,
   // aliases は前の版の見出し（見つかったら新しい見出しに書き換えて使い続ける）
   columns: [

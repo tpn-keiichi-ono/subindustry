@@ -82,7 +82,7 @@ test('setupRequestSheet：リクエスト シートを作る。行は足さず�
 
   assert.strictEqual(request.getProtections().length, 0, 'A〜D はプルダウンで選ぶので保護しない');
   assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
-  assert.match(gas.toasts[0].message, /新FMT のリクエスト 3件のうち 0件を選んでいます（まだ選んでいないもの 3件）/);
+  assert.match(gas.toasts[0].message, /「新FMT」のリクエスト 3件のうち 0件を選んでいます（まだ選んでいないもの 3件）/);
 });
 
 test('A から順に選ぶと、1つに決まる得意先・案件名は自動で入り、選んだ案件はほかの行の候補から消える（D列以降は自動で入れない）', () => {
@@ -350,7 +350,7 @@ test('新FMT の変更：選んだ行は同じ行を直し、候補も作り直�
   // 選んだ行のリクエスト・得意先・サブインダストリーを変えると、同じ行を直す（サービス案を付けたあとなら注を付ける）
   sourceEdit('F3', '会員の購買データを分析したい');
   assert.deepStrictEqual(gas.dump(request, 'D2:E2')[0], ['会員の購買データを分析したい', '会員分析基盤']);
-  assert.match(request.getRange('D2').getNote(), /^新FMT でリクエストが書き換えられました/);
+  assert.match(request.getRange('D2').getNote(), /^取り込み元でリクエストが書き換えられました/);
   sourceEdit('D3', 'A社（本社）');
   sourceEdit('C3', '大型スーパー');
   assert.deepStrictEqual(gas.dump(request, 'A2:C2')[0], ['大型スーパー', 'A社（本社）', 'アプリ刷新']);
@@ -431,13 +431,13 @@ test('setupRequestSheet：削除しないと答えたら、メモ・追加日は
   assert.match(gas.toasts[gas.toasts.length - 1].message, /「メモ」「追加日」の列は残しました/);
 });
 
-test('新FMT にリクエストが1件も無ければ、候補は「（新FMT にリクエストがありません）」にして知らせる（すべて選択済みと区別する）', () => {
+test('新FMT にリクエストが1件も無ければ、候補は「（取り込み元にリクエストがありません）」にして知らせる（すべて選択済みと区別する）', () => {
   const {gas, g} = setup([['食品スーパー', 'A社', 'アプリ刷新', '']]);
   g.setupRequestSheet();
   const request = gas.ss.getSheetByName('リクエスト');
-  assert.deepStrictEqual(listOf(request.getRange('A2')), ['（新FMT にリクエストがありません）']);
+  assert.deepStrictEqual(listOf(request.getRange('A2')), ['（取り込み元にリクエストがありません）']);
   assert.deepStrictEqual(listOf(request.getRange('D2')), WAIT_SUB);
-  assert.match(gas.toasts[0].message, /新FMT にリクエストが見つかりません/);
+  assert.match(gas.toasts[0].message, /「新FMT」にリクエストが見つかりません/);
 });
 
 test('removeUntouchedRequests：前の版で全件を取り込んだまま手を付けていない行を、確かめてから削除して候補に戻す', () => {
@@ -465,7 +465,7 @@ test('removeUntouchedRequests：前の版で全件を取り込んだまま手を
   ], 'サービス案を付けた行は残す');
   assert.deepStrictEqual(listOf(sheet.getRange('A3')), ['食品スーパー', 'ドラッグストア'], '候補に戻る');
   assert.deepStrictEqual(listOf(sheet.getRange('C3')), WAIT_SUB);
-  assert.match(gas.toasts[gas.toasts.length - 1].message, /2行を削除しました。新FMT のリクエスト 3件のうち 1件を選んでいます/);
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /2行を削除しました。「新FMT」のリクエスト 3件のうち 1件を選んでいます/);
 });
 
 test('removeUntouchedRequests：データの行をすべて消すときも止まらない（空の行を1つ残す）', () => {
@@ -493,7 +493,7 @@ test('読むシートは DIFF_RULES で requests: true を付けたシート：�
   g.setupRequestSheet();
   const request = gas.ss.getSheetByName('リクエスト');
   assert.deepStrictEqual(listOf(request.getRange('A2')), ['食品スーパー', 'ドラッグストア', 'ホームセンター']);
-  assert.match(gas.toasts[gas.toasts.length - 1].message, /新FMT のリクエスト 4件のうち 0件/);
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /「新FMT」「新FMT2」のリクエスト 4件のうち 0件/);
 
   // 新FMT2 の編集でも候補を作り直す
   g.onEdit(gas.edit(fmt2, 'C5:F5', [['ホームセンター', 'E社', '店舗DX', '在庫を見える化したい']]));
@@ -504,7 +504,17 @@ test('読むシートは DIFF_RULES で requests: true を付けたシート：�
 test('requests: true を付けたシートが DIFF_RULES に無ければ、止めて知らせる', () => {
   const {gas, g} = setup();
   delete gas.get('DIFF_RULES')['新FMT'].requests;
-  assert.throws(() => g.setupRequestSheet(), /DIFF_RULES で、読むシート（新FMT など）に requests: true を付けてください/);
+  assert.throws(() => g.setupRequestSheet(), /DIFF_RULES で、読むシートに requests: true を付けてください/);
+});
+
+test('前の版の注（「新FMT でリクエストが書き換えられました」）も、このスクリプトの注として付け替える', () => {
+  const {gas, g, source} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  choose(gas, 2, ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい']);
+  gas.asUser(() => request.getRange('D2').setNote('新FMT でリクエストが書き換えられました（2026/10/01）。サービス案・判断を見直してください。'));
+  g.onEdit(gas.edit(source, 'F3', ''));
+  assert.match(request.getRange('D2').getNote(), /^取り込み元に見つかりません/);
 });
 
 test('新FMT のリクエストの列の見出しが無ければ、止めて知らせる', () => {

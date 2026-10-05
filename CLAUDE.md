@@ -34,4 +34,5 @@ Google スプレッドシートにバインドされた Google Apps Script（V8�
 - 接頭辞でファイル（機能）を表す：`diff*`（差分追跡）、`cred*`（クレデンシャル）、`chg*`（変更履歴）、`hs*`（サイドバー）、`ap*`（アカウントプラン作成。`コード.gs` の既存の関数は接頭辞なし）、`smp*`（サンプルデータ）、`oc*`（オポチュニティキャンバス）、`task*`（タスク管理。見出しの用意・ロックなどサービス管理と共通の処理も）、`svc*`（サービス管理・リクエスト シート）。
 - 末尾 `_` の関数は内部用（メニューや `google.script.run` から直接呼ばない）。
 - 設定は各ファイル先頭の `DIFF_OPTIONS` / `CRED_OPTIONS` / `CHG_OPTIONS` / `HS_OPTIONS` / `TASK_OPTIONS` / `SVC_OPTIONS` に集める。
-- シート名は1か所にだけ書く。新FMT など追跡するシートは `DIFF_RULES`（リクエストを読むシートも `DIFF_RULES` の `requests: true` で指定し、`SVC_OPTIONS` には書かない）。シートを増やしたり名前の設定を変えたりしたら、`docs/OPERATIONS.md` の「シート名の一覧」も直す。
+- シート名は1か所にだけ書く。追跡するシート（スーパー・GMS など。ドキュメントでは「新FMT」と書く）は `DIFF_RULES`（リクエストを読むシートも `DIFF_RULES` の `requests: true` で指定し、`SVC_OPTIONS` には書かない）。追跡するシートの名前を変えたら、前の名前を `formerNames` に足す（記録はシート名で残り、書き換えないため）。シートを増やしたり名前の設定を変えたりしたら、`docs/OPERATIONS.md` の「シート名の一覧」も直す。
+- テストはシート名の設定に左右されない（`tests/lib/gas-mock.js` が `DIFF_RULES` などをテスト用の名前に置き換える）。シート名に関わる処理を足したら、本物の設定の確認（`tests/project.test.js`）も見直す。

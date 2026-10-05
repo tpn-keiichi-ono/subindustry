@@ -23,7 +23,7 @@
  */
 
 const SVC_OPTIONS = {
-  requestSheet: 'リクエスト',
+  requestSheet: 'サービスリクエスト',
   headerRow: 1,
   // リクエストを読むシートは、test.gs の DIFF_RULES で requests: true を付けたシート（見出しの行も DIFF_RULES の headerRow）。
   // 新FMT2 も読むときは、DIFF_RULES の新FMT2 に requests: true を足す（svcSourceSheets_）
@@ -44,14 +44,15 @@ const SVC_OPTIONS = {
   // 使わなくなった列（setupRequestSheet() で、確認してから削除する。取り込み日は追加日の前の版の見出し）
   removedColumns: ['メモ', '追加日', '取り込み日'],
   allSelected: '（すべて選択済み）',      // 候補をすべて選んだときにプルダウンに出す文字
-  noRequests: '（新FMT にリクエストがありません）',   // 新FMT にリクエストが1件も無いときにプルダウンに出す文字
+  noRequests: '（取り込み元にリクエストがありません）',   // 読むシートにリクエストが1件も無いときにプルダウンに出す文字
   chooseLeftFirst: '（先に{label}を選んでください）',  // 左の列が空のときに、右の列のプルダウンに出す文字（{label} は空の列の見出し）
   maxListItems: 500,                     // プルダウンの候補の上限（超えたときは知らせる）
   listSheet: '__REQUEST_LISTS',          // 候補を数式で作る非表示のシート（リクエスト シートの A〜D のプルダウンが参照する）
   listMargin: 5,                         // 候補の欄に足しておく余白（新FMT で候補が増えても、作り直さずに済むように）
   defaultDecision: '未判断',             // まだ判断していないことを表す判断（空と同じに扱う）
   missingNote: '取り込み元に見つかりません',   // 新FMT から消えた・書き換えられたリクエストに付ける注の先頭
-  changedNote: '新FMT でリクエストが書き換えられました',   // サービス案・判断を付けたあとで書き換えられたときの注（セルの注。列ではない）
+  changedNote: '取り込み元でリクエストが書き換えられました',   // サービス案・判断を付けたあとで書き換えられたときの注（セルの注。列ではない）
+  legacyChangedNotes: ['新FMT でリクエストが書き換えられました'],   // 前の版で付けた同じ注（このスクリプトの注として扱う）
   // 前の版で付けた保護（外す）
   legacyProtectDescriptions: ['リクエスト：新FMT から自動で転記する列', 'リクエスト：案件を選ぶと自動で入る列'],
   lockWaitMs: 30000,                      // エディタから実行する処理のロックの待ち時間
@@ -62,6 +63,11 @@ const SVC_OPTIONS = {
 /** リクエストを読むシートの名前（test.gs の DIFF_RULES で requests: true を付けたシート。DIFF_RULES の順）。 */
 function svcSourceSheets_() {
   return Object.keys(DIFF_RULES).filter(name => DIFF_RULES[name] && DIFF_RULES[name].requests);
+}
+
+/** 読むシートの名前を知らせる文に入れる形（「スーパー・GMS」「コンビニ」）。 */
+function svcSourceLabel_() {
+  return '「' + svcSourceSheets_().join('」「') + '」';
 }
 
 /** 連動プルダウンの列の key（左から）。 */
@@ -150,7 +156,7 @@ function setupRequestSheet() {
   const name = SVC_OPTIONS.requestSheet;
   const lines = [result.created ? '「' + name + '」シートを作りました。' : '「' + name + '」シートのプルダウンを作り直しました。'];
   lines.push(svcCountMessage_(result));
-  if (result.missing) lines.push('新FMT に見つからないリクエストが ' + result.missing + '件あります（「リクエスト」のセルに注を付けました）。');
+  if (result.missing) lines.push(svcSourceLabel_() + 'に見つからないリクエストが ' + result.missing + '件あります（「リクエスト」のセルに注を付けました）。');
   if (result.removed.length) lines.push('「' + result.removed.join('」「') + '」の列を削除しました。');
   else if (oldColumns.length) lines.push('「' + oldColumns.join('」「') + '」の列は残しました（使いません。不要なら削除してください）。');
   if (result.added.length) lines.push('「' + result.added.join('」「') + '」の列を足しました。');
@@ -225,13 +231,13 @@ function svcUntouched_(request, decision, others) {
 /** 選んだ件数の知らせ（{total, selected, remaining, unselectable, untouched}）。 */
 function svcCountMessage_(result) {
   if (!result.total) {
-    return '新FMT にリクエストが見つかりません。新FMT の「' + SVC_OPTIONS.sourceHeaders[3] + '」の列にリクエストが入っているか確かめてください。';
+    return svcSourceLabel_() + 'にリクエストが見つかりません。「' + SVC_OPTIONS.sourceHeaders[3] + '」の列にリクエストが入っているか確かめてください。';
   }
-  const lines = ['新FMT のリクエスト ' + result.total + '件のうち ' + result.selected + '件を選んでいます（まだ選んでいないもの ' +
+  const lines = [svcSourceLabel_() + 'のリクエスト ' + result.total + '件のうち ' + result.selected + '件を選んでいます（まだ選んでいないもの ' +
     result.remaining + '件）。'];
   if (result.unselectable) {
-    lines.push('新FMT でサブインダストリー・得意先・案件名のどれかが空のため、選べないリクエストが ' + result.unselectable + '件あります' +
-      '（左の列から順に選ぶため。新FMT で入力すると候補に出ます）。');
+    lines.push(svcSourceLabel_() + 'でサブインダストリー・得意先・案件名のどれかが空のため、選べないリクエストが ' + result.unselectable + '件あります' +
+      '（左の列から順に選ぶため。そのシートで入力すると候補に出ます）。');
   }
   if (!result.remaining && result.untouched) {
     lines.push('判断・フィードバック・サービス案・担当者が空の行が ' + result.untouched + '件あります。前の版で自動で取り込んだ行なら、' +
@@ -325,7 +331,7 @@ function svcSourceRecords_(ss) {
   const seen = new Set();
   const names = svcSourceSheets_();
   if (!names.length) {
-    throw new Error('リクエストを読むシートがありません。test.gs の DIFF_RULES で、読むシート（新FMT など）に requests: true を付けてください。');
+    throw new Error('リクエストを読むシートがありません。test.gs の DIFF_RULES で、読むシートに requests: true を付けてください。');
   }
   names.forEach(name => {
     const sheet = ss.getSheetByName(name);
@@ -406,7 +412,8 @@ function svcSync_(ss, sheet, renamed, records) {
   const next = keys.map((key, i) => {
     if (!key) return notes[i];
     const missingNote = notes[i].indexOf(SVC_OPTIONS.missingNote) === 0;
-    const ours = missingNote || notes[i].indexOf(SVC_OPTIONS.changedNote) === 0;   // 利用者が書いた注は変えない
+    const ours = missingNote || [SVC_OPTIONS.changedNote].concat(SVC_OPTIONS.legacyChangedNotes)
+      .some(prefix => notes[i].indexOf(prefix) === 0);   // 利用者が書いた注は変えない
     if (source.has(key)) {
       if (changedRows.has(i) && (!notes[i] || ours)) {
         notesChanged = true;
@@ -420,7 +427,7 @@ function svcSync_(ss, sheet, renamed, records) {
     if (missingNote || (notes[i] && !ours)) return notes[i];   // 前回から見つからないまま、または利用者が書いた注
     notesChanged = true;
     return SVC_OPTIONS.missingNote + '（' + today + ' に気づきました）。' +
-      svcSourceSheets_().join('・') + ' で書き換えか削除された可能性があります。';
+      svcSourceLabel_() + 'で書き換えか削除された可能性があります。';
   });
   if (notesChanged) noteRange.setNotes(next.map(n => [n]));
   return {updated, missing};
@@ -851,7 +858,7 @@ function svcHandleSourceEdit_(sheet, range, e) {
       svcBuildLists_(ss, request, records, false);
     });
   } catch (error) {
-    throw new Error('リクエスト シートを新FMT に合わせられませんでした（' + error.message + '）。' +
+    throw new Error('「' + SVC_OPTIONS.requestSheet + '」シートを「' + sheet.getName() + '」の変更に合わせられませんでした（' + error.message + '）。' +
       'あとで setupRequestSheet() を実行するか、もう一度編集してください。');
   }
 }

@@ -289,12 +289,14 @@ function hsChangeIndex_(ss) {
   const iCustomer = col(diffCleanHeaderText_(CRED_OPTIONS.customerHeader));
   if (iCustomer < 0) return {changes: out, more};
 
-  // シート＋得意先ごとに、新しい方から決まった件数だけ残す
+  // シート＋得意先ごとに、新しい方から決まった件数だけ残す（シート名を変える前の記録は、今のシート名にそろえる）
+  const current = diffSheetNameResolver_();
   const groups = new Map();
   for (let r = 1; r < values.length; r++) {
     const v = values[r];
-    if (!v[iSheet] || !DIFF_RULES[v[iSheet]]) continue;
-    const key = v[iSheet] + '\u0001' + credNormalize_(v[iCustomer]);
+    const sheetName = current(v[iSheet]);
+    if (!sheetName || !DIFF_RULES[sheetName]) continue;
+    const key = sheetName + '\u0001' + credNormalize_(v[iCustomer]);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(v);
   }
@@ -318,7 +320,7 @@ function hsChangeIndex_(ss) {
     log.getRange(2, 2, log.getLastRow() - 1, 8).getDisplayValues().forEach(r => {
       if (!needed.has(r[0])) return;
       if (!records.has(r[0])) records.set(r[0], []);
-      records.get(r[0]).push({sheet: r[2], cell: r[3], column: r[4], before: r[6], after: r[7]});
+      records.get(r[0]).push({sheet: current(r[2]), cell: r[3], column: r[4], before: r[6], after: r[7]});
     });
   }
 

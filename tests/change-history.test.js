@@ -60,3 +60,26 @@ test('openChangeHistoryDialog：見出し行を選んでいたら知らせる', 
   assert.strictEqual(gas.dialogs.length, 0);
   assert.match(gas.alerts[0].message, /データ行（3行目以降）を選んでください/);
 });
+
+test('シート名を変えたあと：DIFF_RULES の formerNames に前の名前を書くと、前の名前の記録も変更履歴とサイドバーに出す', () => {
+  const {gas, g, sheet} = setupProject();
+  g.recordDiffEdit(gas.edit(sheet, 'F3', '受注'));   // 「新FMT」として記録される
+
+  // シート名を変え、DIFF_RULES のキーを新しい名前にして前の名前を formerNames に書く（運用と同じ手順）
+  sheet.setName('スーパー・GMS');
+  const rules = gas.get('DIFF_RULES');
+  rules['スーパー・GMS'] = Object.assign({}, rules['新FMT'], {formerNames: ['新FMT']});
+  delete rules['新FMT'];
+  g.setupDiffTracking();
+  g.recordDiffEdit(gas.edit(sheet, 'E3', '高橋'));   // 「スーパー・GMS」として記録される
+
+  const data = plain(g.getChangeHistoryData('スーパー・GMS', 3));
+  assert.deepStrictEqual(data.events.map(e => e.changes.map(c => c.column)), [['担当'], ['状況']], '前の名前の記録も出す');
+  const bundle = plain(g.getSidebarBundle());
+  assert.deepStrictEqual(bundle.sheets, ['新FMT2', 'スーパー・GMS']);
+  assert.strictEqual(bundle.changes['スーパー・GMS']['A社'].length, 2);
+  assert.strictEqual(bundle.changes['新FMT'], undefined, '前の名前では分けない');
+
+  const log = gas.ss.getSheetByName('変更履歴_差分');
+  assert.ok(gas.dump(log, 'D2:D3').some(r => r[0] === '新FMT'), '記録は書き換えない（前の名前のまま残る）');
+});

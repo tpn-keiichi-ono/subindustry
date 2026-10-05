@@ -74,19 +74,38 @@
  */
 
 // 追跡するシート（キーがシート名）。ほかの機能もこのシート名と headerRow を使う：
-// requests: true を付けたシートは、リクエスト シート（ServiceManagement.gs）がサービスのリクエストを読む。
-// シート名を変えると、差分追跡の記録（シート名で残る）と過去の行がつながらなくなるので変えない（docs/OPERATIONS.md「シート名の一覧」）。
+// - requests: true を付けたシートは、リクエスト シート（ServiceManagement.gs）がサービスのリクエストを読む
+// - formerNames は前のシート名。差分追跡の記録はシート名で残るので、名前を変えたら前の名前をここに足す
+//   （前の名前の記録も、このシートの記録としてサイドバー・変更履歴に出す。記録は書き換えない）
+// シート名を変えたら setupDiffTracking() を実行する（docs/OPERATIONS.md「シート名の一覧」）。
 const DIFF_RULES = {
-  '新FMT': {
+  'スーパー・GMS': {
     headerRow: 2,
     ranges: ['D3:AF'],
-    requests: true      // リクエスト シートの候補にする（「サービスのリクエスト」の列を読む）
+    requests: true,          // リクエスト シートの候補にする（「サービスのリクエスト」の列を読む）
+    formerNames: ['新FMT']
     // Optional: capture an explicit row span in the row snapshot.
     // , snapshotColumns: 'A:Z'
-  }
-  // Add other existing tabs, for example:
-  , '新FMT2': { headerRow: 2, ranges: ['D3:AF']}
+  },
+  'コンビニ': {headerRow: 2, ranges: ['D3:AF'], requests: true, formerNames: ['新FMT2']},
+  '百貨店': {headerRow: 2, ranges: ['D3:AF'], requests: true}
 };
+
+/**
+ * 記録に残っているシート名を、今の DIFF_RULES のシート名にそろえる関数を返す
+ * （formerNames に書いた前の名前なら今の名前、どちらでもなければそのまま）。
+ */
+function diffSheetNameResolver_() {
+  const names = new Map();
+  Object.keys(DIFF_RULES).forEach(name => {
+    names.set(name, name);
+    (DIFF_RULES[name].formerNames || []).forEach(former => { if (!names.has(former)) names.set(String(former), name); });
+  });
+  return value => {
+    const text = String(value == null ? '' : value);
+    return names.get(text) || text;
+  };
+}
 
 const DIFF_OPTIONS = {
   stampHeader: '最終更新日時',

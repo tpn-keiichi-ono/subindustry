@@ -149,10 +149,11 @@ function getChangeHistoryData(sheetName, row) {
   const ignoreInCompare = key => diffNormalizeStampHeader_(key) === diffNormalizeStampHeader_(stampKey);
 
   const key = credNormalize_(target.customer);
+  const current = diffSheetNameResolver_();   // シート名を変える前の記録（DIFF_RULES の formerNames）も同じシートとみなす
   let matches = [];
   for (let r = 1; r < values.length; r++) {
     const v = values[r];
-    if (v[iSheet] === name && credNormalize_(v[iCustomer]) === key) matches.push(v);
+    if (current(v[iSheet]) === name && credNormalize_(v[iCustomer]) === key) matches.push(v);
   }
   // 行の順ではなく記録日時の順にそろえる（過去の日時の記録があとから足された場合も、古い順になるように）
   matches.sort((a, b) => (a[iAt] < b[iAt] ? -1 : a[iAt] > b[iAt] ? 1 : 0));
@@ -172,7 +173,7 @@ function getChangeHistoryData(sheetName, row) {
   if (log && log.getLastRow() >= 2) {
     // B:I = イベントID, 編集者メールアドレス, シート, セル, 列名, 種類, 変更前, 変更後
     log.getRange(2, 2, log.getLastRow() - 1, 8).getDisplayValues().forEach(r => {
-      if (!eventIds.has(r[0]) || r[2] !== name) return;
+      if (!eventIds.has(r[0]) || current(r[2]) !== name) return;
       if (!recordsByEvent.has(r[0])) recordsByEvent.set(r[0], []);
       recordsByEvent.get(r[0]).push({cell: r[3], column: r[4], kind: r[5], before: r[6], after: r[7]});
     });

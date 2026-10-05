@@ -2,6 +2,10 @@
 
 導入・日々の運用・設定の変更・トラブル対応の手順です。仕組みは [DESIGN.md](DESIGN.md) を参照してください。
 
+> **シート名について**：シート名は設定で変えられます。このドキュメントでは、差分追跡の対象のシート（今の名前は「スーパー・GMS」「コンビニ」「百貨店」。前の名前は新FMT・新FMT2）を「新FMT」、
+> リクエストを選ぶシート（今の名前は「サービスリクエスト」）を「リクエスト」、タスクのシート（今の名前は「サービス案タスク管理」）を「タスク管理」と書きます。
+> 今の名前と書いてある場所は、OPERATIONS.md の「シート名の一覧」を見てください。
+
 関数を「実行する」とは、Apps Script エディタで関数を選んで「実行」を押すことです。
 メニュー「履歴機能」には利用者向けの「権限を承認する（初回のみ）」だけを置いているので、管理者の作業や選んだ行のモーダルを開く処理は、エディタから関数を実行します。
 確認や結果の画面はスプレッドシートの側に出るので、スプレッドシートを別のタブで開いたまま実行してください。
@@ -170,7 +174,7 @@ URL を入れたあとは、サイドバーの「再読み込み」（または1
   エディタで `removeUntouchedRequests()` を実行すると、手を付けていない行（判断が「未判断」か空で、フィードバック・サービス案・担当者が空）を、件数を確かめてから削除し、その案件を候補に戻せます
   （判断・フィードバック・サービス案・担当者のどれかが入っている行は残ります）。
 - 前の版で作った `サービス` シートは使いません。不要なら削除してください。
-- リクエストを読むシートは、`test.gs` の `DIFF_RULES` で `requests: true` を付けたシートです（今は新FMT。見出しの行も `DIFF_RULES` の `headerRow`）。
+- リクエストを読むシートは、`test.gs` の `DIFF_RULES` で `requests: true` を付けたシートです（今はスーパー・GMS・コンビニ・百貨店。見出しの行も `DIFF_RULES` の `headerRow`）。
   新FMT2 も読むときは、`DIFF_RULES` の新FMT2 に `requests: true` を足して `test.gs` を貼り付け、`setupRequestSheet()` を実行してください。
   読むシートには「サブインダストリー」「得意先」「案件名」「サービスのリクエスト」の見出しが1つずつ必要です。
 - 見出し・選択肢は、`ServiceManagement.gs` の `SVC_OPTIONS` で変えられます。
@@ -215,17 +219,20 @@ D列以降（タスク・担当者・期限・状況・メモ）の値はその�
 
 | シート | 書いてある場所 | 名前を変えてよいか | 直したあとの作業 |
 |---|---|---|---|
-| 新FMT・新FMT2（追跡するシート） | `test.gs` の `DIFF_RULES`（キー）。`requests: true` を付けたシートは、リクエスト シートの候補にも使う | **変えない**。差分追跡の記録（変更履歴_差分・変更時点スナップショット）はシート名で残るので、変えると過去の記録がサイドバー・変更履歴に出なくなる | （変えるときは）`setupDiffTracking()`・`setupRequestSheet()` |
+| スーパー・GMS・コンビニ・百貨店（追跡するシート。前の名前は新FMT・新FMT2） | `test.gs` の `DIFF_RULES`（キー）。`requests: true` を付けたシートは、リクエスト シートの候補にも使う | 変えられる。キーを新しい名前にし、**前の名前を `formerNames` に足す**（差分追跡の記録はシート名で残るので、足さないと前の名前の記録がサイドバー・変更履歴に出なくなる） | `setupDiffTracking()`・`setupRequestSheet()` |
 | 変更履歴_差分・変更時点スナップショット | `test.gs` の `DIFF_OPTIONS`（`logSheet`・`rowSnapshotSheet`） | 変えられる（設定と同時に） | なし |
 | クレデンシャル履歴_記録 | `CredentialHistory.gs` の `CRED_OPTIONS.logSheet` | 変えられる（設定と同時に） | なし |
-| リクエスト | `ServiceManagement.gs` の `SVC_OPTIONS.requestSheet` | 変えられる | `setupRequestSheet()` |
-| タスク管理 | `TaskManagement.gs` の `TASK_OPTIONS.sheet` | 変えられる | `setupRequestSheet()` |
+| サービスリクエスト（リクエスト） | `ServiceManagement.gs` の `SVC_OPTIONS.requestSheet` | 変えられる | `setupRequestSheet()` |
+| サービス案タスク管理（タスク管理） | `TaskManagement.gs` の `TASK_OPTIONS.sheet` | 変えられる | `setupRequestSheet()` |
 | 33シナリオ攻略先リスト（アカウントプランの URL） | `HistorySidebar.gs` の `HS_OPTIONS.accountPlan.sheet` | 変えられる | なし |
 | 「案件_」で始まるシート（列の保護） | `自動入力部分のシート保護.gs` の `prefix` | 変えられる | `protectSpecificColumnsWithLock()` |
 | `__CHAR_DIFF_<シートID>`（非表示） | `test.gs` の `DIFF_OPTIONS.snapshotPrefix` | **変えない・消さない**（差分の比較基準） | — |
 | `__REQUEST_LISTS`（非表示） | `ServiceManagement.gs` の `SVC_OPTIONS.listSheet` | **変えない・消さない**（リクエストの候補を作る数式） | 消したときは `setupRequestSheet()` で作り直す |
 
-- 新FMT の名前を書くのは `DIFF_RULES` の1か所だけです（リクエスト シートも `DIFF_RULES` を見ます）。
+- 追跡するシートの名前を書くのは `DIFF_RULES` の1か所だけです（リクエスト シートも `DIFF_RULES` を見ます）。
+- 追跡するシートを足すとき（例：百貨店）は、`DIFF_RULES` に足し、そのシートの2行目に追跡シートと同じ見出し（`得意先`・`最終更新日時` など）を用意してから、
+  `setupDiffTracking()`・2つのボタン列の設定（`setupCredentialLauncher()`・`setupChangeHistoryLauncher()`）を実行します。
+  `requests: true` を付けたシートには「サブインダストリー」「得意先」「案件名」「サービスのリクエスト」の見出しも必要です（無いと `setupRequestSheet()` が止まります）。
 - 記録のシート（変更履歴_差分・変更時点スナップショット・クレデンシャル履歴_記録）は、設定だけ・シート名だけを変えると、次の記録で空のシートが新しく作られ、記録が2つのシートに分かれます。
 
 ## clasp で同期する

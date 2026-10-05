@@ -527,9 +527,15 @@ class Spreadsheet {
 
 /* ---------------- 全体 ---------------- */
 
+/** テストで使う追跡シート（tests/lib/fixture.js の 新FMT・新FMT2 と同じ形）。本物の DIFF_RULES の代わりに使う。 */
+const TEST_DIFF_RULES = {
+  '新FMT': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  '新FMT2': {headerRow: 2, ranges: ['D3:AF']}
+};
+
 /**
  * テスト1件ぶんの Apps Script 環境を作り、リポジトリ直下の *.gs を読み込む。
- * options = {user, owner, timeZone, files}
+ * options = {user, owner, timeZone, files, realSheetNames}
  */
 function createGas(options) {
   options = options || {};
@@ -877,6 +883,19 @@ function createGas(options) {
   files.forEach(name => {
     vm.runInContext(fs.readFileSync(path.join(ROOT, name), 'utf8'), context, {filename: name});
   });
+
+  // シート名の設定（管理者が実際のシートに合わせて変える）にテストが左右されないよう、テスト用の名前に置き換える。
+  // 本物の設定のまま読むときは createGas({realSheetNames: true})（tests/project.test.js で設定の形を確かめる）
+  if (!options.realSheetNames) {
+    vm.runInContext('(' + function (rules) {
+      if (typeof DIFF_RULES !== 'undefined') {
+        Object.keys(DIFF_RULES).forEach(name => { delete DIFF_RULES[name]; });
+        Object.assign(DIFF_RULES, rules);
+      }
+      if (typeof SVC_OPTIONS !== 'undefined') SVC_OPTIONS.requestSheet = 'リクエスト';
+      if (typeof TASK_OPTIONS !== 'undefined') TASK_OPTIONS.sheet = 'タスク管理';
+    } + ')(' + JSON.stringify(TEST_DIFF_RULES) + ')', context);
+  }
 
   /* ----- テスト用の補助 ----- */
 
