@@ -289,7 +289,7 @@ test('openRequestListDialog：バッジから一覧のモーダルを開く（�
   assert.strictEqual(gas.dialogs[1].html.data.kind, 'unregistered', '知らない値なら未登録のタブ');
   assert.ok(gas.dialogs[0].html.width >= 600 && gas.dialogs[0].html.height >= 400);
   const html = gas.dialogs[0].html.getContent();
-  ['getRequestListData', 'saveCredentialDialogSize'].forEach(name => {
+  ['getRequestListData', 'saveCredentialDialogSize', 'addServiceRequestFromList', 'deleteServiceRequest'].forEach(name => {
     assert.match(html, new RegExp('\\.' + name + '\\('), name + ' を呼んでいない');
     assert.strictEqual(typeof g[name], 'function', name);
   });
@@ -310,11 +310,13 @@ test('getRequestListData：未登録と登録済みの一覧を返す（登録�
   gas.writes.length = 0;
   const data = g.getRequestListData();
   assert.deepStrictEqual(gas.writes, [], '何も書き込まない');
-  assert.deepStrictEqual(plain(data.unregistered), [
+  assert.ok(data.unregistered.concat(data.registered).every(item => item.key), '追加・削除に使うキーを付ける');
+  const withoutKey = list => plain(list).map(item => { delete item.key; return item; });
+  assert.deepStrictEqual(withoutKey(data.unregistered), [
     {sheet: '新FMT', values: ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの配布数を減らしたい']},
     {sheet: '新FMT', values: ['ドラッグストア', 'C社', 'EC立ち上げ', '=在庫を店舗と共有したい']}
   ]);
-  assert.deepStrictEqual(plain(data.registered), [
+  assert.deepStrictEqual(withoutKey(data.registered), [
     {row: 2, sheet: '新FMT', missing: false, values: ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい'],
       decision: 'サービス化検討', feedback: '前向きに検討', service: '会員分析基盤', owner: '佐藤'},
     {row: 3, sheet: '', missing: true, values: ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい'],
@@ -322,6 +324,90 @@ test('getRequestListData：未登録と登録済みの一覧を返す（登録�
   ]);
   assert.strictEqual(data.requestSheet, 'リクエスト');
   assert.match(data.loadedAt, /^\d{2}:\d{2}$/);
+});
+
+test('addServiceRequestFromList：一覧のモーダルから追加し、一覧の新しい内容を返す', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  const item = g.getRequestListData().unregistered.find(i => i.values[2] === 'チラシのデジタル化');
+  const result = g.addServiceRequestFromList(item.key);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.row, 2);
+  assert.strictEqual(result.message, '2行目に追加しました。');
+  assert.deepStrictEqual(gas.dump(request, 'A2:D2')[0], ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい']);
+  assert.strictEqual(result.list.unregistered.length, 2);
+  assert.deepStrictEqual(plain(result.list.registered.map(r => [r.row, r.values[2]])), [[2, 'チラシのデジタル化']]);
+  assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
+
+  const again = g.addServiceRequestFromList(item.key);
+  assert.strictEqual(again.ok, false);
+  assert.strictEqual(again.message, 'このリクエストは、すでに登録されています。');
+  assert.strictEqual(request.getLastRow(), 2);
+});
+
+test('deleteServiceRequest：登録済みの行を削除し、そのリクエストを未登録に戻す（判断などの入力も行ごと消える）', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  add(g, 'アプリ刷新', '会員の購買分析をしたい');
+  add(g, 'チラシのデジタル化', 'チラシの効果を測りたい');
+  gas.asUser(() => request.getRange('E2:H2').setValues([['サービス化検討', '', '会員分析基盤', '佐藤']]));
+  const target = g.getRequestListData().registered.find(r => r.row === 2);
+
+  gas.writes.length = 0;
+  const result = g.deleteServiceRequest(target.row, target.key);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.message, '2行目を削除しました。');
+  assert.deepStrictEqual(gas.dump(request, 'A2:E2')[0], ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい', ''], '下の行が上がる');
+  assert.deepStrictEqual(plain(result.list.registered.map(r => r.row)), [2]);
+  assert.ok(result.list.unregistered.some(i => i.values[2] === 'アプリ刷新'), '未登録に戻る');
+  assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
+
+  // 同じ行をもう一度削除しようとしても（古い一覧から）、ほかの行は消さない
+  const stale = g.deleteServiceRequest(target.row, target.key);
+  assert.strictEqual(stale.ok, false);
+  assert.match(stale.message, /^この行が見つかりません/);
+  assert.strictEqual(request.getLastRow(), 2);
+});
+
+test('deleteServiceRequest：並べ替えなどで行がずれていても、同じリクエストの行を探して削除する（1つに決まらなければ削除しない）', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  add(g, 'アプリ刷新', '会員の購買分析をしたい');
+  add(g, 'チラシのデジタル化', 'チラシの効果を測りたい');
+  const target = g.getRequestListData().registered.find(r => r.values[2] === 'チラシのデジタル化');   // 3行目
+  gas.asUser(() => request.insertRowsAfter(1, 1));   // 一覧を開いたあとに、ほかの人が上に行を足した → 4行目にずれる
+
+  const result = g.deleteServiceRequest(target.row, target.key);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.row, 4);
+  assert.deepStrictEqual(gas.dump(request, 'C2:C4'), [[''], ['アプリ刷新'], ['']]);
+
+  // 同じリクエストの行が2つあり、どちらも指定の行でなければ削除しない
+  gas.asUser(() => request.getRange('A5:D6').setValues([
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい'],
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい']]));
+  const dup = g.getRequestListData().registered.find(r => r.row === 3);
+  const before = request.getLastRow();
+  const ambiguous = g.deleteServiceRequest(99, dup.key);
+  assert.strictEqual(ambiguous.ok, false);
+  assert.match(ambiguous.message, /^同じリクエストの行が複数ある/);
+  assert.strictEqual(request.getLastRow(), before);
+  assert.strictEqual(g.deleteServiceRequest(5, dup.key).row, 5, '行が合えば、その行を削除する');
+});
+
+test('deleteServiceRequest：データの行をすべて消すときも止まらない（空の行を1つ残す）', () => {
+  const {gas, g} = setup();
+  const sheet = gas.addSheet('リクエスト', [
+    ['サブインダストリー', '得意先', '案件名', 'リクエスト', '判断', 'サービス部門からのフィードバック', 'サービス案', '担当者'],
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい', '', '', '', '']
+  ], {rows: 2, columns: 8});
+  const target = g.getRequestListData().registered[0];
+  assert.strictEqual(g.deleteServiceRequest(target.row, target.key).ok, true);
+  assert.strictEqual(sheet.getLastRow(), 1);
+  assert.strictEqual(sheet.getMaxRows(), 2);
 });
 
 test('getRequestListData：ほかの処理がロックを持っていても読める', () => {

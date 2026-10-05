@@ -280,17 +280,28 @@
       $('refresh').disabled = false;
     }
 
-    function load() {
-      startTicker('リクエストを読み込んでいます…');
+    let loading = false;
+
+    /** 読み込む。quiet のときは画面を覆わずに裏で読み直す（一覧のモーダルを閉じたあとなど） */
+    function load(quiet) {
+      if (loading) return;
+      loading = true;
+      if (!quiet) startTicker('リクエストを読み込んでいます…');
       $('refresh').disabled = true;
       google.script.run
         .withSuccessHandler(result => {
+          loading = false;
           stopTicker();
           $('loading').hidden = true;
           $('refresh').disabled = false;
           show(result);
         })
-        .withFailureHandler(showLoadError)
+        .withFailureHandler(error => {
+          loading = false;
+          if (!quiet) { showLoadError(error); return; }
+          $('refresh').disabled = false;
+          showBanner('error', '読み込めませんでした：' + errorText(error));
+        })
         .getRequestPickerData();
     }
 
@@ -554,10 +565,20 @@
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitMoreButtons);
     window.addEventListener('resize', fitMoreButtons);
     // 件数のバッジ：一覧をモーダルで開く（開くまで少しかかるので、その間は押せなくする）
+    // モーダルで追加・削除したかもしれないので、モーダルを閉じてパネルに戻ってきたら（ポインタが入る・フォーカスが戻る）裏で読み直す
+    let listOpened = false;
+    function reloadAfterList() {
+      if (!listOpened || adding != null) return;
+      listOpened = false;
+      load(true);
+    }
+    document.documentElement.addEventListener('mouseenter', reloadAfterList);
+    window.addEventListener('focus', reloadAfterList);
+
     function openList(kind, button) {
       button.disabled = true;
       google.script.run
-        .withSuccessHandler(() => { button.disabled = false; })
+        .withSuccessHandler(() => { button.disabled = false; listOpened = true; })
         .withFailureHandler(error => { button.disabled = false; showBanner('error', '一覧を開けませんでした：' + errorText(error)); })
         .openRequestListDialog(kind);
     }
@@ -565,7 +586,7 @@
     $('openRegistered').addEventListener('click', () => openList('registered', $('openRegistered')));
     $('closeBanner').addEventListener('click', hideBanner);
     $('refresh').addEventListener('click', () => { hideBanner(); load(); });
-    $('reload').addEventListener('click', load);
+    $('reload').addEventListener('click', () => load());
 
     load();
   </script>

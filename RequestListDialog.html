@@ -110,6 +110,36 @@
     .more-btn:hover { text-decoration: underline; }
     .more-btn.open svg { transform: rotate(180deg); }
     mark { background: #FFF1B8; color: inherit; border-radius: 2px; }
+
+    /* ---------- 追加・削除 ---------- */
+    td.act { padding-right: 0; text-align: right; }
+    .act-btn {
+      height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 10px; border: 1px solid #CFE3DC; border-radius: 7px;
+      background: #ffffff; color: var(--cred); font-size: 11.5px; font-weight: 600; white-space: nowrap;
+    }
+    .act-btn:hover { background: var(--teal-soft); border-color: #9FCFC3; }
+    .act-btn.danger { border-color: #F3CFCB; color: var(--danger); }
+    .act-btn.danger:hover { background: var(--del-bg); border-color: #E9A9A2; }
+    .act-btn.danger.solid, .act-btn.danger.solid:hover { background: var(--danger); border-color: var(--danger); color: #ffffff; }
+    .act-btn.busy, .act-btn.busy:hover { background: var(--cred); border-color: var(--cred); color: #ffffff; cursor: progress; }
+    .act-btn.danger.busy, .act-btn.danger.busy:hover { background: var(--danger); border-color: var(--danger); }
+    .act-btn:disabled:not(.busy) { color: var(--meta); border-color: var(--line); background: #ffffff; cursor: default; }
+    .confirm { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+    .confirm small { font-size: 10.5px; color: var(--danger); white-space: nowrap; }
+    .link-btn { border: none; background: none; padding: 2px 0; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+    .link-btn:hover { text-decoration: underline; }
+
+    /* ---------- 追加・削除の結果（見出しの下） ---------- */
+    .notice {
+      display: flex; align-items: flex-start; gap: 10px; margin: 12px 24px 0 32px; padding: 8px 8px 8px 14px;
+      border: 1px solid transparent; border-radius: 10px; font-size: 12.5px; line-height: 1.55;
+    }
+    .notice.ok { border-color: #CFE3DC; background: var(--teal-soft); color: var(--cred-text); }
+    .notice.error { border-color: #F3CFCB; background: var(--del-bg); color: var(--danger); }
+    .notice span { flex: 1; min-width: 0; padding-top: 1px; overflow-wrap: anywhere; }
+    .notice .clear-x { position: static; transform: none; flex: none; width: 24px; height: 24px; color: inherit; opacity: .7; }
+    .notice .clear-x:hover { background: rgba(255, 255, 255, .6); opacity: 1; }
+
     .empty { padding: 48px 0; text-align: center; font-size: 13px; font-weight: 600; color: var(--faint); }
 
     /* ---------- 読み込み中 ---------- */
@@ -162,6 +192,12 @@
         </button>
       </div>
     </header>
+    <div class="notice" id="notice" role="status" aria-live="polite" hidden>
+      <span id="noticeText"></span>
+      <button type="button" class="clear-x" id="closeNotice" title="閉じる" aria-label="閉じる">
+        <svg width="9" height="9" viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </div>
     <div class="list" id="list" role="tabpanel"></div>
   </div>
 
@@ -169,7 +205,10 @@
     const $ = id => document.getElementById(id);
     const context = {kind: document.body.dataset.kind === 'registered' ? 'registered' : 'unregistered'};
     let data = null;
-    const expanded = new Set();   // 「もっと見る」で全文を出している行（タブ＋番号）
+    const expanded = new Set();   // 「もっと見る」で全文を出している行（itemId）
+    let busyId = null;            // 追加・削除している行（itemId）
+    let confirmId = null;         // 削除を確かめている行（itemId）
+    const PLUS_ICON = '<svg width="10" height="10" viewBox="0 0 12 12"><path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
 
     /** 要素を作る小さな補助。text は文字列として入れる（HTML として解釈しない）。 */
     function el(tag, className, text) {
@@ -393,8 +432,8 @@
 
       const table = el('table');
       const columns = registered
-        ? [['行', '56px'], ['サブインダストリー', '13%'], ['得意先', '13%'], ['案件名', '14%'], ['リクエスト', ''], ['判断', '120px'], ['サービス案', '13%'], ['担当者', '100px']]
-        : [['シート', '120px'], ['サブインダストリー', '15%'], ['得意先', '17%'], ['案件名', '19%'], ['リクエスト', '']];
+        ? [['行', '56px'], ['サブインダストリー', '12%'], ['得意先', '12%'], ['案件名', '13%'], ['リクエスト', ''], ['判断', '120px'], ['サービス案', '12%'], ['担当者', '96px'], ['', '132px']]
+        : [['シート', '120px'], ['サブインダストリー', '15%'], ['得意先', '16%'], ['案件名', '18%'], ['リクエスト', ''], ['', '96px']];
       const colgroup = el('colgroup');
       columns.forEach(([, width]) => {
         const col = el('col');
@@ -409,7 +448,7 @@
       table.appendChild(thead);
 
       const tbody = el('tbody');
-      rows.forEach((item, i) => {
+      rows.forEach(item => {
         const tr = el('tr');
         const [subIndustry, customer, project, request] = item.values;
         if (registered) {
@@ -430,7 +469,7 @@
           extra.appendChild(tag);
           extra.style.marginBottom = '4px';
         }
-        tr.appendChild(requestCell((registered ? 'r' : 'u') + (registered ? item.row : i), request, terms, extra));
+        tr.appendChild(requestCell(itemId(item, registered), request, terms, extra));
         if (registered) {
           const td = el('td');
           if (item.decision) td.appendChild(el('span', 'decision ' + (DECISION_CLASS[item.decision] || ''), item.decision));
@@ -439,6 +478,7 @@
           tr.appendChild(textCell('', item.service, terms));
           tr.appendChild(textCell('', item.owner, terms));
         }
+        tr.appendChild(actionCell(item, registered));
         tbody.appendChild(tr);
       });
       table.appendChild(tbody);
@@ -446,11 +486,103 @@
       fitMoreButtons();
     }
 
+    /* ---------- 追加・削除 ---------- */
+
+    /** 行を見分ける名前（登録済みは同じリクエストの行が複数あることもあるので、行番号も入れる） */
+    const itemId = (item, registered) => (registered ? 'r' + item.row + ':' : 'u:') + item.key;
+    const itemName = item => [item.values[1], item.values[2]].filter(Boolean).join('／');
+    const hasInput = item => !!(item.decision && item.decision !== '未判断' || item.feedback || item.service || item.owner);
+
+    /** 操作の列：未登録は「追加」、登録済みは「削除」（押すと「削除する」「やめる」で確かめる） */
+    function actionCell(item, registered) {
+      const td = el('td', 'act');
+      const id = itemId(item, registered);
+      if (registered && confirmId === id && busyId !== id) {
+        const box = el('div', 'confirm');
+        if (hasInput(item)) box.appendChild(el('small', null, '判断などの入力も消えます'));
+        const yes = el('button', 'act-btn danger solid', '削除する');
+        yes.type = 'button';
+        yes.disabled = busyId != null;
+        yes.addEventListener('click', () => removeItem(item));
+        const no = el('button', 'link-btn', 'やめる');
+        no.type = 'button';
+        no.addEventListener('click', () => { confirmId = null; render(); });
+        box.appendChild(yes);
+        box.appendChild(no);
+        td.appendChild(box);
+        return td;
+      }
+      const button = el('button', registered ? 'act-btn danger' : 'act-btn');
+      button.type = 'button';
+      if (busyId === id) {
+        button.classList.add('busy');
+        button.textContent = registered ? '削除中…' : '追加中…';
+      } else if (registered) {
+        button.textContent = '削除';
+        button.title = item.row + '行目を「' + data.requestSheet + '」シートから削除します';
+      } else {
+        button.innerHTML = PLUS_ICON;
+        button.appendChild(document.createTextNode('追加'));
+        button.title = '「' + data.requestSheet + '」シートに追加します';
+      }
+      button.disabled = busyId != null;
+      button.addEventListener('click', () => {
+        if (registered) { confirmId = id; render(); } else addItem(item);
+      });
+      td.appendChild(button);
+      return td;
+    }
+
+    /**
+     * サーバーの関数を呼ぶ（呼んでいる間はほかの追加・削除と再読み込みを止める）。
+     * call(runner) の中で runner.関数名(…) を呼ぶ（関数名をそのまま書き、npm run check で確かめられるようにする）。
+     */
+    function run(id, call, verb, item) {
+      if (busyId != null) return;
+      busyId = id;
+      hideNotice();
+      $('refresh').disabled = true;
+      render();
+      const done = () => { busyId = null; confirmId = null; $('refresh').disabled = false; };
+      const runner = google.script.run
+        .withSuccessHandler(result => {
+          done();
+          if (result.list) data = result.list;
+          showNotice(result.ok ? 'ok' : 'error', result.ok ? result.message.replace(/。$/, '') + '（' + itemName(item) + '）' : result.message);
+          render();
+        })
+        .withFailureHandler(error => {
+          done();
+          showNotice('error', verb + 'できませんでした：' + errorText(error));
+          render();
+        });
+      call(runner);
+    }
+
+    function addItem(item) {
+      run(itemId(item, false), runner => runner.addServiceRequestFromList(item.key), '追加', item);
+    }
+
+    function removeItem(item) {
+      run(itemId(item, true), runner => runner.deleteServiceRequest(item.row, item.key), '削除', item);
+    }
+
+    function showNotice(kind, text) {
+      $('notice').className = 'notice ' + kind;
+      $('noticeText').textContent = text;
+      $('notice').hidden = false;
+    }
+
+    function hideNotice() {
+      $('notice').hidden = true;
+    }
+
     /* ---------- 操作 ---------- */
 
     function switchTab(kind) {
       if (context.kind === kind) return;
       context.kind = kind;
+      confirmId = null;
       $('list').scrollTop = 0;
       render();
     }
@@ -468,7 +600,8 @@
       render();
       $('query').focus();
     });
-    $('refresh').addEventListener('click', load);
+    $('refresh').addEventListener('click', () => { hideNotice(); confirmId = null; load(); });
+    $('closeNotice').addEventListener('click', hideNotice);
     $('reload').addEventListener('click', load);
     window.addEventListener('resize', fitMoreButtons);
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitMoreButtons);

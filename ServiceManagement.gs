@@ -9,7 +9,8 @@
  *   パネルはサービスリクエストのシートを開いているときだけ開く。
  *   パネルは開いたとき・追加したときに取り込み元の最新を読み、まだ登録していないリクエストだけを出す
  *   （サブインダストリー → 得意先 → 案件名で絞り込み、文字で探せる）。選ぶと、サービスリクエストの最後の行の下に A〜D を書く。
- * - パネルの件数のバッジ（未登録・登録済み）を押すと、一覧をモーダル（RequestListDialog）で確かめられる（読むだけ）。
+ * - パネルの件数のバッジ（未登録・登録済み）を押すと、一覧をモーダル（RequestListDialog）で確かめられる。
+ *   モーダルからも未登録のリクエストを追加でき、登録済みのリクエストの行を削除できる（削除は確かめてから）。
  * - 前の版は、セルの連動プルダウン（候補を非表示の __REQUEST_LISTS の数式で作る）と onEdit で登録していたが、
  *   行の並べ替えでプルダウンがずれる・onEdit が30秒で止まる・差分追跡とロックを取り合う・取り込み元の変更を取りこぼす、
  *   などで安定しなかったのでやめた。setupRequestSheet() が、前の版の A〜D のプルダウンと __REQUEST_LISTS を外す。
@@ -103,8 +104,7 @@ function openRequestPicker() {
  */
 function getRequestPickerData() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SVC_OPTIONS.requestSheet);
-  if (!sheet) throw new Error('「' + SVC_OPTIONS.requestSheet + '」シートがありません。管理者に setupRequestSheet() の実行を頼んでください。');
+  const sheet = svcRequestSheetOrThrow_(ss);
   const records = svcSourceRecords_(ss);
   let synced = true;
   try {
@@ -125,19 +125,36 @@ function getRequestPickerData() {
  * {ok, row, message, data: パネルの新しい内容}
  */
 function addServiceRequest(key) {
+  const result = svcAddRequest_(key);
+  return {ok: result.ok, row: result.row, message: result.message, data: svcPickerData_(result.sheet, result.records)};
+}
+
+/**
+ * 一覧のモーダルの「追加」（google.script.run から呼ぶ）。addServiceRequest と同じく追加し、一覧の新しい内容を返す。
+ * {ok, row, message, list: getRequestListData() と同じ形}
+ */
+function addServiceRequestFromList(key) {
+  const result = svcAddRequest_(key);
+  return {ok: result.ok, row: result.row, message: result.message, list: svcListData_(result.sheet, result.records)};
+}
+
+/**
+ * リクエストを1件登録する（ロックの中で読み直してから書く）。{ok, row, message, sheet, records}
+ * 取り込み元に無い・すでに登録されているときは書かずに ok: false。
+ */
+function svcAddRequest_(key) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   return taskWithLock_(() => {
-    const sheet = ss.getSheetByName(SVC_OPTIONS.requestSheet);
-    if (!sheet) throw new Error('「' + SVC_OPTIONS.requestSheet + '」シートがありません。管理者に setupRequestSheet() の実行を頼んでください。');
+    const sheet = svcRequestSheetOrThrow_(ss);
     const records = svcSourceRecords_(ss);
     const record = records.find(rec => rec.key === String(key));
     if (!record) {
-      return {ok: false, row: 0, data: svcPickerData_(sheet, records),
+      return {ok: false, row: 0, sheet, records,
         message: '取り込み元にこのリクエストが見つかりません（書き換えか削除された可能性があります）。一覧を読み込み直しました。'};
     }
     const registered = svcRegistered_(sheet);
     if (registered.keys.has(record.key)) {
-      return {ok: false, row: 0, data: svcPickerData_(sheet, records), message: 'このリクエストは、すでに登録されています。'};
+      return {ok: false, row: 0, sheet, records, message: 'このリクエストは、すでに登録されています。'};
     }
 
     const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
@@ -153,8 +170,41 @@ function addServiceRequest(key) {
       // 先頭に ' を付けて書く（「=…」のリクエストも数式にならない）
       sheet.getRange(row, cols[k]).setValue(credText_(record.values[i]));
     });
-    return {ok: true, row, data: svcPickerData_(sheet, records), message: row + '行目に追加しました。'};
+    return {ok: true, row, sheet, records, message: row + '行目に追加しました。'};
   }, SVC_OPTIONS.pickerLockWaitMs);
+}
+
+/**
+ * 一覧のモーダルの「削除」（google.script.run から呼ぶ）：登録済みのリクエストの行を、サービスリクエストのシートから削除する。
+ * row は一覧を読んだときの行番号、key はその行のリクエストのキー。並べ替え・行の追加などで行がずれていたら、
+ * 同じキーの行を探して削除する（同じキーの行が複数あって1つに決まらないとき・見つからないときは削除しない）。
+ * 判断・サービス案などの入力も行ごと消える（確認はモーダルで行う）。{ok, row, message, list}
+ */
+function deleteServiceRequest(row, key) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  return taskWithLock_(() => {
+    const sheet = svcRequestSheetOrThrow_(ss);
+    const matches = svcRegistered_(sheet).rows.filter(r => r.key === String(key));
+    const target = matches.find(r => r.row === Number(row)) || (matches.length === 1 ? matches[0] : null);
+    if (!target) {
+      return {ok: false, row: 0, list: svcListData_(sheet, svcSourceRecords_(ss)), message: matches.length
+        ? '同じリクエストの行が複数あるため、どの行か決められませんでした。一覧を読み込み直しました。'
+        : 'この行が見つかりません（ほかの人が削除・変更した可能性があります）。一覧を読み込み直しました。'};
+    }
+    // すべての行を消すことはできないので、足りなければ空の行を足しておく
+    if (sheet.getMaxRows() - 1 <= Math.max(sheet.getFrozenRows(), SVC_OPTIONS.headerRow)) {
+      sheet.insertRowsAfter(sheet.getMaxRows(), 1);
+    }
+    sheet.deleteRow(target.row);
+    return {ok: true, row: target.row, list: svcListData_(sheet, svcSourceRecords_(ss)), message: target.row + '行目を削除しました。'};
+  }, SVC_OPTIONS.pickerLockWaitMs);
+}
+
+/** サービスリクエストのシート。無ければ、管理者に setupRequestSheet() を頼むよう知らせて止める。 */
+function svcRequestSheetOrThrow_(ss) {
+  const sheet = ss.getSheetByName(SVC_OPTIONS.requestSheet);
+  if (!sheet) throw new Error('「' + SVC_OPTIONS.requestSheet + '」シートがありません。管理者に setupRequestSheet() の実行を頼んでください。');
+  return sheet;
 }
 
 /**
@@ -196,23 +246,27 @@ function openRequestListDialog(kind) {
 
 /**
  * 一覧のモーダルが読む内容（google.script.run から呼ぶ。読むだけなのでロックは取らない）。
- * {unregistered: [{sheet, values: [サブインダストリー, 得意先, 案件名, リクエスト]}],
- *  registered: [{row, sheet: 取り込み元のシート（見つからなければ空）, missing: 取り込み元に見つからないか,
+ * {unregistered: [{key, sheet, values: [サブインダストリー, 得意先, 案件名, リクエスト]}],
+ *  registered: [{row, key, sheet: 取り込み元のシート（見つからなければ空）, missing: 取り込み元に見つからないか,
  *                values: [サブインダストリー, 得意先, 案件名, リクエスト], decision, feedback, service, owner}],
  *  requestSheet, loadedAt}
  */
 function getRequestListData() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SVC_OPTIONS.requestSheet);
-  if (!sheet) throw new Error('「' + SVC_OPTIONS.requestSheet + '」シートがありません。管理者に setupRequestSheet() の実行を頼んでください。');
-  const records = svcSourceRecords_(ss);
+  return svcListData_(svcRequestSheetOrThrow_(ss), svcSourceRecords_(ss));
+}
+
+/** getRequestListData() の中身（追加・削除のあとの一覧にも使う）。 */
+function svcListData_(sheet, records) {
   const sourceSheet = new Map(records.map(rec => [rec.key, rec.sheet]));
   const registered = svcRegistered_(sheet);
   const sourceKeys = svcSourceKeys_();
   return {
-    unregistered: records.filter(rec => !registered.keys.has(rec.key)).map(rec => ({sheet: rec.sheet, values: rec.values.slice()})),
+    unregistered: records.filter(rec => !registered.keys.has(rec.key))
+      .map(rec => ({key: rec.key, sheet: rec.sheet, values: rec.values.slice()})),
     registered: registered.rows.map(r => ({
       row: r.row,
+      key: r.key,
       sheet: sourceSheet.get(r.key) || '',
       missing: !sourceSheet.has(r.key),
       values: sourceKeys.map(k => r.values[k] || ''),
