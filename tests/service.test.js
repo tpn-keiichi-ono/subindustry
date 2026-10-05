@@ -17,12 +17,26 @@ function setup(rows) {
   const header = ['No', 'メモ', 'サブインダストリー', '得意先', '案件名', 'サービスのリクエスト'];
   gas.addSheet('新FMT', [['新FMT'], header].concat((rows || SOURCE).map((r, i) => [String(i + 1), ''].concat(r))),
     {rows: 30, columns: 6});
+  gas.evaluateFormulas = true;   // 候補のシート（__REQUEST_LISTS）の数式を計算する
   return {gas, g: gas.global, source: gas.ss.getSheetByName('新FMT')};
 }
 
+/**
+ * セルのプルダウンの候補。範囲を参照するプルダウン（候補のシートの欄）は、欄の先頭の数式を計算して横に並んだ値を返す
+ * （欄に入りきらなければ、シートと同じく #REF!）。
+ */
 const listOf = cell => {
   const rule = cell.getDataValidation();
-  return rule && rule.getCriteriaType() === 'VALUE_IN_LIST' ? plain(rule.getCriteriaValues()[0]) : null;
+  if (!rule) return null;
+  if (rule.getCriteriaType() === 'VALUE_IN_LIST') return plain(rule.getCriteriaValues()[0]);
+  if (rule.getCriteriaType() !== 'VALUE_IN_RANGE') return null;
+  const range = rule.getCriteriaValues()[0];
+  const sheet = range.getSheet();
+  const result = sheet.gas.evaluate(sheet, range.getRow(), range.getColumn());
+  if (result && result.error) return [result.error];
+  const values = Array.isArray(result) ? [].concat(...result) : [result];
+  if (values.length > range.getNumColumns()) return ['#REF!'];
+  return values.filter(v => v !== '' && v != null).map(String);
 };
 const rangeOf = cell => {
   const rule = cell.getDataValidation();
@@ -60,7 +74,8 @@ test('setupRequestSheet：リクエスト シートを作る。行は足さず�
 
   assert.deepStrictEqual(listOf(request.getRange('A2')), ['食品スーパー', 'ドラッグストア']);
   ['B2', 'C2', 'D2', 'D1000'].forEach(a1 => assert.deepStrictEqual(listOf(request.getRange(a1)), WAIT_SUB, a1 + '：左の列が空なら選べない'));
-  assert.match(request.getRange('C2').getDataValidation().getHelpText(), /先にサブインダストリーを選んでください/);
+  assert.match(request.getRange('C2').getDataValidation().getHelpText(), /案件名は一覧から選んでください（左の列から順に選びます/);
+  assert.ok(gas.ss.getSheetByName('__REQUEST_LISTS').isSheetHidden(), '候補を作るシートは隠す');
   assert.strictEqual(request.getRange('E2').getDataValidation(), null, 'サービス案は自由に入力する');
   assert.deepStrictEqual(listOf(request.getRange('F2')), ['未判断', 'サービス化検討', '棄却']);
 
@@ -90,7 +105,7 @@ test('A から順に選ぶと、1つに決まる得意先・案件名は自動�
   assert.deepStrictEqual(listOf(request.getRange('C2')), ['アプリ刷新', 'チラシのデジタル化'], '自分の行には残る');
 });
 
-test('A〜C を選ぶたびに、その行の右の列の候補が絞られる（編集した行のプルダウンを先に反映する）', () => {
+test('A〜C を選ぶたびに、その行の右の列の候補が絞られる（候補は数式で作るので、選ぶたびにプルダウンを付け直さない）', () => {
   const {gas, g} = setup([
     ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい'],
     ['食品スーパー', 'A社', 'アプリ刷新', 'クーポンを配りたい'],
@@ -98,10 +113,15 @@ test('A〜C を選ぶたびに、その行の右の列の候補が絞られる�
     ['ドラッグストア', 'C社', 'EC立ち上げ', '在庫を店舗と共有したい']
   ]);
   g.setupRequestSheet();
+  let request = gas.ss.getSheetByName('リクエスト');
+  const event = gas.edit(request, 'A3', '食品スーパー');
   gas.writes.length = 0;
-  let request = edit(gas, 'リクエスト', 'A3', '食品スーパー');
-  const validations = gas.writes.filter(w => w.kind === 'setDataValidations').map(w => w.a1);
-  assert.deepStrictEqual(validations.slice(0, 4), ['A3', 'B3', 'C3', 'D3'], '編集した行を先に');
+  gas.reads.length = 0;
+  g.onEdit(event);
+  assert.deepStrictEqual(gas.writes.filter(w => /Validation|Formula/.test(w.kind)), [], 'プルダウン・数式は付け直さない');
+  assert.ok(!gas.reads.some(r => r.sheet === '新FMT'), '新FMT は読まない（速く終わるように）');
+  assert.deepStrictEqual(gas.reads.map(r => r.sheet), ['リクエスト', '__REQUEST_LISTS', 'リクエスト'],
+    '読むのは見出し・候補のシート・連動列の3回だけ');
   assert.deepStrictEqual(listOf(request.getRange('B3')), ['A社', 'B社']);
   assert.deepStrictEqual(listOf(request.getRange('C3')), ['（先に得意先を選んでください）']);
   assert.deepStrictEqual(listOf(request.getRange('D3')), ['（先に得意先を選んでください）']);
@@ -164,7 +184,8 @@ test('すべて選ぶと候補は「（すべて選択済み）」だけにな�
 
   choose(gas, 3, ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい']);
   choose(gas, 4, ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい']);
-  ['A5', 'B5', 'C5', 'D5', 'A20', 'D20'].forEach(a1 => assert.deepStrictEqual(listOf(request.getRange(a1)), ['（すべて選択済み）'], a1));
+  ['A5', 'A20'].forEach(a1 => assert.deepStrictEqual(listOf(request.getRange(a1)), ['（すべて選択済み）'], a1));
+  assert.deepStrictEqual(listOf(request.getRange('B5')), WAIT_SUB);
 
   gas.toasts.length = 0;
   request = edit(gas, 'リクエスト', 'A5', '（すべて選択済み）');
@@ -258,6 +279,52 @@ test('新FMT でサブインダストリー〜案件名のどれかが空のリ�
   assert.match(gas.toasts[0].message, /どれかが空のため、選べないリクエストが 1件あります/);
 });
 
+test('リクエスト シートの行を足す・消すなどでプルダウンの参照がずれたら、次に選んだときに作り直す', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  const rowOf = a1 => request.getRange(a1).getDataValidation().getCriteriaValues()[0].getRow();
+  assert.strictEqual(rowOf('A2'), 2, 'n 行目のプルダウンは、候補のシートの n 行目を参照する');
+
+  // 行を消して足す（行数は同じ）：消した行より下のプルダウンは、1つ下の行の候補を参照したままになる
+  gas.asUser(() => { request.deleteRows(3, 1); request.insertRowsAfter(request.getMaxRows(), 1); });
+  assert.strictEqual(rowOf('A3'), 4);
+  edit(gas, 'リクエスト', 'A3', '食品スーパー');
+  assert.strictEqual(rowOf('A3'), 3);
+  assert.strictEqual(rowOf('A10'), 10);
+  assert.deepStrictEqual(listOf(request.getRange('C3')), ['アプリ刷新', 'チラシのデジタル化']);
+
+  // 行を足す：足した行にもプルダウンを付ける
+  const max = request.getMaxRows();
+  gas.asUser(() => request.insertRowsAfter(max, 5));
+  assert.strictEqual(request.getRange('A' + (max + 3)).getDataValidation(), null);
+  edit(gas, 'リクエスト', 'A2', 'ドラッグストア');
+  assert.deepStrictEqual(listOf(request.getRange('A' + (max + 3))), ['食品スーパー', 'ドラッグストア']);
+});
+
+test('新FMT で候補が増えて欄に入りきらなくなったら、プルダウンと候補のシートを作り直す（入るうちは案件だけを書き直す）', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  gas.writes.length = 0;
+  edit(gas, '新FMT', 'C8:F8', [['食品スーパー', 'D社', '新店', '売場を見直したい']]);
+  assert.deepStrictEqual(gas.writes.filter(w => w.kind === 'setDataValidations'), [], '欄に入るうちは作り直さない');
+
+  const more = ['E社', 'F社', 'G社', 'H社', 'I社', 'J社'].map(c => ['食品スーパー', c, '新店', '売場を見直したい']);
+  edit(gas, '新FMT', 'C9:F14', more);
+  assert.ok(gas.writes.some(w => w.kind === 'setDataValidations'), '欄を広げて作り直す');
+  edit(gas, 'リクエスト', 'A2', '食品スーパー');
+  assert.deepStrictEqual(listOf(request.getRange('B2')), ['A社', 'D社', 'E社', 'F社', 'G社', 'H社', 'I社', 'J社']);
+});
+
+test('候補を作る数式がエラーになっていたら、setupRequestSheet() のあとに知らせる', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  assert.strictEqual(g.svcCheckLists_(gas.ss).length, 0, 'エラーが無ければ何も言わない');
+  gas.asUser(() => gas.ss.getSheetByName('__REQUEST_LISTS').getRange('G2').setValue('=NOSUCHFUNCTION()'));
+  assert.match(g.svcCheckLists_(gas.ss)[0], /候補を作る数式でエラーが出ています（#NAME\?）/);
+});
+
 test('新FMT の変更：選んだ行は同じ行を直し、候補も作り直す（行は足さない）', () => {
   const {gas, g, source} = setup();
   const sourceEdit = (a1, value) => g.onEdit(gas.edit(source, a1, value));
@@ -316,7 +383,8 @@ test('新FMT にリクエストが1件も無ければ、候補は「（新FMT �
   const {gas, g} = setup([['食品スーパー', 'A社', 'アプリ刷新', '']]);
   g.setupRequestSheet();
   const request = gas.ss.getSheetByName('リクエスト');
-  ['A2', 'D2'].forEach(a1 => assert.deepStrictEqual(listOf(request.getRange(a1)), ['（新FMT にリクエストがありません）'], a1));
+  assert.deepStrictEqual(listOf(request.getRange('A2')), ['（新FMT にリクエストがありません）']);
+  assert.deepStrictEqual(listOf(request.getRange('D2')), WAIT_SUB);
   assert.match(gas.toasts[0].message, /新FMT にリクエストが見つかりません/);
 });
 
