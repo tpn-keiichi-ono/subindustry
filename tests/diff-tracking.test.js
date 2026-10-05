@@ -77,7 +77,10 @@ test('recordDiffEdit：変更したセルを差分・編集者つきで記録し
   assert.strictEqual(snap[0]['行番号'], '3');
   assert.strictEqual(snap[0]['変更セル'], 'F3');
   assert.strictEqual(snap[0]['得意先'], 'A社');
-  assert.strictEqual(snap[0]['状況'], '受注');
+  const content = new Map(JSON.parse(snap[0]['行の内容']));
+  assert.strictEqual(content.get('状況'), '受注', '行の内容に、見出しと値をまとめて入れる');
+  assert.strictEqual(content.get('得意先'), 'A社');
+  assert.ok(!content.has('メモ'), '空欄の項目は持たない');
 });
 
 test('recordDiffEdit：値が変わっていなければ何も記録しない', () => {
@@ -90,7 +93,7 @@ test('recordDiffEdit：「=」で始まる入力も、差分ログでは数式�
   const {gas, g, sheet} = setupProject({launchers: false});
   g.recordDiffEdit(gas.edit(sheet, 'F3', '=IMPORTXML("https://example.com","//a")'));
   const log = gas.ss.getSheetByName(LOG);
-  const formulas = log.getRange(2, 1, 1, 11).getFormulas()[0];
+  const formulas = log.getRange(2, 1, 1, log.getMaxColumns()).getFormulas()[0];
   assert.ok(formulas.every(f => f === ''), '差分ログに数式が入っています: ' + formulas.join(' / '));
   assert.strictEqual(gas.records(LOG)[0]['変更後'], '=IMPORTXML("https://example.com","//a")');
   assert.strictEqual(gas.records(LOG)[0]['種類'], '文字列 -> 数式');

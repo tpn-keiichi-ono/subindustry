@@ -123,10 +123,12 @@ const DIFF_OPTIONS = {
   maxCellsPerEdit: 2000,
   maxSnapshotCellsPerEdit: 50000,
   maxTokenLength: 45000,
-  maxDiffCharacters: 45000,
   maxLcsCells: 1000000,
   maxLcsCellsPerEdit: 4000000,
-  dateFormat: 'yyyy/MM/dd HH:mm'
+  dateFormat: 'yyyy/MM/dd HH:mm',
+  // 変更時点スナップショットの「行の内容」：その行の見出しと値（空欄の項目は持たない）を1つのセルに JSON（[[見出し, 値], …]）で入れる
+  snapshotContentHeader: '行の内容',
+  snapshotContentLimit: 45000   // 1つのセルに入れる文字数の上限（超えるときは長い値を省略する）
 };
 
 // 行の追加・削除の自動処理（v5）
@@ -147,11 +149,15 @@ const DIFF_ROW_OPTIONS = {
   checkPrefix: 'CHAR_DIFF_ROWCHECK_V1_'
 };
 
+// セル数を節約するため9列（前の版の「差分」「確認済み」はやめた。文字単位の差分は変更履歴の画面がその場で作る）。
+// Changehistory.gs・HistorySidebar.gs は B〜I 列を位置で読む
 const DIFF_HEADERS = [
   '記録日時', 'イベントID', '編集者メールアドレス', 'シート', 'セル', '列名',
-  '種類', '変更前', '変更後',
-  '差分', '確認済み'
+  '種類', '変更前', '変更後'
 ];
+
+// 前の版の11列（「差分」「確認済み」がある）。compactDiffRecords() で2列を削除する
+const DIFF_LEGACY_TAIL_HEADERS = ['差分', '確認済み'];
 
 // Previous 10-column schema: editor email does not exist.
 const DIFF_LEGACY_HEADERS_10 = [
@@ -288,6 +294,8 @@ function setupDiffTracking() {
             .setValues(diffTokens_(source));
         }
       }
+      // 比較基準は追跡範囲の右端の列・追跡シートの行数までにする（空のセルも上限に数えられるため）
+      diffTrimGrid_(snapshot, Math.max(...blocks.map(([, col, , cols]) => col + cols - 1), 1), sheet.getMaxRows());
       snapshot.hideSheet();
       state[sheet.getSheetId()] = {
         snapshotId: snapshot.getSheetId(),
@@ -1601,28 +1609,6 @@ function diffCharacters_(before, after, budget) {
   return {parts, coarse};
 }
 
-function diffRich_(parts) {
-  const normal = SpreadsheetApp.newTextStyle().setForegroundColor('#000000')
-    .setBold(false).setStrikethrough(false).build();
-  const styles = {
-    add: SpreadsheetApp.newTextStyle().setForegroundColor('#ff0000').setBold(true)
-      .setStrikethrough(false).build(),
-    del: SpreadsheetApp.newTextStyle().setForegroundColor('#ff0000').setBold(false)
-      .setStrikethrough(true).build()
-  };
-  const full = parts.map(p => p.text).join('');
-  if (full.length > DIFF_OPTIONS.maxDiffCharacters) {
-    return diffPlain_('差分が長いため省略。変更前・変更後列を確認。');
-  }
-  const builder = SpreadsheetApp.newRichTextValue().setText(full || '空欄').setTextStyle(normal);
-  let offset = 0;
-  for (const part of parts) {
-    if (styles[part.kind]) builder.setTextStyle(offset, offset + part.text.length, styles[part.kind]);
-    offset += part.text.length;
-  }
-  return builder.build();
-}
-
 function diffPlain_(text) {
   return SpreadsheetApp.newRichTextValue().setText(text || '（空欄）')
     .setTextStyle(SpreadsheetApp.newTextStyle().setForegroundColor('#000000')
@@ -1640,21 +1626,23 @@ function diffLogSheet_(ss) {
     diffEnsureGrid_(log, 1, DIFF_HEADERS.length);
     log.getRange(1, 1, 1, DIFF_HEADERS.length).setValues([DIFF_HEADERS]);
     diffFormatDiffHeader_(log);
+    diffTrimGrid_(log, DIFF_HEADERS.length);   // 使わない右の列・下の行を持たない（セル数の節約）
     return log;
   }
 
   diffEnsureGrid_(log, 1, DIFF_HEADERS.length);
 
-  const actual = log.getRange(1, 1, 1, DIFF_HEADERS.length)
-    .getDisplayValues()[0];
+  // 前の版の列構成（8・9・10列）も読めるよう、右の列まで読む
+  const width = Math.min(log.getMaxColumns(), Math.max(log.getLastColumn(), DIFF_LEGACY_HEADERS_10.length));
+  const actual = log.getRange(1, 1, 1, width).getDisplayValues()[0];
 
+  // 今の9列（前の版の11列で「差分」「確認済み」が右に残っているときも、左の9列は同じ）
   if (diffHeadersEqual_(actual, DIFF_HEADERS)) {
     return log;
   }
 
   // Previous 10-column version: insert editor email after Event ID.
-  if (diffHeadersEqual_(actual.slice(0, DIFF_LEGACY_HEADERS_10.length),
-      DIFF_LEGACY_HEADERS_10)) {
+  if (diffHeadersEqual_(actual, DIFF_LEGACY_HEADERS_10)) {
     log.insertColumnAfter(2);
     log.getRange(1, 1, 1, DIFF_HEADERS.length).setValues([DIFF_HEADERS]);
     diffFormatDiffHeader_(log);
@@ -1662,8 +1650,7 @@ function diffLogSheet_(ss) {
   }
 
   // Previous 9-column version: insert Event ID and editor email.
-  if (diffHeadersEqual_(actual.slice(0, DIFF_LEGACY_HEADERS_9.length),
-      DIFF_LEGACY_HEADERS_9)) {
+  if (diffHeadersEqual_(actual, DIFF_LEGACY_HEADERS_9)) {
     log.insertColumnAfter(1);
     log.insertColumnAfter(2);
     log.getRange(1, 1, 1, DIFF_HEADERS.length).setValues([DIFF_HEADERS]);
@@ -1672,8 +1659,7 @@ function diffLogSheet_(ss) {
   }
 
   // Oldest 8-column version: insert column name, Event ID, and editor email.
-  if (diffHeadersEqual_(actual.slice(0, DIFF_LEGACY_HEADERS_8.length),
-      DIFF_LEGACY_HEADERS_8)) {
+  if (diffHeadersEqual_(actual, DIFF_LEGACY_HEADERS_8)) {
     log.insertColumnAfter(3);
     log.insertColumnAfter(1);
     log.insertColumnAfter(2);
@@ -1701,8 +1687,6 @@ function diffFormatDiffHeader_(log) {
   log.setColumnWidth(6, 180);
   log.setColumnWidth(7, 180);
   log.setColumnWidths(8, 2, 300);
-  log.setColumnWidth(10, 420);
-  log.setColumnWidth(11, 90);
 }
 
 function diffAppend_(ss, records, now) {
@@ -1716,7 +1700,7 @@ function diffAppend_(ss, records, now) {
     .setNumberFormat(DIFF_OPTIONS.dateFormat);
 
   // Rich text prevents strings beginning with '=' from becoming executable formulas.
-  log.getRange(row, 2, records.length, 9).setRichTextValues(records.map(rec => [
+  log.getRange(row, 2, records.length, DIFF_HEADERS.length - 1).setRichTextValues(records.map(rec => [
     diffPlain_(rec.eventId),
     diffPlain_(rec.editorEmail),
     diffPlain_(rec.sheet),
@@ -1724,11 +1708,8 @@ function diffAppend_(ss, records, now) {
     diffPlain_(rec.columnName),
     diffPlain_(rec.kind),
     diffPlain_(rec.before),
-    diffPlain_(rec.after),
-    diffRich_(rec.parts)
+    diffPlain_(rec.after)
   ]));
-
-  log.getRange(row, 11, records.length, 1).insertCheckboxes();
 
   log.getRange(row, 1, records.length, DIFF_HEADERS.length)
     .setVerticalAlignment('top')
@@ -1738,14 +1719,22 @@ function diffAppend_(ss, records, now) {
 
 /* ---------------- Row snapshot log ---------------- */
 
+/**
+ * 変更時点スナップショットのシート。列は、固定の6列（ROW_SNAPSHOT_FIXED_HEADERS）・得意先・行の内容（JSON）の8列。
+ * 前の版（固定の列のあとに見出しごとの列が並ぶ）のシートには、得意先・行の内容の列が無ければ右端に足し、
+ * 新しい行はこの2列だけに書く（compactDiffRecords() で前の版の行も移し替え、見出しごとの列を削除する）。
+ * 戻り値 {sheet, customerColumn, contentColumn}
+ */
 function diffRowSnapshotSheet_(ss) {
   let sheet = ss.getSheetByName(DIFF_OPTIONS.rowSnapshotSheet);
+  const tail = [diffSnapshotCustomerHeader_(), DIFF_OPTIONS.snapshotContentHeader];
 
   if (!sheet) {
+    const headers = ROW_SNAPSHOT_FIXED_HEADERS.concat(tail);
     sheet = ss.insertSheet(DIFF_OPTIONS.rowSnapshotSheet);
-    diffEnsureGrid_(sheet, 1, ROW_SNAPSHOT_FIXED_HEADERS.length);
-    sheet.getRange(1, 1, 1, ROW_SNAPSHOT_FIXED_HEADERS.length)
-      .setValues([ROW_SNAPSHOT_FIXED_HEADERS])
+    diffEnsureGrid_(sheet, 1, headers.length);
+    sheet.getRange(1, 1, 1, headers.length)
+      .setValues([headers])
       .setFontWeight('bold')
       .setBackground('#e8eef5');
 
@@ -1756,7 +1745,10 @@ function diffRowSnapshotSheet_(ss) {
     sheet.setColumnWidth(4, 130);
     sheet.setColumnWidth(5, 80);
     sheet.setColumnWidth(6, 200);
-    return sheet;
+    sheet.setColumnWidth(7, 180);
+    sheet.setColumnWidth(8, 600);
+    diffTrimGrid_(sheet, headers.length);   // 使わない右の列・下の行を持たない（セル数の節約）
+    return {sheet, customerColumn: 7, contentColumn: 8};
   }
 
   diffEnsureGrid_(sheet, 1, ROW_SNAPSHOT_FIXED_HEADERS.length);
@@ -1765,33 +1757,88 @@ function diffRowSnapshotSheet_(ss) {
     .getRange(1, 1, 1, ROW_SNAPSHOT_FIXED_HEADERS.length)
     .getDisplayValues()[0];
 
-  if (diffHeadersEqual_(actual, ROW_SNAPSHOT_FIXED_HEADERS)) {
-    return sheet;
+  if (!diffHeadersEqual_(actual, ROW_SNAPSHOT_FIXED_HEADERS)) {
+    // Previous 5-column fixed layout: insert editor email after Event ID.
+    if (diffHeadersEqual_(actual.slice(0, ROW_SNAPSHOT_LEGACY_HEADERS_5.length),
+        ROW_SNAPSHOT_LEGACY_HEADERS_5)) {
+      sheet.insertColumnAfter(2);
+      sheet.getRange(1, 1, 1, ROW_SNAPSHOT_FIXED_HEADERS.length)
+        .setValues([ROW_SNAPSHOT_FIXED_HEADERS])
+        .setFontWeight('bold')
+        .setBackground('#e8eef5');
+      sheet.setColumnWidth(3, 240);
+    } else {
+      throw new Error(
+        'Row snapshot sheet has unexpected fixed headers: ' +
+        DIFF_OPTIONS.rowSnapshotSheet
+      );
+    }
   }
 
-  // Previous 5-column fixed layout: insert editor email after Event ID.
-  if (diffHeadersEqual_(actual.slice(0, ROW_SNAPSHOT_LEGACY_HEADERS_5.length),
-      ROW_SNAPSHOT_LEGACY_HEADERS_5)) {
-    sheet.insertColumnAfter(2);
-    sheet.getRange(1, 1, 1, ROW_SNAPSHOT_FIXED_HEADERS.length)
-      .setValues([ROW_SNAPSHOT_FIXED_HEADERS])
+  // 得意先・行の内容の列（無ければ右端に足す）
+  const fixed = ROW_SNAPSHOT_FIXED_HEADERS.length;
+  const last = Math.max(sheet.getLastColumn(), fixed);
+  const headers = sheet.getRange(1, 1, 1, last).getDisplayValues()[0].map(diffCleanHeaderText_);
+  const columns = tail.map(header => {
+    const index = headers.indexOf(header, fixed);
+    return index >= 0 ? index + 1 : 0;
+  });
+  const missing = tail.filter((header, i) => !columns[i]);
+  if (missing.length) {
+    const start = sheet.getLastColumn() + 1;
+    diffEnsureGrid_(sheet, 1, start + missing.length - 1);
+    sheet.getRange(1, start, 1, missing.length)
+      .setValues([missing])
       .setFontWeight('bold')
       .setBackground('#e8eef5');
-    sheet.setColumnWidth(3, 240);
-    return sheet;
+    missing.forEach((header, i) => { columns[tail.indexOf(header)] = start + i; });
   }
+  return {sheet, customerColumn: columns[0], contentColumn: columns[1]};
+}
 
-  throw new Error(
-    'Row snapshot sheet has unexpected fixed headers: ' +
-    DIFF_OPTIONS.rowSnapshotSheet
-  );
+/** スナップショットの「得意先」の列の見出し（クレデンシャル・変更履歴・サイドバーが得意先で記録を探すのに使う）。 */
+function diffSnapshotCustomerHeader_() {
+  return diffCleanHeaderText_(typeof CRED_OPTIONS !== 'undefined' ? CRED_OPTIONS.customerHeader : '得意先');
+}
+
+/** スナップショットに入れない列（ボタン列。チェックの ON/OFF は行の内容ではない）。 */
+function diffSnapshotSkippedHeaders_() {
+  const headers = [];
+  if (typeof CRED_OPTIONS !== 'undefined') headers.push(CRED_OPTIONS.launcherHeader);
+  if (typeof CHG_OPTIONS !== 'undefined') headers.push(CHG_OPTIONS.launcherHeader);
+  return new Set(headers.map(diffCleanHeaderText_));
+}
+
+/**
+ * 「行の内容」のセルに入れる文字（[[見出し, 値], …] の JSON。空欄の項目は持たない）。
+ * 1つのセルの上限を超えるときは、長い値から省略する。
+ */
+function diffSnapshotContent_(pairs) {
+  let json = JSON.stringify(pairs);
+  for (const limit of [2000, 500, 100]) {
+    if (json.length <= DIFF_OPTIONS.snapshotContentLimit) break;
+    json = JSON.stringify(pairs.map(([key, value]) =>
+      [key, value.length > limit ? value.slice(0, limit) + '…（省略）' : value]));
+  }
+  return json;
+}
+
+/** スナップショットの行の「行の内容」を [[見出し, 値], …] にする（読めないときは空）。 */
+function diffParseSnapshotContent_(text) {
+  if (!text) return [];
+  try {
+    const pairs = JSON.parse(String(text));
+    return Array.isArray(pairs) ? pairs.filter(p => Array.isArray(p) && p.length === 2).map(([k, v]) => [String(k), String(v)]) : [];
+  } catch (_) {
+    return [];
+  }
 }
 
 function diffAppendRowSnapshots_(
     ss, sourceSheet, rule, rows, changedCellsByRow, eventId, editorEmail, now, schema) {
   if (!rows.length) return;
 
-  const snapshotSheet = diffRowSnapshotSheet_(ss);
+  const {sheet: snapshotSheet, customerColumn, contentColumn} = diffRowSnapshotSheet_(ss);
   schema = schema || diffSnapshotSchema_(sourceSheet, rule);
 
   const snapshotCells = rows.length * schema.items.length;
@@ -1803,17 +1850,8 @@ function diffAppendRowSnapshots_(
     );
   }
 
-  const keyToSheetColumn =
-    diffEnsureRowSnapshotColumns_(snapshotSheet, schema.items);
-
   const startRow = snapshotSheet.getLastRow() + 1;
-  const finalColumn = snapshotSheet.getLastColumn();
-
-  diffEnsureGrid_(
-    snapshotSheet,
-    startRow + rows.length - 1,
-    finalColumn
-  );
+  diffEnsureGrid_(snapshotSheet, startRow + rows.length - 1, Math.max(customerColumn, contentColumn));
 
   const metadata = rows.map(rowNumber => [
     now,
@@ -1853,47 +1891,34 @@ function diffAppendRowSnapshots_(
     }
   }
 
-  const dynamicWidth = Math.max(
-    0,
-    finalColumn - ROW_SNAPSHOT_FIXED_HEADERS.length
-  );
-
-  if (dynamicWidth) {
-    const matrix = rows.map(rowNumber => {
-      const output = Array.from(
-        {length: dynamicWidth},
-        () => diffSnapshotText_('')
-      );
-
-      const values = rowValues.get(rowNumber);
-
-      schema.items.forEach((item, index) => {
-        const targetColumn = keyToSheetColumn[item.key];
-        const dynamicIndex =
-          targetColumn - ROW_SNAPSHOT_FIXED_HEADERS.length - 1;
-
-        if (dynamicIndex >= 0 && dynamicIndex < dynamicWidth) {
-          output[dynamicIndex] = diffSnapshotText_(values[index]);
-        }
-      });
-
-      return output;
+  // 得意先と、行の内容（見出しと値。空欄・ボタン列は持たない）。リッチテキストで書くので数式にならない
+  const customerKey = diffSnapshotCustomerHeader_();
+  const skipped = diffSnapshotSkippedHeaders_();
+  const tail = rows.map(rowNumber => {
+    const values = rowValues.get(rowNumber);
+    const pairs = [];
+    let customer = '';
+    schema.items.forEach((item, index) => {
+      const value = String(values[index] == null ? '' : values[index]);
+      if (item.key === customerKey) customer = value;
+      if (value !== '' && !skipped.has(item.key)) pairs.push([item.key, value]);
     });
+    return {customer, content: diffSnapshotContent_(pairs)};
+  });
 
-    snapshotSheet
-      .getRange(
-        startRow,
-        ROW_SNAPSHOT_FIXED_HEADERS.length + 1,
-        rows.length,
-        dynamicWidth
-      )
-      .setRichTextValues(matrix);
+  if (contentColumn === customerColumn + 1) {
+    snapshotSheet.getRange(startRow, customerColumn, rows.length, 2)
+      .setRichTextValues(tail.map(t => [diffSnapshotText_(t.customer), diffSnapshotText_(t.content)]));
+  } else {
+    snapshotSheet.getRange(startRow, customerColumn, rows.length, 1)
+      .setRichTextValues(tail.map(t => [diffSnapshotText_(t.customer)]));
+    snapshotSheet.getRange(startRow, contentColumn, rows.length, 1)
+      .setRichTextValues(tail.map(t => [diffSnapshotText_(t.content)]));
   }
 
   snapshotSheet
-    .getRange(startRow, 1, rows.length, finalColumn)
-    .setVerticalAlignment('top')
-    .setWrap(true);
+    .getRange(startRow, 1, rows.length, ROW_SNAPSHOT_FIXED_HEADERS.length)
+    .setVerticalAlignment('top');
 }
 
 /**
@@ -1963,50 +1988,6 @@ function diffSnapshotColumnBounds_(sheet, rule) {
   return {firstColumn: 1, columnCount: finalColumn};
 }
 
-function diffEnsureRowSnapshotColumns_(snapshotSheet, schemaItems) {
-  const fixed = ROW_SNAPSHOT_FIXED_HEADERS.length;
-  const currentLast = Math.max(snapshotSheet.getLastColumn(), fixed);
-
-  const existingHeaders = currentLast > fixed
-    ? snapshotSheet
-        .getRange(1, fixed + 1, 1, currentLast - fixed)
-        .getDisplayValues()[0]
-    : [];
-
-  const map = {};
-
-  existingHeaders.forEach((header, index) => {
-    if (header) map[header] = fixed + index + 1;
-  });
-
-  const missing = schemaItems
-    .map(item => item.key)
-    .filter(key => map[key] == null);
-
-  if (missing.length) {
-    const startColumn = snapshotSheet.getLastColumn() + 1;
-
-    diffEnsureGrid_(
-      snapshotSheet,
-      1,
-      startColumn + missing.length - 1
-    );
-
-    snapshotSheet
-      .getRange(1, startColumn, 1, missing.length)
-      .setRichTextValues([missing.map(value => diffSnapshotText_(value))])
-      .setFontWeight('bold')
-      .setBackground('#e8eef5');
-
-    snapshotSheet.setColumnWidths(startColumn, missing.length, 180);
-
-    missing.forEach((header, index) => {
-      map[header] = startColumn + index;
-    });
-  }
-
-  return map;
-}
 
 
 /* ---------------- Event/timestamp helpers ---------------- */
@@ -2134,6 +2115,178 @@ function diffSnapshotText_(text) {
         .build()
     )
     .build();
+}
+
+/**
+ * 使わない右の列・下の行を削除する（空のセルも、スプレッドシートの1,000万セルの上限に数えられるため）。
+ * columns より右の列と、rows（省略したときはデータのある最後の行）より下の行。データのある列・行は消さない。
+ */
+function diffTrimGrid_(sheet, columns, rows) {
+  const keepColumns = Math.max(columns || 1, sheet.getLastColumn(), 1);
+  if (sheet.getMaxColumns() > keepColumns) sheet.deleteColumns(keepColumns + 1, sheet.getMaxColumns() - keepColumns);
+  const keepRows = Math.max(rows || 0, sheet.getLastRow(), sheet.getFrozenRows() + 1, 1);
+  if (sheet.getMaxRows() > keepRows) sheet.deleteRows(keepRows + 1, sheet.getMaxRows() - keepRows);
+}
+
+/** スプレッドシートのセル数（空のセルも含む。シートの行数×列数の合計）。 */
+function diffCountCells_(ss) {
+  return ss.getSheets().reduce((n, sheet) => n + sheet.getMaxRows() * sheet.getMaxColumns(), 0);
+}
+
+/**
+ * シートごとのセル数（空のセルも含む）を、多い順に画面とログに出す（読むだけ）。
+ * スプレッドシートは1ファイル1,000万セルまで。
+ */
+function diagnoseCellUsage() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const limit = 10000000;
+  const sheets = ss.getSheets().map(sheet => ({
+    name: sheet.getName(),
+    cells: sheet.getMaxRows() * sheet.getMaxColumns(),
+    rows: sheet.getMaxRows(),
+    columns: sheet.getMaxColumns()
+  })).sort((a, b) => b.cells - a.cells);
+  const total = sheets.reduce((n, s) => n + s.cells, 0);
+  const lines = ['合計 ' + total.toLocaleString() + ' セル（上限 1,000万セルの ' + (total / limit * 100).toFixed(1) + '%）', '']
+    .concat(sheets.map(s => s.name + '：' + s.cells.toLocaleString() + ' セル（' + s.rows + '行 × ' + s.columns + '列）'));
+  console.log(lines.join('\n'));
+  const ui = SpreadsheetApp.getUi();
+  ui.alert('セル数', lines.join('\n'), ui.ButtonSet.OK);
+}
+
+/**
+ * 差分追跡の記録を、セル数の少ない形に移し替える（管理者がエディタから実行する。何度実行してもよい）。
+ * - 変更履歴_差分：前の版の「差分」「確認済み」の列を削除する（文字単位の差分は変更履歴の画面がその場で作る）
+ * - 変更時点スナップショット：見出しごとの列の値を「行の内容」（1つのセル）にまとめてから、見出しごとの列を削除する（値は変えない）
+ * - 記録のシート・比較基準（__CHAR_DIFF_*）・クレデンシャル履歴_記録：使っていない右の列・下の行を削除する
+ * 実行する前に「ファイル」→「コピーを作成」で控えを取ること。行が多くて時間内に終わらないときは途中で止め、
+ * もう一度実行すると続きから行う（見出しごとの列は、すべての行を移し替えてから削除する）。
+ */
+function compactDiffRecords() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const answer = ui.alert('記録の移し替え',
+    '「' + DIFF_OPTIONS.logSheet + '」「' + DIFF_OPTIONS.rowSnapshotSheet + '」を、セル数の少ない形に移し替えます（記録の値は変わりません）。\n' +
+    '実行する前に「ファイル」→「コピーを作成」で控えを取ってください。\n' +
+    '移し替えの間は差分の記録を待たせるので、編集の少ない時間に実行してください。\n\n実行しますか？',
+    ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+
+  const started = Date.now();
+  const before = diffCountCells_(ss);
+  const lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
+  let result;
+  try {
+    const log = diffCompactLog_(ss);
+    const snapshot = diffCompactSnapshots_(ss, started);
+    if (snapshot.done) diffTrimRecordSheets_(ss);
+    result = {log, snapshot};
+  } finally {
+    try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
+  }
+  const after = diffCountCells_(ss);
+
+  const lines = [];
+  if (result.log) lines.push('「' + DIFF_OPTIONS.logSheet + '」の「' + DIFF_LEGACY_TAIL_HEADERS.join('」「') + '」の列を削除しました。');
+  if (result.snapshot.converted) lines.push('「' + DIFF_OPTIONS.rowSnapshotSheet + '」の ' + result.snapshot.converted + '行を「' + DIFF_OPTIONS.snapshotContentHeader + '」にまとめました。');
+  if (result.snapshot.removed) lines.push('見出しごとの列 ' + result.snapshot.removed + '列を削除しました。');
+  if (!result.snapshot.done) {
+    lines.push('行が多いため途中で止めました。もう一度 compactDiffRecords() を実行してください（続きから行います）。');
+  }
+  lines.push('セル数：' + before.toLocaleString() + ' → ' + after.toLocaleString() + '（' + (before - after).toLocaleString() + ' 減）');
+  ui.alert('記録の移し替え', lines.join('\n'), ui.ButtonSet.OK);
+}
+
+/** 変更履歴_差分 の前の版の列（差分・確認済み）を削除する（ロック取得中に呼ぶこと）。削除したら true。 */
+function diffCompactLog_(ss) {
+  if (!ss.getSheetByName(DIFF_OPTIONS.logSheet)) return false;
+  const log = diffLogSheet_(ss);   // 前の版（8・9・10列）なら、先に今の列にそろえる
+  const headers = log.getRange(1, 1, 1, Math.max(log.getLastColumn(), 1)).getDisplayValues()[0].map(diffCleanHeaderText_);
+  let removed = false;
+  for (let c = headers.length; c > DIFF_HEADERS.length; c--) {
+    if (DIFF_LEGACY_TAIL_HEADERS.indexOf(headers[c - 1]) < 0) continue;
+    log.deleteColumn(c);
+    removed = true;
+  }
+  return removed;
+}
+
+/**
+ * 変更時点スナップショットの前の版の行（見出しごとの列）を「行の内容」にまとめ、見出しごとの列を削除する（ロック取得中に呼ぶこと）。
+ * 時間が足りなくなったら途中で止める（もう一度呼ぶと、「行の内容」が空の行から続ける）。{converted, removed, done}
+ */
+function diffCompactSnapshots_(ss, started) {
+  const result = {converted: 0, removed: 0, done: true};
+  if (!ss.getSheetByName(DIFF_OPTIONS.rowSnapshotSheet)) return result;
+  const {sheet, customerColumn, contentColumn} = diffRowSnapshotSheet_(ss);
+  const fixed = ROW_SNAPSHOT_FIXED_HEADERS.length;
+  const width = sheet.getLastColumn();
+  const headers = sheet.getRange(1, 1, 1, width).getDisplayValues()[0].map(diffCleanHeaderText_);
+  const wide = [];   // 見出しごとの列（得意先・行の内容は残す）
+  for (let c = fixed + 1; c <= width; c++) {
+    if (c !== customerColumn && c !== contentColumn) wide.push(c);
+  }
+  if (!wide.length) return result;
+
+  // 前の版の行を「行の内容」にまとめる（見出しの順。空欄・ボタン列は持たない。得意先も含める）
+  const skipped = diffSnapshotSkippedHeaders_();
+  const columns = [];
+  for (let c = fixed + 1; c <= width; c++) {
+    if (c !== contentColumn && headers[c - 1] && !skipped.has(headers[c - 1])) columns.push(c);
+  }
+  const chunk = 500;
+  for (let row = 2; row <= sheet.getLastRow(); row += chunk) {
+    if (Date.now() - started > 270000) {   // 4分半を過ぎたら止める（エディタからの実行は6分まで）
+      result.done = false;
+      return result;
+    }
+    const count = Math.min(chunk, sheet.getLastRow() - row + 1);
+    const values = sheet.getRange(row, 1, count, width).getDisplayValues();
+    let changed = false;
+    const contents = values.map(v => {
+      const current = v[contentColumn - 1];
+      if (current || !v[1]) return current;   // まとめ済み・イベントIDの無い行はそのまま
+      changed = true;
+      result.converted++;
+      return diffSnapshotContent_(columns.filter(c => v[c - 1] !== '').map(c => [headers[c - 1], v[c - 1]]));
+    });
+    if (changed) {
+      sheet.getRange(row, contentColumn, count, 1).setRichTextValues(contents.map(text => [diffSnapshotText_(text)]));
+    }
+  }
+
+  // すべての行をまとめたので、見出しごとの列を右から削除する（続いている列はまとめて）
+  for (let i = wide.length - 1; i >= 0;) {
+    let j = i;
+    while (j > 0 && wide[j - 1] === wide[j] - 1) j--;
+    sheet.deleteColumns(wide[j], i - j + 1);
+    result.removed += i - j + 1;
+    i = j - 1;
+  }
+  sheet.setColumnWidth(fixed + 1, 180);
+  sheet.setColumnWidth(fixed + 2, 600);
+  return result;
+}
+
+/** 記録のシート・比較基準・クレデンシャル履歴_記録の、使っていない右の列・下の行を削除する（ロック取得中に呼ぶこと）。 */
+function diffTrimRecordSheets_(ss) {
+  [DIFF_OPTIONS.logSheet, DIFF_OPTIONS.rowSnapshotSheet,
+    typeof CRED_OPTIONS !== 'undefined' ? CRED_OPTIONS.logSheet : ''].forEach(name => {
+    const sheet = name && ss.getSheetByName(name);
+    if (sheet) diffTrimGrid_(sheet, sheet.getLastColumn(), sheet.getLastRow());   // 記録を足すときは、必要な行だけ足す
+  });
+  // 比較基準：追跡範囲の右端の列・追跡シートの行数まで
+  const state = JSON.parse(PropertiesService.getDocumentProperties().getProperty(DIFF_OPTIONS.stateKey) || '{}');
+  ss.getSheets().forEach(sheet => {
+    const saved = state[sheet.getSheetId()];
+    const rule = saved && DIFF_RULES[sheet.getName()];
+    if (!rule) return;
+    const baseline = ss.getSheets().find(s => s.getSheetId() === saved.snapshotId);
+    if (!baseline) return;
+    const right = Math.max(...rule.ranges.map(a1 => sheet.getRange(a1).getLastColumn()));
+    diffTrimGrid_(baseline, right, sheet.getMaxRows());
+  });
 }
 
 function diffEnsureGrid_(sheet, rows, columns) {

@@ -178,8 +178,11 @@ function getChangeHistoryData(sheetName, row) {
     result.truncated = true;
   }
 
-  const snapshotOf = v => headers.slice(fixed)
-    .map((h, j) => [h, v[fixed + j]])
+  // 行の内容：今の版は「行の内容」の列（[[見出し, 値], …] の JSON）。前の版の行（まだ移し替えていない）は見出しごとの列から読む
+  const iContent = col(DIFF_OPTIONS.snapshotContentHeader);
+  const snapshotOf = v => (iContent >= 0 && v[iContent]
+    ? diffParseSnapshotContent_(v[iContent])
+    : headers.slice(fixed).map((h, j) => [h, v[fixed + j]]).filter((_, j) => fixed + j !== iContent))
     .filter(([h, value]) => h && !hidden.has(h) && value !== '');
 
   // ---- 変更履歴_差分（同じイベントID・同じシート・同じ行のセル）

@@ -723,6 +723,7 @@ function svcBuildLists_(ss, sheet, records, relayout) {
       sheet.getRange(first, cols[key], count, 1).setDataValidations(rules);
     });
   }
+  diffTrimGrid_(helper, needCols, needRows);   // 使わない右の列・下の行を持たない（空のセルも上限に数えられるため）
   return {relaid: true, warnings};
 }
 
