@@ -95,13 +95,14 @@ function onOpen() {
 }
 
 /**
- * 利用者向けのメニューは、権限の承認だけにする。
- * 管理者の作業（ボタン列の設定・自動表示の設置・サンプル履歴など）や、選んだ行のモーダルを開く処理は、
+ * 利用者向けのメニューは、履歴サイドバーを開く・権限の承認の2つだけにする。
+ * 管理者の作業（ボタン列の設定・サンプル履歴など）や、選んだ行のモーダルを開く処理は、
  * Apps Script エディタから関数を直接実行する（docs/OPERATIONS.md）。
  */
 function credAddMenu_() {
   SpreadsheetApp.getUi()
     .createMenu(CRED_OPTIONS.menuTitle)
+    .addItem('履歴サイドバーを開く', 'openHistorySidebar')
     .addItem('権限を承認する（初回のみ）', 'authorizeHistoryFeatures')
     .addToUi();
 }
@@ -109,7 +110,7 @@ function credAddMenu_() {
 /**
  * メニュー「権限を承認する（初回のみ）」。
  * まだ承認していない人がメニューから実行すると、Apps Script が承認の画面を出す。
- * 開いたときのトリガー（管理者の権限で動く）やサイドバーからは承認の画面を出せないため、ここが入口になる。
+ * サイドバーからは承認の画面を出せないため、ここ（とメニューの「履歴サイドバーを開く」）が入口になる。
  * 承認が済んだら、サイドバーを開き直して履歴を読み込ませる。
  */
 function authorizeHistoryFeatures() {

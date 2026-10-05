@@ -18,7 +18,7 @@ Google スプレッドシート「シナリオ攻略先リスト」に組み込�
   CredentialDialog.html         クレデンシャル・オファリング履歴のモーダル
   Changehistory.gs              変更履歴モーダルのサーバー側
   ChangeHistoryDialog.html      変更履歴のモーダル
-  HistorySidebar.gs             履歴サイドバーのサーバー側、開いたときの自動表示
+  HistorySidebar.gs             履歴サイドバーのサーバー側（メニュー「履歴機能」から開く）、承認用のウェブアプリ
   HistorySidebarView.html       履歴サイドバー
   AuthorizeView.html            承認用のウェブアプリ（HistorySidebar.gs の doGet）のページ
   コード.gs                     アカウントプランシートの作成（メニューは onOpen から追加）

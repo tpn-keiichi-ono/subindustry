@@ -47,20 +47,32 @@ test('getSidebarBundle：読み取りだけで、シートに書き込まない'
   assert.deepStrictEqual(gas.writes, []);
 });
 
-test('自動表示：トリガーは1つだけ。オフにした人には開かない', () => {
+test('開いたときの自動表示はやめた：前の版のトリガーが残っていても開かず、そのトリガーと設定を外す', () => {
   const {gas, g} = setupProject();
-  g.setupHistorySidebarAutoOpen();
-  g.setupHistorySidebarAutoOpen();
-  assert.strictEqual(gas.triggers.filter(t => t.getHandlerFunction() === 'autoOpenHistorySidebar').length, 1);
+  const before = gas.triggers.length;
+  g.ScriptApp.newTrigger('autoOpenHistorySidebar').forSpreadsheet(gas.ss).onOpen().create();
+  g.PropertiesService.getDocumentProperties().setProperty('HS_AUTO_OFF_user@example.com', '1');
+  assert.strictEqual(typeof g.setupHistorySidebarAutoOpen, 'undefined', '自動表示を設置する関数は無い');
+  assert.strictEqual(typeof g.toggleHistorySidebarAutoOpen, 'undefined');
 
   g.autoOpenHistorySidebar({user: {getEmail: () => 'user@example.com'}});
-  assert.strictEqual(gas.sidebars.length, 1);
+  assert.strictEqual(gas.sidebars.length, 0, 'サイドバーは開かない');
+  assert.strictEqual(gas.triggers.length, before, '残っていたトリガーを外す（ほかのトリガーはそのまま）');
+  assert.strictEqual(g.PropertiesService.getDocumentProperties().getProperty('HS_AUTO_OFF_user@example.com'), null);
 
-  g.toggleHistorySidebarAutoOpen();   // user@example.com がオフにする
-  g.autoOpenHistorySidebar({user: {getEmail: () => 'user@example.com'}});
+  g.ScriptApp.newTrigger('autoOpenHistorySidebar').forSpreadsheet(gas.ss).onOpen().create();
+  g.removeHistorySidebarAutoOpen();
+  assert.strictEqual(gas.triggers.length, before);
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /前の版の自動表示のトリガーを外しました（1件）/);
+  g.removeHistorySidebarAutoOpen();
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /自動表示のトリガーはありません/);
+});
+
+test('メニュー「履歴機能」＞「履歴サイドバーを開く」で開く', () => {
+  const {gas, g} = setupProject();
+  g.openHistorySidebar();
   assert.strictEqual(gas.sidebars.length, 1);
-  g.autoOpenHistorySidebar({user: {getEmail: () => 'other@example.com'}});
-  assert.strictEqual(gas.sidebars.length, 2);
+  assert.strictEqual(gas.sidebars[0].html.file, 'HistorySidebarView');
 });
 
 test('getSidebarBundle：変更は行（シート・得意先）ごとに新しい方から上限まで。超えた行には印を付ける', () => {

@@ -17,15 +17,18 @@ test('onOpen で「履歴機能」「アカウントプランシート作成」�
   assert.deepStrictEqual(gas.menus[2].items, [{label: 'リクエストを追加', fn: 'openRequestPicker'}]);
 });
 
-test('「履歴機能」のメニューは「権限を承認する（初回のみ）」だけ（ほかの処理はエディタから実行する）', () => {
+test('「履歴機能」のメニューは「履歴サイドバーを開く」「権限を承認する（初回のみ）」だけ（ほかの処理はエディタから実行する）', () => {
   const gas = createGas();
   gas.global.onOpen({source: gas.ss});
   const menu = gas.menus.find(m => m.title === '履歴機能');
-  assert.deepStrictEqual(menu.items, [{label: '権限を承認する（初回のみ）', fn: 'authorizeHistoryFeatures'}]);
+  assert.deepStrictEqual(menu.items, [
+    {label: '履歴サイドバーを開く', fn: 'openHistorySidebar'},
+    {label: '権限を承認する（初回のみ）', fn: 'authorizeHistoryFeatures'}
+  ]);
   // メニューから外した関数も、エディタから実行できるよう残っている
   ['openHistorySidebar', 'openCredentialDialog', 'openChangeHistoryDialog', 'openOpportunityCanvas',
-    'setupCredentialLauncher', 'setupChangeHistoryLauncher', 'setupHistorySidebarAutoOpen',
-    'addSampleHistory', 'removeSampleHistory', 'toggleHistorySidebarAutoOpen'].forEach(fn => {
+    'setupCredentialLauncher', 'setupChangeHistoryLauncher', 'removeHistorySidebarAutoOpen',
+    'addSampleHistory', 'removeSampleHistory'].forEach(fn => {
     assert.strictEqual(typeof gas.global[fn], 'function', fn + ' がありません');
   });
 });
@@ -63,6 +66,7 @@ test('onOpen が単純トリガーとして動く（承認前でも失敗しな�
   gas.global.onOpen({source: gas.ss});
   assert.strictEqual(gas.writes.length, 0, 'onOpen ではシートに書き込まない');
   assert.strictEqual(gas.triggers.length, 0, 'onOpen ではトリガーを作らない');
+  assert.strictEqual(gas.sidebars.length, 0, 'onOpen ではサイドバーを開かない（利用者がメニューから開く）');
 });
 
 test('本物のシート名の設定：DIFF_RULES・前の名前（formerNames）・リクエスト・タスク管理のシート名が重ならない', () => {

@@ -4,8 +4,8 @@
  * 画面は HTMLファイル「HistorySidebarView」。
  *
  * 仕組み
- * - 開いたときに自動で表示する（autoOpenHistorySidebar）。メニュー「履歴機能」＞「権限を承認する（初回のみ）」や、
- *   エディタから openHistorySidebar() を実行しても開く（閉じるまで出たまま）
+ * - 利用者がメニュー「履歴機能」＞「履歴サイドバーを開く」で開く（閉じるまで出たまま）。
+ *   開いたときの自動表示（前の版の autoOpenHistorySidebar）はやめた。トリガーが残っていれば removeHistorySidebarAutoOpen() で外す
  * - サイドバーから呼ぶ関数は、開いた本人の権限で動く。まだ承認していない人はサイドバーに「承認する」ボタンを出す。
  *   ボタンは承認用のウェブアプリ（doGet。HS_OPTIONS.authorizeUrl）を新しいタブで開き、そこで Google の承認画面が出る
  *   （サイドバーの中からは承認画面を出せないため）。URL が未設定のときはメニューでの承認を案内する
@@ -25,8 +25,9 @@ const HS_OPTIONS = {
   eventsPerCustomer: 30,   // サイドバーに読み込む変更の記録の件数（シート・得意先ごと・新しい順）。それより古いものはモーダルで見る
   textLimit: 200,          // 変更前・変更後の表示文字数（それ以上はモーダルで確認）
   cacheSeconds: 600,       // 得意先列の位置を覚えておく秒数
-  autoOpenHandler: 'autoOpenHistorySidebar',   // 開いたときに自動表示するトリガーの関数名
-  autoOffPrefix: 'HS_AUTO_OFF_',               // 自動表示をオフにした人（メールアドレスごと）
+  // 前の版の自動表示（やめた）。残っているトリガー・設定を外すときに使う
+  legacyAutoOpenHandler: 'autoOpenHistorySidebar',   // 開いたときに自動表示していたトリガーの関数名
+  legacyAutoOffPrefix: 'HS_AUTO_OFF_',               // 自動表示をオフにした人（メールアドレスごと）
   // 承認用のウェブアプリの URL（「デプロイ」→「ウェブアプリ」で作った …/exec。docs/OPERATIONS.md）。
   // 空のときは、サイドバーにボタンを出さず、メニュー「履歴機能」での承認を案内する
   authorizeUrl: '',
@@ -72,61 +73,41 @@ function doGet() {
   return template.evaluate().setTitle('履歴機能の権限の承認');
 }
 
-/* ---------------- 開いたときに自動で表示 ---------------- */
+/* ---------------- 前の版の自動表示（やめた） ---------------- */
 
 /**
- * インストール型の「起動時」トリガーから呼ばれる。誰が開いても動き、
- * 自動表示をオフにしている人でなければサイドバーを開く。
- * （単純トリガーの onOpen ではサイドバーを開けないため、インストール型を使う）
+ * 前の版で、スプレッドシートを開いたときにサイドバーを自動で表示していた「起動時」トリガーの関数。
+ * 今はサイドバーを開かない（利用者がメニュー「履歴機能」＞「履歴サイドバーを開く」で開く）。
+ * トリガーが残っていても「関数が見つからない」エラーにならないよう名前だけを残し、動いたらそのトリガーを外す。
  */
-function autoOpenHistorySidebar(e) {
-  let email = '';
-  try { email = e && e.user ? e.user.getEmail() : ''; } catch (_) {}
-  if (email && PropertiesService.getDocumentProperties().getProperty(HS_OPTIONS.autoOffPrefix + email)) return;
+function autoOpenHistorySidebar() {
   try {
-    openHistorySidebar();
+    hsRemoveAutoOpen_();
   } catch (error) {
-    // スマートフォンのアプリなど、サイドバーを出せない環境では何もしない
-    console.warn('Sidebar auto-open skipped: ' + (error && error.message));
+    console.warn('Legacy auto-open cleanup skipped: ' + (error && error.message));
   }
 }
 
-/** 管理者が1回実行する：起動時トリガーを1つだけ設置する。 */
-function setupHistorySidebarAutoOpen() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const existing = ScriptApp.getProjectTriggers().filter(t =>
-    t.getHandlerFunction() === HS_OPTIONS.autoOpenHandler && t.getTriggerSourceId() === ss.getId());
-  existing.slice(1).forEach(t => ScriptApp.deleteTrigger(t));
-  if (!existing.length) {
-    ScriptApp.newTrigger(HS_OPTIONS.autoOpenHandler).forSpreadsheet(ss).onOpen().create();
-  }
-  ss.toast('スプレッドシートを開いたときに、履歴サイドバーを自動で表示します。', '履歴サイドバー', 8);
-}
-
-/** 管理者用：自動表示のトリガーを外す（全員の自動表示が止まる）。 */
+/** 管理者がエディタから実行する：前の版の自動表示のトリガーと、各自のオン・オフの設定を外す。 */
 function removeHistorySidebarAutoOpen() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ScriptApp.getProjectTriggers()
-    .filter(t => t.getHandlerFunction() === HS_OPTIONS.autoOpenHandler && t.getTriggerSourceId() === ss.getId())
-    .forEach(t => ScriptApp.deleteTrigger(t));
-  ss.toast('履歴サイドバーの自動表示を止めました。', '履歴サイドバー', 8);
+  const removed = hsRemoveAutoOpen_();
+  SpreadsheetApp.getActiveSpreadsheet().toast(removed
+    ? '前の版の自動表示のトリガーを外しました（' + removed + '件）。'
+    : '自動表示のトリガーはありません。', '履歴サイドバー', 8);
 }
 
-/** 各自がエディタから実行する：自分だけ自動表示をオン／オフする。 */
-function toggleHistorySidebarAutoOpen() {
-  const ui = SpreadsheetApp.getUi();
-  const email = credActiveEmail_();
-  if (!email || email === '取得不可') {
-    ui.alert('履歴サイドバー', 'メールアドレスを確認できないため、個人ごとの設定を変更できません。', ui.ButtonSet.OK);
-    return;
-  }
+/**
+ * 前の版の自動表示のトリガー（実行した人が所有するもの）と、各自のオフの設定（ドキュメントのプロパティ）を外す。
+ * 外したトリガーの数を返す。
+ */
+function hsRemoveAutoOpen_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const triggers = ScriptApp.getProjectTriggers().filter(t =>
+    t.getHandlerFunction() === HS_OPTIONS.legacyAutoOpenHandler && t.getTriggerSourceId() === ss.getId());
+  triggers.forEach(t => ScriptApp.deleteTrigger(t));
   const props = PropertiesService.getDocumentProperties();
-  const key = HS_OPTIONS.autoOffPrefix + email;
-  const nowOff = !props.getProperty(key);
-  if (nowOff) props.setProperty(key, '1'); else props.deleteProperty(key);
-  ui.alert('履歴サイドバー', nowOff
-    ? '次回から、開いたときにサイドバーを自動で表示しません。メニュー「' + CRED_OPTIONS.menuTitle + '」＞「権限を承認する（初回のみ）」からも開けます。'
-    : '次回から、開いたときにサイドバーを自動で表示します。', ui.ButtonSet.OK);
+  props.getKeys().filter(key => key.indexOf(HS_OPTIONS.legacyAutoOffPrefix) === 0).forEach(key => props.deleteProperty(key));
+  return triggers.length;
 }
 
 /** サイドバーのボタンから各モーダルを開く。 */
