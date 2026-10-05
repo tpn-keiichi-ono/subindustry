@@ -14,7 +14,8 @@
  * - サービスは最初から決まっているものではなく、リクエストをもとに考える。「サービス案」に入力した名前がサービス案になる
  *   （同じ名前を付けたリクエストが1つのサービス案にまとまる）。判断はプルダウン、ほかの列は自由に入力する
  * - 登録した行は、パネルを開いたとき・setupRequestSheet() のときに取り込み元に合わせる（svcSync_）：
- *   サブインダストリーを同じ案件の値にそろえ、取り込み元に無くなったリクエストには注を付ける
+ *   サブインダストリーを同じ案件の値にそろえる。取り込み元に無くなったリクエストにメモは付けない
+ *   （行番号は diagnoseRequestSources() で確かめる。前の版で付けたメモは外す）
  * - サービス案ごとの検討の進捗は、タスク管理シート（TaskManagement.gs）でタスクとして管理する
  */
 
@@ -42,9 +43,8 @@ const SVC_OPTIONS = {
   pickerTemplate: 'RequestPickerView',
   pickerTitle: 'リクエストを追加',
   defaultDecision: '未判断',             // まだ判断していないことを表す判断（空と同じに扱う）
-  missingNote: '取り込み元に見つかりません',   // 取り込み元から消えた・書き換えられたリクエストに付ける注の先頭
-  // 前の版で付けた注（このスクリプトの注として扱い、取り込み元に見つからないときは付け替える）
-  legacyNotes: ['取り込み元でリクエストが書き換えられました', '新FMT でリクエストが書き換えられました'],
+  // 前の版で「リクエスト」のセルに付けたメモの先頭（今はメモを付けない。パネルを開いたとき・setupRequestSheet() で外す）
+  legacyNotes: ['取り込み元に見つかりません', '取り込み元でリクエストが書き換えられました', '新FMT でリクエストが書き換えられました'],
   // 前の版で付けた保護・候補のシート（setupRequestSheet() で外す）
   legacyProtectDescriptions: ['リクエスト：新FMT から自動で転記する列', 'リクエスト：案件を選ぶと自動で入る列'],
   legacyListSheet: '__REQUEST_LISTS',
@@ -146,21 +146,17 @@ function addServiceRequest(key) {
 
 /**
  * パネルに出す内容。{items: まだ登録していないリクエスト [{key, sheet, values: [サブインダストリー, 得意先, 案件名, リクエスト]}],
- *  total, registered, remaining, missing: 取り込み元に見つからない登録済みのリクエストの数, sources: 読むシート, requestSheet, loadedAt}
+ *  total, registered, remaining, sources: 読むシート, requestSheet, loadedAt}
  */
 function svcPickerData_(sheet, records) {
   const registered = svcRegistered_(sheet);
-  const sourceKeys = new Set(records.map(rec => rec.key));
   const items = records.filter(rec => !registered.keys.has(rec.key))
     .map(rec => ({key: rec.key, sheet: rec.sheet, values: rec.values.slice()}));
-  let missing = 0;
-  registered.keys.forEach(key => { if (!sourceKeys.has(key)) missing++; });
   return {
     items,
     total: records.length,
     registered: records.length - items.length,
     remaining: items.length,
-    missing,
     sources: svcSourceSheets_(),
     requestSheet: SVC_OPTIONS.requestSheet,
     loadedAt: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm')
@@ -168,14 +164,16 @@ function svcPickerData_(sheet, records) {
 }
 
 /**
- * サービスリクエストに登録したリクエストのキーと、SVC_OPTIONS.requestColumns の列（A〜H）のどれかに値のある最後の行。{keys: Set, lastRow}
+ * サービスリクエストに登録したリクエストのキーと、SVC_OPTIONS.requestColumns の列（A〜H）のどれかに値のある最後の行。
+ * {keys: Set, lastRow, rows: [{row, key}]（リクエストのある行）}
  * 判断だけを書いた行などにリクエストを書き足さないよう、最後の行はすべての列で見る（ほかの列は見ない）。
  */
 function svcRegistered_(sheet) {
   const headerRow = SVC_OPTIONS.headerRow;
   const keys = new Set();
   const count = sheet.getLastRow() - headerRow;
-  if (count < 1) return {keys, lastRow: headerRow};
+  const rows = [];
+  if (count < 1) return {keys, lastRow: headerRow, rows};
   const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, headerRow);
   const sourceKeys = svcSourceKeys_();
   const used = Object.keys(cols).map(k => cols[k]).filter(Boolean);
@@ -186,9 +184,12 @@ function svcRegistered_(sheet) {
   lines.forEach((line, i) => {
     if (used.some(col => String(line[col - left]).trim())) lastRow = headerRow + 1 + i;
     const values = sourceKeys.map(k => String(line[cols[k] - left]).trim());
-    if (values[3]) keys.add(svcRequestKey_(values[1], values[2], values[3]));
+    if (!values[3]) return;
+    const key = svcRequestKey_(values[1], values[2], values[3]);
+    keys.add(key);
+    rows.push({row: headerRow + 1 + i, key});
   });
-  return {keys, lastRow};
+  return {keys, lastRow, rows};
 }
 
 /* ---------------- 管理者がエディタから実行する ---------------- */
@@ -231,7 +232,7 @@ function svcSetupRequestSheet_(ss) {
   const name = SVC_OPTIONS.requestSheet;
   const lines = [result.created ? '「' + name + '」シートを作りました。' : '「' + name + '」シートを整えました。'];
   lines.push(svcCountMessage_(result));
-  if (result.missing) lines.push(svcSourceLabel_() + 'に見つからないリクエストが ' + result.missing + '件あります（「リクエスト」のセルに注を付けました）。');
+  if (result.notesRemoved) lines.push('前の版で「リクエスト」のセルに付けたメモを ' + result.notesRemoved + '件外しました。');
   if (result.legacy) {
     lines.push('前の版の A〜D のプルダウンと「' + SVC_OPTIONS.legacyListSheet + '」シートを外しました。' +
       'リクエストは、メニュー「' + SVC_OPTIONS.menuTitle + '」→「リクエストを追加」から登録します。');
@@ -439,6 +440,7 @@ function svcDiagnoseLines_(ss) {
   }
 
   const seen = new Set();
+  let complete = !!request;   // 読むシートをすべて読めたか（読めないシートがあると、見つからない行を数えられない）
   Object.keys(DIFF_RULES).forEach(name => {
     const rule = DIFF_RULES[name];
     if (!rule.requests) {
@@ -448,6 +450,7 @@ function svcDiagnoseLines_(ss) {
     const sheet = ss.getSheetByName(name);
     if (!sheet) {
       lines.push('「' + name + '」：シートがありません。');
+      complete = false;
       return;
     }
     const headers = sheet.getRange(rule.headerRow, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
@@ -455,6 +458,7 @@ function svcDiagnoseLines_(ss) {
     const missing = SVC_OPTIONS.sourceHeaders.filter((h, i) => !cols[i]);
     if (missing.length) {
       lines.push('「' + name + '」：' + rule.headerRow + '行目に「' + missing.join('」「') + '」の見出しがちょうど1つずつ必要です。');
+      complete = false;
       return;
     }
     const count = sheet.getLastRow() - rule.headerRow;
@@ -479,6 +483,15 @@ function svcDiagnoseLines_(ss) {
     lines.push('「' + name + '」：リクエストのある行 ' + withRequest.length + '件 → パネルに出る ' + candidates + '件' +
       (reasons.length ? '（出ないもの：' + reasons.join('、') + '）' : '') + '。');
   });
+  // 登録済みで、取り込み元に見つからない行（取り込み元で書き換えか削除された）
+  if (complete && registered.rows) {
+    const rows = registered.rows.filter(r => !seen.has(r.key)).map(r => r.row);
+    if (rows.length) {
+      const limit = 30;
+      lines.push('「' + SVC_OPTIONS.requestSheet + '」で取り込み元に見つからない行：' + rows.slice(0, limit).join('・') + '行目' +
+        (rows.length > limit ? ' ほか ' + (rows.length - limit) + '行' : '') + '（取り込み元で書き換えか削除された可能性があります）。');
+    }
+  }
   if (ss.getSheetByName(SVC_OPTIONS.legacyListSheet)) {
     lines.push('前の版の「' + SVC_OPTIONS.legacyListSheet + '」シートが残っています。setupRequestSheet() を実行すると外します。');
   }
@@ -534,8 +547,9 @@ function svcSourceRecords_(ss) {
 /**
  * 登録した行を取り込み元に合わせる（行は足さない。ロック取得中に呼ぶこと）。
  * - サブインダストリーを、取り込み元の同じ案件の値にそろえる（全角・半角だけの違いなら変えない）
- * - 取り込み元に無い行には注を付ける（取り込み元に戻ったら外す。利用者が書いた注は変えない）
- * {updated, missing}
+ * - 前の版で「リクエスト」のセルに付けたメモ（SVC_OPTIONS.legacyNotes で始まるもの）を外す（利用者が書いたメモは変えない）
+ * 取り込み元に無い行には何もしない（メモは付けない。行番号は diagnoseRequestSources() で確かめる）。
+ * {updated, notesRemoved}
  */
 function svcSync_(ss, sheet, records) {
   const headerRow = SVC_OPTIONS.headerRow;
@@ -543,10 +557,9 @@ function svcSync_(ss, sheet, records) {
   const source = new Map(records.map(r => [r.key, r.values]));
   const count = sheet.getLastRow() - headerRow;
   let updated = 0;
-  let missing = 0;
-  if (count < 1) return {updated, missing};
+  let notesRemoved = 0;
+  if (count < 1) return {updated, notesRemoved};
 
-  const today = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyy/MM/dd');
   const read = key => sheet.getRange(headerRow + 1, cols[key], count, 1).getDisplayValues().map(r => String(r[0]).trim());
   const [subIndustries, customers, projects, requests] = svcSourceKeys_().map(read);
   const keys = requests.map((request, i) => (request ? svcRequestKey_(customers[i], projects[i], request) : ''));
@@ -559,26 +572,16 @@ function svcSync_(ss, sheet, records) {
     updated++;
   });
 
+  // 前の版で付けたメモを外す
   const noteRange = sheet.getRange(headerRow + 1, cols.request, count, 1);
   const notes = noteRange.getNotes().map(r => String(r[0] || ''));
-  let notesChanged = false;
-  const next = keys.map((key, i) => {
-    if (!key) return notes[i];
-    const missingNote = notes[i].indexOf(SVC_OPTIONS.missingNote) === 0;
-    const ours = missingNote || SVC_OPTIONS.legacyNotes.some(prefix => notes[i].indexOf(prefix) === 0);   // 利用者が書いた注は変えない
-    if (source.has(key)) {
-      if (!missingNote) return notes[i];
-      notesChanged = true;
-      return '';
-    }
-    missing++;
-    if (missingNote || (notes[i] && !ours)) return notes[i];   // 前回から見つからないまま、または利用者が書いた注
-    notesChanged = true;
-    return SVC_OPTIONS.missingNote + '（' + today + ' に気づきました）。' +
-      svcSourceLabel_() + 'で書き換えか削除された可能性があります。';
+  const next = notes.map(note => {
+    if (!note || !SVC_OPTIONS.legacyNotes.some(prefix => note.indexOf(prefix) === 0)) return note;
+    notesRemoved++;
+    return '';
   });
-  if (notesChanged) noteRange.setNotes(next.map(n => [n]));
-  return {updated, missing};
+  if (notesRemoved) noteRange.setNotes(next.map(n => [n]));
+  return {updated, notesRemoved};
 }
 
 /** 登録した件数を数える。{total, selected, remaining, untouched}（svcCountMessage_ で知らせる）。 */

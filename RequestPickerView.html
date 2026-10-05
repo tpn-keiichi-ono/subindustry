@@ -53,8 +53,6 @@
     .chip .mono { font-size: 11px; font-weight: 600; color: var(--ink); }
     .chip.main { color: var(--cred); background: var(--teal-soft); }
     .chip.main .mono { color: var(--cred); }
-    .chip.warn { color: var(--danger); background: var(--danger-soft); cursor: help; }
-    .chip.warn .mono { color: var(--danger); }
 
     /* ---------- 絞り込み ---------- */
     .filter-card { flex: none; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
@@ -179,7 +177,6 @@
         <div class="counts" id="counts">
           <span class="chip main">未登録<span class="mono" id="remaining">–</span></span>
           <span class="chip">登録済み<span class="mono" id="registered">–</span></span>
-          <span class="chip warn" id="missingChip" hidden>要確認<span class="mono" id="missing">0</span></span>
         </div>
         <button type="button" class="refresh-btn" id="refresh" title="再読み込み" aria-label="再読み込み">
           <svg width="13" height="13" viewBox="0 0 12 12"><path d="M10 6a4 4 0 1 1-1.2-2.85M10 1.5V4H7.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -299,10 +296,6 @@
       data = result;
       $('remaining').textContent = String(data.remaining);
       $('registered').textContent = String(data.registered);
-      // 取り込み元に見つからない登録済みのリクエスト（説明は title に入れ、画面には件数だけを出す）
-      $('missingChip').hidden = !data.missing;
-      $('missing').textContent = String(data.missing || 0);
-      $('missingChip').title = '取り込み元に見つからない登録済みのリクエスト（シートの「リクエスト」のセルに注を付けています）';
       $('refresh').title = data.loadedAt ? '再読み込み（' + data.loadedAt + ' に取得）' : '再読み込み';
       renderFilters();
       renderList();

@@ -171,7 +171,7 @@ test('getRequestPickerData：まだ登録していないリクエストを、取
   ]);
   assert.strictEqual(new Set(data.items.map(item => item.key)).size, 3, 'キーは1件ずつ違う');
   assert.deepStrictEqual(plain(Object.assign({}, data, {items: null, loadedAt: null})), {
-    items: null, total: 3, registered: 0, remaining: 3, missing: 0, sources: ['新FMT'], requestSheet: 'リクエスト', loadedAt: null, synced: true
+    items: null, total: 3, registered: 0, remaining: 3, sources: ['新FMT'], requestSheet: 'リクエスト', loadedAt: null, synced: true
   });
   assert.match(data.loadedAt, /^\d{2}:\d{2}$/);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(data)), plain(data), 'google.script.run で返せる値だけ（Set・Date を含まない）');
@@ -282,33 +282,35 @@ test('パネルはいつも取り込み元の最新を読む。開いたとき�
   g.getRequestPickerData();
   assert.strictEqual(gas.dump(request, 'A2')[0][0], '大型スーパー');
 
-  // リクエストが書き換わったら、行は残して注を付け（新しいリクエストはパネルに出る）、戻したら外す
+  // リクエストが書き換わっても、行はそのまま残し、メモは付けない（新しいリクエストはパネルに出る）
   gas.asUser(() => source.getRange('F3').setValue('会員の購買データを分析したい'));
-  let data = g.getRequestPickerData();
-  assert.match(request.getRange('D2').getNote(), /^取り込み元に見つかりません（\d{4}\/\d{2}\/\d{2} に気づきました）。「新FMT」で書き換えか削除された可能性があります。/);
-  assert.strictEqual(data.missing, 1);
+  const data = g.getRequestPickerData();
+  assert.strictEqual(request.getRange('D2').getNote(), '', 'メモは付けない');
+  assert.deepStrictEqual(gas.dump(request, 'A2:D2')[0], ['大型スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい']);
   assert.ok(shown(data).includes('大型スーパー / A社 / アプリ刷新 / 会員の購買データを分析したい'));
-  gas.asUser(() => source.getRange('F3').setValue('会員の購買分析をしたい'));
-  data = g.getRequestPickerData();
-  assert.strictEqual(request.getRange('D2').getNote(), '');
-  assert.strictEqual(data.missing, 0);
   assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
 });
 
-test('取り込み元に見つからない行の注：前の版の注は付け替え、利用者が書いた注は変えない', () => {
-  const {gas, g, source} = setup();
+test('前の版で「リクエスト」のセルに付けたメモは外し、利用者が書いたメモは変えない', () => {
+  const {gas, g} = setup();
   g.setupRequestSheet();
   const request = gas.ss.getSheetByName('リクエスト');
   add(g, 'アプリ刷新', '会員の購買分析をしたい');
   add(g, 'チラシのデジタル化', 'チラシの効果を測りたい');
+  add(g, 'EC立ち上げ', '=在庫を店舗と共有したい');
   gas.asUser(() => {
-    request.getRange('D2').setNote('新FMT でリクエストが書き換えられました（2026/10/01）。サービス案・判断を見直してください。');
-    request.getRange('D3').setNote('先方に確認中');
-    source.getRange('F3:F4').setValues([[''], ['']]);
+    request.getRange('D2').setNote('取り込み元に見つかりません（2026/10/05 に気づきました）。「新FMT」で書き換えか削除された可能性があります。');
+    request.getRange('D3').setNote('新FMT でリクエストが書き換えられました（2026/10/01）。サービス案・判断を見直してください。');
+    request.getRange('D4').setNote('先方に確認中');
   });
+  g.setupRequestSheet();
+  assert.deepStrictEqual(['D2', 'D3', 'D4'].map(a1 => request.getRange(a1).getNote()), ['', '', '先方に確認中']);
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /前の版で「リクエスト」のセルに付けたメモを 2件外しました。/);
+
+  // パネルを開いたときにも外す
+  gas.asUser(() => request.getRange('D2').setNote('取り込み元でリクエストが書き換えられました（2026/10/01）。'));
   g.getRequestPickerData();
-  assert.match(request.getRange('D2').getNote(), /^取り込み元に見つかりません/);
-  assert.strictEqual(request.getRange('D3').getNote(), '先方に確認中');
+  assert.strictEqual(request.getRange('D2').getNote(), '');
 });
 
 /* ---------------- 前の版のシート・列 ---------------- */
@@ -485,6 +487,24 @@ test('diagnoseRequestSources：シートごとに、リクエストの件数と�
     '「新FMT」：リクエストのある行 4件 → パネルに出る 2件（出ないもの：登録済み 1件、ほかの行・シートと同じリクエスト 1件）。',
     '「新FMT2」：読みません（test.gs の DIFF_RULES に requests: true がありません）。'
   ]);
+});
+
+test('diagnoseRequestSources：登録済みで取り込み元に見つからない行の行番号を出す（メモの代わり）', () => {
+  const {gas, g, source} = setup();
+  g.setupRequestSheet();
+  add(g, 'アプリ刷新', '会員の購買分析をしたい');
+  add(g, 'チラシのデジタル化', 'チラシの効果を測りたい');
+  gas.asUser(() => source.getRange('F4').setValue('チラシの配布数を減らしたい'));
+  gas.alerts.length = 0;
+  g.diagnoseRequestSources();
+  assert.match(gas.alerts[0].message, /「リクエスト」で取り込み元に見つからない行：3行目（取り込み元で書き換えか削除された可能性があります）。/);
+
+  // 読めないシートがあるときは、見つからない行を出さない（読めなかったシートにあるかもしれないため）
+  gas.get('DIFF_RULES')['新FMT2'].requests = true;
+  gas.alerts.length = 0;
+  g.diagnoseRequestSources();
+  assert.doesNotMatch(gas.alerts[0].message, /見つからない行/);
+  assert.match(gas.alerts[0].message, /「新FMT2」：/);
 });
 
 test('diagnoseRequestSources：前の版の候補のシートが残っていれば、setupRequestSheet() を案内する', () => {
