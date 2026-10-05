@@ -66,11 +66,17 @@ function setupChangeHistoryLauncher() {
   lock.waitLock(CRED_OPTIONS.lockWaitMs);
 
   try {
+    // ボタン列の無いシートは飛ばす（ボタン列は使うシートだけに置く）
+    const skipped = [];
     const plans = Object.entries(DIFF_RULES).map(([name, rule]) => {
       const sheet = ss.getSheetByName(name);
       if (!sheet) throw new Error('シートが見つかりません: ' + name);
 
-      const launcher = credColumnByHeader_(sheet, rule, CHG_OPTIONS.launcherHeader);
+      const launcher = credColumnByHeader_(sheet, rule, CHG_OPTIONS.launcherHeader, true);
+      if (!launcher) {
+        skipped.push(name);
+        return null;
+      }
       credColumnByHeader_(sheet, rule, CRED_OPTIONS.customerHeader);   // 得意先列があるか確認
       const stamp = diffStampColumn_(sheet, rule);
       const firstRow = rule.headerRow + 1;
@@ -84,7 +90,14 @@ function setupChangeHistoryLauncher() {
         );
       }
       return {sheet, launcher, firstRow};
-    });
+    }).filter(Boolean);
+
+    const header = '「' + credHeaderText_(CHG_OPTIONS.launcherHeader) + '」';
+    if (!plans.length) {
+      const message = 'ボタン列（' + header + '）のあるシートが無いので、ボタンは付けていません。';
+      ss.toast(message, '変更履歴', 8);
+      return message;
+    }
 
     let buttons = 0;
     for (const p of plans) {
@@ -100,7 +113,10 @@ function setupChangeHistoryLauncher() {
 
     credInstallTrigger_(ss);   // チェックを検知するトリガー（クレデンシャル履歴と共通）
     SpreadsheetApp.flush();
-    ss.toast('変更履歴のボタンを ' + buttons + ' 行に設定しました。', '変更履歴', 8);
+    const message = header + 'のボタンを ' + buttons + ' 行に設定しました。' +
+      (skipped.length ? '（ボタン列の無い「' + skipped.join('」「') + '」には付けていません）' : '');
+    ss.toast(message, '変更履歴', 8);
+    return message;
   } finally {
     try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
   }

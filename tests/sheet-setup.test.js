@@ -71,7 +71,7 @@ test('setupAfterSheetChange：差分追跡・2つのボタン列・サービス�
 test('setupAfterSheetChange：見出しが足りないシートがあれば、何も変えずに直す点をまとめて知らせる', () => {
   const {gas, g} = setupProject();
   const header = new Array(WIDTH).fill('');
-  header[COL.customer - 1] = '得意先';   // 最終更新日時・ボタン列・リクエストの見出しが無い
+  header[COL.customer - 1] = '得意先';   // 最終更新日時・リクエストの見出しが無い（ボタン列は無くてよい）
   addDepartmentStore(gas, header);
   gas.get('DIFF_RULES')['専門店'] = {headerRow: 2, ranges: ['D3:AF']};   // シートが無い
 
@@ -80,8 +80,7 @@ test('setupAfterSheetChange：見出しが足りないシートがあれば、�
   const message = gas.alerts[0].message;
   assert.match(message, /まだ何も変えていません/);
   assert.match(message, /百貨店 の 2行目に「最終更新日時」の見出しがちょうど1つ必要です/);
-  assert.match(message, /百貨店 の 2行目に「クレデンシャル/);
-  assert.match(message, /百貨店 の 2行目に「変更履歴」/);
+  assert.doesNotMatch(message, /クレデンシャル|変更履歴/, 'ボタン列は無くてもよい');
   assert.match(message, /「サービスのリクエスト」の見出しがちょうど1つ必要です/);
   assert.match(message, /「専門店」シートがありません/);
   assert.deepStrictEqual(gas.writes, [], '何も書き込まない');
@@ -95,4 +94,58 @@ test('setupAfterSheetChange：ボタン列が追跡範囲に入っていたら�
   g.setupAfterSheetChange();
   assert.match(gas.alerts[0].message, /百貨店 の「クレデンシャル.*」列（AH列）が DIFF_RULES の ranges に含まれています/);
   assert.deepStrictEqual(gas.writes, []);
+});
+
+/** ボタン列（クレデンシャル オファリング登録・変更履歴）の見出しを消す（ボタンを使わないシート） */
+function removeButtonColumns(gas, name) {
+  const sheet = gas.ss.getSheetByName(name);
+  gas.asUser(() => sheet.getRange(2, COL.credButton, 1, 2).setValues([['', '']]));
+  return sheet;
+}
+
+test('setupAfterSheetChange：どのシートにもボタン列が無ければ、ボタン列の設定は省いて残りを行う', () => {
+  const {gas, g} = setupProject();
+  const sheet = addDepartmentStore(gas);
+  ['新FMT', '新FMT2', '百貨店'].forEach(name => removeButtonColumns(gas, name));
+
+  g.setupAfterSheetChange();
+  assert.strictEqual(gas.alerts.length, 1, '直す点として止めない');
+  const message = gas.alerts[0].message;
+  assert.match(message, /「差分追跡」「サービスリクエストの候補」を設定しました/);
+  assert.match(message, /「クレデンシャル オファリング登録」の列のあるシートが無いので、クレデンシャルのボタン列の設定は省きました/);
+  assert.match(message, /「変更履歴」の列のあるシートが無いので、変更履歴のボタン列の設定は省きました/);
+  assert.strictEqual(sheet.getRange(3, COL.credButton).getValue(), '', 'ボタンは付けない');
+});
+
+test('setupAfterSheetChange：ボタン列のあるシートにだけボタンを付ける', () => {
+  const {gas, g} = setupProject();
+  addDepartmentStore(gas);
+  const sheet = removeButtonColumns(gas, '百貨店');
+  g.setupAfterSheetChange();
+  const message = gas.alerts[0].message;
+  assert.match(message, /「差分追跡」「クレデンシャルのボタン列」「変更履歴のボタン列」「サービスリクエストの候補」を設定しました/);
+  assert.match(message, /ボタン列の無い「百貨店」には付けていません/);
+  assert.strictEqual(sheet.getRange(3, COL.credButton).getValue(), '');
+  assert.strictEqual(gas.ss.getSheetByName('新FMT').getRange(3, COL.credButton).getValue(), false);
+});
+
+test('setupAfterSheetChange：ボタン列の見出しが2つあれば、何も変えずに知らせる', () => {
+  const {gas, g} = setupProject();
+  addDepartmentStore(gas);
+  const sheet = gas.ss.getSheetByName('百貨店');
+  gas.asUser(() => sheet.getRange(2, 10).setValue('変更履歴'));   // J列にも同じ見出しを付けてしまった
+  g.setupAfterSheetChange();
+  assert.match(gas.alerts[0].message, /百貨店 の 2行目に「変更履歴」見出しがちょうど1つ必要です（見つかった数: 2）/);
+  assert.deepStrictEqual(gas.writes, []);
+});
+
+test('setupCredentialLauncher・setupChangeHistoryLauncher：ボタン列のあるシートが無くても止めずに知らせる', () => {
+  const {gas, g} = setupProject({launchers: false});
+  ['新FMT', '新FMT2'].forEach(name => removeButtonColumns(gas, name));
+  g.setupCredentialLauncher();
+  g.setupChangeHistoryLauncher();
+  assert.deepStrictEqual(gas.toasts.map(t => t.message), [
+    'ボタン列（「クレデンシャル オファリング登録」）のあるシートが無いので、ボタンは付けていません。',
+    'ボタン列（「変更履歴」）のあるシートが無いので、ボタンは付けていません。'
+  ]);
 });

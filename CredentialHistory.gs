@@ -238,12 +238,17 @@ function setupCredentialLauncher() {
   lock.waitLock(CRED_OPTIONS.lockWaitMs);
 
   try {
-    // 先に全シートを検証してから変更する
+    // 先に全シートを検証してから変更する。ボタン列の無いシートは飛ばす（ボタン列は使うシートだけに置く）
+    const skipped = [];
     const plans = Object.entries(DIFF_RULES).map(([name, rule]) => {
       const sheet = ss.getSheetByName(name);
       if (!sheet) throw new Error('シートが見つかりません: ' + name);
 
-      const launcher = credColumnByHeader_(sheet, rule, CRED_OPTIONS.launcherHeader);
+      const launcher = credColumnByHeader_(sheet, rule, CRED_OPTIONS.launcherHeader, true);
+      if (!launcher) {
+        skipped.push(name);
+        return null;
+      }
       const customer = credColumnByHeader_(sheet, rule, CRED_OPTIONS.customerHeader);
       const stamp = diffStampColumn_(sheet, rule);
       const firstRow = rule.headerRow + 1;
@@ -259,7 +264,14 @@ function setupCredentialLauncher() {
         );
       }
       return {sheet, launcher, customer, firstRow};
-    });
+    }).filter(Boolean);
+
+    const header = '「' + credHeaderText_(CRED_OPTIONS.launcherHeader) + '」';
+    if (!plans.length) {
+      const message = 'ボタン列（' + header + '）のあるシートが無いので、ボタンは付けていません。';
+      ss.toast(message, CRED_OPTIONS.dialogTitle, 10);
+      return message;
+    }
 
     const {log, cols} = credLogSheet_(ss, true);
     const timezone = ss.getSpreadsheetTimeZone();
@@ -304,12 +316,11 @@ function setupCredentialLauncher() {
 
     credInstallTrigger_(ss);
     SpreadsheetApp.flush();
-    ss.toast(
-      'ボタンを ' + buttons + ' 行に設定しました。' +
-      (migrated ? '既存の履歴 ' + migrated + ' 件を「' + CRED_OPTIONS.logSheet + '」へ移しました。' : ''),
-      CRED_OPTIONS.dialogTitle,
-      10
-    );
+    const message = header + 'のボタンを ' + buttons + ' 行に設定しました。' +
+      (migrated ? '既存の履歴 ' + migrated + ' 件を「' + CRED_OPTIONS.logSheet + '」へ移しました。' : '') +
+      (skipped.length ? '（ボタン列の無い「' + skipped.join('」「') + '」には付けていません）' : '');
+    ss.toast(message, CRED_OPTIONS.dialogTitle, 10);
+    return message;
   } finally {
     try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
   }
@@ -910,7 +921,8 @@ function credResolveTarget_(sheet, row) {
   return {sheet, rule, row, customerColumn, customer};
 }
 
-function credColumnByHeader_(sheet, rule, header) {
+/** 見出しの列番号。ちょうど1つでなければ止める（optional なら、見出しが無いときは 0 を返す。ボタン列はシートに置かなくてもよいため）。 */
+function credColumnByHeader_(sheet, rule, header, optional) {
   const normalize = v => String(v == null ? '' : v).replace(/\s/g, '');
   const target = normalize(header);
   const headers = sheet
@@ -920,6 +932,7 @@ function credColumnByHeader_(sheet, rule, header) {
   const matches = [];
   headers.forEach((h, i) => { if (normalize(h) === target) matches.push(i + 1); });
 
+  if (optional && !matches.length) return 0;
   if (matches.length !== 1) {
     throw new Error(
       sheet.getName() + ' の ' + rule.headerRow + '行目に「' + credHeaderText_(header) +

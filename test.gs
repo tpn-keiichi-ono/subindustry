@@ -315,31 +315,36 @@ function setupDiffTracking() {
  * DIFF_RULES のシートを足した・名前を変えたあとに必要な設定を、まとめて実行する。何度実行してもよい。
  * 1. 差分追跡（setupDiffTracking）  2. クレデンシャルのボタン列（setupCredentialLauncher）
  * 3. 変更履歴のボタン列（setupChangeHistoryLauncher）  4. サービスリクエストの候補（setupRequestSheet）
+ * ボタン列は、見出しのあるシートにだけ付ける（どのシートにも無ければ 2・3 は省く）。
  * 途中で止まって設定が半分だけにならないよう、先にすべてのシートの見出しを確かめ、足りなければ何も変えずに知らせる。
  * トリガーを設置するので、管理者アカウント（トリガーの所有者）で実行すること。
  */
 function setupAfterSheetChange() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = SpreadsheetApp.getUi();
-  const problems = diffCheckSheets_(ss);
+  const {problems, buttons} = diffCheckSheets_(ss);
   if (problems.length) {
     ui.alert('シートの設定', '次の点を直してから、もう一度実行してください（まだ何も変えていません）。\n\n・' + problems.join('\n・'),
       ui.ButtonSet.OK);
     return;
   }
 
-  const steps = [
-    {label: '差分追跡', run: () => setupDiffTracking()},
-    {label: 'クレデンシャルのボタン列', run: () => setupCredentialLauncher()},
-    {label: '変更履歴のボタン列', run: () => setupChangeHistoryLauncher()},
-    {label: 'サービスリクエストの候補', run: () => svcSetupRequestSheet_(ss)}
-  ];
-  const done = [];
   let notes = [];
+  const steps = [{label: '差分追跡', run: () => setupDiffTracking()}];
+  [
+    {label: 'クレデンシャルのボタン列', header: CRED_OPTIONS.launcherHeader, sheets: buttons.credential, run: () => setupCredentialLauncher()},
+    {label: '変更履歴のボタン列', header: CHG_OPTIONS.launcherHeader, sheets: buttons.change, run: () => setupChangeHistoryLauncher()}
+  ].forEach(step => {
+    if (step.sheets.length) steps.push(step);
+    else notes.push('「' + credHeaderText_(step.header) + '」の列のあるシートが無いので、' + step.label + 'の設定は省きました。');
+  });
+  steps.push({label: 'サービスリクエストの候補', run: () => svcSetupRequestSheet_(ss)});
+  const done = [];
   steps.forEach(step => {
     try {
       const result = step.run();
       if (Array.isArray(result)) notes = notes.concat(result);
+      else if (typeof result === 'string') notes.push(result);
     } catch (error) {
       throw new Error('「' + step.label + '」で止まりました（' + error.message + '）。' +
         (done.length ? '「' + done.join('」「') + '」は済んでいます。' : '') +
@@ -355,12 +360,14 @@ function setupAfterSheetChange() {
 }
 
 /**
- * DIFF_RULES のシートが setupAfterSheetChange() の設定に足りているかを確かめる（読むだけ）。直す点の一覧を返す。
- * シートがあるか・見出し（最終更新日時・得意先・2つのボタン列。requests: true ならリクエストの4つの見出し）があるか・
- * ボタン列が追跡範囲（ranges）の外にあるか。
+ * DIFF_RULES のシートが setupAfterSheetChange() の設定に足りているかを確かめる（読むだけ）。
+ * シートがあるか・見出し（最終更新日時・得意先。requests: true ならリクエストの4つの見出し）があるか・
+ * ボタン列（使うシートだけに置く。無くてもよい）があれば、1つだけで追跡範囲（ranges）の外にあるか。
+ * {problems: 直す点, buttons: {credential: ボタン列のあるシート, change: 変更履歴のボタン列のあるシート}}
  */
 function diffCheckSheets_(ss) {
   const problems = [];
+  const buttons = {credential: [], change: []};
   Object.entries(DIFF_RULES).forEach(([name, rule]) => {
     const sheet = ss.getSheetByName(name);
     if (!sheet) {
@@ -381,9 +388,11 @@ function diffCheckSheets_(ss) {
       problems.push(name + ' の ' + rule.headerRow + '行目に「' + DIFF_OPTIONS.stampHeader + '」の見出しがちょうど1つ必要です。');
     }
     check(() => credColumnByHeader_(sheet, rule, CRED_OPTIONS.customerHeader));
-    [CRED_OPTIONS.launcherHeader, CHG_OPTIONS.launcherHeader].forEach(header => {
-      const launcher = check(() => credColumnByHeader_(sheet, rule, header));
-      if (!launcher || !stamp) return;
+    [['credential', CRED_OPTIONS.launcherHeader], ['change', CHG_OPTIONS.launcherHeader]].forEach(([kind, header]) => {
+      const launcher = check(() => credColumnByHeader_(sheet, rule, header, true));
+      if (!launcher) return;
+      buttons[kind].push(name);
+      if (!stamp) return;
       const column = sheet.getRange(rule.headerRow + 1, launcher, Math.max(sheet.getMaxRows() - rule.headerRow, 1), 1);
       if (diffBlocks_(sheet, rule, column, stamp, false).length) {
         problems.push(name + ' の「' + credHeaderText_(header) + '」列（' + diffColumnLetter_(launcher) +
@@ -397,7 +406,7 @@ function diffCheckSheets_(ss) {
       });
     }
   });
-  return problems;
+  return {problems, buttons};
 }
 
 /**
