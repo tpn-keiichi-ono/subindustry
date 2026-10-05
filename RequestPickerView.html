@@ -129,6 +129,15 @@
     .item-name .slash { color: var(--off-day); font-weight: 500; padding: 0 3px; }
     .item-name .project { color: var(--body); font-weight: 500; }
     .request { font-size: 12px; line-height: 1.6; color: var(--body); white-space: pre-wrap; overflow-wrap: anywhere; }
+    /* リクエストの文は2行までにし、長いものだけ「もっと見る」で全文を出す */
+    .request.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+    .more-btn {
+      align-self: flex-start; display: inline-flex; align-items: center; gap: 3px; margin-top: -3px; padding: 2px 0;
+      border: none; background: none; font-size: 11px; font-weight: 600; color: var(--cred);
+    }
+    .more-btn:hover { text-decoration: underline; }
+    .more-btn svg { transition: transform .15s; }
+    .more-btn.open svg { transform: rotate(180deg); }
     .blank { color: var(--faint); }
     mark { background: #FFF1B8; color: inherit; border-radius: 2px; }
     .add-btn {
@@ -229,6 +238,7 @@
 
     let data = null;      // getRequestPickerData() の結果
     let adding = null;    // 追加している items[].key
+    const expanded = new Set();   // 「もっと見る」で全文を出しているリクエスト（items[].key）
     const picked = [ALL, ALL, ALL];
 
     /** 要素を作る小さな補助。text は文字列として入れる（HTML として解釈しない）。 */
@@ -435,6 +445,7 @@
       }
 
       shown.slice(0, LIMIT).forEach(item => list.appendChild(renderItem(item, terms)));
+      fitMoreButtons();
       if (shown.length > LIMIT) {
         list.appendChild(el('div', 'more', '先頭の ' + LIMIT + '件を表示しています。残りの ' + (shown.length - LIMIT) + '件は、絞り込むか文字で探してください。'));
       }
@@ -470,8 +481,37 @@
       head.appendChild(button);
       node.appendChild(head);
 
-      node.appendChild(highlighted('div', 'request', request, terms));
+      const text = highlighted('div', expanded.has(item.key) ? 'request' : 'request clamp', request, terms);
+      node.appendChild(text);
+      const more = el('button', 'more-btn');
+      more.type = 'button';
+      more.hidden = true;   // 2行に収まらないときだけ出す（fitMoreButtons）
+      setMoreLabel(more, expanded.has(item.key));
+      more.addEventListener('click', () => {
+        const open = !expanded.has(item.key);
+        if (open) expanded.add(item.key); else expanded.delete(item.key);
+        text.classList.toggle('clamp', !open);
+        setMoreLabel(more, open);
+      });
+      node.appendChild(more);
       return node;
+    }
+
+    function setMoreLabel(button, open) {
+      button.classList.toggle('open', open);
+      button.innerHTML = '<svg width="9" height="9" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      button.insertBefore(document.createTextNode(open ? '閉じる' : 'もっと見る'), button.firstChild);
+      button.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    /** 一覧を並べたあとに、2行に収まらないリクエスト（と全文を出しているもの）にだけ「もっと見る」「閉じる」を出す */
+    function fitMoreButtons() {
+      document.querySelectorAll('#list .item').forEach(node => {
+        const text = node.querySelector('.request');
+        const more = node.querySelector('.more-btn');
+        if (!text || !more) return;
+        more.hidden = text.classList.contains('clamp') ? text.scrollHeight <= text.clientHeight + 1 : false;
+      });
     }
 
     /* ---------- 追加 ---------- */
@@ -544,6 +584,9 @@
       renderFilters();
       renderList();
     });
+    // フォントの読み込み・幅の変更で行数が変わるので、「もっと見る」を出すかを確かめ直す
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitMoreButtons);
+    window.addEventListener('resize', fitMoreButtons);
     $('closeBanner').addEventListener('click', hideBanner);
     $('refresh').addEventListener('click', () => { hideBanner(); load(); });
     $('reload').addEventListener('click', load);
