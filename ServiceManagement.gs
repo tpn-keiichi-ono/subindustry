@@ -5,12 +5,12 @@
  *
  * 仕組み
  * - リクエスト シートの1行が1件のリクエスト。A〜D（サブインダストリー → 得意先 → 案件名 → リクエスト）はすべて連動プルダウンで、
- *   候補は新FMT から自動で作る。どの列から選んでもよく、選んだ値で1つに決まる列は自動で入る
- *   （例：リクエストを選ぶと A〜C が入る。案件名を選ぶと、その案件のリクエストが1つならリクエストも入る）。
+ *   候補は新FMT から自動で作る。どの列から選んでもよく、選んだ値で1つに決まる A〜C の列は自動で入る
+ *   （例：リクエストを選ぶと A〜C が入る）。D（リクエスト）より右の列には、スクリプトは値を入れない（人が選ぶ・入力する）。
  *   候補は「新FMT でリクエストが入っていて、ほかの行でまだ選んでいない案件」だけ。
  *   候補が無くなると、プルダウンには「（すべて選択済み）」だけが出る（リクエストをすべて選んだことが分かる）
  * - サービスは最初から決まっているものではなく、リクエストをもとに考える。リクエストの「サービス案」に入力した名前がサービス案になる
- *   （同じ名前を付けたリクエストが1つのサービス案にまとまる）。サービス案を付けると、判断が未判断なら「サービス化検討」にする
+ *   （同じ名前を付けたリクエストが1つのサービス案にまとまる）
  * - 選んだ行は、新FMT の変更に合わせる（単純トリガーの onEdit）：サブインダストリーは同じ案件の値にそろえ、
  *   1つのセルで得意先・案件名・リクエストを書き換えたときは同じ行の値を直す。新FMT から消えたリクエストには注を付ける。
  *   新FMT にリクエストが増えたり減ったりしたら、候補も作り直す
@@ -41,8 +41,7 @@ const SVC_OPTIONS = {
   allSelected: '（すべて選択済み）',      // 候補をすべて選んだときにプルダウンに出す文字
   noRequests: '（新FMT にリクエストがありません）',   // 新FMT にリクエストが1件も無いときにプルダウンに出す文字
   maxListItems: 500,                     // プルダウンの候補の上限（超えたときは候補を付けずに知らせる）
-  defaultDecision: '未判断',             // リクエストを選んだときの判断
-  decisionWithService: 'サービス化検討',  // サービス案を付けたとき、判断が未判断（または空）ならこれにする
+  defaultDecision: '未判断',             // まだ判断していないことを表す判断（空と同じに扱う）
   missingNote: '取り込み元に見つかりません',   // 新FMT から消えた・書き換えられたリクエストに付ける注の先頭
   changedNote: '新FMT でリクエストが書き換えられました',   // サービス案・判断を付けたあとで書き換えられたときの注
   // 前の版で付けた保護（外す）
@@ -390,7 +389,7 @@ function svcOptionsFor_(records, level, selected, memo, scope) {
 /**
  * リクエスト シートの候補を作り直す。候補は、新FMT でリクエストが入っていて、ほかの行でまだ選んでいない案件だけ。
  * edited（{first, last, from, levels: 編集した連動列}）の行は、from 番目から右の連動列で候補に無い値を空にし（編集した列の値なら知らせる）、
- * 選んでいる値に合う案件で1つに決まる列を埋める（判断・追加日が空なら入れる）。
+ * 選んでいる値に合う案件で1つに決まる A〜C の列を埋める（リクエスト・判断・追加日などは入れない）。
  * 入力済みの行は行ごとに、最後の行より下の空いている行はまとめて、プルダウンを付ける。
  * {total: 新FMT のリクエストの数, selected: 選んだ行の数, remaining: まだ選んでいないリクエストの数,
  *  untouched: 手を付けていない行の数, messages: 編集した人に知らせる文, warnings: 管理者に知らせる文}
@@ -409,7 +408,6 @@ function svcRefreshRequestRows_(sheet, records, edited) {
   const values = {};
   fields.forEach(key => { values[key] = read(key); });
   const decisions = read('decision');
-  const addedAt = read('addedAt');
   const messages = [];
 
   const keyOf = i => (values.request[i] ? svcRequestKey_(values.customer[i], values.project[i], values.request[i]) : '');
@@ -423,7 +421,6 @@ function svcRefreshRequestRows_(sheet, records, edited) {
 
   // 編集した行：候補に無い値を空にし、選んでいる値で1つに決まる列を埋める
   if (edited) {
-    const now = new Date();
     const last = Math.min(edited.last, lastRow);
     for (let row = Math.max(edited.first, first); row <= last; row++) {
       const i = row - first;
@@ -448,11 +445,12 @@ function svcRefreshRequestRows_(sheet, records, edited) {
         selected[level] = '';
       }
 
-      // 選んでいる値に合う案件で、どれも同じ値になる列を埋める（例：リクエストを選べば A〜C、案件名を選べばそのリクエスト）
+      // 選んでいる値に合う案件で、どれも同じ値になる A〜C の列を埋める（例：リクエストを選べば A〜C）。
+      // リクエスト（D）は、案件が1つに決まっても入れない（人がプルダウンで選ぶ）
       if (!rejected && selected.some(Boolean)) {
         const matches = available.filter(rec => selected.every((value, level) => !value || rec.keys[level] === credNormalize_(value)));
         cascadeKeys.forEach((key, level) => {
-          if (selected[level] || !matches.length) return;
+          if (key === 'request' || selected[level] || !matches.length) return;
           const same = matches[0].keys[level];
           if (matches.every(rec => rec.keys[level] === same)) selected[level] = matches[0].values[level];
         });
@@ -466,13 +464,7 @@ function svcRefreshRequestRows_(sheet, records, edited) {
         values[key][i] = next[n];
       });
       keys[i] = keyOf(i);
-      if (!keys[i]) continue;
-      used.set(keys[i], (used.get(keys[i]) || 0) + 1);
-      if (cols.decision && !decisions[i]) {
-        sheet.getRange(row, cols.decision).setValue(SVC_OPTIONS.defaultDecision);
-        decisions[i] = SVC_OPTIONS.defaultDecision;
-      }
-      if (cols.addedAt && !addedAt[i]) sheet.getRange(row, cols.addedAt).setValue(now).setNumberFormat('yyyy/MM/dd');
+      if (keys[i]) used.set(keys[i], (used.get(keys[i]) || 0) + 1);
     }
   }
 
@@ -602,36 +594,21 @@ function svcHandleSourceEdit_(sheet, range, e) {
 }
 
 /**
- * リクエスト シートを編集したとき：
- * - A〜D（サブインダストリー・得意先・案件名・リクエスト）を変えたら、その行を整え（候補に無い値を空にし、1つに決まる列を埋める）、全行の候補を作り直す
- * - サービス案を付けた行は、判断が未判断（または空）なら「サービス化検討」にする
+ * リクエスト シートを編集したとき：A〜D（サブインダストリー・得意先・案件名・リクエスト）を変えたら、
+ * その行を整え（候補に無い値を空にし、1つに決まる A〜C の列を埋める）、全行の候補を作り直す。D より右の列には値を入れない。
  */
 function svcHandleRequestEdit_(sheet, range) {
   const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
   const edited = col => col > 0 && col >= range.getColumn() && col <= range.getLastColumn();
   const levels = svcCascadeKeys_().map((key, level) => (edited(cols[key]) ? level : -1)).filter(level => level >= 0);
   const level = levels.length ? levels[0] : -1;
-  const serviceEdited = edited(cols.service) && cols.decision > 0;
-  if (level < 0 && !serviceEdited) return;
+  if (level < 0) return;
 
   const ss = sheet.getParent();
   const first = Math.max(range.getRow(), SVC_OPTIONS.headerRow + 1);
   const last = range.getLastRow();
   taskWithLock_(() => {
-    if (level >= 0) {
-      const result = svcRefreshRequestRows_(sheet, svcSourceRecords_(ss), {first, last, from: level, levels});
-      if (result.messages.length) ss.toast(result.messages.join('\n'), 'サービス管理', 10);
-    }
-    if (serviceEdited) {
-      const rows = last - first + 1;
-      const services = sheet.getRange(first, cols.service, rows, 1).getDisplayValues();
-      const decisions = sheet.getRange(first, cols.decision, rows, 1).getDisplayValues();
-      services.forEach((service, i) => {
-        const decision = String(decisions[i][0]).trim();
-        if (String(service[0]).trim() && (!decision || decision === SVC_OPTIONS.defaultDecision)) {
-          sheet.getRange(first + i, cols.decision).setValue(SVC_OPTIONS.decisionWithService);
-        }
-      });
-    }
+    const result = svcRefreshRequestRows_(sheet, svcSourceRecords_(ss), {first, last, from: level, levels});
+    if (result.messages.length) ss.toast(result.messages.join('\n'), 'サービス管理', 10);
   }, SVC_OPTIONS.editLockWaitMs);
 }

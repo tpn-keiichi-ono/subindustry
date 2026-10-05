@@ -38,8 +38,6 @@ function edit(gas, sheetName, a1, value) {
   return sheet;
 }
 
-const today = gas => gas.global.Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd');
-
 test('setupRequestSheet：リクエスト シートを作る。行は足さず、A〜D のプルダウンにリクエストのある案件だけを自動で候補にする', () => {
   const {gas, g} = setup();
   g.setupRequestSheet();
@@ -61,7 +59,7 @@ test('setupRequestSheet：リクエスト シートを作る。行は足さず�
   assert.match(gas.toasts[0].message, /新FMT のリクエスト 3件のうち 0件を選んでいます（まだ選んでいないもの 3件）/);
 });
 
-test('A から順に選ぶと、1つに決まる列は自動で入り、選んだ案件はほかの行の候補から消える', () => {
+test('A から順に選ぶと、1つに決まる A〜C は自動で入り、選んだ案件はほかの行の候補から消える（D列以降は自動で入れない）', () => {
   const {gas, g} = setup();
   g.setupRequestSheet();
   let request = edit(gas, 'リクエスト', 'A2', '食品スーパー');
@@ -69,9 +67,14 @@ test('A から順に選ぶと、1つに決まる列は自動で入り、選ん�
   assert.deepStrictEqual(listOf(request.getRange('C2')), ['アプリ刷新', 'チラシのデジタル化']);
   assert.deepStrictEqual(listOf(request.getRange('D2')), ['会員の購買分析をしたい', 'チラシの効果を測りたい']);
   request = edit(gas, 'リクエスト', 'C2', 'アプリ刷新');
-  assert.deepStrictEqual(gas.dump(request, 'A2:H2')[0],
-    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい', '', '未判断', '', today(gas)]);
+  assert.deepStrictEqual(gas.dump(request, 'A2:H2')[0], ['食品スーパー', 'A社', 'アプリ刷新', '', '', '', '', ''],
+    'リクエストが1つでも入れない（プルダウンで選ぶ）');
+  assert.deepStrictEqual(listOf(request.getRange('D2')), ['会員の購買分析をしたい']);
+  assert.deepStrictEqual(listOf(request.getRange('C3')), ['アプリ刷新', 'チラシのデジタル化', 'EC立ち上げ'], 'リクエストを選ぶまでは候補に残る');
 
+  request = edit(gas, 'リクエスト', 'D2', '会員の購買分析をしたい');
+  assert.deepStrictEqual(gas.dump(request, 'A2:H2')[0],
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい', '', '', '', ''], '判断・追加日は入れない');
   assert.deepStrictEqual(listOf(request.getRange('C3')), ['チラシのデジタル化', 'EC立ち上げ'], 'ほかの行の候補から消える');
   assert.deepStrictEqual(listOf(request.getRange('C2')), ['アプリ刷新', 'チラシのデジタル化'], '自分の行には残る');
 });
@@ -96,16 +99,20 @@ test('A〜C を選ぶたびに、その行のリクエストの候補が絞ら�
     'ほかの行は絞らない');
 });
 
-test('案件名やリクエストを先に選ぶと、ほかの列も入る。すべて選ぶと候補は「（すべて選択済み）」だけになる', () => {
+test('案件名やリクエストを先に選ぶと、A〜C も入る。すべて選ぶと候補は「（すべて選択済み）」だけになる', () => {
   const {gas, g} = setup();
   g.setupRequestSheet();
   let request = edit(gas, 'リクエスト', 'C2', 'EC立ち上げ');
-  assert.deepStrictEqual(gas.dump(request, 'A2:D2')[0], ['ドラッグストア', 'C社', 'EC立ち上げ', '=在庫を店舗と共有したい']);
+  assert.deepStrictEqual(gas.dump(request, 'A2:D2')[0], ['ドラッグストア', 'C社', 'EC立ち上げ', ''], 'リクエストは入れない');
+  assert.deepStrictEqual(listOf(request.getRange('D2')), ['=在庫を店舗と共有したい']);
+  request = edit(gas, 'リクエスト', 'D2', "'=在庫を店舗と共有したい");
+  assert.strictEqual(gas.dump(request, 'D2')[0][0], '=在庫を店舗と共有したい');
   assert.strictEqual(request.getRange('D2').getFormula(), '', '数式にしない');
 
   request = edit(gas, 'リクエスト', 'D3', 'チラシの効果を測りたい');
   assert.deepStrictEqual(gas.dump(request, 'A3:D3')[0], ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい']);
-  request = edit(gas, 'リクエスト', 'C4', 'アプリ刷新');
+  request = edit(gas, 'リクエスト', 'D4', '会員の購買分析をしたい');
+  assert.deepStrictEqual(gas.dump(request, 'A4:D4')[0], ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい']);
   ['A5', 'B5', 'C5', 'D5', 'A20'].forEach(a1 => assert.deepStrictEqual(listOf(request.getRange(a1)), ['（すべて選択済み）'], a1));
 
   gas.toasts.length = 0;
@@ -119,22 +126,24 @@ test('案件名やリクエストを先に選ぶと、ほかの列も入る。�
 test('左の列を選び直すと、合わなくなった右の列とリクエストを空にし、その案件はまた候補に戻る', () => {
   const {gas, g} = setup();
   g.setupRequestSheet();
-  edit(gas, 'リクエスト', 'C2', 'アプリ刷新');
-  edit(gas, 'リクエスト', 'C3', 'チラシのデジタル化');
+  edit(gas, 'リクエスト', 'D2', '会員の購買分析をしたい');
+  edit(gas, 'リクエスト', 'D3', 'チラシの効果を測りたい');
   edit(gas, 'リクエスト', 'E2', '会員分析基盤');
+  edit(gas, 'リクエスト', 'F2', 'サービス化検討');
   assert.deepStrictEqual(listOf(gas.ss.getSheetByName('リクエスト').getRange('A2')), ['食品スーパー', 'ドラッグストア']);
 
   const request = edit(gas, 'リクエスト', 'A2', 'ドラッグストア');
   assert.deepStrictEqual(gas.dump(request, 'A2:F2')[0],
-    ['ドラッグストア', 'C社', 'EC立ち上げ', '=在庫を店舗と共有したい', '会員分析基盤', 'サービス化検討'],
-    '合わなくなった得意先・案件名・リクエストを空にし、ドラッグストアの候補は1つなので入れる。サービス案・判断は消さない');
-  assert.deepStrictEqual(listOf(request.getRange('C4')), ['アプリ刷新'], 'アプリ刷新が候補に戻る');
+    ['ドラッグストア', 'C社', 'EC立ち上げ', '', '会員分析基盤', 'サービス化検討'],
+    '合わなくなった得意先・案件名・リクエストを空にし、1つに決まる得意先・案件名だけを入れる。サービス案・判断は消さない');
+  assert.deepStrictEqual(listOf(request.getRange('D2')), ['=在庫を店舗と共有したい']);
+  assert.deepStrictEqual(listOf(request.getRange('C4')), ['アプリ刷新', 'EC立ち上げ'], 'アプリ刷新が候補に戻る');
 });
 
 test('貼り付けなどで同じ案件を2つの行に入れたら、あとの行は空にして知らせる', () => {
   const {gas, g} = setup();
   g.setupRequestSheet();
-  edit(gas, 'リクエスト', 'C2', 'アプリ刷新');
+  edit(gas, 'リクエスト', 'D2', '会員の購買分析をしたい');
   gas.toasts.length = 0;
   const request = edit(gas, 'リクエスト', 'A3:C3', [['食品スーパー', 'A社', 'アプリ刷新']]);
   assert.deepStrictEqual(gas.dump(request, 'A3:D3')[0], ['食品スーパー', 'A社', '', '']);
@@ -154,7 +163,7 @@ test('候補に無いリクエストを入力したら空にして知らせる�
   assert.strictEqual(gas.dump(request, 'D2')[0][0], '会員の購買分析をしたい');
 });
 
-test('同じ案件にリクエストが2つあれば、案件名を選んでもリクエストは入れず、プルダウンで選ぶ', () => {
+test('案件名まで選んでも、リクエストは入れずプルダウンで選ぶ（残りが1つでも）', () => {
   const {gas, g} = setup([
     ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい'],
     ['食品スーパー', 'A社', 'アプリ刷新', 'クーポンを配りたい']
@@ -166,17 +175,24 @@ test('同じ案件にリクエストが2つあれば、案件名を選んでも�
   request = edit(gas, 'リクエスト', 'D2', 'クーポンを配りたい');
   assert.deepStrictEqual(listOf(request.getRange('D3')), ['会員の購買分析をしたい']);
   request = edit(gas, 'リクエスト', 'C3', 'アプリ刷新');
-  assert.strictEqual(gas.dump(request, 'D3')[0][0], '会員の購買分析をしたい', '残りが1つなら入る');
+  assert.deepStrictEqual(gas.dump(request, 'A3:D3')[0], ['食品スーパー', 'A社', 'アプリ刷新', ''], '残りが1つでも入れない');
+  assert.deepStrictEqual(listOf(request.getRange('D3')), ['会員の購買分析をしたい']);
 });
 
-test('リクエストにサービス案を付けると、判断が未判断なら「サービス化検討」にする（棄却などはそのまま）', () => {
+test('サービス案・判断・メモ・追加日を入力しても、ほかの列は変えない（判断も自動で入れない）', () => {
   const {gas, g} = setup();
   g.setupRequestSheet();
-  edit(gas, 'リクエスト', 'C2', 'アプリ刷新');
-  edit(gas, 'リクエスト', 'C3', 'EC立ち上げ');
+  edit(gas, 'リクエスト', 'D2', '会員の購買分析をしたい');
+  edit(gas, 'リクエスト', 'D3', 'チラシの効果を測りたい');
   edit(gas, 'リクエスト', 'F3', '棄却');
+  gas.writes.length = 0;
   const request = edit(gas, 'リクエスト', 'E2:E3', [['会員分析基盤'], ['会員分析基盤']]);
-  assert.deepStrictEqual(gas.dump(request, 'F2:F3'), [['サービス化検討'], ['棄却']]);
+  edit(gas, 'リクエスト', 'G2:H2', [['先方に確認', '2026/10/05']]);
+  assert.deepStrictEqual(gas.writes, [], '何も書き込まない');
+  assert.deepStrictEqual(gas.dump(request, 'E2:H3'), [
+    ['会員分析基盤', '', '先方に確認', '2026/10/05'],
+    ['会員分析基盤', '棄却', '', '']
+  ]);
 });
 
 test('新FMT の変更：選んだ行は同じ行を直し、候補も作り直す（行は足さない）', () => {
@@ -187,7 +203,7 @@ test('新FMT の変更：選んだ行は同じ行を直し、候補も作り直�
 
   g.setupRequestSheet();
   const request = gas.ss.getSheetByName('リクエスト');
-  edit(gas, 'リクエスト', 'C2', 'アプリ刷新');
+  edit(gas, 'リクエスト', 'D2', '会員の購買分析をしたい');
   edit(gas, 'リクエスト', 'E2', '会員分析基盤');
   gas.writes.length = 0;
   sourceEdit('B3', 'メモを書く');
