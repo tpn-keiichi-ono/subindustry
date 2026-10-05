@@ -14,7 +14,8 @@
  * - 選んだ行は、新FMT の変更に合わせる（単純トリガーの onEdit）：サブインダストリーは同じ案件の値にそろえ、
  *   1つのセルで得意先・案件名・リクエストを書き換えたときは同じ行の値を直す。新FMT から消えたリクエストには注を付ける。
  *   新FMT にリクエストが増えたり減ったりしたら、候補も作り直す
- * - 管理者が setupRequestSheet() をエディタから実行して、シート・見出し・プルダウンを用意する（候補をまとめて作り直すときも）
+ * - 管理者が setupRequestSheet() をエディタから実行して、シート・見出し・プルダウンを用意する（候補をまとめて作り直すときも）。
+ *   前の版で全件を自動で取り込んでいた行のうち、手を付けていない行は removeUntouchedRequests() で削除して候補に戻せる
  * - サービス案ごとの検討の進捗は、タスク管理シート（TaskManagement.gs）でタスクとして管理する
  */
 
@@ -37,7 +38,8 @@ const SVC_OPTIONS = {
     {key: 'note', label: 'メモ', width: 280},
     {key: 'addedAt', label: '追加日', width: 100, aliases: ['取り込み日']}
   ],
-  allSelected: '（すべて選択済み）',      // 候補が無いときにプルダウンに出す文字
+  allSelected: '（すべて選択済み）',      // 候補をすべて選んだときにプルダウンに出す文字
+  noRequests: '（新FMT にリクエストがありません）',   // 新FMT にリクエストが1件も無いときにプルダウンに出す文字
   maxListItems: 500,                     // プルダウンの候補の上限（超えたときは候補を付けずに知らせる）
   defaultDecision: '未判断',             // リクエストを選んだときの判断
   decisionWithService: 'サービス化検討',  // サービス案を付けたとき、判断が未判断（または空）ならこれにする
@@ -95,11 +97,85 @@ function setupRequestSheet() {
 
   const name = SVC_OPTIONS.requestSheet;
   const lines = [result.created ? '「' + name + '」シートを作りました。' : '「' + name + '」シートのプルダウンを作り直しました。'];
-  lines.push(result.remaining ? 'まだ選んでいないリクエストが ' + result.remaining + '件あります。' : 'リクエストはすべて選んでいます。');
+  lines.push(svcCountMessage_(result));
   if (result.missing) lines.push('新FMT に見つからないリクエストが ' + result.missing + '件あります（「リクエスト」のセルに注を付けました）。');
   if (result.added.length) lines.push(name + ' の右端に「' + result.added.join('」「') + '」の列を足しました。');
   if (result.taskAdded.length) lines.push(TASK_OPTIONS.sheet + ' の右端に「' + result.taskAdded.join('」「') + '」の列を足しました。');
   ss.toast(lines.concat(result.warnings, result.messages).join('\n'), 'サービス管理', 10);
+}
+
+/**
+ * 前の版で全件を自動で取り込んだまま手を付けていない行（サービス案・メモが空で、判断が未判断か空）を削除し、その案件をまた候補に戻す。
+ * 削除する前に件数を見せて確かめる。サービス案・判断・メモのどれかが入っている行は残す。
+ */
+function removeUntouchedRequests() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SVC_OPTIONS.requestSheet);
+  if (!sheet) throw new Error('「' + SVC_OPTIONS.requestSheet + '」シートがありません。setupRequestSheet() を実行してください。');
+  const ui = SpreadsheetApp.getUi();
+  const count = svcUntouchedRows_(sheet).length;
+  if (!count) {
+    ui.alert('サービス管理', '削除できる行はありません（どの行も、サービス案・判断・メモのどれかが入っています）。', ui.ButtonSet.OK);
+    return;
+  }
+  const answer = ui.alert('サービス管理',
+    'サービス案・メモが空で、判断が「' + SVC_OPTIONS.defaultDecision + '」の行が ' + count + '件あります。\n' +
+    'これらの行を削除して、その案件をまた候補に戻しますか？（サービス案・判断・メモのどれかが入っている行は残します）',
+    ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+
+  const result = taskWithLock_(() => {
+    const rows = svcUntouchedRows_(sheet);   // ロックの中で数え直す
+    // すべての行を消すことはできないので、足りなければ空の行を足しておく
+    if (sheet.getMaxRows() - rows.length <= Math.max(sheet.getFrozenRows(), SVC_OPTIONS.headerRow)) {
+      sheet.insertRowsAfter(sheet.getMaxRows(), 1);
+    }
+    // 下の行から、続いている行はまとめて削除する
+    for (let end = rows.length - 1; end >= 0;) {
+      let start = end;
+      while (start > 0 && rows[start - 1] === rows[start] - 1) start--;
+      sheet.deleteRows(rows[start], end - start + 1);
+      end = start - 1;
+    }
+    return Object.assign({removed: rows.length}, svcRefreshRequestRows_(sheet, svcSourceRecords_(ss), null));
+  }, SVC_OPTIONS.lockWaitMs);
+  ss.toast(result.removed + '行を削除しました。' + svcCountMessage_(result), 'サービス管理', 10);
+}
+
+/** 手を付けていない行（リクエストがあり、サービス案・メモが空で、判断が未判断か空）の行番号（上から）。 */
+function svcUntouchedRows_(sheet) {
+  const headerRow = SVC_OPTIONS.headerRow;
+  const count = sheet.getLastRow() - headerRow;
+  if (count < 1) return [];
+  const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, headerRow);
+  const read = key => (cols[key]
+    ? sheet.getRange(headerRow + 1, cols[key], count, 1).getDisplayValues().map(r => String(r[0]).trim())
+    : new Array(count).fill(''));
+  const requests = read('request');
+  const services = read('service');
+  const notes = read('note');
+  const decisions = read('decision');
+  const rows = [];
+  requests.forEach((request, i) => {
+    if (!request || services[i] || notes[i]) return;
+    if (decisions[i] && decisions[i] !== SVC_OPTIONS.defaultDecision) return;
+    rows.push(headerRow + 1 + i);
+  });
+  return rows;
+}
+
+/** 選んだ件数の知らせ（{total, selected, remaining, untouched}）。 */
+function svcCountMessage_(result) {
+  if (!result.total) {
+    return '新FMT にリクエストが見つかりません。新FMT の「' + SVC_OPTIONS.sourceHeaders[3] + '」の列にリクエストが入っているか確かめてください。';
+  }
+  const lines = ['新FMT のリクエスト ' + result.total + '件のうち ' + result.selected + '件を選んでいます（まだ選んでいないもの ' +
+    result.remaining + '件）。'];
+  if (!result.remaining && result.untouched) {
+    lines.push('サービス案・判断・メモが空の行が ' + result.untouched + '件あります。前の版で自動で取り込んだ行なら、' +
+      'エディタで removeUntouchedRequests() を実行すると、削除して候補に戻せます。');
+  }
+  return lines.join('\n');
 }
 
 /* ---------------- シートの用意 ---------------- */
@@ -314,7 +390,8 @@ function svcOptionsFor_(records, level, selected, memo, scope) {
  * edited（{first, last, from, levels: 編集した連動列}）の行は、from 番目から右の連動列で候補に無い値を空にし（編集した列の値なら知らせる）、
  * 選んでいる値に合う案件で1つに決まる列を埋める（判断・追加日が空なら入れる）。
  * 入力済みの行は行ごとに、最後の行より下の空いている行はまとめて、プルダウンを付ける。
- * {remaining: まだ選んでいないリクエストの数, messages: 編集した人に知らせる文, warnings: 管理者に知らせる文}
+ * {total: 新FMT のリクエストの数, selected: 選んだ行の数, remaining: まだ選んでいないリクエストの数,
+ *  untouched: 手を付けていない行の数, messages: 編集した人に知らせる文, warnings: 管理者に知らせる文}
  */
 function svcRefreshRequestRows_(sheet, records, edited) {
   const headerRow = SVC_OPTIONS.headerRow;
@@ -355,8 +432,8 @@ function svcRefreshRequestRows_(sheet, records, edited) {
 
       for (let level = Math.max(edited.from, 0); level < cascadeKeys.length; level++) {
         if (!selected[level]) continue;
-        if (selected[level] === SVC_OPTIONS.allSelected) {
-          messages.push('リクエストのある案件は、すべて選んでいます。');
+        if (selected[level] === SVC_OPTIONS.allSelected || selected[level] === SVC_OPTIONS.noRequests) {
+          messages.push(records.length ? 'リクエストのある案件は、すべて選んでいます。' : SVC_OPTIONS.noRequests.replace(/[（）]/g, '') + '。');
           selected[level] = '';
           continue;
         }
@@ -408,7 +485,8 @@ function svcRefreshRequestRows_(sheet, records, edited) {
       tooMany.add(level);
       return null;
     }
-    const list = options.length ? options : [SVC_OPTIONS.allSelected];
+    const empty = records.length ? SVC_OPTIONS.allSelected : SVC_OPTIONS.noRequests;
+    const list = options.length ? options : [empty];
     const key = level + '\u0001' + list.join('\u0001');
     if (!ruleMemo.has(key)) {
       const label = SVC_OPTIONS.requestColumns.find(c => c.key === cascadeKeys[level]).label;
@@ -417,7 +495,7 @@ function svcRefreshRequestRows_(sheet, records, edited) {
         .setAllowInvalid(false)
         .setHelpText(options.length
           ? label + 'は一覧から選んでください（リクエストがあり、まだ選んでいない案件だけが出ます）。'
-          : 'リクエストのある案件は、すべて選んでいます。')
+          : records.length ? 'リクエストのある案件は、すべて選んでいます。' : '新FMT にリクエストがありません。')
         .build());
     }
     return ruleMemo.get(key);
@@ -454,7 +532,11 @@ function svcRefreshRequestRows_(sheet, records, edited) {
     warnings.push('「' + label + '」の候補が ' + SVC_OPTIONS.maxListItems + ' 件を超えるため、プルダウンを付けられない行があります。' +
       '左の列を先に選ぶと絞り込まれます。');
   });
-  return {remaining: base.length, messages, warnings};
+  const services = read('service');
+  const notes = read('note');
+  const untouched = keys.filter((key, i) => key && !services[i] && !notes[i] &&
+    (!decisions[i] || decisions[i] === SVC_OPTIONS.defaultDecision)).length;
+  return {total: records.length, selected: keys.filter(Boolean).length, remaining: base.length, untouched, messages, warnings};
 }
 
 /* ---------------- 編集したとき（onEdit から） ---------------- */

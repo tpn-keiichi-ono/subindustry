@@ -58,7 +58,7 @@ test('setupRequestSheet：リクエスト シートを作る。行は足さず�
 
   assert.strictEqual(request.getProtections().length, 0, 'A〜D はプルダウンで選ぶので保護しない');
   assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
-  assert.match(gas.toasts[0].message, /まだ選んでいないリクエストが 3件あります/);
+  assert.match(gas.toasts[0].message, /新FMT のリクエスト 3件のうち 0件を選んでいます（まだ選んでいないもの 3件）/);
 });
 
 test('A から順に選ぶと、1つに決まる列は自動で入り、選んだ案件はほかの行の候補から消える', () => {
@@ -93,7 +93,7 @@ test('案件名やリクエストを先に選ぶと、ほかの列も入る。�
   assert.strictEqual(gas.dump(request, 'A5')[0][0], '', '選んでも入らない');
   assert.match(gas.toasts[0].message, /すべて選んでいます/);
   g.setupRequestSheet();
-  assert.match(gas.toasts[gas.toasts.length - 1].message, /リクエストはすべて選んでいます/);
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /3件のうち 3件を選んでいます（まだ選んでいないもの 0件）/);
 });
 
 test('左の列を選び直すと、合わなくなった右の列とリクエストを空にし、その案件はまた候補に戻る', () => {
@@ -209,6 +209,55 @@ test('前の版のシート：見出し（サービス・取り込み日）を�
   assert.strictEqual(old.getProtections().length, 0);
   assert.deepStrictEqual(listOf(old.getRange('C3')), ['チラシのデジタル化', 'EC立ち上げ'], '選んであった案件は候補から外す');
   assert.strictEqual(rangeOf(gas.ss.getSheetByName('タスク管理').getRange('A2')), 'リクエスト!E2:E20');
+});
+
+test('新FMT にリクエストが1件も無ければ、候補は「（新FMT にリクエストがありません）」にして知らせる（すべて選択済みと区別する）', () => {
+  const {gas, g} = setup([['食品スーパー', 'A社', 'アプリ刷新', '']]);
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  ['A2', 'D2'].forEach(a1 => assert.deepStrictEqual(listOf(request.getRange(a1)), ['（新FMT にリクエストがありません）'], a1));
+  assert.match(gas.toasts[0].message, /新FMT にリクエストが見つかりません/);
+});
+
+test('removeUntouchedRequests：前の版で全件を取り込んだまま手を付けていない行を、確かめてから削除して候補に戻す', () => {
+  const {gas, g} = setup();
+  const header = ['サブインダストリー', '得意先', '案件名', 'リクエスト', 'サービス', '判断', 'メモ', '取り込み日'];
+  const sheet = gas.addSheet('リクエスト', [header,
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい', '会員分析基盤', 'サービス化検討', '', '2026/10/01'],
+    ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい', '', '未判断', '', '2026/10/01'],
+    ['ドラッグストア', 'C社', 'EC立ち上げ', '=在庫を店舗と共有したい', '', '未判断', '', '2026/10/01']
+  ].map((r, i) => (i && r[3][0] === '=' ? r.map((v, j) => (j === 3 ? "'" + v : v)) : r)), {rows: 10, columns: 8});
+  g.setupRequestSheet();
+  assert.deepStrictEqual(listOf(sheet.getRange('A5')), ['（すべて選択済み）'], '前の版の行はすべて選んだ行になっている');
+  assert.match(gas.toasts[0].message, /サービス案・判断・メモが空の行が 2件あります。.*removeUntouchedRequests\(\)/);
+
+  gas.confirmAnswer = 'NO';
+  g.removeUntouchedRequests();
+  assert.strictEqual(sheet.getLastRow(), 4, '「いいえ」なら消さない');
+
+  gas.confirmAnswer = 'YES';
+  g.removeUntouchedRequests();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /判断が「未判断」の行が 2件あります/);
+  assert.deepStrictEqual(gas.dump(sheet, 'A2:E3'), [
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい', '会員分析基盤'],
+    ['', '', '', '', '']
+  ], 'サービス案を付けた行は残す');
+  assert.deepStrictEqual(listOf(sheet.getRange('C3')), ['チラシのデジタル化', 'EC立ち上げ'], '候補に戻る');
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /2行を削除しました。新FMT のリクエスト 3件のうち 1件を選んでいます/);
+});
+
+test('removeUntouchedRequests：データの行をすべて消すときも止まらない（空の行を1つ残す）', () => {
+  const {gas, g} = setup();
+  const header = ['サブインダストリー', '得意先', '案件名', 'リクエスト', 'サービス案', '判断', 'メモ', '追加日'];
+  const sheet = gas.addSheet('リクエスト', [header,
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい', '', '未判断', '', ''],
+    ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい', '', '', '', '']
+  ], {rows: 3, columns: 8});
+  gas.confirmAnswer = 'YES';
+  g.removeUntouchedRequests();
+  assert.strictEqual(sheet.getLastRow(), 1);
+  assert.strictEqual(sheet.getMaxRows(), 2);
+  assert.deepStrictEqual(listOf(sheet.getRange('C2')), ['アプリ刷新', 'チラシのデジタル化', 'EC立ち上げ']);
 });
 
 test('新FMT のリクエストの列の見出しが無ければ、止めて知らせる', () => {
