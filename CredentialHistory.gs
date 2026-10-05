@@ -29,7 +29,7 @@ const CRED_OPTIONS = {
   launcherHeader: 'クレデンシャル\nオファリング登録',
   customerHeader: '得意先',               // 照合に使う列の見出し
   logSheet: 'クレデンシャル履歴_記録',
-  // メニューの名前（画面の案内にもこの名前を出す）。項目は「履歴サイドバーを開く」「権限を承認する（初回のみ）」だけ
+  // メニューの名前（画面の案内・管理者向けの確認画面のタイトルにもこの名前を出す）。項目は「履歴サイドバーを開く」「権限を承認する（初回のみ）」だけ
   menuTitle: '🟩RXビジネスMTG用',
   // アカウントプランシート作成（コード.gs）のメニューを出すか。出さないときは、エディタから showLoadingDialog() を実行する
   accountPlanMenu: false,
@@ -281,7 +281,7 @@ function setupCredentialLauncher() {
     const header = '「' + credHeaderText_(CRED_OPTIONS.launcherHeader) + '」';
     if (!plans.length) {
       const message = 'ボタン列（' + header + '）のあるシートが無いので、ボタンは付けていません。';
-      ss.toast(message, CRED_OPTIONS.dialogTitle, 10);
+      ss.toast(message, CRED_OPTIONS.menuTitle, 10);
       return message;
     }
 
@@ -331,7 +331,7 @@ function setupCredentialLauncher() {
     const message = header + 'のボタンを ' + buttons + ' 行に設定しました。' +
       (migrated ? '既存の履歴 ' + migrated + ' 件を「' + CRED_OPTIONS.logSheet + '」へ移しました。' : '') +
       (skipped.length ? '（ボタン列の無い「' + skipped.join('」「') + '」には付けていません）' : '');
-    ss.toast(message, CRED_OPTIONS.dialogTitle, 10);
+    ss.toast(message, CRED_OPTIONS.menuTitle, 10);
     return message;
   } finally {
     try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }

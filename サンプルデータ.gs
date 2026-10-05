@@ -53,7 +53,7 @@ const SMP_OPTIONS = {
 /** 選んだ行の得意先に、サンプルの履歴を追加する。 */
 function addSampleHistory() {
   const ui = SpreadsheetApp.getUi();
-  const title = 'サンプル履歴の追加';
+  const title = CRED_OPTIONS.menuTitle;   // 確認画面のタイトルはメニューの名前にそろえる
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const targets = smpSelectedTargets_(SpreadsheetApp.getActiveSheet());
@@ -89,7 +89,7 @@ function addSampleHistory() {
 /** サンプルの印が付いた行だけを、記録のシートから削除する。 */
 function removeSampleHistory() {
   const ui = SpreadsheetApp.getUi();
-  const title = 'サンプル履歴の削除';
+  const title = CRED_OPTIONS.menuTitle;
   try {
     const answer = ui.alert(title,
       'サンプルの履歴をすべて削除します。\n' +

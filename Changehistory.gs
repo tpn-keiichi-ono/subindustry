@@ -95,7 +95,7 @@ function setupChangeHistoryLauncher() {
     const header = '「' + credHeaderText_(CHG_OPTIONS.launcherHeader) + '」';
     if (!plans.length) {
       const message = 'ボタン列（' + header + '）のあるシートが無いので、ボタンは付けていません。';
-      ss.toast(message, '変更履歴', 8);
+      ss.toast(message, CRED_OPTIONS.menuTitle, 8);
       return message;
     }
 
@@ -115,7 +115,7 @@ function setupChangeHistoryLauncher() {
     SpreadsheetApp.flush();
     const message = header + 'のボタンを ' + buttons + ' 行に設定しました。' +
       (skipped.length ? '（ボタン列の無い「' + skipped.join('」「') + '」には付けていません）' : '');
-    ss.toast(message, '変更履歴', 8);
+    ss.toast(message, CRED_OPTIONS.menuTitle, 8);
     return message;
   } finally {
     try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }

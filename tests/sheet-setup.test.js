@@ -144,3 +144,30 @@ test('setupCredentialLauncher・setupChangeHistoryLauncher：ボタン列のあ�
     'ボタン列（「変更履歴」）のあるシートが無いので、ボタンは付けていません。'
   ]);
 });
+
+test('管理者向けの確認画面のタイトルは、メニューの名前にそろえる（🟩 差分追跡・履歴、🟪 サービスリクエスト・タスク管理）', () => {
+  const {gas, g, sheet} = setupProject();
+  addDepartmentStore(gas);
+  const business = gas.get('CRED_OPTIONS').menuTitle;
+  const service = gas.get('SVC_OPTIONS').menuTitle;
+  const titles = list => Array.from(new Set(list.map(x => x.title)));
+  const clear = () => { gas.toasts.length = 0; gas.alerts.length = 0; };
+
+  clear();
+  g.setupAfterSheetChange();   // 差分追跡・ボタン列の設定と、最後のまとめ
+  g.diagnoseCellUsage();
+  gas.select(sheet, 'E3');
+  gas.confirmAnswer = 'NO';
+  g.addSampleHistory();
+  g.removeSampleHistory();
+  assert.ok(gas.toasts.length && gas.alerts.length);
+  assert.deepStrictEqual(titles(gas.toasts.concat(gas.alerts)), [business]);
+
+  clear();
+  g.setupRequestSheet();
+  g.setupTaskSheet();
+  g.diagnoseRequestSources();
+  g.removeUntouchedRequests();
+  assert.ok(gas.toasts.length && gas.alerts.length);
+  assert.deepStrictEqual(titles(gas.toasts.concat(gas.alerts)), [service]);
+});

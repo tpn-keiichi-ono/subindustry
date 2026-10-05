@@ -46,7 +46,7 @@ function setupTaskSheet() {
   let removeOld = false;
   if (oldColumns.length) {
     const ui = SpreadsheetApp.getUi();
-    removeOld = ui.alert('タスク管理',
+    removeOld = ui.alert(SVC_OPTIONS.menuTitle,
       'タスク管理は、案件ではなく、リクエストのサービス案に対応付けるようになりました。\n' +
       '「' + oldColumns.join('」「') + '」の列を削除し、「サービス案」の列を左端に置きます。\n' +
       'ほかの列（タスク・担当者など）の値はそのまま残ります。削除する列に入っている値は消えます。\n\n削除しますか？',
@@ -73,7 +73,7 @@ function setupTaskSheet() {
   if (result.removed.length) lines.push('「' + result.removed.join('」「') + '」の列を削除し、「サービス案」を左端に置きました。');
   else if (oldColumns.length) lines.push('「' + oldColumns.join('」「') + '」の列は残しました（使いません。不要なら削除してください）。');
   if (result.added.length) lines.push('右端に「' + result.added.join('」「') + '」の列を足しました。');
-  ss.toast(lines.concat(result.warnings).join('\n'), 'タスク管理', 10);
+  ss.toast(lines.concat(result.warnings).join('\n'), SVC_OPTIONS.menuTitle, 10);
 }
 
 /* ---------------- シートの形（サービス管理と共通） ---------------- */

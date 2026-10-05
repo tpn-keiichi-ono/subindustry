@@ -41,7 +41,7 @@ const SVC_OPTIONS = {
   ],
   // 使わなくなった列（setupRequestSheet() で、確認してから削除する。取り込み日は追加日の前の版の見出し）
   removedColumns: ['メモ', '追加日', '取り込み日'],
-  menuTitle: '🟪RXサービスMTG用',   // メニューの名前（画面の案内にもこの名前を出す）
+  menuTitle: '🟪RXサービスMTG用',   // メニューの名前（画面の案内・管理者向けの確認画面のタイトルにもこの名前を出す）
   pickerTemplate: 'RequestPickerView',
   pickerTitle: 'リクエストを追加',
   listTemplate: 'RequestListDialog',   // パネルの件数のバッジから開く一覧のモーダル
@@ -267,7 +267,7 @@ function svcRegistered_(sheet) {
  */
 function setupRequestSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ss.toast(svcSetupRequestSheet_(ss).join('\n'), 'サービス管理', 10);
+  ss.toast(svcSetupRequestSheet_(ss).join('\n'), SVC_OPTIONS.menuTitle, 10);
 }
 
 /** setupRequestSheet() の中身。知らせる文（行ごと）を返す（setupAfterSheetChange() からも使う）。 */
@@ -278,7 +278,7 @@ function svcSetupRequestSheet_(ss) {
   let removeOld = false;
   if (oldColumns.length) {
     const ui = SpreadsheetApp.getUi();
-    removeOld = ui.alert('サービス管理',
+    removeOld = ui.alert(SVC_OPTIONS.menuTitle,
       '「' + SVC_OPTIONS.requestSheet + '」シートの「' + oldColumns.join('」「') + '」の列は使わなくなりました。\n' +
       'これらの列を削除します。ほかの列の値はそのまま残ります。削除する列に入っている値は消えます。\n\n削除しますか？',
       ui.ButtonSet.YES_NO) === ui.Button.YES;
@@ -320,10 +320,10 @@ function removeUntouchedRequests() {
   const ui = SpreadsheetApp.getUi();
   const count = svcUntouchedRows_(sheet).length;
   if (!count) {
-    ui.alert('サービス管理', '削除できる行はありません（どの行も、判断・フィードバック・サービス案・担当者のどれかが入っています）。', ui.ButtonSet.OK);
+    ui.alert(SVC_OPTIONS.menuTitle, '削除できる行はありません（どの行も、判断・フィードバック・サービス案・担当者のどれかが入っています）。', ui.ButtonSet.OK);
     return;
   }
-  const answer = ui.alert('サービス管理',
+  const answer = ui.alert(SVC_OPTIONS.menuTitle,
     '判断が「' + SVC_OPTIONS.defaultDecision + '」か空で、フィードバック・サービス案・担当者が空の行が ' + count + '件あります。\n' +
     'これらの行を削除して、そのリクエストをまた選択パネルに出しますか？（判断・フィードバック・サービス案・担当者のどれかが入っている行は残します）',
     ui.ButtonSet.YES_NO);
@@ -344,7 +344,7 @@ function removeUntouchedRequests() {
     }
     return Object.assign({removed: rows.length}, svcCountRequests_(sheet, svcSourceRecords_(ss)));
   }, SVC_OPTIONS.lockWaitMs);
-  ss.toast(result.removed + '行を削除しました。' + svcCountMessage_(result), 'サービス管理', 10);
+  ss.toast(result.removed + '行を削除しました。' + svcCountMessage_(result), SVC_OPTIONS.menuTitle, 10);
 }
 
 /** 手を付けていない行（リクエストがあり、判断が未判断か空で、フィードバック・サービス案・担当者が空）の行番号（上から）。 */
@@ -486,7 +486,7 @@ function diagnoseRequestSources() {
   const lines = svcDiagnoseLines_(ss);
   console.log(lines.join('\n'));
   const ui = SpreadsheetApp.getUi();
-  ui.alert('サービスリクエストの確認', lines.join('\n'), ui.ButtonSet.OK);
+  ui.alert(SVC_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
 }
 
 /** diagnoseRequestSources() の中身。画面に出す文（行ごと）を返す。 */

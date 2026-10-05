@@ -125,7 +125,7 @@ function removeHistorySidebarAutoOpen() {
   const removed = hsRemoveAutoOpen_();
   SpreadsheetApp.getActiveSpreadsheet().toast(removed
     ? '前の版の自動表示のトリガーを外しました（' + removed + '件）。'
-    : '自動表示のトリガーはありません。', '履歴サイドバー', 8);
+    : '自動表示のトリガーはありません。', CRED_OPTIONS.menuTitle, 8);
 }
 
 /**

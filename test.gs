@@ -209,7 +209,7 @@ function upgradeDiffTrackingV3() {
     diffInstallTriggers_(ss);
     ss.toast(
       '差分履歴・行スナップショットに編集者メールアドレス列を追加しました。',
-      'Diff tracking',
+      diffAdminTitle_(),
       8
     );
   } finally {
@@ -310,11 +310,19 @@ function setupDiffTracking() {
     SpreadsheetApp.flush();
     props.setProperty(DIFF_OPTIONS.stateKey, JSON.stringify(state));
     diffInstallTriggers_(ss);
-    ss.toast('現在の値を比較基準にしました。', 'Diff tracking', 8);
+    ss.toast('現在の値を比較基準にしました。', diffAdminTitle_(), 8);
   } finally {
     SpreadsheetApp.flush();
     lock.releaseLock();
   }
+}
+
+/**
+ * 管理者がエディタから実行する処理の確認・結果の画面のタイトル。メニュー「🟩RXビジネスMTG用」（CRED_OPTIONS.menuTitle）の名前にそろえる
+ * （CredentialHistory.gs が無いときは「差分追跡」）。
+ */
+function diffAdminTitle_() {
+  return typeof CRED_OPTIONS !== 'undefined' && CRED_OPTIONS.menuTitle ? CRED_OPTIONS.menuTitle : '差分追跡';
 }
 
 /* ---------------- シートを足した・名前を変えたあと（管理者がエディタから実行する） ---------------- */
@@ -332,7 +340,7 @@ function setupAfterSheetChange() {
   const ui = SpreadsheetApp.getUi();
   const {problems, buttons} = diffCheckSheets_(ss);
   if (problems.length) {
-    ui.alert('シートの設定', '次の点を直してから、もう一度実行してください（まだ何も変えていません）。\n\n・' + problems.join('\n・'),
+    ui.alert(diffAdminTitle_(), '次の点を直してから、もう一度実行してください（まだ何も変えていません）。\n\n・' + problems.join('\n・'),
       ui.ButtonSet.OK);
     return;
   }
@@ -361,7 +369,7 @@ function setupAfterSheetChange() {
     done.push(step.label);
   });
 
-  ui.alert('シートの設定',
+  ui.alert(diffAdminTitle_(),
     '対象のシート：「' + Object.keys(DIFF_RULES).join('」「') + '」\n' +
     '「' + done.join('」「') + '」を設定しました。\n\n' + notes.join('\n'),
     ui.ButtonSet.OK);
@@ -2151,7 +2159,7 @@ function diagnoseCellUsage() {
     .concat(sheets.map(s => s.name + '：' + s.cells.toLocaleString() + ' セル（' + s.rows + '行 × ' + s.columns + '列）'));
   console.log(lines.join('\n'));
   const ui = SpreadsheetApp.getUi();
-  ui.alert('セル数', lines.join('\n'), ui.ButtonSet.OK);
+  ui.alert(diffAdminTitle_(), lines.join('\n'), ui.ButtonSet.OK);
 }
 
 /**
@@ -2165,7 +2173,7 @@ function diagnoseCellUsage() {
 function compactDiffRecords() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = SpreadsheetApp.getUi();
-  const answer = ui.alert('記録の移し替え',
+  const answer = ui.alert(diffAdminTitle_(),
     '「' + DIFF_OPTIONS.logSheet + '」「' + DIFF_OPTIONS.rowSnapshotSheet + '」を、セル数の少ない形に移し替えます（記録の値は変わりません）。\n' +
     '実行する前に「ファイル」→「コピーを作成」で控えを取ってください。\n' +
     '移し替えの間は差分の記録を待たせるので、編集の少ない時間に実行してください。\n\n実行しますか？',
@@ -2195,7 +2203,7 @@ function compactDiffRecords() {
     lines.push('行が多いため途中で止めました。もう一度 compactDiffRecords() を実行してください（続きから行います）。');
   }
   lines.push('セル数：' + before.toLocaleString() + ' → ' + after.toLocaleString() + '（' + (before - after).toLocaleString() + ' 減）');
-  ui.alert('記録の移し替え', lines.join('\n'), ui.ButtonSet.OK);
+  ui.alert(diffAdminTitle_(), lines.join('\n'), ui.ButtonSet.OK);
 }
 
 /** 変更履歴_差分 の前の版の列（差分・確認済み）を削除する（ロック取得中に呼ぶこと）。削除したら true。 */
@@ -2339,7 +2347,7 @@ function protectTimestampColumns() {
     if (protection.canDomainEdit()) protection.setDomainEdit(false);
   }
 
-  ss.toast('最終更新日時列を保護しました。', 'Diff tracking', 8);
+  ss.toast('最終更新日時列を保護しました。', diffAdminTitle_(), 8);
 }
 
 
@@ -2357,7 +2365,7 @@ function reinstallDiffTriggers() {
 
   diffInstallTriggers_(ss);
 
-  ss.toast('差分追跡トリガーを再作成しました。', 'Diff tracking', 8);
+  ss.toast('差分追跡トリガーを再作成しました。', diffAdminTitle_(), 8);
 }
 
 /** Lists this account's project triggers. */
