@@ -68,7 +68,7 @@ test('開いたときの自動表示はやめた：前の版のトリガーが�
   assert.match(gas.toasts[gas.toasts.length - 1].message, /自動表示のトリガーはありません/);
 });
 
-test('メニュー「履歴機能」＞「履歴サイドバーを開く」で開く（対象のシートのときだけ）', () => {
+test('メニュー「RXビジネスMTG用」＞「履歴サイドバーを開く」で開く（対象のシートのときだけ）', () => {
   const {gas, g, sheet} = setupProject();
   gas.select(sheet, 'E3');
   assert.strictEqual(g.openHistorySidebar(), true);
@@ -156,15 +156,25 @@ test('getSidebarBundle：33シナリオ攻略先リストが無ければ、ア�
   assert.deepStrictEqual(plain(g.getSidebarBundle()).accountPlans, {});
 });
 
-test('画面：まだ承認していない人への案内は、実際のメニュー名・項目名と一致する', () => {
+test('画面：まだ承認していない人への案内は、実際のメニュー名・項目名と一致する（メニューの名前は CRED_OPTIONS.menuTitle を渡す）', () => {
   const fs = require('fs');
   const path = require('path');
   const html = fs.readFileSync(path.join(__dirname, '..', 'HistorySidebarView.html'), 'utf8');
-  const {gas, g} = setupProject();
+  const page = fs.readFileSync(path.join(__dirname, '..', 'AuthorizeView.html'), 'utf8');
+  const {gas, g, sheet} = setupProject();
   g.onOpen({source: gas.ss});
-  const menu = gas.menus.find(m => m.title === gas.get('CRED_OPTIONS').menuTitle);
+  const title = gas.get('CRED_OPTIONS').menuTitle;
+  const menu = gas.menus.find(m => m.title === title);
   const item = menu.items.find(i => i.fn === 'authorizeHistoryFeatures');
-  assert.ok(html.includes('メニュー「' + menu.title + '」＞「' + item.label + '」'), 'サイドバーの案内とメニューの名前が違います');
+  assert.ok(html.includes('メニュー「<?= menuTitle ?>」＞「' + item.label + '」'), 'サイドバーの案内と項目の名前が違います');
+  assert.ok(html.includes('」＞「' + item.label + '」を実行し'), 'サイドバーの案内（ボタンが無いとき）と項目の名前が違います');
+  assert.ok(page.includes('メニュー「<?= menuTitle ?>」＞「' + item.label + '」'), '承認のページの案内と項目の名前が違います');
+  assert.ok(!/履歴機能」/.test(html + page), '前のメニューの名前が残っています');
+
+  gas.select(sheet, 'E3');
+  g.openHistorySidebar();
+  assert.strictEqual(gas.sidebars[0].html.data.menuTitle, title, 'サイドバーにメニューの名前を渡す');
+  assert.strictEqual(g.doGet({}).data.menuTitle, title, '承認のページにメニューの名前を渡す');
 });
 
 test('openHistorySidebar：承認用のウェブアプリの URL（…/exec）だけをサイドバーに渡す', () => {
@@ -190,7 +200,8 @@ test('doGet：承認が済んでいれば完了のページ、足りなければ
   gas.writes.length = 0;
   const done = g.doGet({});
   assert.strictEqual(done.file, 'AuthorizeView');
-  assert.deepStrictEqual(plain(done.data), {status: 'done', retryUrl: ''});
+  assert.deepStrictEqual(plain(done.data), {status: 'done', retryUrl: '', menuTitle: gas.get('CRED_OPTIONS').menuTitle});
+  assert.strictEqual(done.title, gas.get('CRED_OPTIONS').menuTitle + 'の権限の承認');
 
   gas.authRequired = true;
   const missing = g.doGet({});
@@ -203,7 +214,7 @@ test('画面：サイドバーは承認用の URL を data-authorize-url で受�
   const fs = require('fs');
   const path = require('path');
   const sidebar = fs.readFileSync(path.join(__dirname, '..', 'HistorySidebarView.html'), 'utf8');
-  assert.ok(sidebar.includes('<body data-authorize-url="<?= authorizeUrl ?>">'));
+  assert.ok(sidebar.includes('<body data-authorize-url="<?= authorizeUrl ?>" data-menu-title="<?= menuTitle ?>">'));
   ['auth', 'authText', 'authBtn', 'authNote'].forEach(id => assert.ok(sidebar.includes('id="' + id + '"'), id + ' がありません'));
   const page = fs.readFileSync(path.join(__dirname, '..', 'AuthorizeView.html'), 'utf8');
   assert.ok(page.includes('data-status="<?= status ?>"') && page.includes('data-retry-url="<?= retryUrl ?>"'));

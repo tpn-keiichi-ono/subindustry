@@ -5,7 +5,8 @@
  * TaskManagement.gs と同じプロジェクトに置くファイル（見出しの用意・ロックは TaskManagement.gs と共通）。
  *
  * 仕組み
- * - リクエストは、選択パネル（RequestPickerView。メニュー「サービス管理」→「リクエストを追加」）で選んで登録する。
+ * - リクエストは、選択パネル（RequestPickerView。メニュー「RXサービスMTG用」→「リクエストを追加」）で選んで登録する。
+ *   パネルはサービスリクエストのシートを開いているときだけ開く。
  *   パネルは開いたとき・追加したときに取り込み元の最新を読み、まだ登録していないリクエストだけを出す
  *   （サブインダストリー → 得意先 → 案件名で絞り込み、文字で探せる）。選ぶと、サービスリクエストの最後の行の下に A〜D を書く。
  * - パネルの件数のバッジ（未登録・登録済み）を押すと、一覧をモーダル（RequestListDialog）で確かめられる（読むだけ）。
@@ -40,7 +41,7 @@ const SVC_OPTIONS = {
   ],
   // 使わなくなった列（setupRequestSheet() で、確認してから削除する。取り込み日は追加日の前の版の見出し）
   removedColumns: ['メモ', '追加日', '取り込み日'],
-  menuTitle: 'サービス管理',
+  menuTitle: 'RXサービスMTG用',   // メニューの名前（画面の案内にもこの名前を出す）
   pickerTemplate: 'RequestPickerView',
   pickerTitle: 'リクエストを追加',
   listTemplate: 'RequestListDialog',   // パネルの件数のバッジから開く一覧のモーダル
@@ -71,7 +72,7 @@ function svcSourceKeys_() {
 
 /* ---------------- メニューと選択パネル ---------------- */
 
-/** メニュー「サービス管理」。onOpen（CredentialHistory.gs）から呼ぶ。 */
+/** メニュー「RXサービスMTG用」（SVC_OPTIONS.menuTitle）。onOpen（CredentialHistory.gs）から呼ぶ。 */
 function svcAddMenu_() {
   SpreadsheetApp.getUi()
     .createMenu(SVC_OPTIONS.menuTitle)
@@ -79,10 +80,20 @@ function svcAddMenu_() {
     .addToUi();
 }
 
-/** メニュー「リクエストを追加」：選択パネル（サイドバー）を開く。 */
+/**
+ * メニュー「リクエストを追加」：選択パネル（サイドバー）を開く。
+ * 開いているシートがサービスリクエスト（SVC_OPTIONS.requestSheet）でなければ開かずに知らせる。開いたら true。
+ */
 function openRequestPicker() {
+  const ui = SpreadsheetApp.getUi();
+  const active = SpreadsheetApp.getActiveSheet();
+  if (!active || active.getName() !== SVC_OPTIONS.requestSheet) {
+    ui.alert(SVC_OPTIONS.menuTitle, 'このシートでは開けません。「' + SVC_OPTIONS.requestSheet + '」のシートで開いてください。', ui.ButtonSet.OK);
+    return false;
+  }
   const html = HtmlService.createTemplateFromFile(SVC_OPTIONS.pickerTemplate).evaluate().setTitle(SVC_OPTIONS.pickerTitle);
-  SpreadsheetApp.getUi().showSidebar(html);
+  ui.showSidebar(html);
+  return true;
 }
 
 /**

@@ -259,7 +259,8 @@
   </style>
 </head>
 <!-- data-authorize-url：承認用のウェブアプリの URL（HistorySidebar.gs の openHistorySidebar が入れる。未設定なら空） -->
-<body data-authorize-url="<?= authorizeUrl ?>">
+<!-- data-menu-title：メニューの名前（CRED_OPTIONS.menuTitle。承認の案内に出す） -->
+<body data-authorize-url="<?= authorizeUrl ?>" data-menu-title="<?= menuTitle ?>">
   <div class="side">
     <!-- 表示中の行（タブもこのカードの中に置く） -->
     <section class="card row-card" aria-live="polite">
@@ -290,7 +291,7 @@
         <a class="auth-btn" id="authBtn" target="_blank" rel="noopener noreferrer">
           <svg width="13" height="13" viewBox="0 0 14 14"><rect x="2.5" y="6" width="9" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.5 6V4.5a2.5 2.5 0 0 1 5 0V6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>承認する
         </a>
-        <span class="auth-note" id="authNote">ボタンで開けないときは、メニュー「履歴機能」＞「権限を承認する（初回のみ）」からも承認できます。</span>
+        <span class="auth-note" id="authNote">ボタンで開けないときは、メニュー「<?= menuTitle ?>」＞「権限を承認する（初回のみ）」からも承認できます。</span>
       </div>
       <span class="last-edit" id="lastEdit" hidden>この行の最終編集<span class="mono" id="lastEditAt"></span><span id="lastEditBy"></span></span>
       <div class="tabs" id="tabs" role="tablist" hidden>
@@ -444,9 +445,10 @@
     // ここから呼ぶ関数は開いた本人の権限で動く。メニューから開くときに承認の画面が出るが、
     // 一部の権限を外して承認した人などは呼び出しが失敗するので、「承認する」ボタンを出す。
     // サイドバーの中からは承認画面を出せないため、ボタンは承認用のウェブアプリ（doGet）を新しいタブで開く。
-    // ウェブアプリの URL が未設定なら、メニューでの承認を案内する（メニューの名前は CredentialHistory.gs と合わせる）。
+    // ウェブアプリの URL が未設定なら、メニューでの承認を案内する（メニューの名前は CredentialHistory.gs の CRED_OPTIONS.menuTitle）。
     const AUTHORIZE_URL = /^https:\/\//.test(document.body.dataset.authorizeUrl || '') ? document.body.dataset.authorizeUrl : '';
-    const AUTH_MENU_TEXT = '初めて使うときは、権限の承認が必要です。メニュー「履歴機能」＞「権限を承認する（初回のみ）」を実行し、表示される画面で承認してください。承認が済むと、サイドバーが開き直して履歴を表示します。';
+    const MENU_TITLE = document.body.dataset.menuTitle || '';
+    const AUTH_MENU_TEXT = '初めて使うときは、権限の承認が必要です。メニュー「' + MENU_TITLE + '」＞「権限を承認する（初回のみ）」を実行し、表示される画面で承認してください。承認が済むと、サイドバーが開き直して履歴を表示します。';
     let authClickedAt = 0;   // 「承認する」を押した時刻（しばらくは問い合わせを早める）
 
     if (AUTHORIZE_URL) {

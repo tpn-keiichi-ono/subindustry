@@ -83,7 +83,7 @@ test('setupRequestSheet：前の版の A〜D のプルダウンと候補のシ�
   assert.deepStrictEqual(gas.dump(sheet, 'A2:H2')[0],
     ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい', 'サービス化検討', '', '会員分析基盤', '佐藤'], '値はそのまま');
   const toast = gas.toasts[gas.toasts.length - 1].message;
-  assert.match(toast, /前の版の A〜D のプルダウンと「__REQUEST_LISTS」シートを外しました。リクエストは、メニュー「サービス管理」→「リクエストを追加」から登録します。/);
+  assert.match(toast, /前の版の A〜D のプルダウンと「__REQUEST_LISTS」シートを外しました。リクエストは、メニュー「RXサービスMTG用」→「リクエストを追加」から登録します。/);
   assert.match(toast, /「新FMT」のリクエスト 3件のうち 1件を登録しています（まだ登録していないもの 2件）/);
 
   g.setupRequestSheet();
@@ -141,11 +141,22 @@ test('パネルを開いたときにロックが取れず前の版のプルダ�
 });
 
 
-test('メニュー「サービス管理」→「リクエストを追加」で、選択パネル（サイドバー）を開く', () => {
-  const {gas, g} = setup();
+test('メニュー「RXサービスMTG用」→「リクエストを追加」で、選択パネル（サイドバー）を開く（リクエスト シートのときだけ）', () => {
+  const {gas, g, source} = setup();
+  g.setupRequestSheet();
+  gas.writes.length = 0;
   g.svcAddMenu_();
-  assert.deepStrictEqual(plain(gas.menus), [{title: 'サービス管理', items: [{label: 'リクエストを追加', fn: 'openRequestPicker'}]}]);
-  g.openRequestPicker();
+  assert.deepStrictEqual(plain(gas.menus), [{title: 'RXサービスMTG用', items: [{label: 'リクエストを追加', fn: 'openRequestPicker'}]}]);
+
+  // リクエスト シート以外では開かず、開けるシートを知らせる
+  gas.select(source, 'D3');
+  assert.strictEqual(g.openRequestPicker(), false);
+  assert.strictEqual(gas.sidebars.length, 0);
+  assert.strictEqual(gas.alerts[0].title, 'RXサービスMTG用');
+  assert.strictEqual(gas.alerts[0].message, 'このシートでは開けません。「リクエスト」のシートで開いてください。');
+
+  gas.select(gas.ss.getSheetByName('リクエスト'), 'A2');
+  assert.strictEqual(g.openRequestPicker(), true);
   assert.strictEqual(gas.sidebars.length, 1);
   assert.strictEqual(gas.sidebars[0].html.file, 'RequestPickerView');
   assert.strictEqual(gas.sidebars[0].html.title, 'リクエストを追加');

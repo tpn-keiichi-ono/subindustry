@@ -38,20 +38,21 @@
     .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
   </style>
 </head>
+<!-- menuTitle：メニューの名前（CRED_OPTIONS.menuTitle） -->
 <body data-status="<?= status ?>" data-retry-url="<?= retryUrl ?>">
   <main class="card" id="done" hidden>
-    <span class="eyebrow">履歴機能</span>
+    <span class="eyebrow"><?= menuTitle ?></span>
     <h1>権限の承認が完了しました</h1>
     <p>このタブを閉じて、スプレッドシートに戻ってください。数秒でサイドバーに履歴が表示されます。</p>
     <p class="note">表示されないときは、スプレッドシートを開き直してください。</p>
   </main>
 
   <main class="card" id="missing" hidden>
-    <span class="eyebrow error">履歴機能</span>
+    <span class="eyebrow error"><?= menuTitle ?></span>
     <h1>一部の権限が承認されていません</h1>
-    <p>履歴機能を使うには、承認画面のすべての項目にチェックを入れて承認する必要があります。下のボタンから、もう一度承認してください。</p>
+    <p>履歴の機能を使うには、承認画面のすべての項目にチェックを入れて承認する必要があります。下のボタンから、もう一度承認してください。</p>
     <a class="btn" id="retry" target="_blank" rel="noopener noreferrer">もう一度承認する</a>
-    <p class="note">承認が済んだら、このページを再読み込みしてください。スプレッドシートのメニュー「履歴機能」＞「権限を承認する（初回のみ）」からも承認できます。</p>
+    <p class="note">承認が済んだら、このページを再読み込みしてください。スプレッドシートのメニュー「<?= menuTitle ?>」＞「権限を承認する（初回のみ）」からも承認できます。</p>
   </main>
 
   <script>

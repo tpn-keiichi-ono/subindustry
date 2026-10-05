@@ -4,7 +4,7 @@
  * 画面は HTMLファイル「HistorySidebarView」。
  *
  * 仕組み
- * - 利用者がメニュー「履歴機能」＞「履歴サイドバーを開く」で開く（閉じるまで出たまま）。
+ * - 利用者がメニュー「RXビジネスMTG用」（CRED_OPTIONS.menuTitle）＞「履歴サイドバーを開く」で開く（閉じるまで出たまま）。
  *   開いているシートが対象（DIFF_RULES のシート）でなければ開かずに知らせる。
  *   開いたときの自動表示（前の版の autoOpenHistorySidebar）はやめた。トリガーが残っていれば removeHistorySidebarAutoOpen() で外す
  * - サイドバーから呼ぶ関数は、開いた本人の権限で動く。まだ承認していない人はサイドバーに「承認する」ボタンを出す。
@@ -30,7 +30,7 @@ const HS_OPTIONS = {
   legacyAutoOpenHandler: 'autoOpenHistorySidebar',   // 開いたときに自動表示していたトリガーの関数名
   legacyAutoOffPrefix: 'HS_AUTO_OFF_',               // 自動表示をオフにした人（メールアドレスごと）
   // 承認用のウェブアプリの URL（「デプロイ」→「ウェブアプリ」で作った …/exec。docs/OPERATIONS.md）。
-  // 空のときは、サイドバーにボタンを出さず、メニュー「履歴機能」での承認を案内する
+  // 空のときは、サイドバーにボタンを出さず、メニュー（CRED_OPTIONS.menuTitle）での承認を案内する
   authorizeUrl: '',
   // 得意先名の横の「アカウントプラン」ボタンが開く URL の読み込み元
   accountPlan: {
@@ -44,7 +44,7 @@ const HS_OPTIONS = {
 /* ---------------- 開く ---------------- */
 
 /**
- * メニュー「履歴機能」＞「履歴サイドバーを開く」。
+ * メニュー「RXビジネスMTG用」＞「履歴サイドバーを開く」。
  * 開いているシートが対象（DIFF_RULES のシート）でなければ開かず、対象のシートを知らせる。開いたら true。
  */
 function openHistorySidebar() {
@@ -75,6 +75,7 @@ function hsTargetSheetsLabel_() {
 function hsShowSidebar_() {
   const template = HtmlService.createTemplateFromFile(HS_OPTIONS.template);
   template.authorizeUrl = hsAuthorizeUrl_();
+  template.menuTitle = CRED_OPTIONS.menuTitle;   // 承認の案内に出すメニューの名前
   const html = template.evaluate().setTitle(HS_OPTIONS.title);
   SpreadsheetApp.getUi().showSidebar(html);
 }
@@ -100,14 +101,15 @@ function doGet() {
   const template = HtmlService.createTemplateFromFile('AuthorizeView');
   template.status = missing ? 'missing' : 'done';
   template.retryUrl = missing ? (info.getAuthorizationUrl() || '') : '';
-  return template.evaluate().setTitle('履歴機能の権限の承認');
+  template.menuTitle = CRED_OPTIONS.menuTitle;
+  return template.evaluate().setTitle(CRED_OPTIONS.menuTitle + 'の権限の承認');
 }
 
 /* ---------------- 前の版の自動表示（やめた） ---------------- */
 
 /**
  * 前の版で、スプレッドシートを開いたときにサイドバーを自動で表示していた「起動時」トリガーの関数。
- * 今はサイドバーを開かない（利用者がメニュー「履歴機能」＞「履歴サイドバーを開く」で開く）。
+ * 今はサイドバーを開かない（利用者がメニュー「RXビジネスMTG用」＞「履歴サイドバーを開く」で開く）。
  * トリガーが残っていても「関数が見つからない」エラーにならないよう名前だけを残し、動いたらそのトリガーを外す。
  */
 function autoOpenHistorySidebar() {
