@@ -304,7 +304,7 @@ test('リクエスト シートの行を足す・消すなどでプルダウン�
   assert.deepStrictEqual(listOf(request.getRange('A' + (max + 3))), ['食品スーパー', 'ドラッグストア']);
 });
 
-test('新FMT で候補が増えて欄に入りきらなくなったら、プルダウンと候補のシートを作り直す（入るうちは案件だけを書き直す）', () => {
+test('新FMT で候補が増えて欄に入りきらなくなっても、編集のときは候補のシートを空にせず、setupRequestSheet() を頼むよう知らせる', () => {
   const {gas, g} = setup();
   g.setupRequestSheet();
   const request = gas.ss.getSheetByName('リクエスト');
@@ -312,11 +312,51 @@ test('新FMT で候補が増えて欄に入りきらなくなったら、プル�
   edit(gas, '新FMT', 'C8:F8', [['食品スーパー', 'D社', '新店', '売場を見直したい']]);
   assert.deepStrictEqual(gas.writes.filter(w => w.kind === 'setDataValidations'), [], '欄に入るうちは作り直さない');
 
+  gas.toasts.length = 0;
   const more = ['E社', 'F社', 'G社', 'H社', 'I社', 'J社'].map(c => ['食品スーパー', c, '新店', '売場を見直したい']);
   edit(gas, '新FMT', 'C9:F14', more);
-  assert.ok(gas.writes.some(w => w.kind === 'setDataValidations'), '欄を広げて作り直す');
+  assert.ok(!gas.writes.some(w => w.kind === 'clearContents'), '編集のときは候補のシートを空にしない（30秒で止まっても壊れないように）');
+  assert.match(gas.toasts[0].message, /プルダウンの候補を作り直す必要があります.*setupRequestSheet\(\)/);
   edit(gas, 'リクエスト', 'A2', '食品スーパー');
-  assert.deepStrictEqual(listOf(request.getRange('B2')), ['A社', 'D社', 'E社', 'F社', 'G社', 'H社', 'I社', 'J社']);
+  assert.deepStrictEqual(listOf(request.getRange('A3')), ['食品スーパー', 'ドラッグストア'], 'ほかのプルダウンは使える');
+  assert.deepStrictEqual(listOf(request.getRange('B2')), ['#REF!'], '欄に入りきらないところだけエラーになる（本物のシートと同じ）');
+
+  g.setupRequestSheet();
+  assert.deepStrictEqual(listOf(request.getRange('B2')), ['A社', 'D社', 'E社', 'F社', 'G社', 'H社', 'I社', 'J社'], '管理者が作り直すと直る');
+});
+
+test('並べ替えなどでプルダウンだけが別の行に動いても、次に選んだときに同じ欄のまま付け直す（候補のシートは空にしない）', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  choose(gas, 2, ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい']);
+  // 並べ替えで、2行目と3行目のプルダウン（入力規則）が入れ替わった状態にする
+  const rules = request.getRange('A2:D3').getDataValidations();
+  gas.asUser(() => request.getRange('A2:D3').setDataValidations([rules[1], rules[0]]));
+  assert.strictEqual(request.getRange('D3').getDataValidation().getCriteriaValues()[0].getRow(), 2);
+
+  gas.writes.length = 0;
+  edit(gas, 'リクエスト', 'A3', 'ドラッグストア');
+  const clears = gas.writes.filter(w => w.sheet === '__REQUEST_LISTS' && /clear/.test(w.kind));
+  assert.ok(clears.every(w => w.kind === 'clearContent' && Number(/\d+/.exec(w.a1)[0]) >= 5),
+    '候補のシートは空にしない（消すのは、案件（2〜4行目）より下の余った行だけ）');
+  ['A2', 'D2', 'A3', 'D3'].forEach(a1 => {
+    assert.strictEqual(request.getRange(a1).getDataValidation().getCriteriaValues()[0].getRow(), Number(a1.slice(1)), a1);
+  });
+  assert.deepStrictEqual(listOf(request.getRange('D2')), ['会員の購買分析をしたい']);
+  assert.deepStrictEqual(listOf(request.getRange('D3')), ['=在庫を店舗と共有したい']);
+});
+
+test('候補のシートが無いときは、編集のときに作らず、setupRequestSheet() を頼むよう知らせる', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  gas.ss.deleteSheet(gas.ss.getSheetByName('__REQUEST_LISTS'));
+  gas.toasts.length = 0;
+  edit(gas, 'リクエスト', 'A2', '食品スーパー');
+  assert.strictEqual(gas.ss.getSheetByName('__REQUEST_LISTS'), null);
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /setupRequestSheet\(\)/);
+  g.setupRequestSheet();
+  assert.ok(gas.ss.getSheetByName('__REQUEST_LISTS'));
 });
 
 test('候補を作る数式がエラーになっていたら、setupRequestSheet() のあとに知らせる', () => {

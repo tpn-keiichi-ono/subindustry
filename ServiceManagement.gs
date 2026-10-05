@@ -151,7 +151,7 @@ function svcSetupRequestSheet_(ss) {
     const records = svcSourceRecords_(ss);
     const synced = svcSync_(ss, ensured.sheet, null, records);
     const rules = svcApplyRules_(ss, ensured.sheet);
-    const lists = svcBuildLists_(ss, ensured.sheet, records, true);
+    const lists = svcBuildLists_(ss, ensured.sheet, records, {full: true});
     return Object.assign(ensured, synced, rules, svcCountRequests_(ensured.sheet, records),
       {warnings: rules.warnings.concat(lists.warnings)});
   }, SVC_OPTIONS.lockWaitMs);
@@ -202,7 +202,7 @@ function removeUntouchedRequests() {
       end = start - 1;
     }
     const records = svcSourceRecords_(ss);
-    svcBuildLists_(ss, sheet, records, true);   // 行を消したので、プルダウンの参照を作り直す
+    svcBuildLists_(ss, sheet, records, {full: true});   // 行を消したので、プルダウンの参照を作り直す
     return Object.assign({removed: rows.length}, svcCountRequests_(sheet, records));
   }, SVC_OPTIONS.lockWaitMs);
   ss.toast(result.removed + '行を削除しました。' + svcCountMessage_(result), 'サービス管理', 10);
@@ -635,11 +635,17 @@ function svcReadLists_(ss) {
 }
 
 /**
- * 候補のシートを用意する。案件（A〜E 列）はいつも書き直す。
- * relayout が true のとき・レイアウトが合わないとき（リクエスト シートの行数・読む列が変わった、候補が欄に入りきらない）は、
- * 行ごとの候補の数式と、リクエスト シートの A〜D のプルダウン（範囲で参照する）も作り直す。{relaid, warnings}
+ * 候補のシートを用意する。案件（A〜E 列）はいつも書き直す。{relaid, needsSetup, warnings}
+ * options.full（管理者が実行する関数から）：候補のシートを空にして、欄の幅・行ごとの数式・プルダウンをすべて作り直す。
+ * それ以外（編集したときの onEdit から）：候補のシートを空にしない。単純トリガーは30秒で止まるため、
+ * 空にしたところで止まると、すべてのプルダウンの候補が無くなる（一斉にエラーになる）ので。
+ * - リクエスト シートの行数が変わった・options.realign（行の追加・削除・並べ替えでプルダウンの参照がずれた）ときは、
+ *   同じ欄のまま、行ごとの数式とプルダウンを上書きする（途中で止まっても、壊れるところが無い）
+ * - 欄の幅を変える必要があるとき（候補が欄に入りきらない・候補のシートが無い・読む列が変わった）は作り直さず、
+ *   needsSetup にして知らせる（管理者が setupRequestSheet() を実行する）
  */
-function svcBuildLists_(ss, sheet, records, relayout) {
+function svcBuildLists_(ss, sheet, records, options) {
+  const full = !!(options && options.full);
   const headerRow = SVC_OPTIONS.headerRow;
   const cascadeKeys = svcCascadeKeys_();
   const levels = cascadeKeys.length;
@@ -655,23 +661,27 @@ function svcBuildLists_(ss, sheet, records, relayout) {
   });
 
   let helper = ss.getSheetByName(SVC_OPTIONS.listSheet);
+  if (!helper && !full) {
+    warnings.push(svcNeedsSetupMessage_());
+    return {relaid: false, needsSetup: true, warnings};
+  }
   if (!helper) {
     helper = ss.insertSheet(SVC_OPTIONS.listSheet);
     helper.hideSheet();
-    relayout = true;
   }
   const rows = sheet.getMaxRows();
   const columns = cascadeKeys.map(key => cols[key]).join(',');
   const old = svcListMeta_(helper.getRange(1, layout.meta).getDisplayValue());
   const fit = counts.map(count => Math.min(count, SVC_OPTIONS.maxListItems));
-  if (!old || old.rows !== rows || old.columns !== columns || old.widths.length !== levels ||
-      fit.some((count, level) => count > old.widths[level])) {
-    relayout = true;
-  }
+  const layoutBroken = !old || old.columns !== columns || old.widths.length !== levels ||
+    fit.some((count, level) => count > old.widths[level]);
+  const needsSetup = layoutBroken && !full;
+  if (needsSetup) warnings.push(svcNeedsSetupMessage_());
+  const relayout = full || (!layoutBroken && (old.rows !== rows || !!(options && options.realign)));
   // 欄の幅は、新FMT で候補が少し増えても作り直さずに済むように余白を足す（案内の文字のために少なくとも1）
-  const widths = relayout
+  const widths = full
     ? fit.map(count => Math.min(Math.max(count, 1) + Math.max(SVC_OPTIONS.listMargin, Math.ceil(count * 0.2)), SVC_OPTIONS.maxListItems))
-    : old.widths;
+    : (old ? old.widths : []);
   const starts = [];
   widths.reduce((col, width) => { starts.push(col); return col + width; }, layout.start);
 
@@ -684,8 +694,9 @@ function svcBuildLists_(ss, sheet, records, relayout) {
   // 案件と、それを選んだ行の数
   const requestRef = "'" + sheet.getName().replace(/'/g, "''") + "'!";
   const column = key => requestRef + '$' + diffColumnLetter_(cols[key]) + '$' + (headerRow + 1) + ':$' + diffColumnLetter_(cols[key]);
-  if (relayout) helper.clearContents();
-  else helper.getRange(2, 1, helper.getMaxRows() - 1, layout.used).clearContent();
+  // 全部を作り直すときだけ空にする。それ以外は、案件を上書きしてから、余った行だけを消す
+  // （先に空にすると、書き終わるまで候補が無くなり、そこで止まると一斉にエラーになるため）
+  if (full) helper.clearContents();
   if (list.length) {
     helper.getRange(2, 1, list.length, levels).setValues(list.map(rec => rec.values.map(credText_)));
     helper.getRange(2, layout.used, list.length, 1).setFormulas(list.map((rec, i) => {
@@ -696,9 +707,12 @@ function svcBuildLists_(ss, sheet, records, relayout) {
       }).join('*') + ')'];
     }));
   }
-  const meta = {rows, columns, widths, sourceRows: list.length};
+  const extra = helper.getMaxRows() - (list.length + 1);
+  if (!full && extra > 0) helper.getRange(list.length + 2, 1, extra, layout.used).clearContent();
+  if (needsSetup) return {relaid: false, needsSetup, warnings};   // レイアウトは前のまま（案件だけ書き直した）
+  const meta = {rows: relayout ? rows : old.rows, columns, widths, sourceRows: list.length};
   helper.getRange(1, 1, 1, layout.meta).setValues([labels.concat(['選んだ行の数', credText_(JSON.stringify(meta))])]);
-  if (!relayout) return {relaid: false, warnings};
+  if (!relayout) return {relaid: false, needsSetup: false, warnings};
 
   // 行ごとの候補の数式と、リクエスト シートのプルダウン
   const first = headerRow + 1;
@@ -723,8 +737,14 @@ function svcBuildLists_(ss, sheet, records, relayout) {
       sheet.getRange(first, cols[key], count, 1).setDataValidations(rules);
     });
   }
-  diffTrimGrid_(helper, needCols, needRows);   // 使わない右の列・下の行を持たない（空のセルも上限に数えられるため）
-  return {relaid: true, warnings};
+  if (full) diffTrimGrid_(helper, needCols, needRows);   // 使わない右の列・下の行を持たない（空のセルも上限に数えられるため）
+  return {relaid: true, needsSetup: false, warnings};
+}
+
+/** 候補の欄を作り直す必要があるときに、編集した人に知らせる文。 */
+function svcNeedsSetupMessage_() {
+  return '「' + SVC_OPTIONS.requestSheet + '」のプルダウンの候補を作り直す必要があります（候補が欄に入りきらない・候補のシートが無いなど）。' +
+    '管理者に setupRequestSheet() の実行を頼んでください。それまで、一部のプルダウンにエラーが出ることがあります。';
 }
 
 /**
@@ -926,15 +946,22 @@ function svcCountRequests_(sheet, records) {
  * 行の追加・削除・並べ替えでずれたとき（またはリクエスト シートの行数・読む列が変わったとき）は false。
  */
 function svcListsInPlace_(sheet, meta, cols, first, last) {
-  const columns = svcCascadeKeys_().map(key => cols[key]).join(',');
+  const cascadeKeys = svcCascadeKeys_();
+  const columns = cascadeKeys.map(key => cols[key]).join(',');
   if (!meta || meta.rows !== sheet.getMaxRows() || meta.columns !== columns) return false;
-  const rules = sheet.getRange(first, cols[svcCascadeKeys_()[0]], last - first + 1, 1).getDataValidations();
-  return rules.every((line, i) => {
-    const rule = line[0];
+  // 連動列ごとの欄の左端（候補のシートの列）
+  const starts = [];
+  meta.widths.reduce((col, width) => { starts.push(col); return col + width; }, svcListColumns_().start);
+  const left = Math.min.apply(null, cascadeKeys.map(key => cols[key]));
+  const right = Math.max.apply(null, cascadeKeys.map(key => cols[key]));
+  const rules = sheet.getRange(first, left, last - first + 1, right - left + 1).getDataValidations();
+  return rules.every((line, i) => cascadeKeys.every((key, level) => {
+    const rule = line[cols[key] - left];
     if (!rule || rule.getCriteriaType() !== SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE) return false;
     const range = rule.getCriteriaValues()[0];
-    return range.getSheet().getName() === SVC_OPTIONS.listSheet && range.getRow() === first + i;
-  });
+    return range.getSheet().getName() === SVC_OPTIONS.listSheet && range.getRow() === first + i &&
+      range.getColumn() === starts[level];
+  }));
 }
 
 /* ---------------- 編集したとき（onEdit から） ---------------- */
@@ -974,16 +1001,18 @@ function svcHandleSourceEdit_(sheet, range, e) {
     }
   }
 
+  let lists;
   try {
-    taskWithLock_(() => {
+    lists = taskWithLock_(() => {
       const records = svcSourceRecords_(ss);
       svcSync_(ss, request, renamed, records);
-      svcBuildLists_(ss, request, records, false);
+      return svcBuildLists_(ss, request, records, {});
     });
   } catch (error) {
     throw new Error('「' + SVC_OPTIONS.requestSheet + '」シートを「' + sheet.getName() + '」の変更に合わせられませんでした（' + error.message + '）。' +
       'あとで setupRequestSheet() を実行するか、もう一度編集してください。');
   }
+  if (lists.needsSetup) ss.toast(lists.warnings.join('\n'), 'サービス管理', 10);
 }
 
 /**
@@ -1007,8 +1036,10 @@ function svcHandleRequestEdit_(sheet, range) {
     const messages = svcFixEditedRows_(sheet, lists ? lists.list : svcListRecords_(svcSourceRecords_(ss)),
       {first, last, from: level, levels}, cols);
     if (messages.length) ss.toast(messages.join('\n'), 'サービス管理', 10);
+    // 行の追加・削除・並べ替えでプルダウンの参照がずれていたら、同じ欄のまま付け直す（候補のシートは空にしない）
     if (!lists || !svcListsInPlace_(sheet, lists.meta, cols, first, last)) {
-      svcBuildLists_(ss, sheet, lists && lists.meta ? lists.list : svcSourceRecords_(ss), true);
+      const result = svcBuildLists_(ss, sheet, lists && lists.meta ? lists.list : svcSourceRecords_(ss), {realign: true});
+      if (result.needsSetup) ss.toast(result.warnings.join('\n'), 'サービス管理', 10);
     }
   }, SVC_OPTIONS.editLockWaitMs);
 }
