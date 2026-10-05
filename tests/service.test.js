@@ -92,6 +92,55 @@ test('setupRequestSheet：前の版の A〜D のプルダウンと候補のシ�
 
 /* ---------------- 選択パネル ---------------- */
 
+/** 前の版のシート（A〜D に連動プルダウン。候補に無い値は拒否。setupRequestSheet() をまだ実行していない） */
+function addLegacyDropdownSheet(gas) {
+  const sheet = gas.addSheet('リクエスト', [
+    ['サブインダストリー', '得意先', '案件名', 'リクエスト', '判断', 'サービス部門からのフィードバック', 'サービス案', '担当者']
+  ], {rows: 20, columns: 8});
+  const lists = gas.addSheet('__REQUEST_LISTS', [['（前の版の候補）']], {rows: 20, columns: 10});
+  lists.hideSheet();
+  const SpreadsheetApp = gas.global.SpreadsheetApp;
+  gas.asUser(() => {
+    sheet.getRange('A2:A20').setDataValidation(SpreadsheetApp.newDataValidation().requireValueInRange(lists.getRange('G2:J2'), true)
+      .setAllowInvalid(false).setHelpText('サブインダストリーは一覧から選んでください（リクエストがあり、まだ選んでいない案件だけが出ます）。').build());
+    sheet.getRange('B2:D20').setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(['（先にサブインダストリーを選んでください）'], true)
+      .setAllowInvalid(false).build());
+    sheet.getRange('E2:E20').setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(['未判断', 'サービス化検討', '棄却'], true)
+      .setAllowInvalid(false).build());
+  });
+  return sheet;
+}
+
+test('前の版の A〜D のプルダウンが残っていても追加できる：パネルを開いたときに外す（setupRequestSheet() を待たない）', () => {
+  const {gas, g} = setup();
+  const sheet = addLegacyDropdownSheet(gas);
+  // 本物と同じく、プルダウンが残っているとスクリプトの書き込みも止まる
+  assert.throws(() => sheet.getRange('A2').setValue('食品スーパー'), /サブインダストリーは一覧から選んでください/);
+
+  const result = add(g, 'アプリ刷新', '会員の購買分析をしたい');
+  assert.strictEqual(result.ok, true, result.message);
+  assert.deepStrictEqual(gas.dump(sheet, 'A2:D2')[0], ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい']);
+  ['A2', 'B2', 'C2', 'D20'].forEach(a1 => assert.strictEqual(sheet.getRange(a1).getDataValidation(), null, a1 + '：A〜D のプルダウンは外す'));
+  assert.deepStrictEqual(listOf(sheet.getRange('E2')), ['未判断', 'サービス化検討', '棄却'], '判断のプルダウンは残す');
+  assert.strictEqual(gas.ss.getSheetByName('__REQUEST_LISTS'), null, '前の版の候補のシートも外す');
+  assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
+});
+
+test('パネルを開いたときにロックが取れず前の版のプルダウンを外せなくても、「追加」のときに外して書く', () => {
+  const {gas, g} = setup();
+  const sheet = addLegacyDropdownSheet(gas);
+  gas.lockBusy = true;
+  const data = g.getRequestPickerData();
+  assert.strictEqual(data.synced, false);
+  assert.ok(sheet.getRange('A2').getDataValidation(), 'ロックが取れなければ何も変えない');
+  gas.lockBusy = false;
+  const result = g.addServiceRequest(data.items[1].key);
+  assert.strictEqual(result.ok, true, result.message);
+  assert.deepStrictEqual(gas.dump(sheet, 'A2:D2')[0], ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい']);
+  assert.strictEqual(sheet.getRange('A3').getDataValidation(), null);
+});
+
+
 test('メニュー「サービス管理」→「リクエストを追加」で、選択パネル（サイドバー）を開く', () => {
   const {gas, g} = setup();
   g.svcAddMenu_();

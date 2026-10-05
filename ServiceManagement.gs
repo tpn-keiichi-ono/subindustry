@@ -84,7 +84,8 @@ function openRequestPicker() {
 }
 
 /**
- * 選択パネルが読む内容（google.script.run から呼ぶ）。登録した行を取り込み元に合わせてから、まだ登録していないリクエストを返す。
+ * 選択パネルが読む内容（google.script.run から呼ぶ）。前の版の A〜D のプルダウンが残っていれば外し、
+ * 登録した行を取り込み元に合わせてから、まだ登録していないリクエストを返す。
  * ほかの処理が実行中で合わせられないときは、合わせずに読むだけにする（パネルは開けるように）。
  */
 function getRequestPickerData() {
@@ -94,7 +95,10 @@ function getRequestPickerData() {
   const records = svcSourceRecords_(ss);
   let synced = true;
   try {
-    taskWithLock_(() => svcSync_(ss, sheet, records), 5000);
+    taskWithLock_(() => {
+      svcRemoveLegacyLists_(ss, sheet);   // 残っていると、スクリプトの書き込みも入力規則で止まるため
+      svcSync_(ss, sheet, records);
+    }, 5000);
   } catch (_) {
     synced = false;
   }
@@ -103,7 +107,8 @@ function getRequestPickerData() {
 
 /**
  * 選択パネルで選んだリクエストを登録する（google.script.run から呼ぶ）。key は getRequestPickerData() の items[].key。
- * 取り込み元とサービスリクエストを読み直し、まだ登録していなければ、最後の行（svcRegistered_）の下の A〜D に書く。
+ * 取り込み元とサービスリクエストを読み直し、まだ登録していなければ、最後の行（svcRegistered_）の下の A〜D に書く
+ * （前の版の A〜D のプルダウンが残っていれば、先に外す）。
  * {ok, row, message, data: パネルの新しい内容}
  */
 function addServiceRequest(key) {
@@ -130,6 +135,7 @@ function addServiceRequest(key) {
       sheet.insertRowsAfter(maxRows, row - maxRows);
       taskApplyColumnRules_(sheet, SVC_OPTIONS.requestColumns.filter(c => c.options), cols, maxRows + 1, row - maxRows);
     }
+    svcRemoveLegacyLists_(ss, sheet);
     svcSourceKeys_().forEach((k, i) => {
       // 先頭に ' を付けて書く（「=…」のリクエストも数式にならない）
       sheet.getRange(row, cols[k]).setValue(credText_(record.values[i]));
@@ -353,7 +359,8 @@ function svcApplyRules_(ss, sheet) {
 
 /**
  * 前の版の連動プルダウン（A〜D の入力規則）と、候補を作っていた非表示のシート（__REQUEST_LISTS）を外す。
- * 外したものがあれば true。
+ * A〜D には入力規則を付けないので、残っているものは列ごと外す（候補に無い値を拒否する規則が残っていると、パネルから書けない）。
+ * setupRequestSheet() のほか、選択パネルを開いたとき・追加するときにも呼ぶ（ロック取得中に呼ぶこと）。外したものがあれば true。
  */
 function svcRemoveLegacyLists_(ss, sheet) {
   let removed = false;

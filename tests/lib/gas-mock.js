@@ -220,6 +220,7 @@ class Range {
   getNote() { const cell = this.sheet.cell(this.row, this.col, false); return (cell && cell.note) || ''; }
 
   setValue(value) {
+    this.checkValidation(() => value);
     this.write('setValue');
     this.each(cell => this.sheet.gas.store(cell, value));
     return this;
@@ -227,9 +228,36 @@ class Range {
 
   setValues(matrix) {
     this.checkShape(matrix);
+    this.checkValidation((r, c) => matrix[r][c]);
     this.write('setValues');
     this.each((cell, r, c) => this.sheet.gas.store(cell, matrix[r][c]));
     return this;
+  }
+
+  /**
+   * スクリプトの書き込みを、セルの入力規則で確かめる。本物と同じく、無効な値を拒否する一覧・範囲の規則に合わない値は、
+   * 規則のヘルプの文で止める（空にするのは止めない）。利用者の入力（gas.edit）は確かめない。
+   */
+  checkValidation(valueAt) {
+    const gas = this.sheet.gas;
+    if (gas.userInput) return;
+    this.map((cell, r, c) => {
+      const rule = cell && cell.validation;
+      if (!rule || rule.getAllowInvalid()) return;
+      const type = rule.getCriteriaType();
+      if (type !== DataValidationCriteria.VALUE_IN_LIST && type !== DataValidationCriteria.VALUE_IN_RANGE) return;
+      const probe = {};
+      gas.store(probe, valueAt(r, c));
+      const text = gas.display(probe);
+      if (text === '') return;
+      const criteria = rule.getCriteriaValues()[0];
+      const allowed = type === DataValidationCriteria.VALUE_IN_LIST
+        ? criteria : [].concat(...criteria.map(item => gas.display(item)));
+      if (allowed.indexOf(text) < 0) {
+        throw new Error(rule.getHelpText() || 'The data you entered in cell ' + numToCol(this.col + c) + (this.row + r) +
+          ' violates the data validation rules set on this cell.');
+      }
+    });
   }
 
   setFormula(text) { return this.setFormulas(this.map(() => text)); }

@@ -237,6 +237,9 @@
       return node;
     }
 
+    /** サーバーのエラーの文（先頭の「Exception: 」は外す） */
+    const errorText = error => String(error && error.message || error).replace(/^Exception:\s*/, '');
+
     /** 比べるときの形（全角・半角と空白の違いはサーバーの credNormalize_ と同じく無視し、大文字・小文字も区別しない） */
     const norm = v => String(v == null ? '' : v).normalize('NFKC').replace(/\s+/g, '').toLowerCase();
 
@@ -273,7 +276,7 @@
       stopTicker();
       $('loadingTime').textContent = '';
       $('loading').classList.add('error');
-      $('loadingText').textContent = '読み込めませんでした：' + (error && error.message || error);
+      $('loadingText').textContent = '読み込めませんでした：' + errorText(error);
       $('reload').hidden = false;
       $('refresh').disabled = false;
     }
@@ -490,7 +493,7 @@
         .withFailureHandler(error => {
           adding = null;
           $('refresh').disabled = false;
-          showBanner('error', '追加できませんでした：' + (error && error.message || error));
+          showBanner('error', '追加できませんでした：' + errorText(error));
           renderList();
         })
         .addServiceRequest(item.key);
