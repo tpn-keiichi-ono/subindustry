@@ -435,7 +435,8 @@
       const node = el('div', 'item');
       const meta = el('div', 'item-meta');
       meta.appendChild(el('span', 'tag', item.sheet));
-      if (subIndustry) meta.appendChild(highlighted('span', 'sub', subIndustry, terms));
+      // サブインダストリーは、シート名と同じなら出さない（バッジと同じ文字が2回並ぶため）
+      if (subIndustry && norm(subIndustry) !== norm(item.sheet)) meta.appendChild(highlighted('span', 'sub', subIndustry, terms));
       node.appendChild(meta);
 
       const head = el('div', 'item-head');
