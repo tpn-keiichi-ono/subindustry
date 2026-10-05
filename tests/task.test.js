@@ -31,8 +31,8 @@ test('setupTaskSheet：サービス案に対応付けるタスク管理シート
   const sheet = gas.ss.getSheetByName('タスク管理');
   assert.deepStrictEqual(gas.dump(sheet, 'A1:F1')[0], ['サービス案', 'タスク', '担当者', '期限', '状況', 'メモ']);
   assert.strictEqual(sheet.getFrozenRows(), 1);
-  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!E2:E1000', 'リクエストに付けたサービス案から選ぶ');
-  assert.strictEqual(rangeOf(sheet.getRange('A' + sheet.getMaxRows())), 'リクエスト!E2:E1000', '最後の行まで付ける');
+  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!G2:G1000', 'リクエストに付けたサービス案から選ぶ');
+  assert.strictEqual(rangeOf(sheet.getRange('A' + sheet.getMaxRows())), 'リクエスト!G2:G1000', '最後の行まで付ける');
   assert.strictEqual(sheet.getRange('B2').getDataValidation(), null, 'タスクの列は自由に入力できる');
   assert.strictEqual(sheet.getRange('D2').getDataValidation().getCriteriaType(), 'DATE_IS_VALID_DATE');
   assert.deepStrictEqual(listOf(sheet.getRange('E2')), ['未着手', '対応中', '完了']);
@@ -70,7 +70,7 @@ test('setupTaskSheet：前の版のシートは、確認してから A〜C を�
     ['会員分析基盤', '提案書を送る', '佐藤', '', '対応中', '先方に確認']
   ]);
   assert.strictEqual(sheet.getLastColumn(), 6);
-  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!E2:E1000');
+  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!G2:G1000');
   assert.match(gas.toasts[gas.toasts.length - 1].message, /列を削除し、「サービス案」を左端に置きました/);
 });
 

@@ -78,7 +78,7 @@ function setupTaskSheet() {
 
 /* ---------------- シートの形（サービス管理と共通） ---------------- */
 
-/** シートが無ければ作り、見出しを用意する。{sheet, created, added: 右端に足した列の見出し} */
+/** シートが無ければ作り、見出しを用意する。{sheet, created, added: 足した列の見出し} */
 function taskEnsureSheet_(ss, name, columns, headerRow) {
   let sheet = ss.getSheetByName(name);
   const created = !sheet;
@@ -89,7 +89,8 @@ function taskEnsureSheet_(ss, name, columns, headerRow) {
 /**
  * 見出しの行が空なら見出しを書き、形を整える。
  * 見出しが入っているシートは書き換えない：前の版の見出し（aliases）は新しい見出しに書き換え、
- * 必須の列（required）が無ければ止め、足りない列だけを右端に足す。戻り値は右端に足した列の見出し。
+ * 必須の列（required）が無ければ止め、足りない列だけを足す。insertAfter のある列は、その見出しの列のすぐ右に差し込み
+ * （見出しが無ければ右端）、ほかは右端に足す。戻り値は足した列の見出し。
  */
 function taskEnsureHeader_(sheet, columns, headerRow) {
   const where = sheet.getName() + ' の ' + headerRow + '行目';
@@ -110,9 +111,26 @@ function taskEnsureHeader_(sheet, columns, headerRow) {
     });
     columns.filter(c => c.required).forEach(c => taskFindColumn_(headers, c.label, where, true));
     targets = columns.filter(c => !c.required && taskHeaderCount_(headers, c.label) === 0);
+  }
+
+  // insertAfter の見出しがある列は、そのすぐ右に差し込む（右の列はずれる。差し込んだ列は左の列の入力規則を引き継がないようにする）
+  const inserted = [];
+  if (last > 0) {
+    targets = targets.filter(c => {
+      const after = c.insertAfter ? taskFindColumn_(headers, c.insertAfter, where, false) : 0;
+      if (!after) return true;
+      sheet.insertColumnAfter(after);
+      sheet.getRange(headerRow, after + 1).setValue(c.label).setFontWeight('bold').setBackground(TASK_OPTIONS.headerBackground);
+      if (sheet.getMaxRows() > headerRow) sheet.getRange(headerRow + 1, after + 1, sheet.getMaxRows() - headerRow, 1).clearDataValidations();
+      if (c.width) sheet.setColumnWidth(after + 1, c.width);
+      headers.splice(after, 0, c.label);
+      last++;
+      inserted.push(c.label);
+      return false;
+    });
     start = last + 1;
   }
-  if (!targets.length) return [];
+  if (!targets.length) return inserted;
 
   const needed = start + targets.length - 1;
   if (sheet.getMaxColumns() < needed) sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
@@ -120,7 +138,7 @@ function taskEnsureHeader_(sheet, columns, headerRow) {
     .setFontWeight('bold').setBackground(TASK_OPTIONS.headerBackground);
   targets.forEach((c, i) => { if (c.width) sheet.setColumnWidth(start + i, c.width); });
   if (last === 0) sheet.setFrozenRows(headerRow);
-  return last > 0 ? targets.map(c => c.label) : [];
+  return last > 0 ? inserted.concat(targets.map(c => c.label)) : [];
 }
 
 /** 見出しから {key: 列番号} を作る（見つからない列は 0。required の列はちょうど1つ必要）。 */
