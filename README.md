@@ -30,6 +30,7 @@ Google スプレッドシート「シナリオ攻略先リスト」に組み込�
   TaskManagement.gs             タスク管理シート（サービス案ごとの検討の進捗）
   ServiceManagement.gs          サービスリクエスト（新FMT のリクエストを選択パネルで登録する。サービス案を付けてまとめる。メニューは onOpen から追加）
   RequestPickerView.html        サービスリクエストの選択パネル（サイドバー）
+  RequestListDialog.html        サービスリクエストの未登録・登録済みの一覧（パネルの件数のバッジから開くモーダル）
   appsscript.json               マニフェスト（タイムゾーン・ランタイム）
 docs/
   DESIGN.md                     設計思想・データモデル・処理の流れ・判断の理由・画面のデザイン・テスト

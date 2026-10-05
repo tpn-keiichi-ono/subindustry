@@ -264,6 +264,62 @@ test('getRequestPickerData：リクエスト シートが無ければ、管理�
   assert.throws(() => g.addServiceRequest('x'), /「リクエスト」シートがありません/);
 });
 
+/* ---------------- 一覧のモーダル（パネルの件数のバッジ） ---------------- */
+
+test('openRequestListDialog：バッジから一覧のモーダルを開く（押したバッジのタブで開く。見出しは画面の中）', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  g.openRequestListDialog('registered');
+  g.openRequestListDialog('なにか');
+  assert.strictEqual(gas.dialogs.length, 2);
+  assert.strictEqual(gas.dialogs[0].html.file, 'RequestListDialog');
+  assert.strictEqual(gas.dialogs[0].title, ' ');
+  assert.strictEqual(gas.dialogs[0].html.data.kind, 'registered');
+  assert.strictEqual(gas.dialogs[1].html.data.kind, 'unregistered', '知らない値なら未登録のタブ');
+  assert.ok(gas.dialogs[0].html.width >= 600 && gas.dialogs[0].html.height >= 400);
+  const html = gas.dialogs[0].html.getContent();
+  ['getRequestListData', 'saveCredentialDialogSize'].forEach(name => {
+    assert.match(html, new RegExp('\\.' + name + '\\('), name + ' を呼んでいない');
+    assert.strictEqual(typeof g[name], 'function', name);
+  });
+  assert.match(gas.global.HtmlService.createTemplateFromFile('RequestPickerView').evaluate().getContent(), /\.openRequestListDialog\(/,
+    'パネルのバッジから開く');
+});
+
+test('getRequestListData：未登録と登録済みの一覧を返す（登録済みは行番号・判断など。取り込み元に無いものに印。読むだけ）', () => {
+  const {gas, g, source} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  add(g, 'アプリ刷新', '会員の購買分析をしたい');
+  add(g, 'チラシのデジタル化', 'チラシの効果を測りたい');
+  gas.asUser(() => {
+    request.getRange('E2:H2').setValues([['サービス化検討', '前向きに検討', '会員分析基盤', '佐藤']]);
+    source.getRange('F4').setValue('チラシの配布数を減らしたい');   // 登録済みの3行目は取り込み元に無くなる
+  });
+  gas.writes.length = 0;
+  const data = g.getRequestListData();
+  assert.deepStrictEqual(gas.writes, [], '何も書き込まない');
+  assert.deepStrictEqual(plain(data.unregistered), [
+    {sheet: '新FMT', values: ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの配布数を減らしたい']},
+    {sheet: '新FMT', values: ['ドラッグストア', 'C社', 'EC立ち上げ', '=在庫を店舗と共有したい']}
+  ]);
+  assert.deepStrictEqual(plain(data.registered), [
+    {row: 2, sheet: '新FMT', missing: false, values: ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい'],
+      decision: 'サービス化検討', feedback: '前向きに検討', service: '会員分析基盤', owner: '佐藤'},
+    {row: 3, sheet: '', missing: true, values: ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい'],
+      decision: '', feedback: '', service: '', owner: ''}
+  ]);
+  assert.strictEqual(data.requestSheet, 'リクエスト');
+  assert.match(data.loadedAt, /^\d{2}:\d{2}$/);
+});
+
+test('getRequestListData：ほかの処理がロックを持っていても読める', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  gas.lockBusy = true;
+  assert.strictEqual(g.getRequestListData().unregistered.length, 3);
+});
+
 /* ---------------- 取り込み元の変更 ---------------- */
 
 test('パネルはいつも取り込み元の最新を読む。開いたときに、登録した行を取り込み元に合わせる（行は足さない）', () => {

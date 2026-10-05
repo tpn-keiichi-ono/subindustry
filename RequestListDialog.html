@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #1b1b1c;
+      --body: #3c4642;
+      --muted: #5a6660;
+      --faint: #8a968a;
+      --meta: #9AA59C;
+      --line: #EFF2EF;
+      --rail: #E2E7E2;
+      --border: #DDE2DD;
+      --soft: #F4F6F4;
+      --panel: #FAFBFA;
+      --seg: #E9EDEA;
+      --teal: #36A191;
+      --teal-text: #297A6E;
+      --teal-soft: #E9F4F1;
+      --cred: #1F6E5E;
+      --cred-text: #1F5E55;
+      --cred-soft: #EAF5F2;
+      --danger: #B42318;
+      --del-bg: #FCEDEC;
+      --mono: 'Azeret Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: 'Inter', 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic UI', Meiryo, sans-serif;
+      color: var(--ink); background: #ffffff; -webkit-font-smoothing: antialiased;
+    }
+    button, input { font-family: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
+    svg { flex: none; }
+    .mono { font-family: var(--mono); }
+
+    .modal { display: flex; flex-direction: column; height: 100%; }
+
+    /* ---------- 見出し（小見出し・タブ・キーワード・再読み込み） ---------- */
+    .m-head { display: flex; align-items: flex-end; gap: 16px; padding: 16px 24px 20px 32px; border-bottom: 1px solid var(--line); }
+    .m-title { display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 0; }
+    .eyebrow { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .04em; }
+    .tabs { display: inline-flex; align-self: flex-start; gap: 3px; padding: 3px; border-radius: 10px; background: var(--seg); }
+    .tab {
+      height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 16px; border: none; border-radius: 8px;
+      font-size: 14.5px; font-weight: 700; background: transparent; color: var(--muted);
+    }
+    .tab .badge { font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 9px; background: #DCE2DE; color: var(--body); }
+    .tab.on { background: #ffffff; color: var(--ink); box-shadow: 0 1px 2px rgba(20, 30, 25, .10); }
+    .tab.on .badge { background: var(--teal-soft); color: var(--cred); }
+    .m-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+    .search { position: relative; }
+    .search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--faint); pointer-events: none; }
+    .search input {
+      width: 240px; height: 34px; padding: 0 30px 0 30px; border: 1px solid var(--border); border-radius: 8px;
+      font-size: 12.5px; color: var(--ink); background: #ffffff;
+    }
+    .search input::placeholder { color: var(--faint); }
+    .search input::-webkit-search-cancel-button { display: none; }   /* 消すボタンは自前のもの（#clearQuery）だけにする */
+    .clear-x {
+      position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; padding: 0; display: grid; place-items: center;
+      border: none; border-radius: 6px; background: transparent; color: var(--faint);
+    }
+    .clear-x:hover { background: var(--soft); color: var(--muted); }
+    .clear-x svg { position: static; transform: none; color: inherit; }
+    .search input:focus { border-color: var(--teal); }
+    .icon-btn {
+      width: 34px; height: 34px; padding: 0; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 8px;
+      background: #ffffff; color: #2b3330;
+    }
+    .icon-btn:hover { background: var(--soft); }
+    .count { font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+    .count .mono { color: var(--body); font-weight: 600; }
+
+    /* ---------- 一覧 ---------- */
+    .list { flex: 1; min-height: 0; overflow: auto; padding: 0 24px 20px 32px; }
+    table { width: 100%; min-width: 900px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+    th {
+      position: sticky; top: 0; z-index: 1; padding: 12px 14px 8px 0; background: #ffffff; border-bottom: 1px solid var(--rail);
+      font-size: 11px; font-weight: 600; color: var(--faint); text-align: left; white-space: nowrap;
+    }
+    td { padding: 11px 14px 11px 0; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 12.5px; line-height: 1.6; color: var(--ink); overflow-wrap: anywhere; }
+    tr:hover td { background: var(--panel); }
+    td.row-no { font-family: var(--mono); font-size: 11.5px; color: var(--faint); padding-top: 13px; }
+    td.sub { color: var(--muted); }
+    td.customer { font-weight: 600; }
+    td.blank { color: var(--meta); }
+    .tag {
+      display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 5px; border: 1px solid #C9E4DC;
+      font-size: 10.5px; font-weight: 700; color: var(--cred-text); background: var(--cred-soft); white-space: nowrap;
+    }
+    .tag.missing { border-color: #F3CFCB; color: var(--danger); background: var(--del-bg); cursor: help; }
+    .decision { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 11px; font-size: 11px; font-weight: 600; white-space: nowrap; background: var(--soft); color: var(--muted); }
+    .decision.go { background: var(--teal-soft); color: var(--cred); }
+    .decision.drop { background: var(--soft); color: var(--meta); text-decoration: line-through; }
+    .request { white-space: pre-wrap; color: var(--body); }
+    .request.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+    .more-btn {
+      display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; padding: 0; border: none; background: none;
+      font-size: 11.5px; font-weight: 600; color: var(--teal-text);
+    }
+    .more-btn:hover { text-decoration: underline; }
+    .more-btn.open svg { transform: rotate(180deg); }
+    mark { background: #FFF1B8; color: inherit; border-radius: 2px; }
+    .empty { padding: 48px 0; text-align: center; font-size: 13px; font-weight: 600; color: var(--faint); }
+
+    /* ---------- 読み込み中 ---------- */
+    .loading {
+      position: fixed; inset: 0; z-index: 20; background: rgba(255, 255, 255, .96);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+      color: var(--muted); font-size: 13px;
+    }
+    .loading p { margin: 0; }
+    .loading small { color: var(--meta); font-size: 12px; min-height: 1.2em; }
+    .spinner { width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--rail); border-top-color: var(--teal); }
+    .loading.error .spinner { display: none; }
+    .loading.error p { color: var(--danger); }
+    .btn { height: 34px; padding: 0 16px; border: none; border-radius: 8px; background: var(--teal); color: #ffffff; font-size: 12.5px; font-weight: 600; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *:not(.spinner) { transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<!-- data-kind：開いたときのタブ（unregistered / registered。ServiceManagement.gs の openRequestListDialog が入れる） -->
+<body data-kind="<?= kind ?>" data-opened-width="<?= openedWidth ?>" data-opened-height="<?= openedHeight ?>">
+  <div class="loading" id="loading" role="status" aria-live="polite">
+    <div class="spinner"></div>
+    <p id="loadingText">読み込んでいます…</p>
+    <small id="loadingTime"></small>
+    <button type="button" class="btn" id="reload" hidden>もう一度読み込む</button>
+  </div>
+
+  <div class="modal">
+    <header class="m-head">
+      <div class="m-title">
+        <span class="eyebrow">サービスリクエスト</span>
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab" id="tabUnregistered" role="tab">未登録<span class="badge" id="unregisteredCount">–</span></button>
+          <button type="button" class="tab" id="tabRegistered" role="tab">登録済み<span class="badge" id="registeredCount">–</span></button>
+        </div>
+      </div>
+      <div class="m-actions">
+        <span class="count" id="count"></span>
+        <div class="search">
+          <svg width="13" height="13" viewBox="0 0 14 14"><circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9.2 9.2l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <input type="search" id="query" placeholder="キーワード" aria-label="キーワードで探す" autocomplete="off">
+          <button type="button" class="clear-x" id="clearQuery" title="文字を消す" aria-label="文字を消す" hidden>
+            <svg width="10" height="10" viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <button type="button" class="icon-btn" id="refresh" title="再読み込み" aria-label="再読み込み">
+          <svg width="14" height="14" viewBox="0 0 12 12"><path d="M10 6a4 4 0 1 1-1.2-2.85M10 1.5V4H7.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </header>
+    <div class="list" id="list" role="tabpanel"></div>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const context = {kind: document.body.dataset.kind === 'registered' ? 'registered' : 'unregistered'};
+    let data = null;
+    const expanded = new Set();   // 「もっと見る」で全文を出している行（タブ＋番号）
+
+    /** 要素を作る小さな補助。text は文字列として入れる（HTML として解釈しない）。 */
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text != null) node.textContent = text;
+      return node;
+    }
+
+    /** 比べるときの形（全角・半角・空白・大文字小文字の違いは無視） */
+    const norm = v => String(v == null ? '' : v).normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+    const words = () => $('query').value.trim().split(/\s+/).map(norm).filter(Boolean);
+    const errorText = error => String(error && error.message || error).replace(/^Exception:\s*/, '');
+
+    /* ---------- モーダルの大きさ（ブラウザの窓幅の 95%。ほかのモーダルと同じ） ---------- */
+
+    const DIALOG_WIDTH_RATIO = 0.95;
+
+    function targetDialogSize() {
+      const w = window.outerWidth || screen.availWidth;
+      const h = window.outerHeight || screen.availHeight;
+      return {
+        width: Math.max(720, Math.round(w * DIALOG_WIDTH_RATIO)),
+        height: Math.max(560, Math.min(h - 200, 1000))
+      };
+    }
+
+    let sizeSaved = false;
+    function rememberDialogSize(size) {
+      if (sizeSaved) return;
+      const openedW = Number(document.body.dataset.openedWidth) || 0;
+      const openedH = Number(document.body.dataset.openedHeight) || 0;
+      if (Math.abs(openedW - size.width) < 20 && Math.abs(openedH - size.height) < 20) return;
+      sizeSaved = true;
+      try {
+        google.script.run.withFailureHandler(() => {}).saveCredentialDialogSize(size.width, size.height);
+      } catch (_) {}
+    }
+
+    function fitDialog(attempt) {
+      attempt = attempt || 0;
+      const size = targetDialogSize();
+      rememberDialogSize(size);
+      try {
+        google.script.host.setWidth(size.width);
+        google.script.host.setHeight(size.height);
+      } catch (_) {}
+      if (attempt >= 6) return;
+      setTimeout(() => {
+        if (window.innerWidth < size.width - 80) fitDialog(attempt + 1);
+      }, 250 + attempt * 250);
+    }
+
+    if (document.readyState === 'complete') fitDialog();
+    else window.addEventListener('load', () => fitDialog());
+
+    /* ---------- 読み込み ---------- */
+
+    // くるくると経過秒数は JavaScript で動かす（OS の「動きを減らす」設定でも止まらない）
+    let ticker = null;
+
+    function startTicker() {
+      stopTicker();
+      const spinner = document.querySelector('.spinner');
+      const began = Date.now();
+      let angle = 0;
+      ticker = setInterval(() => {
+        angle = (angle + 30) % 360;
+        spinner.style.transform = 'rotate(' + angle + 'deg)';
+        const seconds = Math.floor((Date.now() - began) / 1000);
+        $('loadingTime').textContent = seconds >= 2 ? seconds + '秒経過' : '';
+        if (seconds === 6) $('loadingText').textContent = '読み込みに時間がかかっています。そのままお待ちください…';
+      }, 70);
+    }
+
+    function stopTicker() {
+      if (ticker) clearInterval(ticker);
+      ticker = null;
+    }
+
+    function load() {
+      $('loading').classList.remove('error');
+      $('loading').hidden = false;
+      $('loadingText').textContent = '読み込んでいます…';
+      $('reload').hidden = true;
+      startTicker();
+      google.script.run
+        .withSuccessHandler(result => {
+          stopTicker();
+          $('loading').hidden = true;
+          data = result;
+          $('refresh').title = data.loadedAt ? '再読み込み（' + data.loadedAt + ' に取得）' : '再読み込み';
+          render();
+        })
+        .withFailureHandler(error => {
+          stopTicker();
+          $('loadingTime').textContent = '';
+          $('loading').classList.add('error');
+          $('loadingText').textContent = '読み込めませんでした：' + errorText(error);
+          $('reload').hidden = false;
+        })
+        .getRequestListData();
+    }
+
+    /* ---------- 表示 ---------- */
+
+    /** text を入れた要素。terms に合う部分に印を付ける（文字は textContent で入れる） */
+    function highlighted(tag, className, text, terms) {
+      const node = el(tag, className);
+      const value = String(text || '');
+      if (!terms.length || !value) {
+        node.textContent = value;
+        return node;
+      }
+      const chars = Array.from(value);
+      const normed = chars.map(norm);
+      const marks = new Array(chars.length).fill(false);
+      terms.forEach(term => {
+        for (let start = 0; start < chars.length; start++) {
+          let joined = '';
+          for (let end = start; end < chars.length && joined.length < term.length; end++) {
+            joined += normed[end];
+            if (joined === term) {
+              for (let k = start; k <= end; k++) marks[k] = true;
+              break;
+            }
+            if (term.indexOf(joined) !== 0) break;
+          }
+        }
+      });
+      let run = '';
+      let marked = false;
+      const flush = () => {
+        if (!run) return;
+        node.appendChild(marked ? el('mark', null, run) : document.createTextNode(run));
+        run = '';
+      };
+      chars.forEach((ch, i) => {
+        if (marks[i] !== marked) { flush(); marked = marks[i]; }
+        run += ch;
+      });
+      flush();
+      return node;
+    }
+
+    /** 文字の入ったセル（空なら「—」） */
+    function textCell(className, text, terms) {
+      if (!text) return el('td', (className ? className + ' ' : '') + 'blank', '—');
+      return highlighted('td', className, text, terms);
+    }
+
+    /** リクエストのセル（3行を超えるものは「もっと見る」） */
+    function requestCell(id, text, terms, extra) {
+      const td = el('td');
+      if (extra) td.appendChild(extra);
+      const body = highlighted('div', expanded.has(id) ? 'request' : 'request clamp', text, terms);
+      td.appendChild(body);
+      const more = el('button', 'more-btn');
+      more.type = 'button';
+      more.hidden = true;   // 3行に収まらないときだけ出す（fitMoreButtons）
+      const label = open => {
+        more.classList.toggle('open', open);
+        more.innerHTML = '<svg width="9" height="9" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        more.insertBefore(document.createTextNode(open ? '閉じる' : 'もっと見る'), more.firstChild);
+      };
+      label(expanded.has(id));
+      more.addEventListener('click', () => {
+        const open = !expanded.has(id);
+        if (open) expanded.add(id); else expanded.delete(id);
+        body.classList.toggle('clamp', !open);
+        label(open);
+      });
+      td.appendChild(more);
+      return td;
+    }
+
+    function fitMoreButtons() {
+      document.querySelectorAll('#list td').forEach(td => {
+        const body = td.querySelector('.request');
+        const more = td.querySelector('.more-btn');
+        if (!body || !more) return;
+        more.hidden = body.classList.contains('clamp') ? body.scrollHeight <= body.clientHeight + 1 : false;
+      });
+    }
+
+    function matches(texts, terms) {
+      if (!terms.length) return true;
+      const text = norm(texts.join(' '));
+      return terms.every(t => text.indexOf(t) >= 0);
+    }
+
+    const DECISION_CLASS = {'サービス化検討': 'go', '棄却': 'drop'};
+
+    function render() {
+      if (!data) return;
+      $('unregisteredCount').textContent = String(data.unregistered.length);
+      $('registeredCount').textContent = String(data.registered.length);
+      $('tabUnregistered').classList.toggle('on', context.kind === 'unregistered');
+      $('tabRegistered').classList.toggle('on', context.kind === 'registered');
+      $('tabUnregistered').setAttribute('aria-selected', context.kind === 'unregistered' ? 'true' : 'false');
+      $('tabRegistered').setAttribute('aria-selected', context.kind === 'registered' ? 'true' : 'false');
+
+      const terms = words();
+      const registered = context.kind === 'registered';
+      const all = registered ? data.registered : data.unregistered;
+      const rows = all.filter(item => matches(registered
+        ? item.values.concat([item.decision, item.feedback, item.service, item.owner, item.sheet])
+        : item.values.concat([item.sheet]), terms));
+      $('count').textContent = '';
+      if (terms.length) {
+        $('count').appendChild(el('span', 'mono', String(rows.length)));
+        $('count').appendChild(document.createTextNode('件'));
+      }
+
+      const list = $('list');
+      list.textContent = '';
+      if (!rows.length) {
+        list.appendChild(el('div', 'empty', all.length ? '該当なし' : registered ? '登録済みのリクエストはありません' : 'すべて登録済みです'));
+        return;
+      }
+
+      const table = el('table');
+      const columns = registered
+        ? [['行', '56px'], ['サブインダストリー', '13%'], ['得意先', '13%'], ['案件名', '14%'], ['リクエスト', ''], ['判断', '120px'], ['サービス案', '13%'], ['担当者', '100px']]
+        : [['シート', '120px'], ['サブインダストリー', '15%'], ['得意先', '17%'], ['案件名', '19%'], ['リクエスト', '']];
+      const colgroup = el('colgroup');
+      columns.forEach(([, width]) => {
+        const col = el('col');
+        if (width) col.style.width = width;
+        colgroup.appendChild(col);
+      });
+      table.appendChild(colgroup);
+      const head = el('tr');
+      columns.forEach(([label]) => head.appendChild(el('th', null, label)));
+      const thead = el('thead');
+      thead.appendChild(head);
+      table.appendChild(thead);
+
+      const tbody = el('tbody');
+      rows.forEach((item, i) => {
+        const tr = el('tr');
+        const [subIndustry, customer, project, request] = item.values;
+        if (registered) {
+          tr.appendChild(el('td', 'row-no', String(item.row)));
+        } else {
+          const td = el('td');
+          td.appendChild(el('span', 'tag', item.sheet));
+          tr.appendChild(td);
+        }
+        tr.appendChild(textCell('sub', subIndustry, terms));
+        tr.appendChild(textCell('customer', customer, terms));
+        tr.appendChild(textCell('', project, terms));
+        let extra = null;
+        if (registered && item.missing) {
+          extra = el('div');
+          const tag = el('span', 'tag missing', '取り込み元に無し');
+          tag.title = '取り込み元（読むシート）に、同じ得意先・案件名・リクエストが見つかりません（書き換えか削除された可能性があります）';
+          extra.appendChild(tag);
+          extra.style.marginBottom = '4px';
+        }
+        tr.appendChild(requestCell((registered ? 'r' : 'u') + (registered ? item.row : i), request, terms, extra));
+        if (registered) {
+          const td = el('td');
+          if (item.decision) td.appendChild(el('span', 'decision ' + (DECISION_CLASS[item.decision] || ''), item.decision));
+          else td.appendChild(el('span', 'decision', '未判断'));
+          tr.appendChild(td);
+          tr.appendChild(textCell('', item.service, terms));
+          tr.appendChild(textCell('', item.owner, terms));
+        }
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      list.appendChild(table);
+      fitMoreButtons();
+    }
+
+    /* ---------- 操作 ---------- */
+
+    function switchTab(kind) {
+      if (context.kind === kind) return;
+      context.kind = kind;
+      $('list').scrollTop = 0;
+      render();
+    }
+    $('tabUnregistered').addEventListener('click', () => switchTab('unregistered'));
+    $('tabRegistered').addEventListener('click', () => switchTab('registered'));
+    let typing = null;
+    $('query').addEventListener('input', () => {
+      $('clearQuery').hidden = !$('query').value;
+      clearTimeout(typing);
+      typing = setTimeout(render, 150);
+    });
+    $('clearQuery').addEventListener('click', () => {
+      $('query').value = '';
+      $('clearQuery').hidden = true;
+      render();
+      $('query').focus();
+    });
+    $('refresh').addEventListener('click', load);
+    $('reload').addEventListener('click', load);
+    window.addEventListener('resize', fitMoreButtons);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitMoreButtons);
+
+    load();
+  </script>
+</body>
+</html>

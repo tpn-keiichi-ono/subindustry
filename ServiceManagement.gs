@@ -8,6 +8,7 @@
  * - リクエストは、選択パネル（RequestPickerView。メニュー「サービス管理」→「リクエストを追加」）で選んで登録する。
  *   パネルは開いたとき・追加したときに取り込み元の最新を読み、まだ登録していないリクエストだけを出す
  *   （サブインダストリー → 得意先 → 案件名で絞り込み、文字で探せる）。選ぶと、サービスリクエストの最後の行の下に A〜D を書く。
+ * - パネルの件数のバッジ（未登録・登録済み）を押すと、一覧をモーダル（RequestListDialog）で確かめられる（読むだけ）。
  * - 前の版は、セルの連動プルダウン（候補を非表示の __REQUEST_LISTS の数式で作る）と onEdit で登録していたが、
  *   行の並べ替えでプルダウンがずれる・onEdit が30秒で止まる・差分追跡とロックを取り合う・取り込み元の変更を取りこぼす、
  *   などで安定しなかったのでやめた。setupRequestSheet() が、前の版の A〜D のプルダウンと __REQUEST_LISTS を外す。
@@ -42,6 +43,7 @@ const SVC_OPTIONS = {
   menuTitle: 'サービス管理',
   pickerTemplate: 'RequestPickerView',
   pickerTitle: 'リクエストを追加',
+  listTemplate: 'RequestListDialog',   // パネルの件数のバッジから開く一覧のモーダル
   defaultDecision: '未判断',             // まだ判断していないことを表す判断（空と同じに扱う）
   // 前の版で「リクエスト」のセルに付けたメモの先頭（今はメモを付けない。パネルを開いたとき・setupRequestSheet() で外す）
   legacyNotes: ['取り込み元に見つかりません', '取り込み元でリクエストが書き換えられました', '新FMT でリクエストが書き換えられました'],
@@ -163,9 +165,59 @@ function svcPickerData_(sheet, records) {
   };
 }
 
+/* ---------------- 一覧のモーダル（パネルの件数のバッジから開く） ---------------- */
+
+/**
+ * 未登録・登録済みのリクエストの一覧をモーダルで開く（選択パネルのバッジから google.script.run で呼ぶ）。
+ * kind：'unregistered'（未登録）か 'registered'（登録済み）。開いたときのタブになる。大きさはクレデンシャル履歴と同じ。
+ */
+function openRequestListDialog(kind) {
+  const size = credDialogSize_(credActiveEmail_());
+  const template = HtmlService.createTemplateFromFile(SVC_OPTIONS.listTemplate);
+  template.kind = kind === 'registered' ? 'registered' : 'unregistered';
+  template.openedWidth = size.width;
+  template.openedHeight = size.height;
+  SpreadsheetApp.getUi().showModalDialog(
+    template.evaluate().setWidth(size.width).setHeight(size.height),
+    ' '   // 見出しはモーダルの中に表示する
+  );
+}
+
+/**
+ * 一覧のモーダルが読む内容（google.script.run から呼ぶ。読むだけなのでロックは取らない）。
+ * {unregistered: [{sheet, values: [サブインダストリー, 得意先, 案件名, リクエスト]}],
+ *  registered: [{row, sheet: 取り込み元のシート（見つからなければ空）, missing: 取り込み元に見つからないか,
+ *                values: [サブインダストリー, 得意先, 案件名, リクエスト], decision, feedback, service, owner}],
+ *  requestSheet, loadedAt}
+ */
+function getRequestListData() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SVC_OPTIONS.requestSheet);
+  if (!sheet) throw new Error('「' + SVC_OPTIONS.requestSheet + '」シートがありません。管理者に setupRequestSheet() の実行を頼んでください。');
+  const records = svcSourceRecords_(ss);
+  const sourceSheet = new Map(records.map(rec => [rec.key, rec.sheet]));
+  const registered = svcRegistered_(sheet);
+  const sourceKeys = svcSourceKeys_();
+  return {
+    unregistered: records.filter(rec => !registered.keys.has(rec.key)).map(rec => ({sheet: rec.sheet, values: rec.values.slice()})),
+    registered: registered.rows.map(r => ({
+      row: r.row,
+      sheet: sourceSheet.get(r.key) || '',
+      missing: !sourceSheet.has(r.key),
+      values: sourceKeys.map(k => r.values[k] || ''),
+      decision: r.values.decision || '',
+      feedback: r.values.feedback || '',
+      service: r.values.service || '',
+      owner: r.values.owner || ''
+    })),
+    requestSheet: SVC_OPTIONS.requestSheet,
+    loadedAt: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm')
+  };
+}
+
 /**
  * サービスリクエストに登録したリクエストのキーと、SVC_OPTIONS.requestColumns の列（A〜H）のどれかに値のある最後の行。
- * {keys: Set, lastRow, rows: [{row, key}]（リクエストのある行）}
+ * {keys: Set, lastRow, rows: [{row, key, values: {requestColumns の key: 表示の値}}]（リクエストのある行）}
  * 判断だけを書いた行などにリクエストを書き足さないよう、最後の行はすべての列で見る（ほかの列は見ない）。
  */
 function svcRegistered_(sheet) {
@@ -187,7 +239,9 @@ function svcRegistered_(sheet) {
     if (!values[3]) return;
     const key = svcRequestKey_(values[1], values[2], values[3]);
     keys.add(key);
-    rows.push({row: headerRow + 1 + i, key});
+    const all = {};
+    Object.keys(cols).forEach(k => { all[k] = cols[k] ? String(line[cols[k] - left]).trim() : ''; });
+    rows.push({row: headerRow + 1 + i, key, values: all});
   });
   return {keys, lastRow, rows};
 }

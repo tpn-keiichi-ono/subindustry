@@ -46,10 +46,14 @@
     .refresh-btn:hover { background: var(--hover); }
     .refresh-btn:disabled { color: var(--off-day); cursor: default; background: var(--card); }
     .counts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+    /* 件数のバッジ。押すと一覧のモーダルを開く */
     .chip {
-      height: 22px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: 11px;
+      height: 24px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid transparent; border-radius: 12px;
       font-size: 11px; font-weight: 600; color: var(--muted); background: var(--hover); white-space: nowrap;
     }
+    .chip:hover { border-color: #C5CEC8; }
+    .chip.main:hover { border-color: #9FCFC3; }
+    .chip:disabled { cursor: progress; opacity: .6; }
     .chip .mono { font-size: 11px; font-weight: 600; color: var(--ink); }
     .chip.main { color: var(--cred); background: var(--teal-soft); }
     .chip.main .mono { color: var(--cred); }
@@ -175,8 +179,8 @@
     <section class="card head-card">
       <div class="row-top">
         <div class="counts" id="counts">
-          <span class="chip main">未登録<span class="mono" id="remaining">–</span></span>
-          <span class="chip">登録済み<span class="mono" id="registered">–</span></span>
+          <button type="button" class="chip main" id="openUnregistered" title="未登録のリクエストの一覧">未登録<span class="mono" id="remaining">–</span></button>
+          <button type="button" class="chip" id="openRegistered" title="登録済みのリクエストの一覧">登録済み<span class="mono" id="registered">–</span></button>
         </div>
         <button type="button" class="refresh-btn" id="refresh" title="再読み込み" aria-label="再読み込み">
           <svg width="13" height="13" viewBox="0 0 12 12"><path d="M10 6a4 4 0 1 1-1.2-2.85M10 1.5V4H7.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -549,6 +553,16 @@
     // フォントの読み込み・幅の変更で行数が変わるので、「もっと見る」を出すかを確かめ直す
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitMoreButtons);
     window.addEventListener('resize', fitMoreButtons);
+    // 件数のバッジ：一覧をモーダルで開く（開くまで少しかかるので、その間は押せなくする）
+    function openList(kind, button) {
+      button.disabled = true;
+      google.script.run
+        .withSuccessHandler(() => { button.disabled = false; })
+        .withFailureHandler(error => { button.disabled = false; showBanner('error', '一覧を開けませんでした：' + errorText(error)); })
+        .openRequestListDialog(kind);
+    }
+    $('openUnregistered').addEventListener('click', () => openList('unregistered', $('openUnregistered')));
+    $('openRegistered').addEventListener('click', () => openList('registered', $('openRegistered')));
     $('closeBanner').addEventListener('click', hideBanner);
     $('refresh').addEventListener('click', () => { hideBanner(); load(); });
     $('reload').addEventListener('click', load);
