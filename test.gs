@@ -82,7 +82,7 @@ const DIFF_RULES = {
   'スーパー・GMS': {
     headerRow: 2,
     ranges: ['D3:AF'],
-    requests: true,          // リクエスト シートの候補にする（「サービスのリクエスト」の列を読む）
+    requests: true,          // サービスリクエストの選択パネルに出す（「サービスのリクエスト」の列を読む）
     formerNames: ['新FMT']
     // Optional: capture an explicit row span in the row snapshot.
     // , snapshotColumns: 'A:Z'
@@ -322,7 +322,7 @@ function setupDiffTracking() {
 /**
  * DIFF_RULES のシートを足した・名前を変えたあとに必要な設定を、まとめて実行する。何度実行してもよい。
  * 1. 差分追跡（setupDiffTracking）  2. クレデンシャルのボタン列（setupCredentialLauncher）
- * 3. 変更履歴のボタン列（setupChangeHistoryLauncher）  4. サービスリクエストの候補（setupRequestSheet）
+ * 3. 変更履歴のボタン列（setupChangeHistoryLauncher）  4. サービスリクエスト（setupRequestSheet）
  * ボタン列は、見出しのあるシートにだけ付ける（どのシートにも無ければ 2・3 は省く）。
  * 途中で止まって設定が半分だけにならないよう、先にすべてのシートの見出しを確かめ、足りなければ何も変えずに知らせる。
  * トリガーを設置するので、管理者アカウント（トリガーの所有者）で実行すること。
@@ -346,7 +346,7 @@ function setupAfterSheetChange() {
     if (step.sheets.length) steps.push(step);
     else notes.push('「' + credHeaderText_(step.header) + '」の列のあるシートが無いので、' + step.label + 'の設定は省きました。');
   });
-  steps.push({label: 'サービスリクエストの候補', run: () => svcSetupRequestSheet_(ss)});
+  steps.push({label: 'サービスリクエスト', run: () => svcSetupRequestSheet_(ss)});
   const done = [];
   steps.forEach(step => {
     try {

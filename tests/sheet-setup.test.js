@@ -37,17 +37,16 @@ function addDepartmentStore(gas, header) {
   return sheet;
 }
 
-test('setupAfterSheetChange：差分追跡・2つのボタン列・サービスリクエストの候補をまとめて設定する（トリガーは増やさない）', () => {
+test('setupAfterSheetChange：差分追跡・2つのボタン列・サービスリクエストをまとめて設定する（トリガーは増やさない）', () => {
   const {gas, g} = setupProject();
   const triggers = gas.triggers.map(t => t.getHandlerFunction()).sort();
   const sheet = addDepartmentStore(gas);
-  gas.evaluateFormulas = true;
 
   g.setupAfterSheetChange();
   const message = gas.alerts[gas.alerts.length - 1].message;
   assert.match(message, /対象のシート：「新FMT」「新FMT2」「百貨店」/);
-  assert.match(message, /「差分追跡」「クレデンシャルのボタン列」「変更履歴のボタン列」「サービスリクエストの候補」を設定しました/);
-  assert.match(message, /「新FMT」「百貨店」のリクエスト 2件のうち 0件を選んでいます/, 'サービスリクエストの結果も知らせる');
+  assert.match(message, /「差分追跡」「クレデンシャルのボタン列」「変更履歴のボタン列」「サービスリクエスト」を設定しました/);
+  assert.match(message, /「新FMT」「百貨店」のリクエスト 2件のうち 0件を登録しています/, 'サービスリクエストの結果も知らせる');
 
   // ボタン列（チェックボックス）と差分追跡
   assert.strictEqual(sheet.getRange(3, COL.credButton).getValue(), false);
@@ -56,12 +55,8 @@ test('setupAfterSheetChange：差分追跡・2つのボタン列・サービス�
   const log = gas.ss.getSheetByName('変更履歴_差分');
   assert.ok(gas.dump(log, 'D2:D' + log.getLastRow()).some(r => r[0] === '百貨店'), '足したシートの変更を記録する');
 
-  // サービスリクエストの候補
-  const listOf = cell => {
-    const range = cell.getDataValidation().getCriteriaValues()[0];
-    return plain(gas.evaluate(range.getSheet(), range.getRow(), range.getColumn()))[0];
-  };
-  assert.deepStrictEqual(listOf(gas.ss.getSheetByName('リクエスト').getRange('A2')), ['食品スーパー', '百貨店']);
+  // サービスリクエスト（選択パネルに足したシートのリクエストも出る）
+  assert.deepStrictEqual(plain(g.getRequestPickerData().items.map(item => item.sheet + '：' + item.values[0])), ['新FMT：食品スーパー', '百貨店：百貨店']);
 
   assert.deepStrictEqual(gas.triggers.map(t => t.getHandlerFunction()).sort(), triggers, 'トリガーは1つずつのまま');
   g.setupAfterSheetChange();
@@ -111,7 +106,7 @@ test('setupAfterSheetChange：どのシートにもボタン列が無ければ�
   g.setupAfterSheetChange();
   assert.strictEqual(gas.alerts.length, 1, '直す点として止めない');
   const message = gas.alerts[0].message;
-  assert.match(message, /「差分追跡」「サービスリクエストの候補」を設定しました/);
+  assert.match(message, /「差分追跡」「サービスリクエスト」を設定しました/);
   assert.match(message, /「クレデンシャル オファリング登録」の列のあるシートが無いので、クレデンシャルのボタン列の設定は省きました/);
   assert.match(message, /「変更履歴」の列のあるシートが無いので、変更履歴のボタン列の設定は省きました/);
   assert.strictEqual(sheet.getRange(3, COL.credButton).getValue(), '', 'ボタンは付けない');
@@ -123,7 +118,7 @@ test('setupAfterSheetChange：ボタン列のあるシートにだけボタン�
   const sheet = removeButtonColumns(gas, '百貨店');
   g.setupAfterSheetChange();
   const message = gas.alerts[0].message;
-  assert.match(message, /「差分追跡」「クレデンシャルのボタン列」「変更履歴のボタン列」「サービスリクエストの候補」を設定しました/);
+  assert.match(message, /「差分追跡」「クレデンシャルのボタン列」「変更履歴のボタン列」「サービスリクエスト」を設定しました/);
   assert.match(message, /ボタン列の無い「百貨店」には付けていません/);
   assert.strictEqual(sheet.getRange(3, COL.credButton).getValue(), '');
   assert.strictEqual(gas.ss.getSheetByName('新FMT').getRange(3, COL.credButton).getValue(), false);

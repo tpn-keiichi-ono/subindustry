@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* 色は履歴のサイドバー（HistorySidebarView）と同じ。--bg はスプレッドシートのサイドバーの上の帯と同じ色 */
+      --ink: #1b1b1c; --body: #3c4642; --muted: #5a6660; --faint: #8a968a; --sub: #6b766f; --sub2: #7d887f; --meta: #9AA59C;
+      --bg: #F0F4F9; --card: #ffffff; --card-line: #E3E8E4; --border: #DDE3DE; --line: #EEF1EE; --line2: #F0F2F0; --rail: #E2E7E2;
+      --hover: #F3F6F4; --hover2: #F5F8F6; --off-day: #C3CBC5;
+      --teal: #36A191; --cred: #1F6E5E; --cred-hover: #185A4D; --teal-soft: #E7F4F0; --teal-wash: #F2F9F7;
+      --cred-text: #1F5E55; --cred-soft: #EAF5F2;
+      --after-ink: #174F44; --danger: #B42318; --danger-soft: #FCEDEC; --danger-line: #F3CFCB;
+      --mono: 'Azeret Mono', ui-monospace, Menlo, Consolas, monospace;
+      --sans: 'Inter', 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic UI', Meiryo, sans-serif;
+    }
+    * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: #D5DBD6 transparent; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #D5DBD6; border-radius: 3px; }
+    [hidden] { display: none !important; }
+    html, body { margin: 0; height: 100%; }
+    body { font-family: var(--sans); color: var(--ink); background: var(--bg); -webkit-font-smoothing: antialiased; }
+    button, input, select { font-family: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
+    svg { flex: none; }
+    .mono { font-family: var(--mono); }
+
+    /* セクション（カード）は左右いっぱいに広げ、角丸でそろえる。ボタン・プルダウンは必ずどれかのカードの中に置く */
+    .side { height: 100%; display: flex; flex-direction: column; gap: 8px; }
+    .card { background: var(--card); border: 1px solid var(--card-line); border-radius: 12px; }
+
+    /* ---------- 見出し ---------- */
+    .head-card { flex: none; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+    .row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+    .row-status { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; min-width: 0; }
+    .eyebrow { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600; color: var(--cred); letter-spacing: .04em; }
+    .eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 0 3px rgba(54, 161, 145, .18); }
+    .loaded { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--sub2); }
+    .loaded .mono { color: var(--body); }
+    /* 1行に収めるため、アイコンだけのボタンにする（名前は title と aria-label） */
+    .refresh-btn {
+      flex: none; width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border: 1px solid #D5DCD7; border-radius: 7px;
+      background: var(--card); color: #2b3330;
+    }
+    .refresh-btn:hover { background: var(--hover); }
+    .refresh-btn:disabled { color: var(--off-day); cursor: default; background: var(--card); }
+    .title { font-size: 17px; font-weight: 700; line-height: 1.35; }
+    .counts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .chip {
+      height: 22px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: 11px;
+      font-size: 11px; font-weight: 600; color: var(--muted); background: var(--hover);
+    }
+    .chip .mono { font-size: 11px; font-weight: 600; color: var(--ink); }
+    .chip.main { color: var(--cred); background: var(--teal-soft); }
+    .chip.main .mono { color: var(--cred); }
+    .hint { font-size: 11px; line-height: 1.6; color: var(--muted); }
+    .notes { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; padding-top: 7px; border-top: 1px solid var(--line); }
+    .note { font-size: 10.5px; line-height: 1.6; color: var(--sub); }
+    .note.warn { color: var(--danger); }
+
+    /* ---------- 絞り込み ---------- */
+    .filter-card { flex: none; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+    .search { position: relative; }
+    .search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--faint); pointer-events: none; }
+    .search input {
+      width: 100%; height: 34px; padding: 0 30px 0 30px; border: 1px solid var(--border); border-radius: 9px;
+      font-size: 12px; color: var(--ink); background: var(--card);
+    }
+    .search input::placeholder { color: var(--faint); }
+    .search input::-webkit-search-cancel-button { display: none; }   /* 消すボタンは自前のもの（#clearQuery）だけにする */
+    .search input:hover { border-color: #B8C4BC; }
+    .search input:focus { border-color: var(--teal); }
+    .clear-x {
+      position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; padding: 0; display: grid; place-items: center;
+      border: none; border-radius: 6px; background: transparent; color: var(--faint);
+    }
+    .clear-x:hover { background: var(--hover); color: var(--muted); }
+    .clear-x svg { position: static; transform: none; color: inherit; }
+    .field { display: grid; grid-template-columns: 100px minmax(0, 1fr); align-items: center; gap: 6px; }
+    .field-cap { font-size: 10.5px; font-weight: 600; color: var(--faint); white-space: nowrap; }
+    .field select {
+      width: 100%; min-width: 0; height: 32px; padding: 0 26px 0 9px; border: 1px solid var(--border); border-radius: 8px;
+      font-size: 12px; font-weight: 600; color: var(--ink); background-color: var(--card);
+      appearance: none; -webkit-appearance: none; text-overflow: ellipsis;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5l3 3 3-3' fill='none' stroke='%236b766f' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 9px center;
+    }
+    .field select:hover { border-color: #B8C4BC; }
+    .field select.on { border-color: #9FCFC3; background-color: var(--teal-wash); color: var(--cred); }
+    .field select:disabled { color: var(--off-day); background-color: var(--card); border-color: var(--line); cursor: default; }
+    .filter-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; padding: 6px 2px 0; border-top: 1px solid var(--line); }
+    .result { font-size: 10.5px; color: var(--sub2); }
+    .result .mono { color: var(--body); font-weight: 600; }
+    .link-btn { border: none; background: none; padding: 4px 0; font-size: 11.5px; font-weight: 600; color: var(--cred); }
+    .link-btn:disabled { color: var(--off-day); cursor: default; }
+
+    /* ---------- 追加した結果 ---------- */
+    .banner { flex: none; padding: 9px 12px; display: flex; align-items: flex-start; gap: 8px; font-size: 11.5px; line-height: 1.55; }
+    .banner.ok { border-color: #CFE3DC; background: var(--teal-wash); color: var(--after-ink); }
+    .banner.error { border-color: var(--danger-line); background: var(--danger-soft); color: var(--danger); }
+    .banner span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .banner .clear-x { position: static; transform: none; flex: none; width: 20px; height: 20px; margin: -1px -4px 0 0; color: inherit; opacity: .7; }
+    .banner .clear-x:hover { background: rgba(255, 255, 255, .6); opacity: 1; }
+
+    /* ---------- 一覧 ---------- */
+    /* 一覧のカードは中身に合わせた高さで、入りきらなければカードの中でスクロールする */
+    .list-card { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+    .card-scroll { flex: 0 1 auto; min-height: 0; overflow-y: auto; padding: 4px; }
+    .item { display: flex; flex-direction: column; gap: 5px; padding: 10px 10px 11px; border-radius: 8px; }
+    .item + .item { border-top: 1px solid var(--line2); border-radius: 0 0 8px 8px; }
+    .item:hover { background: var(--hover2); }
+    .item-meta { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 10.5px; line-height: 1.3; color: var(--faint); }
+    .tag {
+      flex: none; height: 18px; padding: 0 7px; display: inline-flex; align-items: center; border-radius: 5px; border: 1px solid #C9E4DC;
+      font-size: 10px; font-weight: 700; letter-spacing: .02em; line-height: 1; color: var(--cred-text); background: var(--cred-soft);
+    }
+    .sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .item-name { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; line-height: 1.45; color: var(--ink); overflow-wrap: anywhere; }
+    .item-name .slash { color: var(--off-day); font-weight: 500; padding: 0 3px; }
+    .item-name .project { color: var(--body); font-weight: 500; }
+    .request { font-size: 12px; line-height: 1.6; color: var(--body); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .blank { color: var(--faint); }
+    mark { background: #FFF1B8; color: inherit; border-radius: 2px; }
+    .add-btn {
+      flex: none; height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 10px;
+      border: 1px solid #CFE3DC; border-radius: 7px; background: var(--card); color: var(--cred); font-size: 11.5px; font-weight: 600; white-space: nowrap;
+    }
+    .add-btn:hover { background: var(--teal-wash); border-color: #9FCFC3; }
+    .add-btn.busy, .add-btn.busy:hover { background: var(--cred); border-color: var(--cred); color: #ffffff; cursor: default; }
+    .add-btn:disabled:not(.busy) { color: var(--off-day); border-color: var(--line); background: var(--card); cursor: default; }
+    .more { padding: 10px 10px 8px; font-size: 10.5px; line-height: 1.6; color: var(--faint); text-align: center; border-top: 1px solid var(--line2); }
+
+    .empty { padding: 28px 16px; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+    .empty strong { font-size: 12.5px; font-weight: 600; color: var(--body); }
+    .empty span { font-size: 11px; line-height: 1.6; color: var(--faint); }
+
+    /* ---------- 読み込み中 ---------- */
+    .loading {
+      position: fixed; inset: 0; z-index: 20; background: rgba(240, 244, 249, .96);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 0 20px;
+      color: var(--muted); font-size: 12.5px; text-align: center;
+    }
+    .loading p { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+    .loading small { color: var(--meta); font-size: 11.5px; min-height: 1.2em; }
+    .spinner { width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--rail); border-top-color: var(--teal); }
+    .loading.error .spinner { display: none; }
+    .loading.error p { color: var(--danger); }
+    .reload-btn { height: 32px; padding: 0 14px; border: none; border-radius: 7px; background: var(--cred); color: #ffffff; font-size: 12px; font-weight: 600; }
+    .reload-btn:hover { background: var(--cred-hover); }
+
+    @media (prefers-reduced-motion: reduce) {
+      *:not(.spinner) { transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="loading" id="loading" role="status" aria-live="polite">
+    <div class="spinner"></div>
+    <p id="loadingText">リクエストを読み込んでいます…</p>
+    <small id="loadingTime"></small>
+    <button type="button" class="reload-btn" id="reload" hidden>もう一度読み込む</button>
+  </div>
+
+  <div class="side">
+    <!-- 見出し（件数・取得した時刻・再読み込み） -->
+    <section class="card head-card">
+      <div class="row-top">
+        <span class="row-status">
+          <span class="eyebrow" id="eyebrow">サービスリクエスト</span>
+          <span class="loaded" id="loaded" hidden><span class="mono" id="loadedAt"></span>に取得</span>
+        </span>
+        <button type="button" class="refresh-btn" id="refresh" title="再読み込み（取り込み元のシートを読み直します）" aria-label="再読み込み">
+          <svg width="13" height="13" viewBox="0 0 12 12"><path d="M10 6a4 4 0 1 1-1.2-2.85M10 1.5V4H7.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <span class="title">リクエストを追加</span>
+      <div class="counts" id="counts" hidden>
+        <span class="chip main">未登録<span class="mono" id="remaining">0</span></span>
+        <span class="chip">登録済み<span class="mono" id="registered">0</span></span>
+      </div>
+      <span class="hint" id="hint">「追加」を押すと、シートの最後の行の下に足します。</span>
+      <div class="notes" id="notes" hidden></div>
+    </section>
+
+    <!-- 絞り込み（左から順に選ぶ・文字で探す） -->
+    <section class="card filter-card" aria-label="絞り込み">
+      <div class="search">
+        <svg width="13" height="13" viewBox="0 0 14 14"><circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9.2 9.2l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <input type="search" id="query" placeholder="得意先・案件名・リクエストで探す" aria-label="文字で探す" autocomplete="off">
+        <button type="button" class="clear-x" id="clearQuery" title="文字を消す" aria-label="文字を消す" hidden>
+          <svg width="10" height="10" viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <label class="field"><span class="field-cap">サブインダストリー</span><select id="f0"></select></label>
+      <label class="field"><span class="field-cap">得意先</span><select id="f1"></select></label>
+      <label class="field"><span class="field-cap">案件名</span><select id="f2"></select></label>
+      <div class="filter-foot">
+        <span class="result" id="result"></span>
+        <button type="button" class="link-btn" id="clearAll" disabled>条件をクリア</button>
+      </div>
+    </section>
+
+    <section class="card banner" id="banner" role="status" aria-live="polite" hidden>
+      <span id="bannerText"></span>
+      <button type="button" class="clear-x" id="closeBanner" title="閉じる" aria-label="閉じる">
+        <svg width="9" height="9" viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </section>
+
+    <section class="card list-card">
+      <div class="card-scroll" id="list"></div>
+    </section>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const FIELDS = ['f0', 'f1', 'f2'];   // サブインダストリー・得意先・案件名（items[].values の 0〜2）
+    const ALL = '';                      // 「すべて」
+    const LIMIT = 200;                   // 一度に出す件数（多いときは絞り込んでもらう）
+
+    let data = null;      // getRequestPickerData() の結果
+    let adding = null;    // 追加している items[].key
+    const picked = [ALL, ALL, ALL];
+
+    /** 要素を作る小さな補助。text は文字列として入れる（HTML として解釈しない）。 */
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text != null) node.textContent = text;
+      return node;
+    }
+
+    /** 比べるときの形（全角・半角と空白の違いはサーバーの credNormalize_ と同じく無視し、大文字・小文字も区別しない） */
+    const norm = v => String(v == null ? '' : v).normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+
+    /* ---------- 読み込み ---------- */
+
+    // くるくると経過秒数は JavaScript で動かす（OS の「動きを減らす」設定でも止まらない）
+    let ticker = null;
+
+    function startTicker(text) {
+      stopTicker();
+      $('loading').classList.remove('error');
+      $('loading').hidden = false;
+      $('loadingText').textContent = text;
+      $('loadingTime').textContent = '';
+      $('reload').hidden = true;
+      const spinner = document.querySelector('.spinner');
+      const began = Date.now();
+      let angle = 0;
+      ticker = setInterval(() => {
+        angle = (angle + 30) % 360;
+        spinner.style.transform = 'rotate(' + angle + 'deg)';
+        const seconds = Math.floor((Date.now() - began) / 1000);
+        $('loadingTime').textContent = seconds >= 2 ? seconds + '秒経過' : '';
+        if (seconds === 6) $('loadingText').textContent = '読み込みに時間がかかっています。そのままお待ちください…';
+      }, 70);
+    }
+
+    function stopTicker() {
+      if (ticker) clearInterval(ticker);
+      ticker = null;
+    }
+
+    function showLoadError(error) {
+      stopTicker();
+      $('loadingTime').textContent = '';
+      $('loading').classList.add('error');
+      $('loadingText').textContent = '読み込めませんでした：' + (error && error.message || error);
+      $('reload').hidden = false;
+      $('refresh').disabled = false;
+    }
+
+    function load() {
+      startTicker('リクエストを読み込んでいます…');
+      $('refresh').disabled = true;
+      google.script.run
+        .withSuccessHandler(result => {
+          stopTicker();
+          $('loading').hidden = true;
+          $('refresh').disabled = false;
+          show(result);
+        })
+        .withFailureHandler(showLoadError)
+        .getRequestPickerData();
+    }
+
+    /* ---------- 表示 ---------- */
+
+    function show(result) {
+      data = result;
+      $('loaded').hidden = !data.loadedAt;
+      $('loadedAt').textContent = data.loadedAt || '';
+      $('counts').hidden = false;
+      $('remaining').textContent = String(data.remaining);
+      $('registered').textContent = String(data.registered);
+
+      const notes = $('notes');
+      notes.textContent = '';
+      const sources = (data.sources || []).map(name => '「' + name + '」').join('');
+      if (sources) notes.appendChild(el('span', 'note', '読むシート：' + sources));
+      if (data.missing) {
+        notes.appendChild(el('span', 'note warn', '登録済みのうち ' + data.missing + '件が取り込み元に見つかりません（「リクエスト」のセルに注を付けました）。'));
+      }
+      if (data.synced === false) {
+        notes.appendChild(el('span', 'note', 'ほかの処理が実行中だったため、登録済みの行は取り込み元に合わせていません（一覧は最新です）。'));
+      }
+      notes.hidden = !notes.childNodes.length;
+      renderFilters();
+      renderList();
+    }
+
+    /** 選んだ条件（左から index 個）に合うリクエスト */
+    function narrowed(count) {
+      return data.items.filter(item => {
+        for (let i = 0; i < count; i++) {
+          if (picked[i] !== ALL && norm(item.values[i]) !== picked[i]) return false;
+        }
+        return true;
+      });
+    }
+
+    /** プルダウンを付け直す。左で選んだものに合わない値は「すべて」に戻す */
+    function renderFilters() {
+      FIELDS.forEach((id, i) => {
+        const select = $(id);
+        const options = new Map();   // 比べる形 → 表示（最初に出てきた書き方）と件数
+        narrowed(i).forEach(item => {
+          const key = norm(item.values[i]);
+          const option = options.get(key) || {label: item.values[i], count: 0};
+          option.count++;
+          options.set(key, option);
+        });
+        if (picked[i] !== ALL && !options.has(picked[i])) picked[i] = ALL;
+        select.textContent = '';
+        select.appendChild(new Option('すべて', ALL));
+        options.forEach((option, key) => {
+          select.appendChild(new Option((option.label || '（空欄）') + '（' + option.count + '）', key));
+        });
+        select.value = picked[i];
+        select.classList.toggle('on', picked[i] !== ALL);
+        select.disabled = !options.size;
+      });
+      $('clearAll').disabled = picked.every(v => v === ALL) && !$('query').value;
+    }
+
+    /** 文字で探すときの語（空白で区切った語をすべて含むもの） */
+    function words() {
+      return $('query').value.trim().split(/\s+/).map(norm).filter(Boolean);
+    }
+
+    function matches(item, terms) {
+      if (!terms.length) return true;
+      const text = norm(item.values.join(' ') + ' ' + item.sheet);
+      return terms.every(t => text.indexOf(t) >= 0);
+    }
+
+    /** text を入れた要素。terms に合う部分に印を付ける（文字は textContent で入れる） */
+    function highlighted(tag, className, text, terms) {
+      const node = el(tag, className);
+      const value = String(text || '');
+      if (!terms.length || !value) {
+        node.textContent = value;
+        return node;
+      }
+      // 1文字ずつ比べる形にして、合う範囲を元の文字列の位置で印を付ける
+      const chars = Array.from(value);
+      const normed = chars.map(norm);
+      const marks = new Array(chars.length).fill(false);
+      terms.forEach(term => {
+        for (let start = 0; start < chars.length; start++) {
+          let joined = '';
+          for (let end = start; end < chars.length && joined.length < term.length; end++) {
+            joined += normed[end];
+            if (joined === term) {
+              for (let k = start; k <= end; k++) marks[k] = true;
+              break;
+            }
+            if (term.indexOf(joined) !== 0) break;
+          }
+        }
+      });
+      let run = '';
+      let marked = false;
+      const flush = () => {
+        if (!run) return;
+        node.appendChild(marked ? el('mark', null, run) : document.createTextNode(run));
+        run = '';
+      };
+      chars.forEach((ch, i) => {
+        if (marks[i] !== marked) { flush(); marked = marks[i]; }
+        run += ch;
+      });
+      flush();
+      return node;
+    }
+
+    function renderList() {
+      const list = $('list');
+      list.textContent = '';
+      const terms = words();
+      const shown = narrowed(3).filter(item => matches(item, terms));
+      const filtered = shown.length !== data.items.length;
+      $('result').textContent = '';
+      $('result').appendChild(el('span', 'mono', String(shown.length)));
+      $('result').appendChild(document.createTextNode(filtered ? '件（未登録 ' + data.items.length + '件のうち）' : '件'));
+
+      if (!data.items.length) {
+        const empty = el('div', 'empty');
+        empty.appendChild(el('strong', null, data.total ? 'すべて登録済みです' : 'リクエストが見つかりません'));
+        empty.appendChild(el('span', null, data.total
+          ? '取り込み元にリクエストを書き足したら、右上の再読み込みを押してください。'
+          : '取り込み元のシートの「サービスのリクエスト」の列に、リクエストが入っているか確かめてください。'));
+        list.appendChild(empty);
+        return;
+      }
+      if (!shown.length) {
+        const empty = el('div', 'empty');
+        empty.appendChild(el('strong', null, '条件に合うリクエストはありません'));
+        empty.appendChild(el('span', null, '絞り込みや探す文字を変えてみてください。'));
+        list.appendChild(empty);
+        return;
+      }
+
+      shown.slice(0, LIMIT).forEach(item => list.appendChild(renderItem(item, terms)));
+      if (shown.length > LIMIT) {
+        list.appendChild(el('div', 'more', '先頭の ' + LIMIT + '件を表示しています。残りの ' + (shown.length - LIMIT) + '件は、絞り込むか文字で探してください。'));
+      }
+    }
+
+    function renderItem(item, terms) {
+      const [subIndustry, customer, project, request] = item.values;
+      const node = el('div', 'item');
+      const meta = el('div', 'item-meta');
+      meta.appendChild(el('span', 'tag', item.sheet));
+      meta.appendChild(subIndustry ? highlighted('span', 'sub', subIndustry, terms) : el('span', 'sub blank', 'サブインダストリーなし'));
+      node.appendChild(meta);
+
+      const head = el('div', 'item-head');
+      const name = el('span', 'item-name');
+      name.appendChild(customer ? highlighted('span', null, customer, terms) : el('span', 'blank', '得意先なし'));
+      name.appendChild(el('span', 'slash', '／'));
+      name.appendChild(project ? highlighted('span', 'project', project, terms) : el('span', 'project blank', '案件名なし'));
+      head.appendChild(name);
+
+      const button = el('button', 'add-btn');
+      button.type = 'button';
+      button.title = 'このリクエストを「' + (data.requestSheet || 'サービスリクエスト') + '」シートに追加します';
+      if (adding === item.key) {
+        button.classList.add('busy');
+        button.textContent = '追加中…';
+      } else {
+        button.innerHTML = '<svg width="10" height="10" viewBox="0 0 12 12"><path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
+        button.appendChild(document.createTextNode('追加'));
+      }
+      button.disabled = adding != null;
+      button.addEventListener('click', () => add(item));
+      head.appendChild(button);
+      node.appendChild(head);
+
+      node.appendChild(highlighted('div', 'request', request, terms));
+      return node;
+    }
+
+    /* ---------- 追加 ---------- */
+
+    function add(item) {
+      if (adding != null) return;
+      adding = item.key;
+      hideBanner();
+      $('refresh').disabled = true;
+      renderList();
+      google.script.run
+        .withSuccessHandler(result => {
+          adding = null;
+          $('refresh').disabled = false;
+          showBanner(result.ok ? 'ok' : 'error', result.ok
+            ? result.message + '（' + [item.values[1], item.values[2]].filter(Boolean).join('／') + '）'
+            : result.message);
+          if (result.data) show(Object.assign({}, data, result.data));
+          else renderList();
+        })
+        .withFailureHandler(error => {
+          adding = null;
+          $('refresh').disabled = false;
+          showBanner('error', '追加できませんでした：' + (error && error.message || error));
+          renderList();
+        })
+        .addServiceRequest(item.key);
+    }
+
+    function showBanner(kind, text) {
+      $('banner').className = 'card banner ' + kind;
+      $('bannerText').textContent = text;
+      $('banner').hidden = false;
+    }
+
+    function hideBanner() {
+      $('banner').hidden = true;
+    }
+
+    /* ---------- 操作 ---------- */
+
+    FIELDS.forEach((id, i) => {
+      $(id).addEventListener('change', () => {
+        picked[i] = $(id).value;
+        for (let j = i + 1; j < FIELDS.length; j++) picked[j] = ALL;   // 右の列は選び直す
+        renderFilters();
+        renderList();
+      });
+    });
+
+    let typing = null;
+    $('query').addEventListener('input', () => {
+      $('clearQuery').hidden = !$('query').value;
+      clearTimeout(typing);
+      typing = setTimeout(() => { renderFilters(); renderList(); }, 150);
+    });
+    $('clearQuery').addEventListener('click', () => {
+      $('query').value = '';
+      $('clearQuery').hidden = true;
+      renderFilters();
+      renderList();
+      $('query').focus();
+    });
+    $('clearAll').addEventListener('click', () => {
+      picked.fill(ALL);
+      $('query').value = '';
+      $('clearQuery').hidden = true;
+      renderFilters();
+      renderList();
+    });
+    $('closeBanner').addEventListener('click', hideBanner);
+    $('refresh').addEventListener('click', () => { hideBanner(); load(); });
+    $('reload').addEventListener('click', load);
+
+    load();
+  </script>
+</body>
+</html>

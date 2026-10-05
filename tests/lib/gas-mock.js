@@ -12,8 +12,7 @@
  * - setRichTextValues は変換しない（文字列のまま入る）。
  * - getRange はシートの大きさを超えるとエラーになる（行・列の追加を忘れたときに気づけるように）。
  * - スクリプトの書き込みは gas.writes に「ロックを持っていたか」と一緒に残る（利用者の入力 gas.edit() は残さない）。
- * - 数式は計算しない（表示は空）。gas.evaluateFormulas = true のときだけ、tests/lib/formula.js で計算して表示する
- *   （使える関数は formula.js を参照）。gas.evaluate(sheet, row, col) で、配列の結果もそのまま取り出せる。
+ * - 数式は計算しない（表示は空）。
  */
 'use strict';
 
@@ -21,7 +20,6 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const crypto = require('crypto');
-const formula = require('./formula');
 
 const ROOT = path.join(__dirname, '..', '..');   // Apps Script のファイルはリポジトリ直下
 
@@ -209,7 +207,7 @@ class Range {
   getValues() { this.read('getValues'); return this.map(cell => (cell ? cell.v : '')); }
   getDisplayValues() {
     this.read('getDisplayValues');
-    return this.map((cell, r, c) => this.sheet.gas.display(cell, this.sheet, this.row + r, this.col + c));
+    return this.map(cell => this.sheet.gas.display(cell));
   }
   getFormulas() { this.read('getFormulas'); return this.map(cell => (cell ? cell.f : '')); }
   getRichTextValues() {
@@ -586,35 +584,7 @@ function createGas(options) {
     cell.v = value;
   };
 
-  /** 数式のセルを計算する（結果は1つの値か2次元の配列。エラーは {error: '#N/A'} など）。数式でなければ値。 */
-  const evaluating = new Set();
-  gas.evaluate = (sheet, row, col) => {
-    const cell = sheet.cell(row, col, false);
-    if (!cell || !cell.f) return cell ? cell.v : '';
-    const id = sheet.getSheetId() + ':' + row + ':' + col;
-    if (evaluating.has(id)) return {error: '#REF!'};   // 循環参照
-    evaluating.add(id);
-    try {
-      return formula.evaluate(cell.f, {
-        sheet,
-        sheetByName: name => ss.getSheetByName(name),
-        cellValue: (s, r, c) => {
-          const v = gas.evaluate(s, r, c);
-          return Array.isArray(v) ? v[0][0] : v;
-        }
-      });
-    } finally {
-      evaluating.delete(id);
-    }
-  };
-
-  gas.display = (cell, sheet, row, col) => {
-    if (cell && cell.f && gas.evaluateFormulas && sheet) {
-      let v = gas.evaluate(sheet, row, col);
-      if (Array.isArray(v)) v = v[0][0];
-      if (formula.isError(v)) return v.error;
-      return gas.display({v: v === true ? true : v === false ? false : v, f: ''});
-    }
+  gas.display = cell => {
     const v = cell ? cell.v : '';
     if (v === '' || v == null) return '';
     if (isDate(v)) {

@@ -10,10 +10,11 @@ test('リポジトリ直下の *.gs を1つのグローバルスコープに読�
   });
 });
 
-test('onOpen で「履歴機能」と「アカウントプランシート作成」の両方のメニューが出る', () => {
+test('onOpen で「履歴機能」「アカウントプランシート作成」「サービス管理」のメニューが出る', () => {
   const gas = createGas();
   gas.global.onOpen({source: gas.ss});
-  assert.deepStrictEqual(gas.menus.map(m => m.title), ['履歴機能', 'アカウントプランシート作成']);
+  assert.deepStrictEqual(gas.menus.map(m => m.title), ['履歴機能', 'アカウントプランシート作成', 'サービス管理']);
+  assert.deepStrictEqual(gas.menus[2].items, [{label: 'リクエストを追加', fn: 'openRequestPicker'}]);
 });
 
 test('「履歴機能」のメニューは「権限を承認する（初回のみ）」だけ（ほかの処理はエディタから実行する）', () => {
@@ -51,6 +52,12 @@ test('メニュー項目の関数がすべて存在し、内部用（末尾 _）
   });
 });
 
+test('単純トリガーの onEdit は置かない（リクエストは選択パネルで登録する。編集のたびに動く処理を作らない）', () => {
+  const gas = createGas();
+  assert.strictEqual(typeof gas.global.onEdit, 'undefined');
+  assert.strictEqual(typeof gas.global.doGet, 'function', 'doGet は1つ（HistorySidebar.gs）');
+});
+
 test('onOpen が単純トリガーとして動く（承認前でも失敗しない範囲の処理だけ）', () => {
   const gas = createGas();
   gas.global.onOpen({source: gas.ss});
@@ -79,7 +86,7 @@ test('本物のシート名の設定：DIFF_RULES・前の名前（formerNames�
 
   // 機能ごとのシート名は、追跡するシートやほかの機能のシートと重ならない
   const others = [diff.logSheet, diff.rowSnapshotSheet, gas.get('CRED_OPTIONS').logSheet,
-    svc.requestSheet, svc.listSheet, gas.get('TASK_OPTIONS').sheet];
+    svc.requestSheet, svc.legacyListSheet, gas.get('TASK_OPTIONS').sheet];
   assert.strictEqual(new Set(others).size, others.length, '機能ごとのシート名が重なっている');
   others.forEach(name => {
     assert.ok(!names.includes(name) && !former.includes(name), '「' + name + '」が追跡するシートと同じ名前');

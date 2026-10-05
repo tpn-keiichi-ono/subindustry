@@ -106,11 +106,7 @@ test('setupTaskSheet：何度実行しても入力済みのタスクは消えな
   assert.strictEqual(gas.alerts.length, 0);
 });
 
-test('タスク管理シートの編集では何もしない（プルダウンはリクエストのサービス案を参照するだけ）', () => {
-  const {gas, g} = setup();
-  g.setupRequestSheet();
-  g.setupTaskSheet();
-  gas.writes.length = 0;
-  g.onEdit(gas.edit(gas.ss.getSheetByName('タスク管理'), 'B2', '要件を聞く'));
-  assert.deepStrictEqual(gas.writes, []);
+test('タスク管理シートの編集で動く処理は無い（単純トリガーの onEdit を置かない。プルダウンはリクエストのサービス案を参照するだけ）', () => {
+  const {g} = setup();
+  assert.strictEqual(typeof g.onEdit, 'undefined');
 });

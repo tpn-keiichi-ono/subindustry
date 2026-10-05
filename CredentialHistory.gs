@@ -91,6 +91,7 @@ const CRED_OPTIONS = {
 function onOpen() {
   credAddMenu_();
   if (typeof apAddMenu_ === 'function') apAddMenu_();   // コード.gs（アカウントプランシート作成）
+  if (typeof svcAddMenu_ === 'function') svcAddMenu_();   // ServiceManagement.gs（サービスリクエストの選択パネル）
 }
 
 /**

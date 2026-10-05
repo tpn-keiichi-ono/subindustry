@@ -1,24 +1,20 @@
 /**
  * サービス管理（リクエストのとりまとめ）
- * 新FMT の「サービスのリクエスト」（Z列）から、検討するリクエストを「リクエスト」シートに選び、リクエストをもとにサービス案を考える。
+ * 取り込み元のシート（test.gs の DIFF_RULES で requests: true を付けたシート）の「サービスのリクエスト」から、
+ * 検討するリクエストを「サービスリクエスト」シートに登録し、リクエストをもとにサービス案を考える。
  * TaskManagement.gs と同じプロジェクトに置くファイル（見出しの用意・ロックは TaskManagement.gs と共通）。
  *
  * 仕組み
- * - リクエスト シートの1行が1件のリクエスト。A〜D（サブインダストリー → 得意先 → 案件名 → リクエスト）はすべて連動プルダウンで、
- *   候補は新FMT から自動で作る。左の列から順に選び、左の列が空の列のプルダウンには「（先に〜を選んでください）」だけが出る。
- *   左から選んだ値で1つに決まる次の列（B・C）は自動で入る（例：サブインダストリーを選んで得意先が1つなら得意先）。
- *   D（リクエスト）とその右の列には、スクリプトは値を入れない（人が選ぶ・入力する）。
- *   候補は「新FMT でリクエストが入っていて、ほかの行でまだ選んでいない案件」だけ。
- *   候補が無くなると、プルダウンには「（すべて選択済み）」だけが出る（リクエストをすべて選んだことが分かる）
- * - 候補は非表示の「__REQUEST_LISTS」シートの数式で作る（左の列を選ぶとすぐに変わる）。リクエスト シートの onEdit は、
- *   編集した行を整える（候補に無い値を空にする・1つに決まる列を埋める）だけで、プルダウンは付け直さない
- * - サービスは最初から決まっているものではなく、リクエストをもとに考える。リクエストの「サービス案」に入力した名前がサービス案になる
- *   （同じ名前を付けたリクエストが1つのサービス案にまとまる）
- * - 選んだ行は、新FMT の変更に合わせる（単純トリガーの onEdit）：サブインダストリーは同じ案件の値にそろえ、
- *   1つのセルで得意先・案件名・リクエストを書き換えたときは同じ行の値を直す。新FMT から消えたリクエストには注を付ける。
- *   新FMT にリクエストが増えたり減ったりしたら、__REQUEST_LISTS の案件も書き直す
- * - 管理者が setupRequestSheet() をエディタから実行して、シート・見出し・プルダウンを用意する（候補をまとめて作り直すときも）。
- *   前の版で全件を自動で取り込んでいた行のうち、手を付けていない行は removeUntouchedRequests() で削除して候補に戻せる
+ * - リクエストは、選択パネル（RequestPickerView。メニュー「サービス管理」→「リクエストを追加」）で選んで登録する。
+ *   パネルは開いたとき・追加したときに取り込み元の最新を読み、まだ登録していないリクエストだけを出す
+ *   （サブインダストリー → 得意先 → 案件名で絞り込み、文字で探せる）。選ぶと、サービスリクエストの最後の行の下に A〜D を書く。
+ * - 前の版は、セルの連動プルダウン（候補を非表示の __REQUEST_LISTS の数式で作る）と onEdit で登録していたが、
+ *   行の並べ替えでプルダウンがずれる・onEdit が30秒で止まる・差分追跡とロックを取り合う・取り込み元の変更を取りこぼす、
+ *   などで安定しなかったのでやめた。setupRequestSheet() が、前の版の A〜D のプルダウンと __REQUEST_LISTS を外す。
+ * - サービスは最初から決まっているものではなく、リクエストをもとに考える。「サービス案」に入力した名前がサービス案になる
+ *   （同じ名前を付けたリクエストが1つのサービス案にまとまる）。判断はプルダウン、ほかの列は自由に入力する
+ * - 登録した行は、パネルを開いたとき・setupRequestSheet() のときに取り込み元に合わせる（svcSync_）：
+ *   サブインダストリーを同じ案件の値にそろえ、取り込み元に無くなったリクエストには注を付ける
  * - サービス案ごとの検討の進捗は、タスク管理シート（TaskManagement.gs）でタスクとして管理する
  */
 
@@ -26,15 +22,14 @@ const SVC_OPTIONS = {
   requestSheet: 'サービスリクエスト',
   headerRow: 1,
   // リクエストを読むシートは、test.gs の DIFF_RULES で requests: true を付けたシート（見出しの行も DIFF_RULES の headerRow）。
-  // 新FMT2 も読むときは、DIFF_RULES の新FMT2 に requests: true を足す（svcSourceSheets_）
-  // 読む列の見出し（リクエスト シートの A〜D の順）。リクエストは Z列。1つのセルに1件
+  // 読む列の見出し（サービスリクエストの A〜D の順）。1つのセルに1件
   sourceHeaders: ['サブインダストリー', '得意先', '案件名', 'サービスのリクエスト'],
-  // cascade：連動プルダウンの順（0 から）。aliases は前の版の見出し
+  // source：取り込み元の列（sourceHeaders の何番目か）。aliases は前の版の見出し
   requestColumns: [
-    {key: 'subIndustry', label: 'サブインダストリー', width: 160, required: true, cascade: 0},
-    {key: 'customer', label: '得意先', width: 200, required: true, cascade: 1},
-    {key: 'project', label: '案件名', width: 240, required: true, cascade: 2},
-    {key: 'request', label: 'リクエスト', width: 360, required: true, cascade: 3},
+    {key: 'subIndustry', label: 'サブインダストリー', width: 160, required: true, source: 0},
+    {key: 'customer', label: '得意先', width: 200, required: true, source: 1},
+    {key: 'project', label: '案件名', width: 240, required: true, source: 2},
+    {key: 'request', label: 'リクエスト', width: 360, required: true, source: 3},
     {key: 'decision', label: '判断', width: 130, options: ['未判断', 'サービス化検討', '棄却']},
     // insertAfter：前からあるシートに足すときは、その見出しの列のすぐ右に差し込む（無ければ右端）
     {key: 'feedback', label: 'サービス部門からのフィードバック', width: 300, insertAfter: '判断'},   // 自由に入力する
@@ -43,21 +38,18 @@ const SVC_OPTIONS = {
   ],
   // 使わなくなった列（setupRequestSheet() で、確認してから削除する。取り込み日は追加日の前の版の見出し）
   removedColumns: ['メモ', '追加日', '取り込み日'],
-  allSelected: '（すべて選択済み）',      // 候補をすべて選んだときにプルダウンに出す文字
-  noRequests: '（取り込み元にリクエストがありません）',   // 読むシートにリクエストが1件も無いときにプルダウンに出す文字
-  chooseLeftFirst: '（先に{label}を選んでください）',  // 左の列が空のときに、右の列のプルダウンに出す文字（{label} は空の列の見出し）
-  maxListItems: 500,                     // プルダウンの候補の上限（超えたときは知らせる）
-  listSheet: '__REQUEST_LISTS',          // 候補を数式で作る非表示のシート（リクエスト シートの A〜D のプルダウンが参照する）
-  listMargin: 5,                         // 候補の欄に足しておく余白（新FMT で候補が増えても、作り直さずに済むように）
+  menuTitle: 'サービス管理',
+  pickerTemplate: 'RequestPickerView',
+  pickerTitle: 'リクエストを追加',
   defaultDecision: '未判断',             // まだ判断していないことを表す判断（空と同じに扱う）
-  missingNote: '取り込み元に見つかりません',   // 新FMT から消えた・書き換えられたリクエストに付ける注の先頭
-  changedNote: '取り込み元でリクエストが書き換えられました',   // サービス案・判断を付けたあとで書き換えられたときの注（セルの注。列ではない）
-  legacyChangedNotes: ['新FMT でリクエストが書き換えられました'],   // 前の版で付けた同じ注（このスクリプトの注として扱う）
-  // 前の版で付けた保護（外す）
+  missingNote: '取り込み元に見つかりません',   // 取り込み元から消えた・書き換えられたリクエストに付ける注の先頭
+  // 前の版で付けた注（このスクリプトの注として扱い、取り込み元に見つからないときは付け替える）
+  legacyNotes: ['取り込み元でリクエストが書き換えられました', '新FMT でリクエストが書き換えられました'],
+  // 前の版で付けた保護・候補のシート（setupRequestSheet() で外す）
   legacyProtectDescriptions: ['リクエスト：新FMT から自動で転記する列', 'リクエスト：案件を選ぶと自動で入る列'],
-  lockWaitMs: 30000,                      // エディタから実行する処理のロックの待ち時間
-  // リクエスト シートの編集（onEdit）でロックを待つ時間。続けて選ぶと前の選択の処理を待つので長めにする（単純トリガーは30秒で止まる）
-  editLockWaitMs: 20000
+  legacyListSheet: '__REQUEST_LISTS',
+  lockWaitMs: 30000,        // エディタから実行する処理のロックの待ち時間
+  pickerLockWaitMs: 20000   // パネルから追加するときのロックの待ち時間
 };
 
 /** リクエストを読むシートの名前（test.gs の DIFF_RULES で requests: true を付けたシート。DIFF_RULES の順）。 */
@@ -70,59 +62,134 @@ function svcSourceLabel_() {
   return '「' + svcSourceSheets_().join('」「') + '」';
 }
 
-/** 連動プルダウンの列の key（左から）。 */
-function svcCascadeKeys_() {
-  return SVC_OPTIONS.requestColumns.filter(c => c.cascade != null).sort((a, b) => a.cascade - b.cascade).map(c => c.key);
+/** 取り込み元から書く列の key（サブインダストリー・得意先・案件名・リクエストの順）。 */
+function svcSourceKeys_() {
+  return SVC_OPTIONS.requestColumns.filter(c => c.source != null).sort((a, b) => a.source - b.source).map(c => c.key);
 }
 
-/** 連動プルダウンの列の見出し（左から）。 */
-function svcCascadeLabels_() {
-  return svcCascadeKeys_().map(key => SVC_OPTIONS.requestColumns.find(c => c.key === key).label);
+/* ---------------- メニューと選択パネル ---------------- */
+
+/** メニュー「サービス管理」。onOpen（CredentialHistory.gs）から呼ぶ。 */
+function svcAddMenu_() {
+  SpreadsheetApp.getUi()
+    .createMenu(SVC_OPTIONS.menuTitle)
+    .addItem('リクエストを追加', 'openRequestPicker')
+    .addToUi();
 }
 
-/** level 番目の連動列が空のときに、その右の列のプルダウンに出す文字。 */
-function svcChooseFirstText_(level) {
-  return SVC_OPTIONS.chooseLeftFirst.replace('{label}', svcCascadeLabels_()[level]);
+/** メニュー「リクエストを追加」：選択パネル（サイドバー）を開く。 */
+function openRequestPicker() {
+  const html = HtmlService.createTemplateFromFile(SVC_OPTIONS.pickerTemplate).evaluate().setTitle(SVC_OPTIONS.pickerTitle);
+  SpreadsheetApp.getUi().showSidebar(html);
 }
-
-/** プルダウンの案内の文字（選んでも入らない値）なら、選んだ人に知らせる文を返す。案内の文字でなければ空。 */
-function svcPlaceholderMessage_(value, hasRecords) {
-  if (value === SVC_OPTIONS.allSelected || value === SVC_OPTIONS.noRequests) {
-    return hasRecords ? 'リクエストのある案件は、すべて選んでいます。' : SVC_OPTIONS.noRequests.replace(/[（）]/g, '') + '。';
-  }
-  const labels = svcCascadeLabels_();
-  const level = labels.findIndex((label, i) => value === svcChooseFirstText_(i));
-  return level >= 0 ? '先に' + labels[level] + 'を選んでください（左の列から順に選びます）。' : '';
-}
-
-/* ---------------- 編集したとき（単純トリガー） ---------------- */
 
 /**
- * 単純トリガー。onEdit() はプロジェクト全体でこの1つだけにすること。
- * 新FMT とリクエスト シートの編集だけを扱い、ほかのシートではすぐ戻る
- * （差分追跡はインストール型の recordDiffEdit が別に動く）。編集した本人として、承認なしで動く。
+ * 選択パネルが読む内容（google.script.run から呼ぶ）。登録した行を取り込み元に合わせてから、まだ登録していないリクエストを返す。
+ * ほかの処理が実行中で合わせられないときは、合わせずに読むだけにする（パネルは開けるように）。
  */
-function onEdit(e) {
-  if (!e || !e.range) return;
-  const sheet = e.range.getSheet();
-  const name = sheet.getName();
-  let handler = null;
-  if (name === SVC_OPTIONS.requestSheet) handler = svcHandleRequestEdit_;
-  else if (svcSourceSheets_().indexOf(name) >= 0) handler = svcHandleSourceEdit_;
-  if (!handler || e.range.getLastRow() <= SVC_OPTIONS.headerRow) return;
+function getRequestPickerData() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SVC_OPTIONS.requestSheet);
+  if (!sheet) throw new Error('「' + SVC_OPTIONS.requestSheet + '」シートがありません。管理者に setupRequestSheet() の実行を頼んでください。');
+  const records = svcSourceRecords_(ss);
+  let synced = true;
   try {
-    handler(sheet, e.range, e);
-  } catch (error) {
-    console.warn(name + ' edit skipped: ' + (error && error.stack || error));
-    try { sheet.getParent().toast(error.message, 'サービス管理', 10); } catch (_) {}
+    taskWithLock_(() => svcSync_(ss, sheet, records), 5000);
+  } catch (_) {
+    synced = false;
   }
+  return Object.assign(svcPickerData_(sheet, records), {synced});
+}
+
+/**
+ * 選択パネルで選んだリクエストを登録する（google.script.run から呼ぶ）。key は getRequestPickerData() の items[].key。
+ * 取り込み元とサービスリクエストを読み直し、まだ登録していなければ、最後の行（svcRegistered_）の下の A〜D に書く。
+ * {ok, row, message, data: パネルの新しい内容}
+ */
+function addServiceRequest(key) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  return taskWithLock_(() => {
+    const sheet = ss.getSheetByName(SVC_OPTIONS.requestSheet);
+    if (!sheet) throw new Error('「' + SVC_OPTIONS.requestSheet + '」シートがありません。管理者に setupRequestSheet() の実行を頼んでください。');
+    const records = svcSourceRecords_(ss);
+    const record = records.find(rec => rec.key === String(key));
+    if (!record) {
+      return {ok: false, row: 0, data: svcPickerData_(sheet, records),
+        message: '取り込み元にこのリクエストが見つかりません（書き換えか削除された可能性があります）。一覧を読み込み直しました。'};
+    }
+    const registered = svcRegistered_(sheet);
+    if (registered.keys.has(record.key)) {
+      return {ok: false, row: 0, data: svcPickerData_(sheet, records), message: 'このリクエストは、すでに登録されています。'};
+    }
+
+    const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
+    const row = registered.lastRow + 1;
+    if (row > sheet.getMaxRows()) {
+      // 行が足りなければ足し、判断のプルダウンも付ける
+      const maxRows = sheet.getMaxRows();
+      sheet.insertRowsAfter(maxRows, row - maxRows);
+      taskApplyColumnRules_(sheet, SVC_OPTIONS.requestColumns.filter(c => c.options), cols, maxRows + 1, row - maxRows);
+    }
+    svcSourceKeys_().forEach((k, i) => {
+      // 先頭に ' を付けて書く（「=…」のリクエストも数式にならない）
+      sheet.getRange(row, cols[k]).setValue(credText_(record.values[i]));
+    });
+    return {ok: true, row, data: svcPickerData_(sheet, records), message: row + '行目に追加しました。'};
+  }, SVC_OPTIONS.pickerLockWaitMs);
+}
+
+/**
+ * パネルに出す内容。{items: まだ登録していないリクエスト [{key, sheet, values: [サブインダストリー, 得意先, 案件名, リクエスト]}],
+ *  total, registered, remaining, missing: 取り込み元に見つからない登録済みのリクエストの数, sources: 読むシート, requestSheet, loadedAt}
+ */
+function svcPickerData_(sheet, records) {
+  const registered = svcRegistered_(sheet);
+  const sourceKeys = new Set(records.map(rec => rec.key));
+  const items = records.filter(rec => !registered.keys.has(rec.key))
+    .map(rec => ({key: rec.key, sheet: rec.sheet, values: rec.values.slice()}));
+  let missing = 0;
+  registered.keys.forEach(key => { if (!sourceKeys.has(key)) missing++; });
+  return {
+    items,
+    total: records.length,
+    registered: records.length - items.length,
+    remaining: items.length,
+    missing,
+    sources: svcSourceSheets_(),
+    requestSheet: SVC_OPTIONS.requestSheet,
+    loadedAt: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm')
+  };
+}
+
+/**
+ * サービスリクエストに登録したリクエストのキーと、SVC_OPTIONS.requestColumns の列（A〜H）のどれかに値のある最後の行。{keys: Set, lastRow}
+ * 判断だけを書いた行などにリクエストを書き足さないよう、最後の行はすべての列で見る（ほかの列は見ない）。
+ */
+function svcRegistered_(sheet) {
+  const headerRow = SVC_OPTIONS.headerRow;
+  const keys = new Set();
+  const count = sheet.getLastRow() - headerRow;
+  if (count < 1) return {keys, lastRow: headerRow};
+  const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, headerRow);
+  const sourceKeys = svcSourceKeys_();
+  const used = Object.keys(cols).map(k => cols[k]).filter(Boolean);
+  const left = Math.min.apply(null, used);
+  const right = Math.max.apply(null, used);
+  const lines = sheet.getRange(headerRow + 1, left, count, right - left + 1).getDisplayValues();
+  let lastRow = headerRow;
+  lines.forEach((line, i) => {
+    if (used.some(col => String(line[col - left]).trim())) lastRow = headerRow + 1 + i;
+    const values = sourceKeys.map(k => String(line[cols[k] - left]).trim());
+    if (values[3]) keys.add(svcRequestKey_(values[1], values[2], values[3]));
+  });
+  return {keys, lastRow};
 }
 
 /* ---------------- 管理者がエディタから実行する ---------------- */
 
 /**
- * リクエスト シートを用意する（無ければ作る）。見出し・プルダウンを付け、選んだ行を新FMT に合わせてから、
- * 候補のシート（__REQUEST_LISTS）と全行のプルダウンを作り直す。行を足した・並べ替えたあとも実行してよい。
+ * サービスリクエストのシートを用意する（無ければ作る）。見出し・判断のプルダウンを付け、登録した行を取り込み元に合わせる。
+ * 前の版の A〜D の連動プルダウンと、候補のシート（__REQUEST_LISTS）は外す。
  * 使わなくなった列（SVC_OPTIONS.removedColumns。メモ・追加日）があれば、確認してから削除する。
  * タスク管理シートがあれば「サービス案」の列（無ければ右端に足す）にもプルダウンを付ける。何度実行してもよい。
  */
@@ -149,18 +216,20 @@ function svcSetupRequestSheet_(ss) {
     const removed = removeOld && existing ? taskDeleteColumns_(existing, SVC_OPTIONS.removedColumns, SVC_OPTIONS.headerRow) : [];
     const ensured = Object.assign(svcEnsureSheet_(ss), {removed});
     const records = svcSourceRecords_(ss);
-    const synced = svcSync_(ss, ensured.sheet, null, records);
+    const synced = svcSync_(ss, ensured.sheet, records);
     const rules = svcApplyRules_(ss, ensured.sheet);
-    const lists = svcBuildLists_(ss, ensured.sheet, records, {full: true});
-    return Object.assign(ensured, synced, rules, svcCountRequests_(ensured.sheet, records),
-      {warnings: rules.warnings.concat(lists.warnings)});
+    const legacy = svcRemoveLegacyLists_(ss, ensured.sheet);
+    return Object.assign(ensured, synced, rules, {legacy}, svcCountRequests_(ensured.sheet, records));
   }, SVC_OPTIONS.lockWaitMs);
-  result.warnings = result.warnings.concat(svcCheckLists_(ss));   // 数式の計算を待つため、ロックの外で読む
 
   const name = SVC_OPTIONS.requestSheet;
-  const lines = [result.created ? '「' + name + '」シートを作りました。' : '「' + name + '」シートのプルダウンを作り直しました。'];
+  const lines = [result.created ? '「' + name + '」シートを作りました。' : '「' + name + '」シートを整えました。'];
   lines.push(svcCountMessage_(result));
   if (result.missing) lines.push(svcSourceLabel_() + 'に見つからないリクエストが ' + result.missing + '件あります（「リクエスト」のセルに注を付けました）。');
+  if (result.legacy) {
+    lines.push('前の版の A〜D のプルダウンと「' + SVC_OPTIONS.legacyListSheet + '」シートを外しました。' +
+      'リクエストは、メニュー「' + SVC_OPTIONS.menuTitle + '」→「リクエストを追加」から登録します。');
+  }
   if (result.removed.length) lines.push('「' + result.removed.join('」「') + '」の列を削除しました。');
   else if (oldColumns.length) lines.push('「' + oldColumns.join('」「') + '」の列は残しました（使いません。不要なら削除してください）。');
   if (result.added.length) lines.push('「' + result.added.join('」「') + '」の列を足しました。');
@@ -170,7 +239,7 @@ function svcSetupRequestSheet_(ss) {
 
 /**
  * 前の版で全件を自動で取り込んだまま手を付けていない行（判断が未判断か空で、フィードバック・サービス案・担当者が空）を削除し、
- * その案件をまた候補に戻す。削除する前に件数を見せて確かめる。判断・フィードバック・サービス案・担当者のどれかが入っている行は残す。
+ * そのリクエストをまた選択パネルに出す。削除する前に件数を見せて確かめる。判断・フィードバック・サービス案・担当者のどれかが入っている行は残す。
  */
 function removeUntouchedRequests() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -184,7 +253,7 @@ function removeUntouchedRequests() {
   }
   const answer = ui.alert('サービス管理',
     '判断が「' + SVC_OPTIONS.defaultDecision + '」か空で、フィードバック・サービス案・担当者が空の行が ' + count + '件あります。\n' +
-    'これらの行を削除して、その案件をまた候補に戻しますか？（判断・フィードバック・サービス案・担当者のどれかが入っている行は残します）',
+    'これらの行を削除して、そのリクエストをまた選択パネルに出しますか？（判断・フィードバック・サービス案・担当者のどれかが入っている行は残します）',
     ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return;
 
@@ -201,9 +270,7 @@ function removeUntouchedRequests() {
       sheet.deleteRows(rows[start], end - start + 1);
       end = start - 1;
     }
-    const records = svcSourceRecords_(ss);
-    svcBuildLists_(ss, sheet, records, {full: true});   // 行を消したので、プルダウンの参照を作り直す
-    return Object.assign({removed: rows.length}, svcCountRequests_(sheet, records));
+    return Object.assign({removed: rows.length}, svcCountRequests_(sheet, svcSourceRecords_(ss)));
   }, SVC_OPTIONS.lockWaitMs);
   ss.toast(result.removed + '行を削除しました。' + svcCountMessage_(result), 'サービス管理', 10);
 }
@@ -232,20 +299,16 @@ function svcUntouched_(request, decision, others) {
   return !!request && (!decision || decision === SVC_OPTIONS.defaultDecision) && others.every(value => !value);
 }
 
-/** 選んだ件数の知らせ（{total, selected, remaining, unselectable, untouched}）。 */
+/** 登録した件数の知らせ（{total, selected, remaining, untouched}）。 */
 function svcCountMessage_(result) {
   if (!result.total) {
     return svcSourceLabel_() + 'にリクエストが見つかりません。「' + SVC_OPTIONS.sourceHeaders[3] + '」の列にリクエストが入っているか確かめてください。';
   }
-  const lines = [svcSourceLabel_() + 'のリクエスト ' + result.total + '件のうち ' + result.selected + '件を選んでいます（まだ選んでいないもの ' +
+  const lines = [svcSourceLabel_() + 'のリクエスト ' + result.total + '件のうち ' + result.selected + '件を登録しています（まだ登録していないもの ' +
     result.remaining + '件）。'];
-  if (result.unselectable) {
-    lines.push(svcSourceLabel_() + 'でサブインダストリー・得意先・案件名のどれかが空のため、選べないリクエストが ' + result.unselectable + '件あります' +
-      '（左の列から順に選ぶため。そのシートで入力すると候補に出ます）。');
-  }
   if (!result.remaining && result.untouched) {
     lines.push('判断・フィードバック・サービス案・担当者が空の行が ' + result.untouched + '件あります。前の版で自動で取り込んだ行なら、' +
-      'エディタで removeUntouchedRequests() を実行すると、削除して候補に戻せます。');
+      'エディタで removeUntouchedRequests() を実行すると、削除して選択パネルに戻せます。');
   }
   return lines.join('\n');
 }
@@ -269,7 +332,7 @@ function svcApplyRules_(ss, sheet) {
   if (rows > 0) {
     const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
     warnings.push.apply(warnings, taskApplyColumnRules_(sheet, SVC_OPTIONS.requestColumns, cols, first, rows));
-    SVC_OPTIONS.requestColumns.filter(c => c.cascade == null && !c.options && cols[c.key]).forEach(c => {
+    SVC_OPTIONS.requestColumns.filter(c => c.source == null && !c.options && cols[c.key]).forEach(c => {
       sheet.getRange(first, cols[c.key], rows, 1).clearDataValidations();
     });
     svcRemoveLegacyProtections_(sheet);
@@ -288,7 +351,32 @@ function svcApplyRules_(ss, sheet) {
   return {warnings, taskAdded};
 }
 
-/** 前の版で付けた保護（A〜D を手で変えると警告が出る）を外す。今は A〜D をプルダウンで選ぶため。 */
+/**
+ * 前の版の連動プルダウン（A〜D の入力規則）と、候補を作っていた非表示のシート（__REQUEST_LISTS）を外す。
+ * 外したものがあれば true。
+ */
+function svcRemoveLegacyLists_(ss, sheet) {
+  let removed = false;
+  const lists = ss.getSheetByName(SVC_OPTIONS.legacyListSheet);
+  if (lists) {
+    ss.deleteSheet(lists);
+    removed = true;
+  }
+  const rows = sheet.getMaxRows() - SVC_OPTIONS.headerRow;
+  if (rows > 0) {
+    const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
+    svcSourceKeys_().forEach(key => {
+      const range = sheet.getRange(SVC_OPTIONS.headerRow + 1, cols[key], rows, 1);
+      if (range.getDataValidations().some(line => line[0])) {
+        range.clearDataValidations();
+        removed = true;
+      }
+    });
+  }
+  return removed;
+}
+
+/** 前の版で付けた保護（A〜D を手で変えると警告が出る）を外す。 */
 function svcRemoveLegacyProtections_(sheet) {
   sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE).forEach(p => {
     let description = '';
@@ -298,8 +386,8 @@ function svcRemoveLegacyProtections_(sheet) {
 }
 
 /**
- * タスク管理の「サービス案」の列の入力規則。リクエスト シートの「サービス案」の列を範囲で参照し、
- * そこに無い名前は入力できないようにする。リクエスト シートが無ければ null。
+ * タスク管理の「サービス案」の列の入力規則。サービスリクエストの「サービス案」の列を範囲で参照し、
+ * そこに無い名前は入力できないようにする。サービスリクエストのシートが無ければ null。
  */
 function svcServiceRule_(ss) {
   const sheet = ss.getSheetByName(SVC_OPTIONS.requestSheet);
@@ -314,51 +402,36 @@ function svcServiceRule_(ss) {
     .build();
 }
 
-/* ---------------- 候補に出ないときの確認（管理者がエディタから実行する） ---------------- */
+/* ---------------- パネルに出ないときの確認（管理者がエディタから実行する） ---------------- */
 
 /**
- * サービスリクエストのプルダウンに案件が出ない理由を調べて、画面に出す（読むだけ。何も書き換えない）。
- * DIFF_RULES の各シートについて、読む対象か・見出しがあるか・リクエストの件数と、候補に出ない件数とその理由。
- * あわせて、候補のシート（__REQUEST_LISTS）とプルダウンが今の内容で作られているかを確かめる。
+ * 選択パネルにリクエストが出ない理由を調べて、画面に出す（読むだけ。何も書き換えない）。
+ * DIFF_RULES の各シートについて、読む対象か・見出しがあるか・リクエストのある行の数と、パネルに出ないもの（登録済み・ほかと同じ）の数。
  */
 function diagnoseRequestSources() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const lines = svcDiagnoseLines_(ss);
   console.log(lines.join('\n'));
   const ui = SpreadsheetApp.getUi();
-  ui.alert('サービスリクエストの候補の確認', lines.join('\n'), ui.ButtonSet.OK);
+  ui.alert('サービスリクエストの確認', lines.join('\n'), ui.ButtonSet.OK);
 }
 
 /** diagnoseRequestSources() の中身。画面に出す文（行ごと）を返す。 */
 function svcDiagnoseLines_(ss) {
   const lines = [];
-  const levels = svcCascadeKeys_().length;
-  const labels = svcCascadeLabels_();
-
-  // サービスリクエストで選んでいる案件
-  const used = new Set();
   const request = ss.getSheetByName(SVC_OPTIONS.requestSheet);
-  let requestCols = null;
+  let registered = {keys: new Set()};
   if (!request) {
     lines.push('「' + SVC_OPTIONS.requestSheet + '」シートがありません。setupRequestSheet() を実行してください。');
   } else {
     try {
-      requestCols = taskColumnMap_(request, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
-      const count = request.getLastRow() - SVC_OPTIONS.headerRow;
-      if (count > 0) {
-        const read = key => request.getRange(SVC_OPTIONS.headerRow + 1, requestCols[key], count, 1).getDisplayValues().map(r => String(r[0]).trim());
-        const customers = read('customer');
-        const projects = read('project');
-        read('request').forEach((value, i) => { if (value) used.add(svcRequestKey_(customers[i], projects[i], value)); });
-      }
+      registered = svcRegistered_(request);
     } catch (error) {
       lines.push(error.message);
     }
   }
 
-  // 読むシートごとの件数
   const seen = new Set();
-  let listed = 0;
   Object.keys(DIFF_RULES).forEach(name => {
     const rule = DIFF_RULES[name];
     if (!rule.requests) {
@@ -382,57 +455,30 @@ function svcDiagnoseLines_(ss) {
       ? sheet.getRange(rule.headerRow + 1, 1, count, Math.max.apply(null, cols)).getDisplayValues()
         .map(line => cols.map(col => String(line[col - 1]).trim()))
       : [];
-    const withRequest = values.filter(v => v[levels - 1]);
-    const blanks = labels.slice(0, levels - 1).map(() => 0);
-    let incomplete = 0;
+    const withRequest = values.filter(v => v[3]);
     let duplicate = 0;
     let selected = 0;
     let candidates = 0;
-    // svcSourceRecords_・svcListRecords_ と同じ順に見る（同じリクエストは最初の行だけ。そのあと左の列が空の行を外す）
+    // svcSourceRecords_ と同じ順に見る（同じリクエストは最初の行だけ）
     withRequest.forEach(v => {
       const key = svcRequestKey_(v[1], v[2], v[3]);
       if (seen.has(key)) { duplicate++; return; }
       seen.add(key);
-      const empty = v.slice(0, levels - 1).map(value => !value);
-      if (empty.some(Boolean)) {
-        incomplete++;
-        empty.forEach((e, i) => { if (e) blanks[i]++; });
-        return;
-      }
-      listed++;
-      if (used.has(key)) selected++; else candidates++;
+      if (registered.keys.has(key)) selected++; else candidates++;
     });
     const reasons = [];
-    if (selected) reasons.push('選択済み ' + selected + '件');
-    if (incomplete) {
-      reasons.push(labels.slice(0, levels - 1).join('・') + 'のどれかが空 ' + incomplete + '件（' +
-        labels.slice(0, levels - 1).map((label, i) => label + 'が空 ' + blanks[i] + '件').filter((_, i) => blanks[i]).join('、') + '）');
-    }
+    if (selected) reasons.push('登録済み ' + selected + '件');
     if (duplicate) reasons.push('ほかの行・シートと同じリクエスト ' + duplicate + '件');
-    lines.push('「' + name + '」：リクエストのある行 ' + withRequest.length + '件 → 候補に出る ' + candidates + '件' +
+    lines.push('「' + name + '」：リクエストのある行 ' + withRequest.length + '件 → パネルに出る ' + candidates + '件' +
       (reasons.length ? '（出ないもの：' + reasons.join('、') + '）' : '') + '。');
   });
-
-  // 候補のシートとプルダウン
-  const lists = svcReadLists_(ss);
-  if (!lists) {
-    lines.push('候補のシート（' + SVC_OPTIONS.listSheet + '）がありません。setupRequestSheet() を実行してください。');
-  } else if (lists.list.length !== listed) {
-    lines.push('候補のシート（' + SVC_OPTIONS.listSheet + '）が古くなっています（今の案件 ' + listed + '件、候補のシート ' + lists.list.length + '件）。' +
-      'setupRequestSheet() を実行してください。');
+  if (ss.getSheetByName(SVC_OPTIONS.legacyListSheet)) {
+    lines.push('前の版の「' + SVC_OPTIONS.legacyListSheet + '」シートが残っています。setupRequestSheet() を実行すると外します。');
   }
-  if (request && requestCols) {
-    const rule = request.getRange(SVC_OPTIONS.headerRow + 1, requestCols[svcCascadeKeys_()[0]]).getDataValidation();
-    const range = rule && rule.getCriteriaType() === SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE ? rule.getCriteriaValues()[0] : null;
-    if (!range || range.getSheet().getName() !== SVC_OPTIONS.listSheet) {
-      lines.push('「' + SVC_OPTIONS.requestSheet + '」のプルダウンが前の版のままです。setupRequestSheet() を実行してください。');
-    }
-  }
-  if (lines.every(line => /^「[^」]*」：/.test(line))) lines.push('候補のシートとプルダウンは、今の内容で作られています。');
   return lines;
 }
 
-/* ---------------- 新FMT のリクエスト ---------------- */
+/* ---------------- 取り込み元のリクエスト ---------------- */
 
 /** リクエストを見分けるキー（得意先・案件名・リクエスト。全角・半角と空白の違いは無視）。 */
 function svcRequestKey_(customer, project, request) {
@@ -445,8 +491,8 @@ function svcSourceHeaderRow_(name) {
 }
 
 /**
- * 新FMT（読むシート。svcSourceSheets_）でリクエストが入っている行を、シート・行の順に返す（同じキーは1つ）。
- * [{values: [サブインダストリー, 得意先, 案件名, リクエスト], keys: 見比べ用（credNormalize_）, key}]。見出しが足りないときは止める。
+ * 取り込み元（読むシート。svcSourceSheets_）でリクエストが入っている行を、シート・行の順に返す（同じキーは1つ）。
+ * [{sheet, values: [サブインダストリー, 得意先, 案件名, リクエスト], key}]。見出しが足りないときは止める。
  */
 function svcSourceRecords_(ss) {
   const records = [];
@@ -472,24 +518,21 @@ function svcSourceRecords_(ss) {
       const key = svcRequestKey_(values[1], values[2], values[3]);
       if (seen.has(key)) return;
       seen.add(key);
-      records.push({values, keys: values.map(credNormalize_), key});
+      records.push({sheet: name, values, key});
     });
   });
   return records;
 }
 
 /**
- * 選んだ行を新FMT に合わせる（行は足さない）。
- * - renamed（1つのセルで得意先・案件名・リクエストを書き換えた）があれば、古いキーの行をその場で新しい値に直す
- *   （新しいキーの行がまだ無いときだけ）。リクエストの書き換えで、サービス案・判断を付けたあとなら注を付ける
- * - サブインダストリーを新FMT に合わせる
- * - 新FMT に無い行には注を付ける（新FMT に戻ったら外す。利用者が書いた注は変えない）
+ * 登録した行を取り込み元に合わせる（行は足さない。ロック取得中に呼ぶこと）。
+ * - サブインダストリーを、取り込み元の同じ案件の値にそろえる（全角・半角だけの違いなら変えない）
+ * - 取り込み元に無い行には注を付ける（取り込み元に戻ったら外す。利用者が書いた注は変えない）
  * {updated, missing}
  */
-function svcSync_(ss, sheet, renamed, records) {
+function svcSync_(ss, sheet, records) {
   const headerRow = SVC_OPTIONS.headerRow;
   const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, headerRow);
-  const fields = ['subIndustry', 'customer', 'project', 'request'];
   const source = new Map(records.map(r => [r.key, r.values]));
   const count = sheet.getLastRow() - headerRow;
   let updated = 0;
@@ -497,33 +540,14 @@ function svcSync_(ss, sheet, renamed, records) {
   if (count < 1) return {updated, missing};
 
   const today = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyy/MM/dd');
-  const read = key => (cols[key]
-    ? sheet.getRange(headerRow + 1, cols[key], count, 1).getDisplayValues().map(r => String(r[0]).trim())
-    : new Array(count).fill(''));
-  const current = fields.map(read);
-  const services = read('service');
-  const decisions = read('decision');
-  const keyOf = i => (current[3][i] ? svcRequestKey_(current[1][i], current[2][i], current[3][i]) : '');
-  const keys = current[3].map((_, i) => keyOf(i));
-  const changedRows = new Set();
+  const read = key => sheet.getRange(headerRow + 1, cols[key], count, 1).getDisplayValues().map(r => String(r[0]).trim());
+  const [subIndustries, customers, projects, requests] = svcSourceKeys_().map(read);
+  const keys = requests.map((request, i) => (request ? svcRequestKey_(customers[i], projects[i], request) : ''));
 
-  // 1つのセルの書き換え：古いキーの行を新しい値に直す
-  if (renamed && keys.indexOf(renamed.newKey) < 0) {
-    const i = keys.indexOf(renamed.oldKey);
-    if (i >= 0) {
-      sheet.getRange(headerRow + 1 + i, cols[fields[renamed.level]]).setValue(credText_(renamed.value));
-      current[renamed.level][i] = renamed.value;
-      keys[i] = keyOf(i);
-      updated++;
-      const judged = services[i] || (decisions[i] && decisions[i] !== SVC_OPTIONS.defaultDecision);
-      if (renamed.level === 3 && judged) changedRows.add(i);
-    }
-  }
-
-  // サブインダストリーを新FMT に合わせる
+  // サブインダストリーを取り込み元に合わせる
   keys.forEach((key, i) => {
     const values = key && source.get(key);
-    if (!values || credNormalize_(values[0]) === credNormalize_(current[0][i])) return;
+    if (!values || credNormalize_(values[0]) === credNormalize_(subIndustries[i])) return;
     sheet.getRange(headerRow + 1 + i, cols.subIndustry).setValue(credText_(values[0]));
     updated++;
   });
@@ -534,13 +558,8 @@ function svcSync_(ss, sheet, renamed, records) {
   const next = keys.map((key, i) => {
     if (!key) return notes[i];
     const missingNote = notes[i].indexOf(SVC_OPTIONS.missingNote) === 0;
-    const ours = missingNote || [SVC_OPTIONS.changedNote].concat(SVC_OPTIONS.legacyChangedNotes)
-      .some(prefix => notes[i].indexOf(prefix) === 0);   // 利用者が書いた注は変えない
+    const ours = missingNote || SVC_OPTIONS.legacyNotes.some(prefix => notes[i].indexOf(prefix) === 0);   // 利用者が書いた注は変えない
     if (source.has(key)) {
-      if (changedRows.has(i) && (!notes[i] || ours)) {
-        notesChanged = true;
-        return SVC_OPTIONS.changedNote + '（' + today + '）。サービス案・判断を見直してください。';
-      }
       if (!missingNote) return notes[i];
       notesChanged = true;
       return '';
@@ -555,361 +574,7 @@ function svcSync_(ss, sheet, renamed, records) {
   return {updated, missing};
 }
 
-/* ---------------- 候補（連動プルダウン） ---------------- */
-
-/*
- * 候補はスクリプトではなく、非表示の「__REQUEST_LISTS」シート（SVC_OPTIONS.listSheet）の数式で作る。
- * 選ぶたびにスクリプトでプルダウンを付け直すと、onEdit が終わるまで（数秒）次の列を選べないため。
- * 数式はシートが計算するので、左の列を選ぶとすぐに右の列の候補が変わる。
- * - A〜D 列：新FMT の案件（候補にできるものだけ。svcListRecords_）。新FMT を編集するたびにスクリプトが書き直す
- * - E 列：その案件を選んだ行の数（SUMPRODUCT。リクエスト シートの得意先・案件名・リクエストと見比べる）
- * - F1：レイアウト（行数・候補の幅・読む列）。行の追加・削除・並べ替えで合わなくなったら作り直す
- * - G 列から右：リクエスト シートの行ごとの候補。列ごとに幅（widths）ぶんの欄を取り、TRANSPOSE で横に並べる。
- *   リクエスト シートの n 行目の A〜D のプルダウンは、このシートの n 行目の欄を範囲で参照する
- */
-
-/** 候補のシートの列（A〜D：案件、E：選んだ行の数、F：レイアウト、G から右：行ごとの候補）。 */
-function svcListColumns_() {
-  const levels = svcCascadeKeys_().length;
-  return {used: levels + 1, meta: levels + 2, start: levels + 3};
-}
-
-/**
- * 候補にする案件。左から順に選ぶので、新FMT でサブインダストリー〜案件名のどれかが空の案件は選べない（外す）。
- * 全角・半角と空白だけが違う値は、列ごとに最初に出てきた書き方にそろえる（プルダウンに同じ値が2つ出ないように）。
- */
-function svcListRecords_(records) {
-  const levels = svcCascadeKeys_().length;
-  const spellings = svcCascadeKeys_().map(() => new Map());
-  return records.filter(rec => rec.values.slice(0, levels - 1).every(Boolean)).map(rec => {
-    const values = rec.values.map((value, level) => {
-      if (!spellings[level].has(rec.keys[level])) spellings[level].set(rec.keys[level], value);
-      return spellings[level].get(rec.keys[level]);
-    });
-    return {values, keys: rec.keys, key: rec.key};
-  });
-}
-
-/** 列ごとの候補の数の最大（左の列で選んだ値の組ごとに数える。大文字・小文字の違いはシートと同じく同じ値とみなす）。 */
-function svcListCounts_(list) {
-  return svcCascadeKeys_().map((key, level) => {
-    const groups = new Map();
-    list.forEach(rec => {
-      const prefix = rec.values.slice(0, level).map(v => String(v).toLowerCase()).join('\u0001');
-      if (!groups.has(prefix)) groups.set(prefix, new Set());
-      groups.get(prefix).add(rec.values[level]);
-    });
-    let max = 0;
-    groups.forEach(values => { max = Math.max(max, values.size); });
-    return max;
-  });
-}
-
-/** 候補のシートのレイアウト（F1 の JSON）。無い・読めないときは null。 */
-function svcListMeta_(text) {
-  try {
-    const meta = JSON.parse(String(text || ''));
-    return meta && Array.isArray(meta.widths) ? meta : null;
-  } catch (_) {
-    return null;
-  }
-}
-
-/**
- * 候補のシートを読む（1回の読み取り）。{meta, list: 候補にする案件}。シートが無ければ null。
- * リクエスト シートを編集するたびに使うので、新FMT は読まない。
- */
-function svcReadLists_(ss) {
-  const helper = ss.getSheetByName(SVC_OPTIONS.listSheet);
-  if (!helper) return null;
-  const levels = svcCascadeKeys_().length;
-  const cols = svcListColumns_();
-  const lines = helper.getRange(1, 1, helper.getMaxRows(), cols.meta).getDisplayValues();
-  const list = [];
-  for (let i = 1; i < lines.length && lines[i][levels - 1]; i++) {
-    const values = lines[i].slice(0, levels).map(v => String(v).trim());
-    const keys = values.map(credNormalize_);
-    list.push({values, keys, key: svcRequestKey_(values[1], values[2], values[3])});
-  }
-  return {meta: svcListMeta_(lines[0][cols.meta - 1]), list};
-}
-
-/**
- * 候補のシートを用意する。案件（A〜E 列）はいつも書き直す。{relaid, needsSetup, warnings}
- * options.full（管理者が実行する関数から）：候補のシートを空にして、欄の幅・行ごとの数式・プルダウンをすべて作り直す。
- * それ以外（編集したときの onEdit から）：候補のシートを空にしない。単純トリガーは30秒で止まるため、
- * 空にしたところで止まると、すべてのプルダウンの候補が無くなる（一斉にエラーになる）ので。
- * - リクエスト シートの行数が変わった・options.realign（行の追加・削除・並べ替えでプルダウンの参照がずれた）ときは、
- *   同じ欄のまま、行ごとの数式とプルダウンを上書きする（途中で止まっても、壊れるところが無い）
- * - 欄の幅を変える必要があるとき（候補が欄に入りきらない・候補のシートが無い・読む列が変わった）は作り直さず、
- *   needsSetup にして知らせる（管理者が setupRequestSheet() を実行する）
- */
-function svcBuildLists_(ss, sheet, records, options) {
-  const full = !!(options && options.full);
-  const headerRow = SVC_OPTIONS.headerRow;
-  const cascadeKeys = svcCascadeKeys_();
-  const levels = cascadeKeys.length;
-  const labels = svcCascadeLabels_();
-  const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, headerRow);
-  const layout = svcListColumns_();
-  const list = svcListRecords_(records);
-  const counts = svcListCounts_(list);
-  const warnings = [];
-  counts.forEach((count, level) => {
-    if (count <= SVC_OPTIONS.maxListItems) return;
-    warnings.push('「' + labels[level] + '」の候補が ' + SVC_OPTIONS.maxListItems + ' 件を超えるため、プルダウンにすべては出せません（SVC_OPTIONS.maxListItems）。');
-  });
-
-  let helper = ss.getSheetByName(SVC_OPTIONS.listSheet);
-  if (!helper && !full) {
-    warnings.push(svcNeedsSetupMessage_());
-    return {relaid: false, needsSetup: true, warnings};
-  }
-  if (!helper) {
-    helper = ss.insertSheet(SVC_OPTIONS.listSheet);
-    helper.hideSheet();
-  }
-  const rows = sheet.getMaxRows();
-  const columns = cascadeKeys.map(key => cols[key]).join(',');
-  const old = svcListMeta_(helper.getRange(1, layout.meta).getDisplayValue());
-  const fit = counts.map(count => Math.min(count, SVC_OPTIONS.maxListItems));
-  const layoutBroken = !old || old.columns !== columns || old.widths.length !== levels ||
-    fit.some((count, level) => count > old.widths[level]);
-  const needsSetup = layoutBroken && !full;
-  if (needsSetup) warnings.push(svcNeedsSetupMessage_());
-  const relayout = full || (!layoutBroken && (old.rows !== rows || !!(options && options.realign)));
-  // 欄の幅は、新FMT で候補が少し増えても作り直さずに済むように余白を足す（案内の文字のために少なくとも1）
-  const widths = full
-    ? fit.map(count => Math.min(Math.max(count, 1) + Math.max(SVC_OPTIONS.listMargin, Math.ceil(count * 0.2)), SVC_OPTIONS.maxListItems))
-    : (old ? old.widths : []);
-  const starts = [];
-  widths.reduce((col, width) => { starts.push(col); return col + width; }, layout.start);
-
-  // 大きさ：行はリクエスト シートの行と案件の数の多いほう、列は候補の欄の右端まで
-  const needRows = Math.max(rows, list.length + 1);
-  const needCols = layout.start + widths.reduce((a, b) => a + b, 0) - 1;
-  if (helper.getMaxRows() < needRows) helper.insertRowsAfter(helper.getMaxRows(), needRows - helper.getMaxRows());
-  if (helper.getMaxColumns() < needCols) helper.insertColumnsAfter(helper.getMaxColumns(), needCols - helper.getMaxColumns());
-
-  // 案件と、それを選んだ行の数
-  const requestRef = "'" + sheet.getName().replace(/'/g, "''") + "'!";
-  const column = key => requestRef + '$' + diffColumnLetter_(cols[key]) + '$' + (headerRow + 1) + ':$' + diffColumnLetter_(cols[key]);
-  // 全部を作り直すときだけ空にする。それ以外は、案件を上書きしてから、余った行だけを消す
-  // （先に空にすると、書き終わるまで候補が無くなり、そこで止まると一斉にエラーになるため）
-  if (full) helper.clearContents();
-  if (list.length) {
-    helper.getRange(2, 1, list.length, levels).setValues(list.map(rec => rec.values.map(credText_)));
-    helper.getRange(2, layout.used, list.length, 1).setFormulas(list.map((rec, i) => {
-      const row = i + 2;
-      return ['=SUMPRODUCT(' + ['customer', 'project', 'request'].map(key => {
-        const level = cascadeKeys.indexOf(key);
-        return '(' + column(key) + '=$' + diffColumnLetter_(level + 1) + row + ')';
-      }).join('*') + ')'];
-    }));
-  }
-  const extra = helper.getMaxRows() - (list.length + 1);
-  if (!full && extra > 0) helper.getRange(list.length + 2, 1, extra, layout.used).clearContent();
-  if (needsSetup) return {relaid: false, needsSetup, warnings};   // レイアウトは前のまま（案件だけ書き直した）
-  const meta = {rows: relayout ? rows : old.rows, columns, widths, sourceRows: list.length};
-  helper.getRange(1, 1, 1, layout.meta).setValues([labels.concat(['選んだ行の数', credText_(JSON.stringify(meta))])]);
-  if (!relayout) return {relaid: false, needsSetup: false, warnings};
-
-  // 行ごとの候補の数式と、リクエスト シートのプルダウン
-  const first = headerRow + 1;
-  const count = rows - headerRow;
-  if (count > 0) {
-    const requestCells = cascadeKeys.map(key => requestRef + '$' + diffColumnLetter_(cols[key]));
-    cascadeKeys.forEach((key, level) => {
-      helper.getRange(1, starts[level]).setValue(labels[level] + 'の候補');
-      const formulas = [];
-      const rules = [];
-      const help = labels[level] + 'は一覧から選んでください（' + (level ? '左の列から順に選びます。' : '') +
-        'リクエストがあり、まだ選んでいない案件だけが出ます）。';
-      for (let row = first; row < first + count; row++) {
-        formulas.push([svcListFormula_(level, row, requestCells)]);
-        rules.push([SpreadsheetApp.newDataValidation()
-          .requireValueInRange(helper.getRange(row, starts[level], 1, widths[level]), true)
-          .setAllowInvalid(false)
-          .setHelpText(help)
-          .build()]);
-      }
-      helper.getRange(first, starts[level], count, 1).setFormulas(formulas);
-      sheet.getRange(first, cols[key], count, 1).setDataValidations(rules);
-    });
-  }
-  if (full) diffTrimGrid_(helper, needCols, needRows);   // 使わない右の列・下の行を持たない（空のセルも上限に数えられるため）
-  return {relaid: true, needsSetup: false, warnings};
-}
-
-/** 候補の欄を作り直す必要があるときに、編集した人に知らせる文。 */
-function svcNeedsSetupMessage_() {
-  return '「' + SVC_OPTIONS.requestSheet + '」のプルダウンの候補を作り直す必要があります（候補が欄に入りきらない・候補のシートが無いなど）。' +
-    '管理者に setupRequestSheet() の実行を頼んでください。それまで、一部のプルダウンにエラーが出ることがあります。';
-}
-
-/**
- * リクエスト シートの row 行目の、level 番目の連動列の候補を横に並べる数式。
- * 左に空の列があれば「（先に〇〇を選んでください）」、選べる案件が無ければ「（すべて選択済み）」だけにする。
- * 候補は、左の列で選んだ値に合う案件のうち、どの行でも選んでいないもの（その行で入っている値は残す）。
- */
-function svcListFormula_(level, row, requestCells) {
-  const levels = svcCascadeKeys_().length;
-  const quote = text => '"' + String(text).replace(/"/g, '""') + '"';
-  const source = k => '$' + diffColumnLetter_(k + 1) + '$2:$' + diffColumnLetter_(k + 1);
-  const used = '$' + diffColumnLetter_(svcListColumns_().used) + '$2:$' + diffColumnLetter_(svcListColumns_().used);
-  const cell = k => requestCells[k] + row;
-  const conditions = [source(levels - 1) + '<>""'];
-  for (let k = 0; k < level; k++) conditions.push(source(k) + '=' + cell(k));
-  conditions.push('(' + used + '=0)+(' + source(level) + '=' + cell(level) + ')');
-  let formula = 'IFERROR(TRANSPOSE(UNIQUE(FILTER(' + source(level) + ',' + conditions.join(',') + '))),' +
-    quote(SVC_OPTIONS.allSelected) + ')';
-  for (let k = level - 1; k >= 0; k--) formula = 'IF(' + cell(k) + '="",' + quote(svcChooseFirstText_(k)) + ',' + formula + ')';
-  if (level === 0) formula = 'IF(COUNTA(' + source(levels - 1) + ')=0,' + quote(SVC_OPTIONS.noRequests) + ',' + formula + ')';
-  return '=' + formula;
-}
-
-/**
- * 候補の数式がエラーになっていないかを確かめる（setupRequestSheet() の最後に、ロックの外で）。
- * リクエスト シートの最初のデータの行の候補を読み、「#」で始まる値（#NAME? など）があれば知らせる文を返す。
- */
-function svcCheckLists_(ss) {
-  const helper = ss.getSheetByName(SVC_OPTIONS.listSheet);
-  if (!helper) return [];
-  const layout = svcListColumns_();
-  const meta = svcListMeta_(helper.getRange(1, layout.meta).getDisplayValue());
-  const row = SVC_OPTIONS.headerRow + 1;
-  if (!meta || meta.rows < row) return [];
-  const width = meta.widths.reduce((a, b) => a + b, 0);
-  const values = helper.getRange(row, layout.start, 1, width).getDisplayValues()[0];
-  const errors = Array.from(new Set(values.filter(v => /^#/.test(String(v)))));
-  return errors.length
-    ? ['候補を作る数式でエラーが出ています（' + errors.join('・') + '）。「' + SVC_OPTIONS.listSheet + '」シートを表示して確かめてください。']
-    : [];
-}
-
-/**
- * level 番目の連動列の候補。左の列で選んでいる値（空の列では絞り込まない）に合う値を、出てくる順に重複なく返す。
- * 編集した行を整えるとき（svcFixEditedRows_）に使う。
- */
-function svcOptionsFor_(records, level, selected) {
-  const keys = [];
-  for (let i = 0; i < level; i++) keys.push(credNormalize_(selected[i] || ''));
-  const seen = new Set();
-  const out = [];
-  records.forEach(record => {
-    for (let i = 0; i < level; i++) {
-      if (keys[i] && record.keys[i] !== keys[i]) return;
-    }
-    const value = record.values[level];
-    if (!value || seen.has(record.keys[level])) return;
-    seen.add(record.keys[level]);
-    out.push(value);
-  });
-  return out;
-}
-
-/**
- * 編集した行（edited = {first, last, from, levels: 編集した連動列}）を整える。list は候補にする案件（svcListRecords_）、
- * cols はリクエスト シートの列（taskColumnMap_）。
- * from 番目から右の連動列で、左の列が空の値と候補に無い値（ほかの行で選んでいる案件など）を空にし（編集した列の値なら知らせる）、
- * 左から選んだ値に合う案件で1つに決まる次の列（得意先・案件名）を埋める。リクエスト・判断などは入れない。
- * プルダウンは数式が作るので、ここでは付け直さない。戻り値は編集した人に知らせる文。
- */
-function svcFixEditedRows_(sheet, list, edited, cols) {
-  const headerRow = SVC_OPTIONS.headerRow;
-  const cascadeKeys = svcCascadeKeys_();
-  const labels = svcCascadeLabels_();
-  const first = headerRow + 1;
-  const lastRow = Math.max(sheet.getLastRow(), headerRow);
-  const count = lastRow - headerRow;
-  const messages = [];
-  if (count < 1) return messages;
-
-  // 連動列をまとめて1回で読む
-  const left = Math.min.apply(null, cascadeKeys.map(key => cols[key]));
-  const right = Math.max.apply(null, cascadeKeys.map(key => cols[key]));
-  const lines = sheet.getRange(first, left, count, right - left + 1).getDisplayValues();
-  const values = {};
-  cascadeKeys.forEach(key => { values[key] = lines.map(line => String(line[cols[key] - left]).trim()); });
-
-  const keyOf = i => (values.request[i] ? svcRequestKey_(values.customer[i], values.project[i], values.request[i]) : '');
-  const keys = [];
-  const used = new Map();
-  for (let i = 0; i < count; i++) {
-    keys[i] = keyOf(i);
-    if (keys[i]) used.set(keys[i], (used.get(keys[i]) || 0) + 1);
-  }
-  const isUsed = key => (used.get(key) || 0) > 0;
-  const isEdited = level => edited.levels.indexOf(level) >= 0;
-
-  const last = Math.min(edited.last, lastRow);
-  for (let row = Math.max(edited.first, first); row <= last; row++) {
-    const i = row - first;
-    if (keys[i]) used.set(keys[i], used.get(keys[i]) - 1);   // この行の選択はいったん外して考える
-    const available = list.filter(rec => !isUsed(rec.key));
-    const selected = cascadeKeys.map(key => values[key][i]);
-    let rejected = false;   // 入力した値を空にした行は、ほかの候補で勝手に埋めない
-    const skipped = [];     // 左の列が空なのに入力した値（空にした）
-    const emptied = [];     // 消した左の列に続けて空にした列の見出し
-
-    for (let level = Math.max(edited.from, 0); level < cascadeKeys.length; level++) {
-      if (!selected[level]) continue;
-      const placeholder = svcPlaceholderMessage_(selected[level], list.length > 0);
-      if (placeholder) {
-        messages.push(placeholder);
-        selected[level] = '';
-        continue;
-      }
-      // 左の列が空なら空にする（左の列から順に選ぶ）
-      const gap = selected.slice(0, level).findIndex(value => !value);
-      if (gap >= 0) {
-        if (isEdited(level)) {
-          skipped.push(selected[level]);
-          rejected = true;
-        } else if (isEdited(gap)) {
-          emptied.push(labels[level]);
-        }
-        selected[level] = '';
-        continue;
-      }
-      const options = svcOptionsFor_(available, level, selected);
-      if (options.some(option => credNormalize_(option) === credNormalize_(selected[level]))) continue;
-      if (isEdited(level)) {
-        messages.push(row + '行目の「' + selected[level] + '」は候補に無いため、空にしました（ほかの行で選んでいるか、リクエストがありません）。');
-        rejected = true;
-      }
-      selected[level] = '';
-    }
-    const gap = selected.findIndex(value => !value);
-    if (skipped.length) messages.push(row + '行目の「' + skipped.join('」「') + '」を空にしました（先に' + labels[gap] + 'を選んでください）。');
-    if (emptied.length) messages.push(row + '行目の' + labels[gap] + 'が空になったため、' + emptied.join('・') + 'も空にしました。');
-
-    // 左から選んだ値に合う案件で、どれも同じ値になる次の列を埋める（例：サブインダストリーを選んで得意先が1つなら得意先）。
-    // リクエスト（D）は、案件が1つに決まっても入れない（人がプルダウンで選ぶ）。人が消した列も埋め直さない
-    if (!rejected && selected[0]) {
-      const matches = available.filter(rec => selected.every((value, level) => !value || rec.keys[level] === credNormalize_(value)));
-      for (let level = 1; level < cascadeKeys.length && matches.length; level++) {
-        if (selected[level]) continue;
-        if (cascadeKeys[level] === 'request' || isEdited(level)) break;
-        const same = matches[0].keys[level];
-        if (!matches.every(rec => rec.keys[level] === same)) break;
-        selected[level] = matches[0].values[level];
-      }
-    }
-
-    cascadeKeys.forEach((key, n) => {
-      if (selected[n] === values[key][i]) return;
-      const target = sheet.getRange(row, cols[key]);
-      if (selected[n]) target.setValue(credText_(selected[n])); else target.clearContent();
-      values[key][i] = selected[n];
-    });
-    keys[i] = keyOf(i);
-    if (keys[i]) used.set(keys[i], (used.get(keys[i]) || 0) + 1);
-  }
-  return Array.from(new Set(messages));
-}
-
-/** 選んだ件数を数える。{total, selected, remaining, unselectable, untouched}（svcCountMessage_ で知らせる）。 */
+/** 登録した件数を数える。{total, selected, remaining, untouched}（svcCountMessage_ で知らせる）。 */
 function svcCountRequests_(sheet, records) {
   const headerRow = SVC_OPTIONS.headerRow;
   const count = sheet.getLastRow() - headerRow;
@@ -930,116 +595,10 @@ function svcCountRequests_(sheet, records) {
     used.add(svcRequestKey_(customers[i], projects[i], request));
     if (svcUntouched_(request, decisions[i], filled.map(values => values[i]))) untouched++;
   });
-  const list = svcListRecords_(records);
-  const listed = new Set(list.map(rec => rec.key));
   return {
     total: records.length,
     selected,
-    remaining: list.filter(rec => !used.has(rec.key)).length,
-    unselectable: records.filter(rec => !listed.has(rec.key) && !used.has(rec.key)).length,
+    remaining: records.filter(rec => !used.has(rec.key)).length,
     untouched
   };
-}
-
-/**
- * 編集した行のプルダウンが、候補のシートの同じ行を参照しているか。
- * 行の追加・削除・並べ替えでずれたとき（またはリクエスト シートの行数・読む列が変わったとき）は false。
- */
-function svcListsInPlace_(sheet, meta, cols, first, last) {
-  const cascadeKeys = svcCascadeKeys_();
-  const columns = cascadeKeys.map(key => cols[key]).join(',');
-  if (!meta || meta.rows !== sheet.getMaxRows() || meta.columns !== columns) return false;
-  // 連動列ごとの欄の左端（候補のシートの列）
-  const starts = [];
-  meta.widths.reduce((col, width) => { starts.push(col); return col + width; }, svcListColumns_().start);
-  const left = Math.min.apply(null, cascadeKeys.map(key => cols[key]));
-  const right = Math.max.apply(null, cascadeKeys.map(key => cols[key]));
-  const rules = sheet.getRange(first, left, last - first + 1, right - left + 1).getDataValidations();
-  return rules.every((line, i) => cascadeKeys.every((key, level) => {
-    const rule = line[cols[key] - left];
-    if (!rule || rule.getCriteriaType() !== SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE) return false;
-    const range = rule.getCriteriaValues()[0];
-    return range.getSheet().getName() === SVC_OPTIONS.listSheet && range.getRow() === first + i &&
-      range.getColumn() === starts[level];
-  }));
-}
-
-/* ---------------- 編集したとき（onEdit から） ---------------- */
-
-/**
- * 新FMT を編集したとき：サブインダストリー・得意先・案件名・リクエストの列を変えたら、選んだ行を合わせ、候補のシートの案件を書き直す。
- * リクエスト シートが無い・見出しが足りないときは何もしない（setupRequestSheet() を実行すると知らせる）。
- */
-function svcHandleSourceEdit_(sheet, range, e) {
-  const ss = sheet.getParent();
-  const request = ss.getSheetByName(SVC_OPTIONS.requestSheet);
-  if (!request) return;
-  const headerRow = svcSourceHeaderRow_(sheet.getName());
-  if (range.getLastRow() <= headerRow) return;
-
-  const headers = sheet.getRange(headerRow, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
-  const cols = SVC_OPTIONS.sourceHeaders.map(h => (taskHeaderCount_(headers, h) === 1 ? taskFindColumn_(headers, h, '', true) : 0));
-  if (cols.some(col => !col)) return;
-  if (!cols.some(col => col >= range.getColumn() && col <= range.getLastColumn())) return;
-
-  // 1つのセルで得意先・案件名・リクエストを書き換えたときは、リクエスト シートの同じ行を直す
-  let renamed = null;
-  const level = cols.indexOf(range.getColumn());
-  if (range.getNumRows() === 1 && range.getNumColumns() === 1 && level >= 1 && e && e.oldValue != null) {
-    const left = Math.min.apply(null, cols);
-    const line = sheet.getRange(range.getRow(), left, 1, Math.max.apply(null, cols) - left + 1).getDisplayValues()[0];
-    const after = cols.map(col => String(line[col - left]).trim());
-    const before = after.slice();
-    before[level] = String(e.oldValue).trim();
-    if (after[3] && before[3]) {
-      renamed = {
-        level,
-        value: after[level],
-        oldKey: svcRequestKey_(before[1], before[2], before[3]),
-        newKey: svcRequestKey_(after[1], after[2], after[3])
-      };
-    }
-  }
-
-  let lists;
-  try {
-    lists = taskWithLock_(() => {
-      const records = svcSourceRecords_(ss);
-      svcSync_(ss, request, renamed, records);
-      return svcBuildLists_(ss, request, records, {});
-    });
-  } catch (error) {
-    throw new Error('「' + SVC_OPTIONS.requestSheet + '」シートを「' + sheet.getName() + '」の変更に合わせられませんでした（' + error.message + '）。' +
-      'あとで setupRequestSheet() を実行するか、もう一度編集してください。');
-  }
-  if (lists.needsSetup) ss.toast(lists.warnings.join('\n'), 'サービス管理', 10);
-}
-
-/**
- * リクエスト シートを編集したとき：A〜D（サブインダストリー・得意先・案件名・リクエスト）を変えたら、その行を整える
- * （左の列が空の値・候補に無い値を空にし、1つに決まる次の列（得意先・案件名）を埋める）。リクエスト（D）とその右の列には値を入れない。
- * 候補は数式が作るので、プルダウンは付け直さない（速く終わるように、新FMT も読まない）。
- * 行の追加・削除・並べ替えでプルダウンの参照がずれていたときだけ、候補のシートとプルダウンを作り直す。
- */
-function svcHandleRequestEdit_(sheet, range) {
-  const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
-  const edited = col => col > 0 && col >= range.getColumn() && col <= range.getLastColumn();
-  const levels = svcCascadeKeys_().map((key, level) => (edited(cols[key]) ? level : -1)).filter(level => level >= 0);
-  const level = levels.length ? levels[0] : -1;
-  if (level < 0) return;
-
-  const ss = sheet.getParent();
-  const first = Math.max(range.getRow(), SVC_OPTIONS.headerRow + 1);
-  const last = range.getLastRow();
-  taskWithLock_(() => {
-    const lists = svcReadLists_(ss);
-    const messages = svcFixEditedRows_(sheet, lists ? lists.list : svcListRecords_(svcSourceRecords_(ss)),
-      {first, last, from: level, levels}, cols);
-    if (messages.length) ss.toast(messages.join('\n'), 'サービス管理', 10);
-    // 行の追加・削除・並べ替えでプルダウンの参照がずれていたら、同じ欄のまま付け直す（候補のシートは空にしない）
-    if (!lists || !svcListsInPlace_(sheet, lists.meta, cols, first, last)) {
-      const result = svcBuildLists_(ss, sheet, lists && lists.meta ? lists.list : svcSourceRecords_(ss), {realign: true});
-      if (result.needsSetup) ss.toast(result.warnings.join('\n'), 'サービス管理', 10);
-    }
-  }, SVC_OPTIONS.editLockWaitMs);
 }

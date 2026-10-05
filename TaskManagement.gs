@@ -27,7 +27,7 @@ const TASK_OPTIONS = {
   // 前の版の列（案件の連動プルダウン）。setupTaskSheet() で確認してから削除する
   removedColumns: ['サブインダストリー', '得意先', '案件名'],
   headerBackground: '#E9F4F1',
-  lockWaitMs: 10000     // 単純トリガー（onEdit）からも使うため短めにする（30秒で止まる）
+  lockWaitMs: 10000     // taskWithLock_ の既定の待ち時間（サービス管理は SVC_OPTIONS の待ち時間を渡す）
 };
 
 /* ---------------- 管理者がエディタから実行する ---------------- */
