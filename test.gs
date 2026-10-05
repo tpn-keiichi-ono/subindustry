@@ -77,7 +77,7 @@
 // - requests: true を付けたシートは、リクエスト シート（ServiceManagement.gs）がサービスのリクエストを読む
 // - formerNames は前のシート名。差分追跡の記録はシート名で残るので、名前を変えたら前の名前をここに足す
 //   （前の名前の記録も、このシートの記録としてサイドバー・変更履歴に出す。記録は書き換えない）
-// シート名を変えたら setupDiffTracking() を実行する（docs/OPERATIONS.md「シート名の一覧」）。
+// シートを足した・名前を変えたら、setupAfterSheetChange() を実行する（docs/OPERATIONS.md「シート名の一覧」）。
 const DIFF_RULES = {
   'スーパー・GMS': {
     headerRow: 2,
@@ -307,6 +307,97 @@ function setupDiffTracking() {
     SpreadsheetApp.flush();
     lock.releaseLock();
   }
+}
+
+/* ---------------- シートを足した・名前を変えたあと（管理者がエディタから実行する） ---------------- */
+
+/**
+ * DIFF_RULES のシートを足した・名前を変えたあとに必要な設定を、まとめて実行する。何度実行してもよい。
+ * 1. 差分追跡（setupDiffTracking）  2. クレデンシャルのボタン列（setupCredentialLauncher）
+ * 3. 変更履歴のボタン列（setupChangeHistoryLauncher）  4. サービスリクエストの候補（setupRequestSheet）
+ * 途中で止まって設定が半分だけにならないよう、先にすべてのシートの見出しを確かめ、足りなければ何も変えずに知らせる。
+ * トリガーを設置するので、管理者アカウント（トリガーの所有者）で実行すること。
+ */
+function setupAfterSheetChange() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const problems = diffCheckSheets_(ss);
+  if (problems.length) {
+    ui.alert('シートの設定', '次の点を直してから、もう一度実行してください（まだ何も変えていません）。\n\n・' + problems.join('\n・'),
+      ui.ButtonSet.OK);
+    return;
+  }
+
+  const steps = [
+    {label: '差分追跡', run: () => setupDiffTracking()},
+    {label: 'クレデンシャルのボタン列', run: () => setupCredentialLauncher()},
+    {label: '変更履歴のボタン列', run: () => setupChangeHistoryLauncher()},
+    {label: 'サービスリクエストの候補', run: () => svcSetupRequestSheet_(ss)}
+  ];
+  const done = [];
+  let notes = [];
+  steps.forEach(step => {
+    try {
+      const result = step.run();
+      if (Array.isArray(result)) notes = notes.concat(result);
+    } catch (error) {
+      throw new Error('「' + step.label + '」で止まりました（' + error.message + '）。' +
+        (done.length ? '「' + done.join('」「') + '」は済んでいます。' : '') +
+        '原因を直してから、もう一度 setupAfterSheetChange() を実行してください（何度実行しても大丈夫です）。');
+    }
+    done.push(step.label);
+  });
+
+  ui.alert('シートの設定',
+    '対象のシート：「' + Object.keys(DIFF_RULES).join('」「') + '」\n' +
+    '「' + done.join('」「') + '」を設定しました。\n\n' + notes.join('\n'),
+    ui.ButtonSet.OK);
+}
+
+/**
+ * DIFF_RULES のシートが setupAfterSheetChange() の設定に足りているかを確かめる（読むだけ）。直す点の一覧を返す。
+ * シートがあるか・見出し（最終更新日時・得意先・2つのボタン列。requests: true ならリクエストの4つの見出し）があるか・
+ * ボタン列が追跡範囲（ranges）の外にあるか。
+ */
+function diffCheckSheets_(ss) {
+  const problems = [];
+  Object.entries(DIFF_RULES).forEach(([name, rule]) => {
+    const sheet = ss.getSheetByName(name);
+    if (!sheet) {
+      problems.push('「' + name + '」シートがありません（DIFF_RULES のシート名と、シートの名前を同じにしてください）。');
+      return;
+    }
+    const check = fn => {
+      try { return fn(); } catch (error) { problems.push(error.message); return 0; }
+    };
+    if (!Number.isInteger(rule.headerRow) || rule.headerRow < 1 || !Array.isArray(rule.ranges) || !rule.ranges.length) {
+      problems.push('DIFF_RULES の「' + name + '」の headerRow（見出しの行）と ranges（追跡範囲）を確かめてください。');
+      return;
+    }
+    let stamp = 0;
+    try {
+      stamp = diffStampColumn_(sheet, rule);
+    } catch (_) {
+      problems.push(name + ' の ' + rule.headerRow + '行目に「' + DIFF_OPTIONS.stampHeader + '」の見出しがちょうど1つ必要です。');
+    }
+    check(() => credColumnByHeader_(sheet, rule, CRED_OPTIONS.customerHeader));
+    [CRED_OPTIONS.launcherHeader, CHG_OPTIONS.launcherHeader].forEach(header => {
+      const launcher = check(() => credColumnByHeader_(sheet, rule, header));
+      if (!launcher || !stamp) return;
+      const column = sheet.getRange(rule.headerRow + 1, launcher, Math.max(sheet.getMaxRows() - rule.headerRow, 1), 1);
+      if (diffBlocks_(sheet, rule, column, stamp, false).length) {
+        problems.push(name + ' の「' + credHeaderText_(header) + '」列（' + diffColumnLetter_(launcher) +
+          '列）が DIFF_RULES の ranges に含まれています。ボタン列は追跡範囲の外にしてください。');
+      }
+    });
+    if (rule.requests) {
+      const headers = sheet.getRange(rule.headerRow, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
+      SVC_OPTIONS.sourceHeaders.forEach(header => {
+        check(() => taskFindColumn_(headers, header, name + ' の ' + rule.headerRow + '行目', true));
+      });
+    }
+  });
+  return problems;
 }
 
 /**

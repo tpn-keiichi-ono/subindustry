@@ -128,7 +128,11 @@ function onEdit(e) {
  */
 function setupRequestSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ss.toast(svcSetupRequestSheet_(ss).join('\n'), 'サービス管理', 10);
+}
 
+/** setupRequestSheet() の中身。知らせる文（行ごと）を返す（setupAfterSheetChange() からも使う）。 */
+function svcSetupRequestSheet_(ss) {
   // 使わなくなった列を消すかは、ロックを取る前に聞く（答えるまでほかの処理を待たせないため）
   const existing = ss.getSheetByName(SVC_OPTIONS.requestSheet);
   const oldColumns = existing ? taskFoundLabels_(existing, SVC_OPTIONS.removedColumns, SVC_OPTIONS.headerRow) : [];
@@ -161,7 +165,7 @@ function setupRequestSheet() {
   else if (oldColumns.length) lines.push('「' + oldColumns.join('」「') + '」の列は残しました（使いません。不要なら削除してください）。');
   if (result.added.length) lines.push('「' + result.added.join('」「') + '」の列を足しました。');
   if (result.taskAdded.length) lines.push(TASK_OPTIONS.sheet + ' の右端に「' + result.taskAdded.join('」「') + '」の列を足しました。');
-  ss.toast(lines.concat(result.warnings).join('\n'), 'サービス管理', 10);
+  return lines.concat(result.warnings);
 }
 
 /**

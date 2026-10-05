@@ -251,6 +251,9 @@ G 列から右が `リクエスト` の行ごとの候補（同じ行番号。�
   前からあるシートに足す列は、`insertAfter` の見出しのすぐ右に差し込みます（`taskEnsureHeader_`。フィードバックは判断の右、担当者はサービス案の右）。
   差し込んだ列は左の列の入力規則を引き継ぐことがあるので、自由に入力する列の入力規則は `svcApplyRules_` で外します。
   使わなくなった列（`removedColumns`：`メモ`・`追加日`・前の版の `取り込み日`）は、`setupRequestSheet()` が確認してから削除します（`taskDeleteColumns_`）。
+- シートを足した・名前を変えたあとの設定は `setupAfterSheetChange()`（`test.gs`）でまとめて行います。先に `diffCheckSheets_()` で全シートの見出しを読むだけで確かめ、
+  足りなければ何も変えずに知らせます（途中で止まって、差分追跡だけ・ボタン列だけが設定された状態にしないため）。
+  そのあと `setupDiffTracking()`・`setupCredentialLauncher()`・`setupChangeHistoryLauncher()`・`svcSetupRequestSheet_()` を順に呼びます（どれも何度実行してもよい）。
 - シート名を変えた追跡シート：差分追跡の記録（`変更履歴_差分`・`変更時点スナップショット`）はシート名で残り、記録は書き換えないので、
   `DIFF_RULES` の `formerNames` に前の名前を書きます。読み手（`Changehistory.gs`・`HistorySidebar.gs`）は `diffSheetNameResolver_()` で前の名前を今の名前にそろえて見ます。
 - 読むシート（`svcSourceSheets_`）：`DIFF_RULES` で `requests: true` を付けたシートです。新FMT の名前と見出しの行を `DIFF_RULES` の1か所に置くため、
