@@ -138,6 +138,7 @@
     }
     .notice.ok { border-color: #CFE3DC; background: var(--teal-soft); color: var(--cred-text); }
     .notice.error { border-color: #F3CFCB; background: var(--del-bg); color: var(--danger); }
+    .notice.wait { border-color: var(--border); background: var(--soft); color: var(--muted); }
     .notice span { flex: 1; min-width: 0; padding-top: 1px; overflow-wrap: anywhere; }
     .notice .clear-x { position: static; transform: none; flex: none; width: 24px; height: 24px; color: inherit; opacity: .7; }
     .notice .clear-x:hover { background: rgba(255, 255, 255, .6); opacity: 1; }
@@ -546,10 +547,13 @@
      * サーバーの関数を呼ぶ（呼んでいる間はほかの追加・削除と再読み込みを止める）。
      * call(runner) の中で runner.関数名(…) を呼ぶ（関数名をそのまま書き、npm run check で確かめられるようにする）。
      */
-    function run(id, call, verb, item) {
-      if (busyId != null) return;
+    const RETRY = 2;   // 「他の処理が実行中です」のとき、自動でやり直す回数
+
+    function run(id, call, verb, item, attempt) {
+      attempt = attempt || 0;
+      if (busyId != null && !attempt) return;
       busyId = id;
-      hideNotice();
+      if (!attempt) hideNotice();
       $('refresh').disabled = true;
       render();
       const done = () => { busyId = null; confirmId = null; $('refresh').disabled = false; };
@@ -561,8 +565,15 @@
           render();
         })
         .withFailureHandler(error => {
+          const text = errorText(error);
+          if (/他の処理/.test(text) && attempt < RETRY) {
+            // ほかの人の追加・削除などが終わるのを少し待って、自動でやり直す
+            showNotice('wait', 'ほかの処理が終わるのを待っています…（' + (attempt + 2) + '回目）');
+            setTimeout(() => run(id, call, verb, item, attempt + 1), 1500);
+            return;
+          }
           done();
-          showNotice('error', verb + 'できませんでした：' + errorText(error));
+          showNotice('error', verb + 'できませんでした：' + text);
           render();
         });
       call(runner);

@@ -138,7 +138,7 @@ function getRequestPickerData() {
       svcSync_(ss, sheet, records);
       svcNotifyIds_(ss, svcEnsureIds_(sheet));   // ID の無い行・重複した ID（行のコピーなど）を直す
       svcLinkTaskServiceColumn_(ss);      // タスク管理のサービス案のプルダウンが、今のサービス案の列を見ているか
-    }, 5000);
+    }, 5000, 'パネルの読み込み');
   } catch (_) {
     synced = false;
   }
@@ -205,7 +205,7 @@ function svcAddRequest_(key) {
       sheet.getRange(row, cols.id).setValue(credText_(id));
     }
     return {ok: true, row, id, sheet, records, message: (id ? id + ' として' : '') + row + '行目に追加しました。'};
-  }, SVC_OPTIONS.pickerLockWaitMs);
+  }, SVC_OPTIONS.pickerLockWaitMs, 'リクエストの追加');
 }
 
 /**
@@ -236,7 +236,7 @@ function deleteServiceRequest(row, key, id) {
     sheet.deleteRow(target.row);
     const label = target.values.id ? target.values.id + '（' + target.row + '行目）' : target.row + '行目';
     return {ok: true, row: target.row, list: svcListData_(sheet, svcSourceRecords_(ss)), message: label + 'を削除しました。'};
-  }, SVC_OPTIONS.pickerLockWaitMs);
+  }, SVC_OPTIONS.pickerLockWaitMs, 'リクエストの削除');
 }
 
 /** サービスリクエストのシート。無ければ、管理者に setupRequestSheet() を頼むよう知らせて止める。 */
@@ -472,7 +472,7 @@ function svcSetupRequestSheet_(ss) {
     const rules = svcApplyRules_(ss, ensured.sheet);
     const legacy = svcRemoveLegacyLists_(ss, ensured.sheet);
     return Object.assign(ensured, synced, rules, {legacy, ids}, svcCountRequests_(ensured.sheet, records));
-  }, SVC_OPTIONS.lockWaitMs);
+  }, SVC_OPTIONS.lockWaitMs, 'setupRequestSheet()');
 
   const name = SVC_OPTIONS.requestSheet;
   const lines = [result.created ? '「' + name + '」シートを作りました。' : '「' + name + '」シートを整えました。'];
@@ -526,7 +526,7 @@ function removeUntouchedRequests() {
       end = start - 1;
     }
     return Object.assign({removed: rows.length}, svcCountRequests_(sheet, svcSourceRecords_(ss)));
-  }, SVC_OPTIONS.lockWaitMs);
+  }, SVC_OPTIONS.lockWaitMs, 'removeUntouchedRequests()');
   ss.toast(result.removed + '行を削除しました。' + svcCountMessage_(result), SVC_OPTIONS.menuTitle, 10);
 }
 
@@ -684,6 +684,39 @@ function svcLinkTaskServiceColumn_(ss) {
   if (linked) return false;
   range.setDataValidation(svcServiceRule_(ss));
   return true;
+}
+
+/* ---------------- 「追加」が止まるときの確認（管理者がエディタから実行する） ---------------- */
+
+/**
+ * 選択パネルの「追加」が「他の処理が実行中です」で止まるときに実行する（読むだけ。何も書き換えない）。
+ * サービス管理が使うロックの種類（貼り替えが済んでいるか）、今ロックを持っている処理、差分追跡などのドキュメントロックが使われているかを画面に出す。
+ */
+function diagnoseServiceLock() {
+  const lines = svcLockLines_();
+  console.log(lines.join('\n'));
+  const ui = SpreadsheetApp.getUi();
+  ui.alert(SVC_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
+}
+
+/** diagnoseServiceLock() の中身。画面に出す文（行ごと）を返す。 */
+function svcLockLines_() {
+  const scriptLock = String(taskWithLock_).indexOf('getScriptLock') >= 0;
+  const busy = lock => {
+    if (!lock.tryLock(0)) return true;
+    lock.releaseLock();
+    return false;
+  };
+  return [
+    scriptLock
+      ? 'サービス管理のロック：差分追跡とは別のロック（新しい版）を使っています。'
+      : 'サービス管理のロック：差分追跡と同じロック（前の版）を使っています。TaskManagement.gs を最新のものに貼り替えてください' +
+        '（差分追跡と順番待ちになり、「追加」が止まります）。',
+    'サービス管理のロック：' + (busy(LockService.getScriptLock()) ? '今、使われています' + taskLockHolderText_() : '空いています') + '。',
+    '差分追跡などのロック：' + (busy(LockService.getDocumentLock())
+      ? '今、使われています（取り込み元の編集の記録・取りこぼしの回収などが動いています）'
+      : '空いています') + '。'
+  ];
 }
 
 /* ---------------- パネルに出ないときの確認（管理者がエディタから実行する） ---------------- */

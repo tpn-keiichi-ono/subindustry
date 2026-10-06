@@ -101,6 +101,7 @@
     }
     .banner.ok { border-color: #CFE3DC; background: var(--teal-wash); color: var(--after-ink); }
     .banner.error { border-color: var(--danger-line); background: var(--danger-soft); color: var(--danger); }
+    .banner.wait { border-color: var(--border); background: var(--hover); color: var(--muted); }
     .banner span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     .banner .clear-x { position: static; transform: none; flex: none; width: 20px; height: 20px; margin: -1px -4px 0 0; color: inherit; opacity: .7; }
     .banner .clear-x:hover { background: rgba(255, 255, 255, .6); opacity: 1; }
@@ -496,10 +497,13 @@
 
     /* ---------- 追加 ---------- */
 
-    function add(item) {
-      if (adding != null) return;
+    const RETRY = 2;   // 「他の処理が実行中です」のとき、自動でやり直す回数
+
+    function add(item, attempt) {
+      attempt = attempt || 0;
+      if (adding != null && !attempt) return;
       adding = item.key;
-      hideBanner();
+      if (!attempt) hideBanner();
       $('refresh').disabled = true;
       renderList();
       google.script.run
@@ -513,9 +517,16 @@
           else renderList();
         })
         .withFailureHandler(error => {
+          const text = errorText(error);
+          if (/他の処理/.test(text) && attempt < RETRY) {
+            // ほかの人の追加などが終わるのを少し待って、自動でやり直す
+            showBanner('wait', 'ほかの処理が終わるのを待っています…（' + (attempt + 2) + '回目）');
+            setTimeout(() => add(item, attempt + 1), 1500);
+            return;
+          }
           adding = null;
           $('refresh').disabled = false;
-          showBanner('error', '追加できませんでした：' + errorText(error));
+          showBanner('error', '追加できませんでした：' + text);
           renderList();
         })
         .addServiceRequest(item.key);

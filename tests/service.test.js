@@ -312,6 +312,39 @@ test('差分追跡などがドキュメントロックを使っていても、�
   gas.lockBusy = false;
 });
 
+test('ロックを待ちきれなかったときは、ロックを持っている処理（何を・誰が・いつから）を知らせる', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  const key = g.getRequestPickerData().items[0].key;
+  const cache = g.CacheService.getScriptCache();
+  assert.strictEqual(cache.get('TASK_LOCK_HOLDER'), null, '終わった処理の記録は残さない');
+  cache.put('TASK_LOCK_HOLDER', JSON.stringify({label: 'リクエストの追加', user: 'sato@example.com', at: Date.now() - 12000}), 600);
+  gas.lockBusy = 'script';
+  assert.throws(() => g.addServiceRequest(key),
+    /^Error: 他の処理（リクエストの追加・sato@example\.com・1[23]秒前から）が実行中です。少し待ってからもう一度お試しください。$/);
+  gas.lockBusy = false;
+});
+
+test('diagnoseServiceLock：サービス管理のロックの種類と、今使われているロックを出す（読むだけ）', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  gas.writes.length = 0;
+  g.diagnoseServiceLock();
+  assert.deepStrictEqual(gas.alerts[0].message.split('\n'), [
+    'サービス管理のロック：差分追跡とは別のロック（新しい版）を使っています。',
+    'サービス管理のロック：空いています。',
+    '差分追跡などのロック：空いています。'
+  ]);
+  assert.strictEqual(gas.alerts[0].title, '🟪RXサービスMTG用');
+  assert.deepStrictEqual(gas.writes, [], '何も書き換えない');
+
+  gas.lockBusy = 'document';
+  g.diagnoseServiceLock();
+  assert.match(gas.alerts[1].message, /差分追跡などのロック：今、使われています/);
+  assert.match(gas.alerts[1].message, /サービス管理のロック：空いています/);
+  gas.lockBusy = false;
+});
+
 test('getRequestPickerData：リクエスト シートが無ければ、管理者に setupRequestSheet() を頼むよう知らせる', () => {
   const {g} = setup();
   assert.throws(() => g.getRequestPickerData(), /「リクエスト」シートがありません。管理者に setupRequestSheet\(\) の実行を頼んでください/);

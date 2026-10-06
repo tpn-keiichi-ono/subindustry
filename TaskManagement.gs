@@ -29,7 +29,8 @@ const TASK_OPTIONS = {
   // 前の版の列（案件の連動プルダウン）。setupTaskSheet() で確認してから削除する
   removedColumns: ['サブインダストリー', '得意先', '案件名'],
   headerBackground: '#E9F4F1',
-  lockWaitMs: 10000     // taskWithLock_ の既定の待ち時間（サービス管理は SVC_OPTIONS の待ち時間を渡す）
+  lockWaitMs: 10000,    // taskWithLock_ の既定の待ち時間（サービス管理は SVC_OPTIONS の待ち時間を渡す）
+  lockHolderKey: 'TASK_LOCK_HOLDER'   // ロックを持っている処理の記録（スクリプトのキャッシュ）
 };
 
 /* ---------------- 管理者がエディタから実行する ---------------- */
@@ -69,7 +70,7 @@ function setupTaskSheet() {
     const cols = taskColumnMap_(sheet, TASK_OPTIONS.columns, TASK_OPTIONS.headerRow);
     const warnings = taskApplyColumnRules_(sheet, TASK_OPTIONS.columns, cols, TASK_OPTIONS.headerRow + 1, rows);
     return {created, added, removed, warnings};
-  });
+  }, TASK_OPTIONS.lockWaitMs, 'setupTaskSheet()');
 
   const lines = [result.created ? TASK_OPTIONS.sheet + ' シートを作りました。' : TASK_OPTIONS.sheet + ' シートのプルダウンを付け直しました。'];
   if (result.removed.length) lines.push('「' + result.removed.join('」「') + '」の列を削除し、「サービス案」を左端に置きました。');
@@ -227,15 +228,41 @@ function taskHeaderCount_(headers, label) {
  * 差分追跡・クレデンシャル履歴などのドキュメントロックとは別の、スクリプトロックを使う
  * （ドキュメントロックだと、取り込み元の編集のたびに動く差分追跡の後ろに並ばされ、選択パネルの「追加」が待ちきれずに止まっていた）。
  * サービス管理・タスク管理の処理どうしは、このロックで1つずつ動く。
+ * label はロックを持っている処理の名前。ロックを取っている間はキャッシュに「誰の何か」を残し、待ちきれなかった人に知らせる。
  */
-function taskWithLock_(fn, waitMs) {
+function taskWithLock_(fn, waitMs, label) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(waitMs || TASK_OPTIONS.lockWaitMs)) {
-    throw new Error('他の処理が実行中です。少し待ってからもう一度お試しください。');
+    throw new Error('他の処理' + taskLockHolderText_() + 'が実行中です。少し待ってからもう一度お試しください。');
   }
+  const cache = CacheService.getScriptCache();
+  try {
+    cache.put(TASK_OPTIONS.lockHolderKey, JSON.stringify({label: label || '', user: credActiveEmail_(), at: Date.now()}), 600);
+  } catch (_) {}
   try {
     return fn();
   } finally {
-    try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
+    try { SpreadsheetApp.flush(); } finally {
+      try { cache.remove(TASK_OPTIONS.lockHolderKey); } catch (_) {}
+      lock.releaseLock();
+    }
+  }
+}
+
+/** ロックを持っている処理（「（リクエストの追加・sato@…・12秒前から）」の形。分からなければ空）。 */
+function taskLockHolderText_() {
+  const holder = taskLockHolder_();
+  if (!holder) return '';
+  const seconds = Math.max(0, Math.round((Date.now() - holder.at) / 1000));
+  return '（' + [holder.label, holder.user && holder.user !== '取得不可' ? holder.user : '', seconds + '秒前から'].filter(Boolean).join('・') + '）';
+}
+
+/** ロックを持っている処理の記録 {label, user, at}（無ければ null）。 */
+function taskLockHolder_() {
+  try {
+    const holder = JSON.parse(CacheService.getScriptCache().get(TASK_OPTIONS.lockHolderKey) || 'null');
+    return holder && holder.at ? holder : null;
+  } catch (_) {
+    return null;
   }
 }
