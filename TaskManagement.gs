@@ -221,9 +221,15 @@ function taskHeaderCount_(headers, label) {
   return headers.filter(h => normalize(h) === normalize(label)).length;
 }
 
-/** ドキュメントロックの中で fn を実行する。waitMs を省くと単純トリガー向けの短い待ち時間。 */
+/**
+ * サービス管理・タスク管理の書き込みのロックの中で fn を実行する（waitMs を省くと TASK_OPTIONS.lockWaitMs）。
+ * サービス管理・タスク管理は、サービスリクエスト・タスク管理のシート（差分追跡の対象外）だけに書き、取り込み元は読むだけなので、
+ * 差分追跡・クレデンシャル履歴などのドキュメントロックとは別の、スクリプトロックを使う
+ * （ドキュメントロックだと、取り込み元の編集のたびに動く差分追跡の後ろに並ばされ、選択パネルの「追加」が待ちきれずに止まっていた）。
+ * サービス管理・タスク管理の処理どうしは、このロックで1つずつ動く。
+ */
 function taskWithLock_(fn, waitMs) {
-  const lock = LockService.getDocumentLock();
+  const lock = LockService.getScriptLock();
   if (!lock.tryLock(waitMs || TASK_OPTIONS.lockWaitMs)) {
     throw new Error('他の処理が実行中です。少し待ってからもう一度お試しください。');
   }

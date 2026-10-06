@@ -236,8 +236,8 @@
       return node;
     }
 
-    /** サーバーのエラーの文（先頭の「Exception: 」は外す） */
-    const errorText = error => String(error && error.message || error).replace(/^Exception:\s*/, '');
+    /** サーバーのエラーの文（先頭の「Exception: 」「Error: 」は外す） */
+    const errorText = error => String(error && error.message || error).replace(/^(Exception|Error):\s*/, '');
 
     /** 比べるときの形（全角・半角と空白の違いはサーバーの credNormalize_ と同じく無視し、大文字・小文字も区別しない） */
     const norm = v => String(v == null ? '' : v).normalize('NFKC').replace(/\s+/g, '').toLowerCase();

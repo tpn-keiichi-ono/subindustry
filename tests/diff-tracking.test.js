@@ -377,3 +377,12 @@ test('列の追加：追跡を停止して知らせる', () => {
   assert.strictEqual(state[sheet.getSheetId()].paused, true);
   assert.ok(gas.toasts.some(t => /列構成が変わったため差分追跡を停止しました/.test(t.message)));
 });
+
+test('サービス管理がロック（スクリプトロック）を使っていても、差分追跡は待たずに記録する（別のロック）', () => {
+  const {gas, g, sheet} = setupProject();
+  gas.lockBusy = 'script';
+  g.recordDiffEdit(gas.edit(sheet, 'F3', '受注'));
+  gas.lockBusy = false;
+  const log = gas.ss.getSheetByName('変更履歴_差分');
+  assert.strictEqual(log.getLastRow(), 2, '記録が1行増える');
+});

@@ -295,6 +295,23 @@ test('ほかの処理がロックを持っているとき：パネルは開け�
   assert.strictEqual(gas.ss.getSheetByName('リクエスト').getLastRow(), 1);
 });
 
+test('差分追跡などがドキュメントロックを使っていても、パネルの追加は待たされない（サービス管理は別のロック）', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  gas.lockBusy = 'document';   // 取り込み元の編集で、差分追跡がドキュメントロックを持っている
+  const data = g.getRequestPickerData();
+  assert.strictEqual(data.synced, true, '登録した行を取り込み元に合わせられる');
+  const result = g.addServiceRequest(data.items[0].key);
+  assert.strictEqual(result.ok, true, result.message);
+  assert.strictEqual(result.id, 'SR-0001');
+
+  // サービス管理どうしは同じロックで1つずつ動く（ほかの人が追加している間は待つ）
+  gas.lockBusy = 'script';
+  assert.throws(() => g.addServiceRequest(data.items[1].key), /他の処理が実行中です/);
+  assert.strictEqual(g.getRequestPickerData().synced, false);
+  gas.lockBusy = false;
+});
+
 test('getRequestPickerData：リクエスト シートが無ければ、管理者に setupRequestSheet() を頼むよう知らせる', () => {
   const {g} = setup();
   assert.throws(() => g.getRequestPickerData(), /「リクエスト」シートがありません。管理者に setupRequestSheet\(\) の実行を頼んでください/);

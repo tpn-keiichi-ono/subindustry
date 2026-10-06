@@ -726,11 +726,12 @@ function createGas(options) {
     getScriptProperties: () => store(gas.props.script)
   };
 
+  /** gas.lockBusy が true ならどのロックも、'document' / 'script' / 'user' ならその種類のロックだけが、ほかの処理に取られている */
   class Lock {
-    constructor() { this.mine = false; }
+    constructor(kind) { this.kind = kind; this.mine = false; }
     tryLock() {
       if (this.mine) return true;
-      if (gas.lockBusy) return false;
+      if (gas.lockBusy === true || gas.lockBusy === this.kind) return false;
       this.mine = true;
       gas.lockHolders++;
       return true;
@@ -744,9 +745,9 @@ function createGas(options) {
     hasLock() { return this.mine; }
   }
   const LockService = {
-    getDocumentLock: () => new Lock(),
-    getScriptLock: () => new Lock(),
-    getUserLock: () => new Lock()
+    getDocumentLock: () => new Lock('document'),
+    getScriptLock: () => new Lock('script'),
+    getUserLock: () => new Lock('user')
   };
 
   const Utilities = {

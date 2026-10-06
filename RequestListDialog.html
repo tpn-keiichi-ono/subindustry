@@ -223,7 +223,7 @@
     /** 比べるときの形（全角・半角・空白・大文字小文字の違いは無視） */
     const norm = v => String(v == null ? '' : v).normalize('NFKC').replace(/\s+/g, '').toLowerCase();
     const words = () => $('query').value.trim().split(/\s+/).map(norm).filter(Boolean);
-    const errorText = error => String(error && error.message || error).replace(/^Exception:\s*/, '');
+    const errorText = error => String(error && error.message || error).replace(/^(Exception|Error):\s*/, '');
 
     /* ---------- モーダルの大きさ（ブラウザの窓幅の 95%。ほかのモーダルと同じ） ---------- */
 
