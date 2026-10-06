@@ -115,17 +115,20 @@ function taskEnsureHeader_(sheet, columns, headerRow) {
     targets = columns.filter(c => !c.required && taskHeaderCount_(headers, c.label) === 0);
   }
 
-  // insertAfter の見出しがある列は、そのすぐ右に差し込む（右の列はずれる。差し込んだ列は左の列の入力規則を引き継がないようにする）
+  // insertAfter の見出しがある列はそのすぐ右に、insertBefore の見出しがある列はそのすぐ左に差し込む
+  // （右の列はずれる。差し込んだ列は隣の列の入力規則を引き継がないようにする）
   const inserted = [];
   if (last > 0) {
     targets = targets.filter(c => {
       const after = c.insertAfter ? taskFindColumn_(headers, c.insertAfter, where, false) : 0;
-      if (!after) return true;
-      sheet.insertColumnAfter(after);
-      sheet.getRange(headerRow, after + 1).setValue(c.label).setFontWeight('bold').setBackground(TASK_OPTIONS.headerBackground);
-      if (sheet.getMaxRows() > headerRow) sheet.getRange(headerRow + 1, after + 1, sheet.getMaxRows() - headerRow, 1).clearDataValidations();
-      if (c.width) sheet.setColumnWidth(after + 1, c.width);
-      headers.splice(after, 0, c.label);
+      const before = !after && c.insertBefore ? taskFindColumn_(headers, c.insertBefore, where, false) : 0;
+      if (!after && !before) return true;
+      const at = after ? after + 1 : before;
+      if (after) sheet.insertColumnAfter(after); else sheet.insertColumnBefore(before);
+      sheet.getRange(headerRow, at).setValue(c.label).setFontWeight('bold').setBackground(TASK_OPTIONS.headerBackground);
+      if (sheet.getMaxRows() > headerRow) sheet.getRange(headerRow + 1, at, sheet.getMaxRows() - headerRow, 1).clearDataValidations();
+      if (c.width) sheet.setColumnWidth(at, c.width);
+      headers.splice(at - 1, 0, c.label);
       last++;
       inserted.push(c.label);
       return false;

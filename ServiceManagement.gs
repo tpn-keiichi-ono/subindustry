@@ -14,6 +14,8 @@
  * - 前の版は、セルの連動プルダウン（候補を非表示の __REQUEST_LISTS の数式で作る）と onEdit で登録していたが、
  *   行の並べ替えでプルダウンがずれる・onEdit が30秒で止まる・差分追跡とロックを取り合う・取り込み元の変更を取りこぼす、
  *   などで安定しなかったのでやめた。setupRequestSheet() が、前の版の A〜D のプルダウンと __REQUEST_LISTS を外す。
+ * - 登録したリクエストには ID（SR-0001 の形）を振る。追加したとき・パネルを開いたとき・setupRequestSheet() のときに、
+ *   ID の無い行と、ほかの行と同じ ID の行（行のコピーなど）に新しい番号を振る（上の行の ID は残す。削除した番号も使い回さない）。
  * - サービスは最初から決まっているものではなく、リクエストをもとに考える。「サービス案」に入力した名前がサービス案になる
  *   （同じ名前を付けたリクエストが1つのサービス案にまとまる）。判断はプルダウン、ほかの列は自由に入力する
  * - 登録した行は、パネルを開いたとき・setupRequestSheet() のときに取り込み元に合わせる（svcSync_）：
@@ -30,9 +32,15 @@ const SVC_OPTIONS = {
   sourceHeaders: ['サブインダストリー', '得意先', '案件名', 'サービスのリクエスト'],
   // 一緒に読む列（リクエストした営業）。見出しが無いシートでは空として扱う。番号は sourceHeaders に続く（4〜7）
   sourceOptionalHeaders: ['アカウント責任者部署', 'アカウント責任者', 'BX部署', 'BX担当'],
+  // 登録したリクエストの ID（SR-0001 の形。追加したときに自動で振る。重複させず、削除した番号も使い回さない）
+  idPrefix: 'SR-',
+  idDigits: 4,
+  idCounterKey: 'SVC_LAST_REQUEST_ID',   // これまでに振った最大の番号（ドキュメントのプロパティ）
   // source：取り込み元の列（sourceHeaders・sourceOptionalHeaders を続けた何番目か）。取り込み元から書き、パネルを開いたときに合わせる
   // aliases は前の版の見出し
   requestColumns: [
+    // insertBefore：前からあるシートに足すときは、その見出しの列のすぐ左に差し込む
+    {key: 'id', label: 'ID', width: 90, insertBefore: 'サブインダストリー'},
     {key: 'subIndustry', label: 'サブインダストリー', width: 160, required: true, source: 0},
     {key: 'customer', label: '得意先', width: 200, required: true, source: 1},
     {key: 'project', label: '案件名', width: 240, required: true, source: 2},
@@ -128,6 +136,7 @@ function getRequestPickerData() {
     taskWithLock_(() => {
       svcRemoveLegacyLists_(ss, sheet);   // 残っていると、スクリプトの書き込みも入力規則で止まるため
       svcSync_(ss, sheet, records);
+      svcNotifyIds_(ss, svcEnsureIds_(sheet));   // ID の無い行・重複した ID（行のコピーなど）を直す
       svcLinkTaskServiceColumn_(ss);      // タスク管理のサービス案のプルダウンが、今のサービス案の列を見ているか
     }, 5000);
   } catch (_) {
@@ -144,7 +153,7 @@ function getRequestPickerData() {
  */
 function addServiceRequest(key) {
   const result = svcAddRequest_(key);
-  return {ok: result.ok, row: result.row, message: result.message, data: svcPickerData_(result.sheet, result.records)};
+  return {ok: result.ok, row: result.row, id: result.id || '', message: result.message, data: svcPickerData_(result.sheet, result.records)};
 }
 
 /**
@@ -153,7 +162,7 @@ function addServiceRequest(key) {
  */
 function addServiceRequestFromList(key) {
   const result = svcAddRequest_(key);
-  return {ok: result.ok, row: result.row, message: result.message, list: svcListData_(result.sheet, result.records)};
+  return {ok: result.ok, row: result.row, id: result.id || '', message: result.message, list: svcListData_(result.sheet, result.records)};
 }
 
 /**
@@ -175,6 +184,7 @@ function svcAddRequest_(key) {
       return {ok: false, row: 0, sheet, records, message: 'このリクエストは、すでに登録されています。'};
     }
 
+    svcEnsureIds_(sheet);   // 先に ID の重複を直してから、次の番号を決める
     const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
     const row = registered.lastRow + 1;
     if (row > sheet.getMaxRows()) {
@@ -189,22 +199,31 @@ function svcAddRequest_(key) {
       // 先頭に ' を付けて書く（「=…」のリクエストも数式にならない）
       sheet.getRange(row, cols[k]).setValue(credText_(record.values[i]));
     });
-    return {ok: true, row, sheet, records, message: row + '行目に追加しました。'};
+    let id = '';
+    if (cols.id) {
+      id = svcFormatId_(svcTakeIds_(1, svcMaxIdInSheet_(sheet, cols.id))[0]);
+      sheet.getRange(row, cols.id).setValue(credText_(id));
+    }
+    return {ok: true, row, id, sheet, records, message: (id ? id + ' として' : '') + row + '行目に追加しました。'};
   }, SVC_OPTIONS.pickerLockWaitMs);
 }
 
 /**
  * 一覧のモーダルの「削除」（google.script.run から呼ぶ）：登録済みのリクエストの行を、サービスリクエストのシートから削除する。
- * row は一覧を読んだときの行番号、key はその行のリクエストのキー。並べ替え・行の追加などで行がずれていたら、
- * 同じキーの行を探して削除する（同じキーの行が複数あって1つに決まらないとき・見つからないときは削除しない）。
+ * row は一覧を読んだときの行番号、key はその行のリクエストのキー、id はその行の ID（あれば）。
+ * 同じ ID で同じリクエストの行があればその行を、無ければ同じキーの行を探して削除する
+ * （並べ替え・行の追加などで行がずれていてもよい。1つに決まらないとき・見つからないときは削除しない）。
  * 判断・サービス案などの入力も行ごと消える（確認はモーダルで行う）。{ok, row, message, list}
  */
-function deleteServiceRequest(row, key) {
+function deleteServiceRequest(row, key, id) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   return taskWithLock_(() => {
     const sheet = svcRequestSheetOrThrow_(ss);
     const matches = svcRegistered_(sheet).rows.filter(r => r.key === String(key));
-    const target = matches.find(r => r.row === Number(row)) || (matches.length === 1 ? matches[0] : null);
+    const number = svcIdNumber_(id);
+    const byId = number ? matches.filter(r => svcIdNumber_(r.values.id) === number) : [];
+    const target = (byId.length === 1 ? byId[0] : null) ||
+      matches.find(r => r.row === Number(row)) || (matches.length === 1 ? matches[0] : null);
     if (!target) {
       return {ok: false, row: 0, list: svcListData_(sheet, svcSourceRecords_(ss)), message: matches.length
         ? '同じリクエストの行が複数あるため、どの行か決められませんでした。一覧を読み込み直しました。'
@@ -215,7 +234,8 @@ function deleteServiceRequest(row, key) {
       sheet.insertRowsAfter(sheet.getMaxRows(), 1);
     }
     sheet.deleteRow(target.row);
-    return {ok: true, row: target.row, list: svcListData_(sheet, svcSourceRecords_(ss)), message: target.row + '行目を削除しました。'};
+    const label = target.values.id ? target.values.id + '（' + target.row + '行目）' : target.row + '行目';
+    return {ok: true, row: target.row, list: svcListData_(sheet, svcSourceRecords_(ss)), message: label + 'を削除しました。'};
   }, SVC_OPTIONS.pickerLockWaitMs);
 }
 
@@ -286,6 +306,7 @@ function svcListData_(sheet, records) {
     registered: registered.rows.map(r => ({
       row: r.row,
       key: r.key,
+      id: r.values.id || '',
       sheet: sourceSheet.get(r.key) || '',
       missing: !sourceSheet.has(r.key),
       values: sourceKeys.map(k => r.values[k] || ''),
@@ -298,6 +319,90 @@ function svcListData_(sheet, records) {
     requestSheet: SVC_OPTIONS.requestSheet,
     loadedAt: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm')
   };
+}
+
+/* ---------------- ID（SR-0001） ---------------- */
+
+/** ID の文字（12 → SR-0012）。 */
+function svcFormatId_(number) {
+  return SVC_OPTIONS.idPrefix + String(number).padStart(SVC_OPTIONS.idDigits, '0');
+}
+
+/** ID の番号（SR-0012・SR12・sr-12・12 → 12。全角・半角と空白の違いは無視。読めなければ 0）。 */
+function svcIdNumber_(value) {
+  const text = credNormalize_(value).toUpperCase();
+  const prefix = credNormalize_(SVC_OPTIONS.idPrefix).toUpperCase().replace(/-+$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp('^(?:' + prefix + '-?)?0*(\\d+)$').exec(text);
+  return match ? Number(match[1]) : 0;
+}
+
+/** シートの ID の列にある、いちばん大きい番号（リクエストの無い行も数える）。 */
+function svcMaxIdInSheet_(sheet, idCol) {
+  const count = sheet.getLastRow() - SVC_OPTIONS.headerRow;
+  if (count < 1) return 0;
+  return sheet.getRange(SVC_OPTIONS.headerRow + 1, idCol, count, 1).getDisplayValues()
+    .reduce((max, line) => Math.max(max, svcIdNumber_(line[0])), 0);
+}
+
+/**
+ * 新しい ID の番号を count 個とって、これまでに振った最大の番号として覚える（ロック取得中に呼ぶこと）。
+ * シートにある最大の番号と、覚えている番号の大きいほうの次から（手で書いた ID とも、削除した行の ID とも重ならない）。
+ */
+function svcTakeIds_(count, maxInSheet) {
+  const props = PropertiesService.getDocumentProperties();
+  const last = Math.max(Number(props.getProperty(SVC_OPTIONS.idCounterKey)) || 0, maxInSheet || 0);
+  props.setProperty(SVC_OPTIONS.idCounterKey, String(last + count));
+  return Array.from({length: count}, (_, i) => last + 1 + i);
+}
+
+/**
+ * リクエストのある行のうち、ID の無い行と、上の行と同じ ID の行（行のコピーなど）に新しい ID を振る（ロック取得中に呼ぶこと）。
+ * 上の行の ID は残す。読めない ID（SR-0001 の形でないもの）も振り直す。ID の列が無ければ何もしない。
+ * {assigned: ID の無かった行の数, renumbered: [{row, from, to}]（振り直した行）}
+ */
+function svcEnsureIds_(sheet) {
+  const headerRow = SVC_OPTIONS.headerRow;
+  const result = {assigned: 0, renumbered: []};
+  const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns.filter(c => c.key === 'id' || c.key === 'request'), headerRow);
+  const count = sheet.getLastRow() - headerRow;
+  if (!cols.id || !cols.request || count < 1) return result;
+  const read = col => sheet.getRange(headerRow + 1, col, count, 1).getDisplayValues().map(line => String(line[0]).trim());
+  const ids = read(cols.id);
+  const requests = read(cols.request);
+  const seen = new Set();
+  const targets = [];
+  ids.forEach((id, i) => {
+    if (!requests[i]) return;
+    const number = svcIdNumber_(id);
+    if (number && !seen.has(number)) { seen.add(number); return; }
+    targets.push(i);
+  });
+  if (!targets.length) return result;
+
+  const numbers = svcTakeIds_(targets.length, ids.reduce((max, id) => Math.max(max, svcIdNumber_(id)), 0));
+  const next = ids.slice();
+  targets.forEach((i, n) => {
+    next[i] = svcFormatId_(numbers[n]);
+    if (ids[i]) result.renumbered.push({row: headerRow + 1 + i, from: ids[i], to: next[i]});
+    else result.assigned++;
+  });
+  const first = targets[0];
+  const last = targets[targets.length - 1];
+  sheet.getRange(headerRow + 1 + first, cols.id, last - first + 1, 1)
+    .setValues(next.slice(first, last + 1).map(v => [credText_(v)]));
+  return result;
+}
+
+/** 振り直した ID の知らせ（多いときは先頭の5件だけ）。 */
+function svcRenumberedMessage_(renumbered) {
+  const shown = renumbered.slice(0, 5).map(r => r.row + '行目：' + r.from + ' → ' + r.to);
+  return 'ほかの行と同じ ID（または読めない ID）だった ' + renumbered.length + '行に、新しい ID を振りました（' +
+    shown.join('、') + (renumbered.length > shown.length ? ' ほか' : '') + '）。';
+}
+
+/** パネルを開いたときに ID を振り直したら、トーストで知らせる（ID の無かった行に振っただけなら知らせない）。 */
+function svcNotifyIds_(ss, ids) {
+  if (ids.renumbered.length) ss.toast(svcRenumberedMessage_(ids.renumbered), SVC_OPTIONS.menuTitle, 10);
 }
 
 /**
@@ -363,14 +468,17 @@ function svcSetupRequestSheet_(ss) {
     const ensured = Object.assign(svcEnsureSheet_(ss), {removed});
     const records = svcSourceRecords_(ss);
     const synced = svcSync_(ss, ensured.sheet, records);
+    const ids = svcEnsureIds_(ensured.sheet);
     const rules = svcApplyRules_(ss, ensured.sheet);
     const legacy = svcRemoveLegacyLists_(ss, ensured.sheet);
-    return Object.assign(ensured, synced, rules, {legacy}, svcCountRequests_(ensured.sheet, records));
+    return Object.assign(ensured, synced, rules, {legacy, ids}, svcCountRequests_(ensured.sheet, records));
   }, SVC_OPTIONS.lockWaitMs);
 
   const name = SVC_OPTIONS.requestSheet;
   const lines = [result.created ? '「' + name + '」シートを作りました。' : '「' + name + '」シートを整えました。'];
   lines.push(svcCountMessage_(result));
+  if (result.ids.assigned) lines.push('ID の無い ' + result.ids.assigned + '行に ID を振りました。');
+  if (result.ids.renumbered.length) lines.push(svcRenumberedMessage_(result.ids.renumbered));
   if (result.updated) lines.push('登録済みの行を取り込み元に合わせました（' + result.updated + 'セル）。');
   if (result.notesRemoved) lines.push('前の版で「リクエスト」のセルに付けたメモを ' + result.notesRemoved + '件外しました。');
   if (result.legacy) {

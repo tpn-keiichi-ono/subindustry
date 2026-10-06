@@ -31,8 +31,8 @@ test('setupTaskSheet：サービス案に対応付けるタスク管理シート
   const sheet = gas.ss.getSheetByName('タスク管理');
   assert.deepStrictEqual(gas.dump(sheet, 'A1:G1')[0], ['サービス案', 'タスク', '本部', '担当者', '期限', '状況', 'メモ'], '本部は担当者の左');
   assert.strictEqual(sheet.getFrozenRows(), 1);
-  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!K2:K1000', 'リクエストに付けたサービス案から選ぶ');
-  assert.strictEqual(rangeOf(sheet.getRange('A' + sheet.getMaxRows())), 'リクエスト!K2:K1000', '最後の行まで付ける');
+  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!L2:L1000', 'リクエストに付けたサービス案から選ぶ');
+  assert.strictEqual(rangeOf(sheet.getRange('A' + sheet.getMaxRows())), 'リクエスト!L2:L1000', '最後の行まで付ける');
   ['B2', 'C2', 'D2'].forEach(a1 => assert.strictEqual(sheet.getRange(a1).getDataValidation(), null, a1 + '：タスク・本部・担当者は自由に入力できる'));
   assert.strictEqual(sheet.getRange('E2').getDataValidation().getCriteriaType(), 'DATE_IS_VALID_DATE');
   assert.deepStrictEqual(listOf(sheet.getRange('F2')), ['未着手', '対応中', '完了']);
@@ -70,7 +70,7 @@ test('setupTaskSheet：前の版のシートは、確認してから A〜C を�
     ['会員分析基盤', '提案書を送る', '', '佐藤', '', '対応中', '先方に確認']
   ]);
   assert.strictEqual(sheet.getLastColumn(), 7);
-  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!K2:K1000');
+  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!L2:L1000');
   assert.match(gas.toasts[gas.toasts.length - 1].message, /列を削除し、「サービス案」を左端に置きました/);
 });
 
@@ -112,7 +112,7 @@ test('タスク管理のサービス案のプルダウンは、サービスリ�
   g.setupTaskSheet();
   const sheet = gas.ss.getSheetByName('タスク管理');
   const request = gas.ss.getSheetByName('リクエスト');
-  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!K2:K1000', 'サービス案は K 列');
+  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!L2:L1000', 'サービス案は L 列');
 
   // 何もずれていなければ書かない
   gas.writes.length = 0;
@@ -126,13 +126,13 @@ test('タスク管理のサービス案のプルダウンは、サービスリ�
       .requireValueInRange(request.getRange('G2:G'), true).setAllowInvalid(false).build());
   });
   g.getRequestPickerData();
-  ['A2', 'A3', 'A5', 'A' + sheet.getMaxRows()].forEach(a1 => assert.strictEqual(rangeOf(sheet.getRange(a1)), 'リクエスト!K2:K1000', a1));
+  ['A2', 'A3', 'A5', 'A' + sheet.getMaxRows()].forEach(a1 => assert.strictEqual(rangeOf(sheet.getRange(a1)), 'リクエスト!L2:L1000', a1));
   assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
 
   // サービス案の列が動いたら（列の追加など）、新しい列を参照し直す
   gas.asUser(() => request.insertColumnAfter(1));
   g.getRequestPickerData();
-  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!L2:L1000');
+  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!M2:M1000');
 });
 
 test('タスク管理シートの編集で動く処理は無い（単純トリガーの onEdit を置かない。プルダウンはリクエストのサービス案を参照するだけ）', () => {

@@ -90,6 +90,8 @@
     td { padding: 11px 14px 11px 0; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 12.5px; line-height: 1.6; color: var(--ink); overflow-wrap: anywhere; }
     tr:hover td { background: var(--panel); }
     td.row-no { font-family: var(--mono); font-size: 11.5px; color: var(--faint); padding-top: 13px; }
+    td.row-no .id { display: block; font-size: 12px; font-weight: 600; color: var(--ink); white-space: nowrap; }
+    td.row-no .line { display: block; font-size: 10.5px; color: var(--meta); }
     td.sub { color: var(--muted); }
     td.customer { font-weight: 600; }
     td.blank { color: var(--meta); }
@@ -415,7 +417,7 @@
       const registered = context.kind === 'registered';
       const all = registered ? data.registered : data.unregistered;
       const rows = all.filter(item => matches(registered
-        ? item.values.concat([item.decision, item.feedback, item.service, item.department, item.owner, item.sheet])
+        ? item.values.concat([item.id, item.decision, item.feedback, item.service, item.department, item.owner, item.sheet])
         : item.values.concat([item.sheet]), terms));
       $('count').textContent = '';
       if (terms.length) {
@@ -431,8 +433,10 @@
       }
 
       const table = el('table');
+      // 列の多い登録済みは、リクエストの列が狭くなりすぎないよう広めにする（入りきらなければ横にスクロール）
+      table.style.minWidth = registered ? '1280px' : '960px';
       const columns = registered
-        ? [['行', '56px'], ['サブインダストリー', '11%'], ['得意先', '11%'], ['案件名', '12%'], ['リクエスト', ''], ['判断', '120px'], ['サービス案', '11%'], ['主管本部', '10%'], ['担当者', '96px'], ['', '132px']]
+        ? [['ID', '84px'], ['サブインダストリー', '8%'], ['得意先', '9%'], ['案件名', '10%'], ['リクエスト', ''], ['判断', '116px'], ['サービス案', '9%'], ['主管本部', '8%'], ['担当者', '84px'], ['', '132px']]
         : [['シート', '120px'], ['サブインダストリー', '15%'], ['得意先', '16%'], ['案件名', '18%'], ['リクエスト', ''], ['', '96px']];
       const colgroup = el('colgroup');
       columns.forEach(([, width]) => {
@@ -452,7 +456,11 @@
         const tr = el('tr');
         const [subIndustry, customer, project, request] = item.values;
         if (registered) {
-          tr.appendChild(el('td', 'row-no', String(item.row)));
+          // ID と、シートの行番号（シートで探すとき用）
+          const td = el('td', 'row-no');
+          if (item.id) td.appendChild(highlighted('span', 'id', item.id, terms));
+          td.appendChild(el('span', 'line', item.row + '行目'));
+          tr.appendChild(td);
         } else {
           const td = el('td');
           td.appendChild(el('span', 'tag', item.sheet));
@@ -520,7 +528,7 @@
         button.textContent = registered ? '削除中…' : '追加中…';
       } else if (registered) {
         button.textContent = '削除';
-        button.title = item.row + '行目を「' + data.requestSheet + '」シートから削除します';
+        button.title = (item.id ? item.id + '（' + item.row + '行目）' : item.row + '行目') + 'を「' + data.requestSheet + '」シートから削除します';
       } else {
         button.innerHTML = PLUS_ICON;
         button.appendChild(document.createTextNode('追加'));
@@ -565,7 +573,7 @@
     }
 
     function removeItem(item) {
-      run(itemId(item, true), runner => runner.deleteServiceRequest(item.row, item.key), '削除', item);
+      run(itemId(item, true), runner => runner.deleteServiceRequest(item.row, item.key, item.id), '削除', item);
     }
 
     function showNotice(kind, text) {

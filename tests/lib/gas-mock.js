@@ -448,6 +448,8 @@ class Sheet {
     return this;
   }
   insertColumnAfter(after) { return this.insertColumnsAfter(after, 1); }
+  insertColumnsBefore(before, count) { return this.insertColumnsAfter(before - 1, count); }
+  insertColumnBefore(before) { return this.insertColumnsAfter(before - 1, 1); }
 
   deleteRows(row, count) {
     // Apps Script と同じく、固定行以外をすべて消すことはできない
