@@ -72,6 +72,13 @@ const SVC_OPTIONS = {
   // 前の版で付けた保護・候補のシート（setupRequestSheet() で外す）
   legacyProtectDescriptions: ['リクエスト：新FMT から自動で転記する列', 'リクエスト：案件を選ぶと自動で入る列'],
   legacyListSheet: '__REQUEST_LISTS',
+  // 前の版の後片付け（A〜D のプルダウン・候補のシート・メモ）が済んだ印（ドキュメントのプロパティ）。
+  // 済んでいれば、パネルを開くたび・追加するたびには確かめない（setupRequestSheet() では毎回確かめる）
+  legacyDoneKey: 'SVC_LEGACY_CLEANED',
+  // タスク管理のサービス案のプルダウンを確かめた記録（ドキュメントのプロパティ）。サービス案の列・行数が変わらなければ、
+  // パネルを開いても taskLinkCheckMinutes 分に1回しか確かめない（毎回すべての行を確かめると、パネルの読み込みが遅くなる）
+  taskLinkKey: 'SVC_TASK_LINK',
+  taskLinkCheckMinutes: 30,
   lockWaitMs: 30000,        // エディタから実行する処理のロックの待ち時間
   pickerLockWaitMs: 20000   // パネルから追加するときのロックの待ち時間
 };
@@ -134,8 +141,9 @@ function getRequestPickerData() {
   let synced = true;
   try {
     taskWithLock_(() => {
-      svcRemoveLegacyLists_(ss, sheet);   // 残っていると、スクリプトの書き込みも入力規則で止まるため
-      svcSync_(ss, sheet, records);
+      const legacy = !PropertiesService.getDocumentProperties().getProperty(SVC_OPTIONS.legacyDoneKey);
+      svcRemoveLegacyLists_(ss, sheet);   // 前の版のプルダウンが残っていると、スクリプトの書き込みも止まるため（済んでいれば何もしない）
+      svcSync_(ss, sheet, records, {notes: legacy});
       svcNotifyIds_(ss, svcEnsureIds_(sheet));   // ID の無い行・重複した ID（行のコピーなど）を直す
       svcLinkTaskServiceColumn_(ss);      // タスク管理のサービス案のプルダウンが、今のサービス案の列を見ているか
     }, 5000, 'パネルの読み込み');
@@ -470,7 +478,7 @@ function svcSetupRequestSheet_(ss) {
     const synced = svcSync_(ss, ensured.sheet, records);
     const ids = svcEnsureIds_(ensured.sheet);
     const rules = svcApplyRules_(ss, ensured.sheet);
-    const legacy = svcRemoveLegacyLists_(ss, ensured.sheet);
+    const legacy = svcRemoveLegacyLists_(ss, ensured.sheet, true);
     return Object.assign(ensured, synced, rules, {legacy, ids}, svcCountRequests_(ensured.sheet, records));
   }, SVC_OPTIONS.lockWaitMs, 'setupRequestSheet()');
 
@@ -610,8 +618,11 @@ function svcApplyRules_(ss, sheet) {
  * 前の版の連動プルダウン（A〜D の入力規則）と、候補を作っていた非表示のシート（__REQUEST_LISTS）を外す。
  * A〜D には入力規則を付けないので、残っているものは列ごと外す（候補に無い値を拒否する規則が残っていると、パネルから書けない）。
  * setupRequestSheet() のほか、選択パネルを開いたとき・追加するときにも呼ぶ（ロック取得中に呼ぶこと）。外したものがあれば true。
+ * 一度確かめたら印（SVC_OPTIONS.legacyDoneKey）を付け、force でなければ次からは確かめない（入力規則を読むのは時間がかかるため）。
  */
-function svcRemoveLegacyLists_(ss, sheet) {
+function svcRemoveLegacyLists_(ss, sheet, force) {
+  const props = PropertiesService.getDocumentProperties();
+  if (!force && props.getProperty(SVC_OPTIONS.legacyDoneKey)) return false;
   let removed = false;
   const lists = ss.getSheetByName(SVC_OPTIONS.legacyListSheet);
   if (lists) {
@@ -631,6 +642,7 @@ function svcRemoveLegacyLists_(ss, sheet) {
       }
     });
   }
+  props.setProperty(SVC_OPTIONS.legacyDoneKey, '1');
   return removed;
 }
 
@@ -662,8 +674,10 @@ function svcServiceRule_(ss) {
 
 /**
  * タスク管理の「サービス案」のプルダウンが、サービスリクエストの今の「サービス案」の列を参照しているかを確かめ、
- * 参照していない行があれば列ごと付け直す（ロック取得中に呼ぶこと）。
- * 列の追加・削除でサービス案の列が動いた・貼り付けでプルダウンが消えた、などでずれても、パネルを開いたときに直る。付け直したら true。
+ * 参照していなければ列ごと付け直す（ロック取得中に呼ぶこと）。付け直したら true。
+ * - サービス案の列（列の追加・削除で動く）か、タスク管理の行数が前に確かめたときと違えば、確かめずに付け直す（書くのは1回）
+ * - 同じなら SVC_OPTIONS.taskLinkCheckMinutes 分に1回だけ、入力規則を1回で読んで確かめる（貼り付けでプルダウンが消えた行など）。
+ *   行ごとにシート名などを問い合わせると、行の数だけ時間がかかる（1,000行で数十秒）ので、種類と参照する列だけを見る
  */
 function svcLinkTaskServiceColumn_(ss) {
   const task = ss.getSheetByName(TASK_OPTIONS.sheet);
@@ -674,16 +688,25 @@ function svcLinkTaskServiceColumn_(ss) {
   const col = taskColumnMap_(task, TASK_OPTIONS.columns.filter(c => c.type === 'service'), TASK_OPTIONS.headerRow).service;
   const serviceCol = taskColumnMap_(request, SVC_OPTIONS.requestColumns.filter(c => c.key === 'service'), SVC_OPTIONS.headerRow).service;
   if (!col || !serviceCol) return false;
+
+  const props = PropertiesService.getDocumentProperties();
+  const state = [request.getSheetId(), serviceCol, task.getSheetId(), col, rows].join(':');
+  let saved = {};
+  try { saved = JSON.parse(props.getProperty(SVC_OPTIONS.taskLinkKey) || '{}') || {}; } catch (_) {}
+  const recent = Date.now() - (Number(saved.at) || 0) < SVC_OPTIONS.taskLinkCheckMinutes * 60 * 1000;
+  if (saved.state === state && recent) return false;   // 列も行数も変わらず、少し前に確かめた
+
   const range = task.getRange(TASK_OPTIONS.headerRow + 1, col, rows, 1);
-  const linked = range.getDataValidations().every(line => {
-    const rule = line[0];
-    if (!rule || rule.getCriteriaType() !== SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE) return false;
-    const target = rule.getCriteriaValues()[0];
-    return target.getSheet().getName() === request.getName() && target.getColumn() === serviceCol;
-  });
-  if (linked) return false;
-  range.setDataValidation(svcServiceRule_(ss));
-  return true;
+  let linked = false;
+  if (saved.state === state) {
+    const rules = range.getDataValidations().map(line => line[0]);
+    const inRange = SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE;
+    linked = rules.every(rule => rule && rule.getCriteriaType() === inRange) &&
+      [0, Math.floor(rules.length / 2), rules.length - 1].every(i => rules[i].getCriteriaValues()[0].getColumn() === serviceCol);
+  }
+  if (!linked) range.setDataValidation(svcServiceRule_(ss));
+  props.setProperty(SVC_OPTIONS.taskLinkKey, JSON.stringify({state, at: Date.now()}));
+  return !linked;
 }
 
 /* ---------------- 「追加」が止まるときの確認（管理者がエディタから実行する） ---------------- */
@@ -866,11 +889,12 @@ function svcSourceRecords_(ss) {
  * - 取り込み元から書く列のうち、リクエストを見分ける列（得意先・案件名・リクエスト）のほか
  *   （サブインダストリー・アカウント責任者部署・アカウント責任者・BX部署・BX担当）を、取り込み元の同じリクエストの値にそろえる
  *   （全角・半角と空白だけの違いなら変えない。取り込み元に無い行は変えない）
- * - 前の版で「リクエスト」のセルに付けたメモ（SVC_OPTIONS.legacyNotes で始まるもの）を外す（利用者が書いたメモは変えない）
+ * - options.notes が false でなければ、前の版で「リクエスト」のセルに付けたメモ（SVC_OPTIONS.legacyNotes で始まるもの）を外す
+ *   （利用者が書いたメモは変えない。パネルを開いたときは、前の版の後片付けが済むまでだけ）
  * 取り込み元に無い行には何もしない（メモは付けない。行番号は diagnoseRequestSources() で確かめる）。
- * {updated: 書き直したセルの数, notesRemoved}
+ * 読み取りは取り込み元から書く列をまとめて1回（列ごとに読むと遅いため）。{updated: 書き直したセルの数, notesRemoved}
  */
-function svcSync_(ss, sheet, records) {
+function svcSync_(ss, sheet, records, options) {
   const headerRow = SVC_OPTIONS.headerRow;
   const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, headerRow);
   const source = new Map(records.map(r => [r.key, r.values]));
@@ -879,13 +903,18 @@ function svcSync_(ss, sheet, records) {
   let notesRemoved = 0;
   if (count < 1) return {updated, notesRemoved};
 
-  const read = key => sheet.getRange(headerRow + 1, cols[key], count, 1).getDisplayValues().map(r => String(r[0]).trim());
+  const sourceColumns = SVC_OPTIONS.requestColumns.filter(c => c.source != null && cols[c.key]);
+  const used = sourceColumns.map(c => cols[c.key]);
+  const left = Math.min.apply(null, used);
+  const right = Math.max.apply(null, used);
+  const block = sheet.getRange(headerRow + 1, left, count, right - left + 1).getDisplayValues();
+  const read = key => block.map(line => String(line[cols[key] - left]).trim());
   const [customers, projects, requests] = ['customer', 'project', 'request'].map(read);
   const keys = requests.map((request, i) => (request ? svcRequestKey_(customers[i], projects[i], request) : ''));
 
   // 見分ける列のほかを、取り込み元に合わせる。書き直すのは変わった行の範囲だけ（列ごとにまとめて書く）
-  SVC_OPTIONS.requestColumns
-    .filter(c => c.source != null && ['customer', 'project', 'request'].indexOf(c.key) < 0 && cols[c.key])
+  sourceColumns
+    .filter(c => ['customer', 'project', 'request'].indexOf(c.key) < 0)
     .forEach(c => {
       const current = read(c.key);
       const next = current.slice();
@@ -905,6 +934,7 @@ function svcSync_(ss, sheet, records) {
     });
 
   // 前の版で付けたメモを外す
+  if (options && options.notes === false) return {updated, notesRemoved};
   const noteRange = sheet.getRange(headerRow + 1, cols.request, count, 1);
   const notes = noteRange.getNotes().map(r => String(r[0] || ''));
   const nextNotes = notes.map(note => {

@@ -537,10 +537,16 @@ test('前の版で「リクエスト」のセルに付けたメモは外し、�
   assert.deepStrictEqual([2, 3, 4].map(row => cellOf(request, 'リクエスト', row).getNote()), ['', '', '先方に確認中']);
   assert.match(gas.toasts[gas.toasts.length - 1].message, /前の版で「リクエスト」のセルに付けたメモを 2件外しました。/);
 
-  // パネルを開いたときにも外す
+  // 前の版の後片付けが済む前（前の版から貼り替えた直後）なら、パネルを開いたときにも外す
   gas.asUser(() => cellOf(request, 'リクエスト', 2).setNote('取り込み元でリクエストが書き換えられました（2026/10/01）。'));
+  g.PropertiesService.getDocumentProperties().deleteProperty('SVC_LEGACY_CLEANED');
   g.getRequestPickerData();
   assert.strictEqual(cellOf(request, 'リクエスト', 2).getNote(), '');
+
+  // 後片付けが済んだら、パネルを開いてもメモ・入力規則は読まない（読むのに時間がかかるため）
+  gas.reads.length = 0;
+  g.getRequestPickerData();
+  assert.deepStrictEqual(gas.reads.filter(r => r.sheet === 'リクエスト' && /Notes|Validations/.test(r.kind)), []);
 });
 
 /* ---------------- リクエストした営業・主管本部 ---------------- */
@@ -904,4 +910,24 @@ test('diagnoseRequestSources：前の版の候補のシートが残っていれ�
   const message = gas.alerts[gas.alerts.length - 1].message;
   assert.match(message, /「新FMT」：リクエストのある行 4件 → パネルに出る 3件（出ないもの：ほかの行・シートと同じリクエスト 1件）。/);
   assert.match(message, /前の版の「__REQUEST_LISTS」シートが残っています。setupRequestSheet\(\) を実行すると外します。/);
+});
+
+test('パネルを開いたときの読み取りの回数は、行の数によらない（行ごとに読まない。遅くならないように）', () => {
+  const readsFor = count => {
+    const rows = [];
+    for (let i = 0; i < count; i++) rows.push(['食品スーパー', '得意先' + i, '案件' + i, 'リクエスト' + i]);
+    const {gas, g} = setup(rows);
+    g.setupRequestSheet();
+    g.setupTaskSheet();
+    const items = g.getRequestPickerData().items;
+    items.slice(0, Math.min(count, 5)).forEach(item => g.addServiceRequest(item.key));
+    g.getRequestPickerData();   // 1回目（確かめた記録を作る）
+    gas.reads.length = 0;
+    g.getRequestPickerData();
+    return gas.reads.length;
+  };
+  const small = readsFor(5);
+  const large = readsFor(25);
+  assert.strictEqual(large, small, '読み取りの回数が行の数で増えている');
+  assert.ok(small <= 20, '読み取りが多すぎます（' + small + '回）');
 });

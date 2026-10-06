@@ -114,19 +114,26 @@ test('タスク管理のサービス案のプルダウンは、サービスリ�
   const request = gas.ss.getSheetByName('リクエスト');
   assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!L2:L1000', 'サービス案は L 列');
 
-  // 何もずれていなければ書かない
+  // 1回目はまだ確かめた記録が無いので付け直す。そのあとは、列も行数も変わらなければ確かめない（読みも書きもしない）
+  g.getRequestPickerData();
   gas.writes.length = 0;
+  gas.reads.length = 0;
   g.getRequestPickerData();
   assert.deepStrictEqual(gas.writes.filter(w => w.sheet === 'タスク管理'), []);
+  assert.deepStrictEqual(gas.reads.filter(w => w.sheet === 'タスク管理' && /Validations/.test(w.kind)), [], '入力規則は読まない');
 
-  // 貼り付けでプルダウンが消えた行・ほかの列を見ているプルダウンがあれば、列ごと付け直す
+  // 貼り付けでプルダウンが消えた行・ほかの列を見ているプルダウンがあれば、少したって（確かめる間隔を過ぎて）から開いたときに列ごと付け直す
+  const last = 'A' + sheet.getMaxRows();
   gas.asUser(() => {
     sheet.getRange('A3').clearDataValidations();
-    sheet.getRange('A5').setDataValidation(g.SpreadsheetApp.newDataValidation()
+    sheet.getRange(last).setDataValidation(g.SpreadsheetApp.newDataValidation()
       .requireValueInRange(request.getRange('G2:G'), true).setAllowInvalid(false).build());
   });
+  const props = g.PropertiesService.getDocumentProperties();
+  const saved = JSON.parse(props.getProperty('SVC_TASK_LINK'));
+  props.setProperty('SVC_TASK_LINK', JSON.stringify(Object.assign(saved, {at: Date.now() - 31 * 60 * 1000})));   // 31分前に確かめた
   g.getRequestPickerData();
-  ['A2', 'A3', 'A5', 'A' + sheet.getMaxRows()].forEach(a1 => assert.strictEqual(rangeOf(sheet.getRange(a1)), 'リクエスト!L2:L1000', a1));
+  ['A2', 'A3', last].forEach(a1 => assert.strictEqual(rangeOf(sheet.getRange(a1)), 'リクエスト!L2:L1000', a1));
   assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
 
   // サービス案の列が動いたら（列の追加など）、新しい列を参照し直す
