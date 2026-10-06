@@ -82,7 +82,7 @@
 
     /* ---------- 一覧 ---------- */
     .list { flex: 1; min-height: 0; overflow: auto; padding: 0 24px 20px 32px; }
-    table { width: 100%; min-width: 900px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+    table { width: 100%; min-width: 1000px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
     th {
       position: sticky; top: 0; z-index: 1; padding: 12px 14px 8px 0; background: #ffffff; border-bottom: 1px solid var(--rail);
       font-size: 11px; font-weight: 600; color: var(--faint); text-align: left; white-space: nowrap;
@@ -415,7 +415,7 @@
       const registered = context.kind === 'registered';
       const all = registered ? data.registered : data.unregistered;
       const rows = all.filter(item => matches(registered
-        ? item.values.concat([item.decision, item.feedback, item.service, item.owner, item.sheet])
+        ? item.values.concat([item.decision, item.feedback, item.service, item.department, item.owner, item.sheet])
         : item.values.concat([item.sheet]), terms));
       $('count').textContent = '';
       if (terms.length) {
@@ -432,7 +432,7 @@
 
       const table = el('table');
       const columns = registered
-        ? [['行', '56px'], ['サブインダストリー', '12%'], ['得意先', '12%'], ['案件名', '13%'], ['リクエスト', ''], ['判断', '120px'], ['サービス案', '12%'], ['担当者', '96px'], ['', '132px']]
+        ? [['行', '56px'], ['サブインダストリー', '11%'], ['得意先', '11%'], ['案件名', '12%'], ['リクエスト', ''], ['判断', '120px'], ['サービス案', '11%'], ['主管本部', '10%'], ['担当者', '96px'], ['', '132px']]
         : [['シート', '120px'], ['サブインダストリー', '15%'], ['得意先', '16%'], ['案件名', '18%'], ['リクエスト', ''], ['', '96px']];
       const colgroup = el('colgroup');
       columns.forEach(([, width]) => {
@@ -476,6 +476,7 @@
           else td.appendChild(el('span', 'decision', '未判断'));
           tr.appendChild(td);
           tr.appendChild(textCell('', item.service, terms));
+          tr.appendChild(textCell('', item.department, terms));
           tr.appendChild(textCell('', item.owner, terms));
         }
         tr.appendChild(actionCell(item, registered));
@@ -491,7 +492,7 @@
     /** 行を見分ける名前（登録済みは同じリクエストの行が複数あることもあるので、行番号も入れる） */
     const itemId = (item, registered) => (registered ? 'r' + item.row + ':' : 'u:') + item.key;
     const itemName = item => [item.values[1], item.values[2]].filter(Boolean).join('／');
-    const hasInput = item => !!(item.decision && item.decision !== '未判断' || item.feedback || item.service || item.owner);
+    const hasInput = item => !!(item.decision && item.decision !== '未判断' || item.feedback || item.service || item.department || item.owner);
 
     /** 操作の列：未登録は「追加」、登録済みは「削除」（押すと「削除する」「やめる」で確かめる） */
     function actionCell(item, registered) {

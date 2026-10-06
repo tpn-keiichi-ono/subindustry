@@ -19,6 +19,8 @@ const TASK_OPTIONS = {
   columns: [
     {key: 'service', label: 'サービス案', width: 220, type: 'service', aliases: ['サービス']},
     {key: 'task', label: 'タスク', width: 280},
+    // 担当者とセットで入れる本部（前からあるシートに足すときは「タスク」のすぐ右＝担当者の左に差し込む）
+    {key: 'department', label: '本部', width: 140, insertAfter: 'タスク'},
     {key: 'owner', label: '担当者', width: 120},
     {key: 'due', label: '期限', width: 100, type: 'date'},
     {key: 'status', label: '状況', width: 90, options: ['未着手', '対応中', '完了']},
@@ -72,7 +74,7 @@ function setupTaskSheet() {
   const lines = [result.created ? TASK_OPTIONS.sheet + ' シートを作りました。' : TASK_OPTIONS.sheet + ' シートのプルダウンを付け直しました。'];
   if (result.removed.length) lines.push('「' + result.removed.join('」「') + '」の列を削除し、「サービス案」を左端に置きました。');
   else if (oldColumns.length) lines.push('「' + oldColumns.join('」「') + '」の列は残しました（使いません。不要なら削除してください）。');
-  if (result.added.length) lines.push('右端に「' + result.added.join('」「') + '」の列を足しました。');
+  if (result.added.length) lines.push('「' + result.added.join('」「') + '」の列を足しました。');
   ss.toast(lines.concat(result.warnings).join('\n'), SVC_OPTIONS.menuTitle, 10);
 }
 

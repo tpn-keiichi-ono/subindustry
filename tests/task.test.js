@@ -29,13 +29,13 @@ test('setupTaskSheet：サービス案に対応付けるタスク管理シート
   g.setupRequestSheet();
   g.setupTaskSheet();
   const sheet = gas.ss.getSheetByName('タスク管理');
-  assert.deepStrictEqual(gas.dump(sheet, 'A1:F1')[0], ['サービス案', 'タスク', '担当者', '期限', '状況', 'メモ']);
+  assert.deepStrictEqual(gas.dump(sheet, 'A1:G1')[0], ['サービス案', 'タスク', '本部', '担当者', '期限', '状況', 'メモ'], '本部は担当者の左');
   assert.strictEqual(sheet.getFrozenRows(), 1);
-  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!G2:G1000', 'リクエストに付けたサービス案から選ぶ');
-  assert.strictEqual(rangeOf(sheet.getRange('A' + sheet.getMaxRows())), 'リクエスト!G2:G1000', '最後の行まで付ける');
-  assert.strictEqual(sheet.getRange('B2').getDataValidation(), null, 'タスクの列は自由に入力できる');
-  assert.strictEqual(sheet.getRange('D2').getDataValidation().getCriteriaType(), 'DATE_IS_VALID_DATE');
-  assert.deepStrictEqual(listOf(sheet.getRange('E2')), ['未着手', '対応中', '完了']);
+  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!K2:K1000', 'リクエストに付けたサービス案から選ぶ');
+  assert.strictEqual(rangeOf(sheet.getRange('A' + sheet.getMaxRows())), 'リクエスト!K2:K1000', '最後の行まで付ける');
+  ['B2', 'C2', 'D2'].forEach(a1 => assert.strictEqual(sheet.getRange(a1).getDataValidation(), null, a1 + '：タスク・本部・担当者は自由に入力できる'));
+  assert.strictEqual(sheet.getRange('E2').getDataValidation().getCriteriaType(), 'DATE_IS_VALID_DATE');
+  assert.deepStrictEqual(listOf(sheet.getRange('F2')), ['未着手', '対応中', '完了']);
   assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
   assert.match(gas.toasts[gas.toasts.length - 1].message, /作りました/);
   assert.strictEqual(gas.alerts.length, 0, '前の版の列が無ければ確認しない');
@@ -65,12 +65,12 @@ test('setupTaskSheet：前の版のシートは、確認してから A〜C を�
 
   assert.strictEqual(gas.alerts.length, 1);
   assert.match(gas.alerts[0].message, /「サブインダストリー」「得意先」「案件名」の列を削除し/);
-  assert.deepStrictEqual(gas.dump(sheet, 'A1:F2'), [
-    ['サービス案', 'タスク', '担当者', '期限', '状況', 'メモ'],
-    ['会員分析基盤', '提案書を送る', '佐藤', '', '対応中', '先方に確認']
+  assert.deepStrictEqual(gas.dump(sheet, 'A1:G2'), [
+    ['サービス案', 'タスク', '本部', '担当者', '期限', '状況', 'メモ'],
+    ['会員分析基盤', '提案書を送る', '', '佐藤', '', '対応中', '先方に確認']
   ]);
-  assert.strictEqual(sheet.getLastColumn(), 6);
-  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!G2:G1000');
+  assert.strictEqual(sheet.getLastColumn(), 7);
+  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!K2:K1000');
   assert.match(gas.toasts[gas.toasts.length - 1].message, /列を削除し、「サービス案」を左端に置きました/);
 });
 
@@ -78,9 +78,9 @@ test('setupTaskSheet：サービスの列が無い前の版でも、サービス
   const {gas, g} = setup();
   const sheet = addOldTaskSheet(gas, false);
   g.setupTaskSheet();
-  assert.deepStrictEqual(gas.dump(sheet, 'A1:F2'), [
-    ['サービス案', 'タスク', '担当者', '期限', '状況', 'メモ'],
-    ['', '提案書を送る', '佐藤', '', '対応中', '先方に確認']
+  assert.deepStrictEqual(gas.dump(sheet, 'A1:G2'), [
+    ['サービス案', 'タスク', '本部', '担当者', '期限', '状況', 'メモ'],
+    ['', '提案書を送る', '', '佐藤', '', '対応中', '先方に確認']
   ]);
 });
 
@@ -89,9 +89,9 @@ test('setupTaskSheet：削除しないと答えたら A〜C は残し、サー�
   const sheet = addOldTaskSheet(gas, true);
   gas.confirmAnswer = 'NO';
   g.setupTaskSheet();
-  assert.deepStrictEqual(gas.dump(sheet, 'A1:I1')[0],
-    ['サブインダストリー', '得意先', '案件名', 'タスク', '担当者', '期限', '状況', 'メモ', 'サービス案']);
-  assert.strictEqual(gas.dump(sheet, 'I2')[0][0], '会員分析基盤');
+  assert.deepStrictEqual(gas.dump(sheet, 'A1:J1')[0],
+    ['サブインダストリー', '得意先', '案件名', 'タスク', '本部', '担当者', '期限', '状況', 'メモ', 'サービス案']);
+  assert.strictEqual(gas.dump(sheet, 'J2')[0][0], '会員分析基盤');
   assert.match(gas.toasts[gas.toasts.length - 1].message, /列は残しました/);
 });
 
@@ -100,9 +100,9 @@ test('setupTaskSheet：何度実行しても入力済みのタスクは消えな
   g.setupRequestSheet();
   g.setupTaskSheet();
   const sheet = gas.ss.getSheetByName('タスク管理');
-  gas.asUser(() => sheet.getRange('A2:E2').setValues([['会員分析基盤', '要件を聞く', '佐藤', '2026/11/01', '未着手']]));
+  gas.asUser(() => sheet.getRange('A2:F2').setValues([['会員分析基盤', '要件を聞く', 'サービス本部', '佐藤', '2026/11/01', '未着手']]));
   g.setupTaskSheet();
-  assert.deepStrictEqual(gas.dump(sheet, 'A2:E2')[0], ['会員分析基盤', '要件を聞く', '佐藤', '2026/11/01', '未着手']);
+  assert.deepStrictEqual(gas.dump(sheet, 'A2:F2')[0], ['会員分析基盤', '要件を聞く', 'サービス本部', '佐藤', '2026/11/01', '未着手']);
   assert.strictEqual(gas.alerts.length, 0);
 });
 
