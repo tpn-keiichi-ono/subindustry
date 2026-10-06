@@ -726,7 +726,8 @@ test('前の版のシート：見出し（サービス・取り込み日）を�
   assert.strictEqual(old.getProtections().length, 0);
   assert.deepStrictEqual(shown(g.getRequestPickerData()), ['食品スーパー / A社 / チラシのデジタル化 / チラシの効果を測りたい',
     'ドラッグストア / C社 / EC立ち上げ / =在庫を店舗と共有したい'], '登録してあったリクエストはパネルに出さない');
-  assert.strictEqual(rangeOf(gas.ss.getSheetByName('タスク管理').getRange('A2')), 'リクエスト!J2:J20');
+  assert.strictEqual(rangeOf(gas.ss.getSheetByName('タスク管理').getRange('A2')), '__TASK_CHOICES!A1', 'タスク管理は登録したリクエストから選ぶ');
+  assert.strictEqual(gas.dump(gas.ss.getSheetByName('__TASK_CHOICES'), 'A1')[0][0], 'SR-0001 会員の購買分析をしたい');
 });
 
 /** 今のシートの並び（判断の右にサービス案。メモ・追加日がある） */
@@ -754,7 +755,7 @@ test('setupRequestSheet：確認してからメモ・追加日を削除し、案
   ['サービス部門からのフィードバック', '主管本部'].concat(SALES).forEach(label =>
     assert.strictEqual(cellOf(sheet, label, 2).getDataValidation(), null, label + '：差し込んだ列は左の列のプルダウンを引き継がない'));
   assert.deepStrictEqual(listOf(cellOf(sheet, '判断', 2)), ['未判断', 'サービス化検討', '棄却']);
-  assert.strictEqual(rangeOf(gas.ss.getSheetByName('タスク管理').getRange('A2')), 'リクエスト!L2:L20', 'タスク管理はずれたサービス案の列を参照する');
+  assert.strictEqual(rangeOf(gas.ss.getSheetByName('タスク管理').getRange('A2')), '__TASK_CHOICES!A1', 'タスク管理は登録したリクエストから選ぶ');
   const toast = gas.toasts[gas.toasts.length - 1].message;
   assert.match(toast, /「メモ」「追加日」の列を削除しました。/);
   assert.match(toast, /「ID」「アカウント責任者部署」「アカウント責任者」「BX部署」「BX担当」「サービス部門からのフィードバック」「主管本部」「担当者」の列を足しました。/);

@@ -4,8 +4,9 @@
  * 差分追跡スクリプト（test.gs）・CredentialHistory.gs と同じプロジェクトに置くファイル。
  *
  * 仕組み
- * - 今は手で行を追加する。1行が1件のタスクで、「サービス案」に対応付け、タスク・担当者・期限・状況・メモを入れる
- * - サービス案のプルダウンは、リクエスト シートのサービス案の列を範囲で参照する（リクエストにサービス案を付けると選べるようになる）
+ * - 今は手で行を追加する。1行が1件のタスクで、「サービス案」で対応するリクエストを選び、タスク・本部・担当者・期限・状況・メモを入れる
+ * - サービス案のプルダウンは、リクエスト シートに登録したリクエストを ID とリクエストで選ぶ（「SR-0001 会員の購買分析をしたい」）。
+ *   候補は ServiceManagement.gs が非表示のシートに書き、リクエストを追加・削除したとき・パネルを開いたときに合わせる
  * - 管理者が setupTaskSheet() をエディタから実行して、シート・見出し・プルダウンを用意する。
  *   前の版のシート（案件の連動プルダウンの「サブインダストリー」「得意先」「案件名」の列がある）は、
  *   確認してからその列を削除し、サービス案を左端に置く（ほかの列の値はそのまま残す）
@@ -17,7 +18,8 @@ const TASK_OPTIONS = {
   headerRow: 1,
   // aliases は前の版の見出し（見つかったら新しい見出しに書き換えて使い続ける）
   columns: [
-    {key: 'service', label: 'サービス案', width: 220, type: 'service', aliases: ['サービス']},
+    // 登録したリクエストを ID とリクエストで選ぶ（候補は svcServiceRule_）
+    {key: 'service', label: 'サービス案', width: 320, type: 'service', aliases: ['サービス']},
     {key: 'task', label: 'タスク', width: 280},
     // 担当者とセットで入れる本部（前からあるシートに足すときは「タスク」のすぐ右＝担当者の左に差し込む）
     {key: 'department', label: '本部', width: 140, insertAfter: 'タスク'},
@@ -37,6 +39,7 @@ const TASK_OPTIONS = {
 
 /**
  * タスク管理シートを用意する（無ければ作る）。見出しが空なら書き、足りない列は右端に足し、全行にプルダウンを付ける。
+ * 入力済みのサービス案は、今の候補（ID とリクエスト）に合わせる（決まらないものは残して知らせる）。
  * 前の版の列（サブインダストリー・得意先・案件名）があれば、確認してから削除し、サービス案を左端に動かす。
  * 何度実行してもよい（入力済みのタスクは消さない）。
  */
@@ -69,13 +72,17 @@ function setupTaskSheet() {
     if (rows < 1) throw new Error(TASK_OPTIONS.sheet + ' にデータの行がありません。行を追加してから実行してください。');
     const cols = taskColumnMap_(sheet, TASK_OPTIONS.columns, TASK_OPTIONS.headerRow);
     const warnings = taskApplyColumnRules_(sheet, TASK_OPTIONS.columns, cols, TASK_OPTIONS.headerRow + 1, rows);
-    return {created, added, removed, warnings};
+    // 入力済みのサービス案（前の版のサービス案の名前など）を、今の候補（ID とリクエスト）に合わせる
+    const link = svcLinkTaskServiceColumn_(ss, true);
+    return {created, added, removed, warnings, link};
   }, TASK_OPTIONS.lockWaitMs, 'setupTaskSheet()');
 
   const lines = [result.created ? TASK_OPTIONS.sheet + ' シートを作りました。' : TASK_OPTIONS.sheet + ' シートのプルダウンを付け直しました。'];
   if (result.removed.length) lines.push('「' + result.removed.join('」「') + '」の列を削除し、「サービス案」を左端に置きました。');
   else if (oldColumns.length) lines.push('「' + oldColumns.join('」「') + '」の列は残しました（使いません。不要なら削除してください）。');
   if (result.added.length) lines.push('「' + result.added.join('」「') + '」の列を足しました。');
+  const link = svcTaskLinkMessage_(result.link, true);
+  if (link) lines.push(link);
   ss.toast(lines.concat(result.warnings).join('\n'), SVC_OPTIONS.menuTitle, 10);
 }
 
@@ -192,7 +199,7 @@ function taskApplyColumnRules_(sheet, columns, cols, first, rows) {
     } else if (column.type === 'service') {
       rule = typeof svcServiceRule_ === 'function' ? svcServiceRule_(sheet.getParent()) : null;
       if (!rule) {
-        warnings.push('リクエスト シートが無いため、「' + column.label + '」の列にプルダウンを付けていません。setupRequestSheet() を実行してください。');
+        warnings.push('リクエスト シート（か、その ID の列）が無いため、「' + column.label + '」の列にプルダウンを付けていません。setupRequestSheet() を実行してください。');
         return;
       }
     } else if (column.options) {

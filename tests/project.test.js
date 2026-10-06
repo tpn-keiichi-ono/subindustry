@@ -110,7 +110,7 @@ test('本物のシート名の設定：DIFF_RULES・前の名前（formerNames�
 
   // 機能ごとのシート名は、追跡するシートやほかの機能のシートと重ならない
   const others = [diff.logSheet, diff.rowSnapshotSheet, gas.get('CRED_OPTIONS').logSheet,
-    svc.requestSheet, svc.legacyListSheet, gas.get('TASK_OPTIONS').sheet];
+    svc.requestSheet, svc.legacyListSheet, svc.taskChoiceSheet, gas.get('TASK_OPTIONS').sheet];
   assert.strictEqual(new Set(others).size, others.length, '機能ごとのシート名が重なっている');
   others.forEach(name => {
     assert.ok(!names.includes(name) && !former.includes(name), '「' + name + '」が追跡するシートと同じ名前');

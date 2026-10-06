@@ -21,7 +21,10 @@
  * - 登録した行は、パネルを開いたとき・setupRequestSheet() のときに取り込み元に合わせる（svcSync_）：
  *   サブインダストリーを同じ案件の値にそろえる。取り込み元に無くなったリクエストにメモは付けない
  *   （行番号は diagnoseRequestSources() で確かめる。前の版で付けたメモは外す）
- * - サービス案ごとの検討の進捗は、タスク管理シート（TaskManagement.gs）でタスクとして管理する
+ * - サービス案ごとの検討の進捗は、タスク管理シート（TaskManagement.gs）でタスクとして管理する。
+ *   タスク管理の「サービス案」は、登録したリクエストを ID とリクエストで選ぶプルダウン（「SR-0001 会員の購買分析をしたい」）。
+ *   候補は非表示のシート（SVC_OPTIONS.taskChoiceSheet）にスクリプトが書き、パネルを開いたとき・追加・削除のとき・setupRequestSheet() のときに書き直す。
+ *   リクエストを書き換えたなどで候補が変わったら、タスクの値も ID で今の候補に合わせる（svcLinkTaskServiceColumn_）
  */
 
 const SVC_OPTIONS = {
@@ -75,7 +78,11 @@ const SVC_OPTIONS = {
   // 前の版の後片付け（A〜D のプルダウン・候補のシート・メモ）が済んだ印（ドキュメントのプロパティ）。
   // 済んでいれば、パネルを開くたび・追加するたびには確かめない（setupRequestSheet() では毎回確かめる）
   legacyDoneKey: 'SVC_LEGACY_CLEANED',
-  // タスク管理のサービス案のプルダウンを確かめた記録（ドキュメントのプロパティ）。サービス案の列・行数が変わらなければ、
+  // タスク管理の「サービス案」のプルダウンの候補（ID とリクエストをつないだ「SR-0001 会員の購買分析をしたい」の形）を書く非表示のシート。
+  // スクリプトが書き直すので、手で書き換えない（書き換えても、パネルを開いたときなどに戻す）
+  taskChoiceSheet: '__TASK_CHOICES',
+  taskChoiceLength: 40,   // 候補に出すリクエストの文字数（長いリクエストは「…」で切る）
+  // タスク管理のサービス案のプルダウンを確かめた記録（ドキュメントのプロパティ）。候補・列・行数が変わらなければ、
   // パネルを開いても taskLinkCheckMinutes 分に1回しか確かめない（毎回すべての行を確かめると、パネルの読み込みが遅くなる）
   taskLinkKey: 'SVC_TASK_LINK',
   taskLinkCheckMinutes: 30,
@@ -144,8 +151,10 @@ function getRequestPickerData() {
       const legacy = !PropertiesService.getDocumentProperties().getProperty(SVC_OPTIONS.legacyDoneKey);
       svcRemoveLegacyLists_(ss, sheet);   // 前の版のプルダウンが残っていると、スクリプトの書き込みも止まるため（済んでいれば何もしない）
       svcSync_(ss, sheet, records, {notes: legacy});
-      svcNotifyIds_(ss, svcEnsureIds_(sheet));   // ID の無い行・重複した ID（行のコピーなど）を直す
-      svcLinkTaskServiceColumn_(ss);      // タスク管理のサービス案のプルダウンが、今のサービス案の列を見ているか
+      const ids = svcEnsureIds_(sheet);   // ID の無い行・重複した ID（行のコピーなど）を直す
+      const link = svcLinkTaskServiceColumn_(ss);   // タスク管理のサービス案のプルダウンの候補を、今のリクエストに合わせる
+      const notes = [ids.renumbered.length ? svcRenumberedMessage_(ids.renumbered) : '', svcTaskLinkMessage_(link)].filter(Boolean);
+      if (notes.length) ss.toast(notes.join('\n'), SVC_OPTIONS.menuTitle, 10);
     }, 5000, 'パネルの読み込み');
   } catch (_) {
     synced = false;
@@ -212,6 +221,7 @@ function svcAddRequest_(key) {
       id = svcFormatId_(svcTakeIds_(1, svcMaxIdInSheet_(sheet, cols.id))[0]);
       sheet.getRange(row, cols.id).setValue(credText_(id));
     }
+    svcRefreshTaskChoices_(ss);   // タスク管理のサービス案で、すぐ選べるように
     return {ok: true, row, id, sheet, records, message: (id ? id + ' として' : '') + row + '行目に追加しました。'};
   }, SVC_OPTIONS.pickerLockWaitMs, 'リクエストの追加');
 }
@@ -242,6 +252,7 @@ function deleteServiceRequest(row, key, id) {
       sheet.insertRowsAfter(sheet.getMaxRows(), 1);
     }
     sheet.deleteRow(target.row);
+    svcRefreshTaskChoices_(ss);   // タスク管理のサービス案の候補から外す
     const label = target.values.id ? target.values.id + '（' + target.row + '行目）' : target.row + '行目';
     return {ok: true, row: target.row, list: svcListData_(sheet, svcSourceRecords_(ss)), message: label + 'を削除しました。'};
   }, SVC_OPTIONS.pickerLockWaitMs, 'リクエストの削除');
@@ -408,11 +419,6 @@ function svcRenumberedMessage_(renumbered) {
     shown.join('、') + (renumbered.length > shown.length ? ' ほか' : '') + '）。';
 }
 
-/** パネルを開いたときに ID を振り直したら、トーストで知らせる（ID の無かった行に振っただけなら知らせない）。 */
-function svcNotifyIds_(ss, ids) {
-  if (ids.renumbered.length) ss.toast(svcRenumberedMessage_(ids.renumbered), SVC_OPTIONS.menuTitle, 10);
-}
-
 /**
  * サービスリクエストに登録したリクエストのキーと、SVC_OPTIONS.requestColumns の列（A〜H）のどれかに値のある最後の行。
  * {keys: Set, lastRow, rows: [{row, key, values: {requestColumns の key: 表示の値}}]（リクエストのある行）}
@@ -450,7 +456,8 @@ function svcRegistered_(sheet) {
  * サービスリクエストのシートを用意する（無ければ作る）。見出し・判断のプルダウンを付け、登録した行を取り込み元に合わせる。
  * 前の版の A〜D の連動プルダウンと、候補のシート（__REQUEST_LISTS）は外す。
  * 使わなくなった列（SVC_OPTIONS.removedColumns。メモ・追加日）があれば、確認してから削除する。
- * タスク管理シートがあれば「サービス案」の列（無ければ右端に足す）にもプルダウンを付ける。何度実行してもよい。
+ * タスク管理シートがあれば「サービス案」の列（無ければ右端に足す）にもプルダウン（ID とリクエスト）を付け、
+ * 入力済みのタスクを今の候補に合わせる。何度実行してもよい。
  */
 function setupRequestSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -497,6 +504,8 @@ function svcSetupRequestSheet_(ss) {
   else if (oldColumns.length) lines.push('「' + oldColumns.join('」「') + '」の列は残しました（使いません。不要なら削除してください）。');
   if (result.added.length) lines.push('「' + result.added.join('」「') + '」の列を足しました。');
   if (result.taskAdded.length) lines.push(TASK_OPTIONS.sheet + ' に「' + result.taskAdded.join('」「') + '」の列を足しました。');
+  const link = svcTaskLinkMessage_(result.taskLink, true);
+  if (link) lines.push(link);
   return lines.concat(result.warnings);
 }
 
@@ -586,7 +595,7 @@ function svcEnsureSheet_(ss) {
 /**
  * 判断のプルダウンを付け、前の版の保護を外す。フィードバック・サービス案・主管本部・担当者の列は自由に入力するので、
  * プルダウンを付けない（前の版で付けたもの・列を差し込んだときに左の列から引き継いだものは外す）。
- * タスク管理シートがあれば、その「サービス案」の列（リクエストに付けたサービス案から選ぶ）にもプルダウンを付ける。
+ * タスク管理シートがあれば、その「サービス案」の列（登録したリクエストを ID とリクエストで選ぶ）にもプルダウンを付ける。
  */
 function svcApplyRules_(ss, sheet) {
   const warnings = [];
@@ -602,16 +611,13 @@ function svcApplyRules_(ss, sheet) {
   }
 
   let taskAdded = [];
+  let taskLink = null;
   const task = ss.getSheetByName(TASK_OPTIONS.sheet);
   if (task) {
     taskAdded = taskEnsureHeader_(task, TASK_OPTIONS.columns, TASK_OPTIONS.headerRow);
-    const taskRows = task.getMaxRows() - TASK_OPTIONS.headerRow;
-    if (taskRows > 0) {
-      taskApplyColumnRules_(task, TASK_OPTIONS.columns.filter(c => c.type === 'service'),
-        taskColumnMap_(task, TASK_OPTIONS.columns, TASK_OPTIONS.headerRow), TASK_OPTIONS.headerRow + 1, taskRows);
-    }
+    taskLink = svcLinkTaskServiceColumn_(ss, true);
   }
-  return {warnings, taskAdded};
+  return {warnings, taskAdded, taskLink};
 }
 
 /**
@@ -655,58 +661,201 @@ function svcRemoveLegacyProtections_(sheet) {
   });
 }
 
+/* ---------------- タスク管理の「サービス案」のプルダウン（ID とリクエスト） ---------------- */
+
 /**
- * タスク管理の「サービス案」の列の入力規則。サービスリクエストの「サービス案」の列を範囲で参照し、
- * そこに無い名前は入力できないようにする。サービスリクエストのシートが無ければ null。
+ * タスク管理の「サービス案」の候補：サービスリクエストに登録したリクエスト（ID のある行）を ID の順に。
+ * [{number: ID の番号, label: 「SR-0001 会員の購買分析をしたい」, service: その行のサービス案}]（同じ ID は上の行だけ）。
+ * ID の列がまだ無い（setupRequestSheet() の前）なら null（候補を作らない。入力済みのタスクを候補に無い値にしないため）。
  */
-function svcServiceRule_(ss) {
-  const sheet = ss.getSheetByName(SVC_OPTIONS.requestSheet);
-  if (!sheet) return null;
-  const col = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns.filter(c => c.key === 'service'), SVC_OPTIONS.headerRow).service;
-  if (!col) return null;
-  const letter = diffColumnLetter_(col);
+function svcTaskChoices_(request) {
+  if (!taskColumnMap_(request, SVC_OPTIONS.requestColumns.filter(c => c.key === 'id'), SVC_OPTIONS.headerRow).id) return null;
+  const seen = new Set();
+  const choices = [];
+  svcRegistered_(request).rows.forEach(r => {
+    const number = svcIdNumber_(r.values.id);
+    if (!number || seen.has(number)) return;
+    seen.add(number);
+    choices.push({number, label: svcTaskChoiceLabel_(svcFormatId_(number), r.values.request), service: r.values.service || ''});
+  });
+  return choices.sort((a, b) => a.number - b.number);
+}
+
+/** 候補の文字（「SR-0001 会員の購買分析をしたい」。改行・続いた空白は1つの空白に、長いリクエストは「…」で切る）。 */
+function svcTaskChoiceLabel_(id, request) {
+  const chars = Array.from(String(request || '').replace(/\s+/g, ' ').trim());
+  const max = SVC_OPTIONS.taskChoiceLength;
+  return (id + ' ' + (chars.length > max ? chars.slice(0, max).join('') + '…' : chars.join(''))).trim();
+}
+
+/** タスクの「サービス案」の値の先頭の ID の番号（「SR-0001 …」→ 1。SR で始まらなければ 0）。 */
+function svcLabelIdNumber_(value) {
+  const head = credNormalize_(String(value).trim().split(/\s+/)[0]).toUpperCase();
+  const prefix = credNormalize_(SVC_OPTIONS.idPrefix).toUpperCase().replace(/-+$/, '');
+  return head.indexOf(prefix) === 0 ? svcIdNumber_(head) : 0;
+}
+
+/**
+ * 候補を非表示のシート（SVC_OPTIONS.taskChoiceSheet）の A 列に書く（無ければ作る。ロック取得中に呼ぶこと）。
+ * 今の内容と同じなら書かない。行は候補の数だけにし、使わない列・行は持たせない。シートを返す。
+ */
+function svcWriteTaskChoices_(ss, labels) {
+  let sheet = ss.getSheetByName(SVC_OPTIONS.taskChoiceSheet);
+  if (!sheet) {
+    const active = ss.getActiveSheet();
+    sheet = ss.insertSheet(SVC_OPTIONS.taskChoiceSheet, ss.getSheets().length);
+    sheet.hideSheet();
+    if (active) active.activate();   // insertSheet は作ったシートを開くので、開いていたシートに戻す
+  }
+  const next = labels.length ? labels : [''];
+  const current = sheet.getRange(1, 1, sheet.getMaxRows(), 1).getDisplayValues().map(line => line[0]);
+  if (sheet.getMaxColumns() !== 1 || current.join('\n') !== next.join('\n')) {
+    if (sheet.getMaxRows() < next.length) sheet.insertRowsAfter(sheet.getMaxRows(), next.length - sheet.getMaxRows());
+    if (sheet.getMaxRows() > next.length) sheet.deleteRows(next.length + 1, sheet.getMaxRows() - next.length);
+    if (sheet.getMaxColumns() > 1) sheet.deleteColumns(2, sheet.getMaxColumns() - 1);
+    sheet.getRange(1, 1, next.length, 1).setValues(next.map(label => [credText_(label)]));
+  }
+  if (!sheet.isSheetHidden()) sheet.hideSheet();
+  return sheet;
+}
+
+/**
+ * タスク管理の「サービス案」の列の入力規則。候補のシート（choiceSheet。省けば今のリクエストから書く）を範囲で参照し、
+ * 候補に無い値は入力できないようにする。サービスリクエストのシートか、その ID の列が無ければ null。
+ */
+function svcServiceRule_(ss, choiceSheet) {
+  let sheet = choiceSheet;
+  if (!sheet) {
+    const request = ss.getSheetByName(SVC_OPTIONS.requestSheet);
+    const choices = request ? svcTaskChoices_(request) : null;
+    if (!choices) return null;
+    sheet = svcWriteTaskChoices_(ss, choices.map(c => c.label));
+  }
   return SpreadsheetApp.newDataValidation()
-    .requireValueInRange(sheet.getRange(letter + (SVC_OPTIONS.headerRow + 1) + ':' + letter), true)
+    .requireValueInRange(sheet.getRange(1, 1, sheet.getMaxRows(), 1), true)
     .setAllowInvalid(false)
-    .setHelpText('「' + SVC_OPTIONS.requestSheet + '」シートでリクエストに付けたサービス案から選んでください。')
+    .setHelpText('「' + SVC_OPTIONS.requestSheet + '」シートに登録したリクエスト（ID とリクエスト）から選んでください。')
     .build();
 }
 
 /**
- * タスク管理の「サービス案」のプルダウンが、サービスリクエストの今の「サービス案」の列を参照しているかを確かめ、
- * 参照していなければ列ごと付け直す（ロック取得中に呼ぶこと）。付け直したら true。
- * - サービス案の列（列の追加・削除で動く）か、タスク管理の行数が前に確かめたときと違えば、確かめずに付け直す（書くのは1回）
- * - 同じなら SVC_OPTIONS.taskLinkCheckMinutes 分に1回だけ、入力規則を1回で読んで確かめる（貼り付けでプルダウンが消えた行など）。
- *   行ごとにシート名などを問い合わせると、行の数だけ時間がかかる（1,000行で数十秒）ので、種類と参照する列だけを見る
+ * タスク管理の「サービス案」のプルダウンを、今のリクエストに合わせる（ロック取得中に呼ぶこと）。
+ * - 候補（ID とリクエスト）を候補のシートに書き、プルダウンが候補のシートを参照していなければ列ごと付け直す
+ * - 入力済みのタスクのうち候補に無い値は、ID が同じ候補（リクエストを書き換えたなど）か、
+ *   前の版の値（サービス案の名前）でそのサービス案のリクエストが1件だけならそのリクエストに書き換える。決まらないものは残す（選び直してもらう）
+ * - 候補・列・行数が前に確かめたときと同じなら、SVC_OPTIONS.taskLinkCheckMinutes 分に1回しか確かめない（force なら毎回）。
+ *   入力規則は1回で読み、種類と、何行かが参照するシートだけを見る（行ごとに問い合わせると、1,000行で数十秒かかる）
+ * {applied: 付け直したか, moved: 書き換えたタスクの数, unmatched: 選び直しが必要なタスクの数}。タスク管理シートが無ければ null。
  */
-function svcLinkTaskServiceColumn_(ss) {
+function svcLinkTaskServiceColumn_(ss, force) {
   const task = ss.getSheetByName(TASK_OPTIONS.sheet);
   const request = ss.getSheetByName(SVC_OPTIONS.requestSheet);
-  if (!task || !request) return false;
+  if (!task || !request) return null;
   const rows = task.getMaxRows() - TASK_OPTIONS.headerRow;
-  if (rows < 1) return false;
+  if (rows < 1) return null;
   const col = taskColumnMap_(task, TASK_OPTIONS.columns.filter(c => c.type === 'service'), TASK_OPTIONS.headerRow).service;
-  const serviceCol = taskColumnMap_(request, SVC_OPTIONS.requestColumns.filter(c => c.key === 'service'), SVC_OPTIONS.headerRow).service;
-  if (!col || !serviceCol) return false;
+  if (!col) return null;
 
+  const choices = svcTaskChoices_(request);
+  if (!choices) return null;
+  const labels = choices.map(c => c.label);
+  const hash = svcTextHash_(labels.join('\n'));
+  const stateOf = sheet => ['v2', sheet ? sheet.getSheetId() : 0, labels.length, task.getSheetId(), col, rows].join(':');
   const props = PropertiesService.getDocumentProperties();
-  const state = [request.getSheetId(), serviceCol, task.getSheetId(), col, rows].join(':');
   let saved = {};
   try { saved = JSON.parse(props.getProperty(SVC_OPTIONS.taskLinkKey) || '{}') || {}; } catch (_) {}
   const recent = Date.now() - (Number(saved.at) || 0) < SVC_OPTIONS.taskLinkCheckMinutes * 60 * 1000;
-  if (saved.state === state && recent) return false;   // 列も行数も変わらず、少し前に確かめた
+  if (!force && recent && saved.choices === hash && saved.state === stateOf(ss.getSheetByName(SVC_OPTIONS.taskChoiceSheet))) {
+    return {applied: false, moved: 0, unmatched: 0};   // 候補も列も行数も変わらず、少し前に確かめた
+  }
 
+  const choiceSheet = svcWriteTaskChoices_(ss, labels);
+  const state = stateOf(choiceSheet);
   const range = task.getRange(TASK_OPTIONS.headerRow + 1, col, rows, 1);
   let linked = false;
   if (saved.state === state) {
     const rules = range.getDataValidations().map(line => line[0]);
     const inRange = SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE;
     linked = rules.every(rule => rule && rule.getCriteriaType() === inRange) &&
-      [0, Math.floor(rules.length / 2), rules.length - 1].every(i => rules[i].getCriteriaValues()[0].getColumn() === serviceCol);
+      [0, Math.floor(rules.length / 2), rules.length - 1].every(i => {
+        const target = rules[i].getCriteriaValues()[0];
+        return target.getSheet().getSheetId() === choiceSheet.getSheetId() && target.getNumRows() === choiceSheet.getMaxRows();
+      });
   }
-  if (!linked) range.setDataValidation(svcServiceRule_(ss));
-  props.setProperty(SVC_OPTIONS.taskLinkKey, JSON.stringify({state, at: Date.now()}));
-  return !linked;
+  if (!linked) range.setDataValidation(svcServiceRule_(ss, choiceSheet));
+  const values = svcRelinkTaskValues_(task, col, choices);
+  props.setProperty(SVC_OPTIONS.taskLinkKey, JSON.stringify({state, choices: hash, at: Date.now()}));
+  return {applied: !linked, moved: values.moved, unmatched: values.unmatched};
+}
+
+/**
+ * 入力済みのタスクの「サービス案」を今の候補に合わせる（svcLinkTaskServiceColumn_ から。プルダウンを付けたあとに呼ぶ）。
+ * 書き換えるセルだけに書く（候補に無い値のセルに書くと、入力規則で止まるため）。{moved, unmatched}
+ */
+function svcRelinkTaskValues_(task, col, choices) {
+  const first = TASK_OPTIONS.headerRow + 1;
+  const count = task.getLastRow() - TASK_OPTIONS.headerRow;
+  const result = {moved: 0, unmatched: 0};
+  if (count < 1) return result;
+  const labels = new Set(choices.map(c => c.label));
+  const byNumber = new Map(choices.map(c => [c.number, c.label]));
+  const byService = new Map();
+  choices.forEach(c => {
+    const name = credNormalize_(c.service);
+    if (name) byService.set(name, (byService.get(name) || []).concat(c.label));
+  });
+  const changes = [];
+  task.getRange(first, col, count, 1).getDisplayValues().forEach((line, i) => {
+    const value = String(line[0]).trim();
+    if (!value || labels.has(value)) return;
+    const same = byService.get(credNormalize_(value)) || [];
+    const next = byNumber.get(svcLabelIdNumber_(value)) || (same.length === 1 ? same[0] : '');
+    if (next) changes.push({row: first + i, value: next});
+    else result.unmatched++;
+  });
+  // 続いている行はまとめて書く
+  for (let i = 0; i < changes.length;) {
+    let j = i;
+    while (j + 1 < changes.length && changes[j + 1].row === changes[j].row + 1) j++;
+    task.getRange(changes[i].row, col, j - i + 1, 1).setValues(changes.slice(i, j + 1).map(c => [credText_(c.value)]));
+    i = j + 1;
+  }
+  result.moved = changes.length;
+  return result;
+}
+
+/**
+ * 追加・削除のあとに、タスク管理のサービス案の候補を合わせる（ロック取得中に呼ぶこと）。
+ * うまくいかなくても追加・削除は済んでいるので止めない（次にパネルを開いたときに合わせる）。
+ */
+function svcRefreshTaskChoices_(ss) {
+  try {
+    svcLinkTaskServiceColumn_(ss);
+  } catch (e) {
+    console.warn('タスク管理のサービス案の候補を合わせられませんでした：' + (e && e.message ? e.message : e));
+  }
+}
+
+/**
+ * svcLinkTaskServiceColumn_ の結果の知らせ（知らせることが無ければ空）。
+ * 選び直しが必要なタスクは、書き換えたとき・プルダウンを付け直したとき（always なら毎回）に知らせる。
+ */
+function svcTaskLinkMessage_(link, always) {
+  if (!link) return '';
+  const name = TASK_OPTIONS.sheet + ' の「' + TASK_OPTIONS.columns.find(c => c.type === 'service').label + '」';
+  const lines = [];
+  if (link.moved) lines.push(name + 'を、今のリクエスト（ID とリクエスト）に合わせました（' + link.moved + '件）。');
+  if (link.unmatched && (always || link.moved || link.applied)) {
+    lines.push(name + 'に、リクエストを選び直してほしいタスクが ' + link.unmatched + '件あります（セルの右上が赤いもの）。');
+  }
+  return lines.join('\n');
+}
+
+/** 文字の短い要約（候補が変わったかを覚えておく用。暗号には使わない）。 */
+function svcTextHash_(text) {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0;
+  return text.length + ':' + hash.toString(36);
 }
 
 /* ---------------- 「追加」が止まるときの確認（管理者がエディタから実行する） ---------------- */

@@ -499,6 +499,7 @@ class Sheet {
   }
 
   hideSheet() { this.hidden = true; return this; }
+  activate() { this.gas.selection = {sheet: this, range: this.getRange('A1')}; return this; }
   isSheetHidden() { return this.hidden; }
   setFrozenRows(n) { this.frozenRows = n; return this; }
   getFrozenRows() { return this.frozenRows; }
@@ -545,6 +546,7 @@ class Spreadsheet {
     const o = options || {};
     const sheet = new Sheet(this.gas, this, name, this.nextSheetId++, o.rows || 1000, o.columns || 26);
     this.sheets.push(sheet);
+    if (this.gas.selection) sheet.activate();   // 本物と同じく、作ったシートを開く（何も選んでいないテストでは選ばない）
     return sheet;
   }
 
