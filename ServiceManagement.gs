@@ -128,6 +128,7 @@ function getRequestPickerData() {
     taskWithLock_(() => {
       svcRemoveLegacyLists_(ss, sheet);   // 残っていると、スクリプトの書き込みも入力規則で止まるため
       svcSync_(ss, sheet, records);
+      svcLinkTaskServiceColumn_(ss);      // タスク管理のサービス案のプルダウンが、今のサービス案の列を見ているか
     }, 5000);
   } catch (_) {
     synced = false;
@@ -549,6 +550,32 @@ function svcServiceRule_(ss) {
     .setAllowInvalid(false)
     .setHelpText('「' + SVC_OPTIONS.requestSheet + '」シートでリクエストに付けたサービス案から選んでください。')
     .build();
+}
+
+/**
+ * タスク管理の「サービス案」のプルダウンが、サービスリクエストの今の「サービス案」の列を参照しているかを確かめ、
+ * 参照していない行があれば列ごと付け直す（ロック取得中に呼ぶこと）。
+ * 列の追加・削除でサービス案の列が動いた・貼り付けでプルダウンが消えた、などでずれても、パネルを開いたときに直る。付け直したら true。
+ */
+function svcLinkTaskServiceColumn_(ss) {
+  const task = ss.getSheetByName(TASK_OPTIONS.sheet);
+  const request = ss.getSheetByName(SVC_OPTIONS.requestSheet);
+  if (!task || !request) return false;
+  const rows = task.getMaxRows() - TASK_OPTIONS.headerRow;
+  if (rows < 1) return false;
+  const col = taskColumnMap_(task, TASK_OPTIONS.columns.filter(c => c.type === 'service'), TASK_OPTIONS.headerRow).service;
+  const serviceCol = taskColumnMap_(request, SVC_OPTIONS.requestColumns.filter(c => c.key === 'service'), SVC_OPTIONS.headerRow).service;
+  if (!col || !serviceCol) return false;
+  const range = task.getRange(TASK_OPTIONS.headerRow + 1, col, rows, 1);
+  const linked = range.getDataValidations().every(line => {
+    const rule = line[0];
+    if (!rule || rule.getCriteriaType() !== SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE) return false;
+    const target = rule.getCriteriaValues()[0];
+    return target.getSheet().getName() === request.getName() && target.getColumn() === serviceCol;
+  });
+  if (linked) return false;
+  range.setDataValidation(svcServiceRule_(ss));
+  return true;
 }
 
 /* ---------------- パネルに出ないときの確認（管理者がエディタから実行する） ---------------- */

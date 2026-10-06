@@ -106,6 +106,35 @@ test('setupTaskSheet：何度実行しても入力済みのタスクは消えな
   assert.strictEqual(gas.alerts.length, 0);
 });
 
+test('タスク管理のサービス案のプルダウンは、サービスリクエストの今のサービス案の列を参照する。ずれた・消えたら、パネルを開いたときに付け直す', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  g.setupTaskSheet();
+  const sheet = gas.ss.getSheetByName('タスク管理');
+  const request = gas.ss.getSheetByName('リクエスト');
+  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!K2:K1000', 'サービス案は K 列');
+
+  // 何もずれていなければ書かない
+  gas.writes.length = 0;
+  g.getRequestPickerData();
+  assert.deepStrictEqual(gas.writes.filter(w => w.sheet === 'タスク管理'), []);
+
+  // 貼り付けでプルダウンが消えた行・ほかの列を見ているプルダウンがあれば、列ごと付け直す
+  gas.asUser(() => {
+    sheet.getRange('A3').clearDataValidations();
+    sheet.getRange('A5').setDataValidation(g.SpreadsheetApp.newDataValidation()
+      .requireValueInRange(request.getRange('G2:G'), true).setAllowInvalid(false).build());
+  });
+  g.getRequestPickerData();
+  ['A2', 'A3', 'A5', 'A' + sheet.getMaxRows()].forEach(a1 => assert.strictEqual(rangeOf(sheet.getRange(a1)), 'リクエスト!K2:K1000', a1));
+  assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
+
+  // サービス案の列が動いたら（列の追加など）、新しい列を参照し直す
+  gas.asUser(() => request.insertColumnAfter(1));
+  g.getRequestPickerData();
+  assert.strictEqual(rangeOf(sheet.getRange('A2')), 'リクエスト!L2:L1000');
+});
+
 test('タスク管理シートの編集で動く処理は無い（単純トリガーの onEdit を置かない。プルダウンはリクエストのサービス案を参照するだけ）', () => {
   const {g} = setup();
   assert.strictEqual(typeof g.onEdit, 'undefined');
