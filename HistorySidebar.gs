@@ -8,8 +8,9 @@
  *   開いているシートが対象（DIFF_RULES のシート）でなければ開かずに知らせる。
  *   開いたときの自動表示（前の版の autoOpenHistorySidebar）はやめた。トリガーが残っていれば removeHistorySidebarAutoOpen() で外す
  * - サイドバーから呼ぶ関数は、開いた本人の権限で動く。まだ承認していない人はサイドバーに「承認する」ボタンを出す。
- *   ボタンは承認用のウェブアプリ（doGet。HS_OPTIONS.authorizeUrl）を新しいタブで開き、そこで Google の承認画面が出る
- *   （サイドバーの中からは承認画面を出せないため）。URL が未設定のときはメニューでの承認を案内する
+ *   ボタンは Google の承認の画面（getAuthorizationLink）を新しいタブで開く（サイドバーの中からは承認画面を出せないため）。
+ *   その URL が取れないときは承認用のウェブアプリ（doGet。HS_OPTIONS.authorizeUrl）を開き、どちらも無ければメニューでの承認を案内する。
+ *   サービスリクエストの選択パネル（RequestPickerView）も同じ getAuthorizationLink を使う
  * - サイドバーは短い間隔で「今選ばれている行」を問い合わせ、行が変わったら
  *   その行の得意先のクレデンシャル・オファリングと変更履歴に表示を切り替える
  *   （画面はタブで「クレデンシャル」「変更履歴」を切り替える。変更履歴は期間・項目で絞り込める）
@@ -81,6 +82,19 @@ function hsShowSidebar_() {
 }
 
 /* ---------------- 権限の承認（ウェブアプリ） ---------------- */
+
+/**
+ * サイドバー・選択パネルの「承認する」ボタンの行き先（google.script.run から呼ぶ。読むだけ）。
+ * 開いた本人の承認が足りなければ、Google の承認の画面の URL（getAuthorizationUrl。ウェブアプリの用意は要らない）を返し、
+ * 取れなければ承認用のウェブアプリの URL（HS_OPTIONS.authorizeUrl。未設定なら空）を返す。
+ * {required: 承認が足りないか, url}。required が false なのに呼び出しが失敗するのは、複数のアカウントでログインしているときなど。
+ */
+function getAuthorizationLink() {
+  const info = ScriptApp.getAuthorizationInfo(ScriptApp.AuthMode.FULL);
+  const required = info.getAuthorizationStatus() === ScriptApp.AuthorizationStatus.REQUIRED;
+  const url = required ? String(info.getAuthorizationUrl() || '') : '';
+  return {required, url: /^https:\/\//.test(url) ? url : hsAuthorizeUrl_()};
+}
 
 /** 承認用のウェブアプリの URL。https://script.google.com/…/exec の形でなければ使わない（空を返す）。 */
 function hsAuthorizeUrl_() {

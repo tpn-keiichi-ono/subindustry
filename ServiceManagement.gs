@@ -6,7 +6,8 @@
  *
  * 仕組み
  * - リクエストは、選択パネル（RequestPickerView。メニュー「🟪RXサービスMTG用」→「リクエストを追加」）で選んで登録する。
- *   パネルはサービスリクエストのシートを開いているときだけ開く。
+ *   パネルはサービスリクエストのシートを開いているときだけ開く。パネルから呼ぶ関数は開いた本人の権限で動く
+ *   （承認が足りない人には、メニューで承認の画面を出し、パネルでは「承認する」ボタンを出す）。
  *   パネルは開いたとき・追加したときに取り込み元の最新を読み、まだ登録していないリクエストだけを出す
  *   （サブインダストリー → 得意先 → 案件名で絞り込み、文字で探せる）。選ぶと、サービスリクエストの最後の行の下に A〜D を書く。
  * - パネルの件数のバッジ（未登録・登録済み）を押すと、一覧をモーダル（RequestListDialog）で確かめられる。
@@ -123,16 +124,21 @@ function svcAddMenu_() {
 /**
  * メニュー「リクエストを追加」：選択パネル（サイドバー）を開く。
  * 開いているシートがサービスリクエスト（SVC_OPTIONS.requestSheet）でなければ開かずに知らせる。開いたら true。
+ * 権限の承認が足りない人（初めて使う人・一部の権限を外して承認した人）には、先に承認の画面を出す
+ * （パネルの中からは承認の画面を出せないため。パネルで足りなくなったときは、パネルに「承認する」ボタンを出す）。
  */
 function openRequestPicker() {
+  ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);
   const ui = SpreadsheetApp.getUi();
   const active = SpreadsheetApp.getActiveSheet();
   if (!active || active.getName() !== SVC_OPTIONS.requestSheet) {
     ui.alert(SVC_OPTIONS.menuTitle, 'このシートでは開けません。「' + SVC_OPTIONS.requestSheet + '」のシートで開いてください。', ui.ButtonSet.OK);
     return false;
   }
-  const html = HtmlService.createTemplateFromFile(SVC_OPTIONS.pickerTemplate).evaluate().setTitle(SVC_OPTIONS.pickerTitle);
-  ui.showSidebar(html);
+  const template = HtmlService.createTemplateFromFile(SVC_OPTIONS.pickerTemplate);
+  template.authorizeUrl = hsAuthorizeUrl_();   // 「承認する」ボタンの予備の行き先（承認用のウェブアプリ。未設定なら空）
+  template.menuTitle = SVC_OPTIONS.menuTitle;  // 承認の案内に出すメニューの名前
+  ui.showSidebar(template.evaluate().setTitle(SVC_OPTIONS.pickerTitle));
   return true;
 }
 

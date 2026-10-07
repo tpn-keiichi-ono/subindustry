@@ -106,6 +106,21 @@
     .banner .clear-x { position: static; transform: none; flex: none; width: 20px; height: 20px; margin: -1px -4px 0 0; color: inherit; opacity: .7; }
     .banner .clear-x:hover { background: rgba(255, 255, 255, .6); opacity: 1; }
 
+    /* ---------- 権限の承認（承認が足りないときだけ、ほかのカードの代わりに出す。形は履歴のサイドバーと同じ） ---------- */
+    .auth-card { flex: none; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .eyebrow { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--danger); }
+    .eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 0 3px rgba(180, 35, 24, .15); }
+    .eyebrow.busy { color: var(--faint); }
+    .eyebrow.busy::before { background: var(--off-day); box-shadow: none; }
+    .auth-text { font-size: 12px; line-height: 1.65; color: var(--body); }
+    .auth-btn {
+      height: 32px; display: flex; align-items: center; justify-content: center; gap: 6px;
+      border-radius: 7px; background: var(--cred); color: #ffffff; font-size: 12px; font-weight: 600; text-decoration: none;
+    }
+    .auth-btn:hover { background: var(--cred-hover); }
+    .auth-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
+    .auth-note { font-size: 10.5px; line-height: 1.6; color: var(--muted); }
+
     /* ---------- 一覧 ---------- */
     /* 一覧のカードは中身に合わせた高さで、入りきらなければカードの中でスクロールする */
     .list-card { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
@@ -167,7 +182,9 @@
     }
   </style>
 </head>
-<body>
+<!-- data-authorize-url：承認用のウェブアプリの URL（ServiceManagement.gs の openRequestPicker が入れる。未設定なら空） -->
+<!-- data-menu-title：メニューの名前（SVC_OPTIONS.menuTitle。承認の案内に出す） -->
+<body data-authorize-url="<?= authorizeUrl ?>" data-menu-title="<?= menuTitle ?>">
   <div class="loading" id="loading" role="status" aria-live="polite">
     <div class="spinner"></div>
     <p id="loadingText">リクエストを読み込んでいます…</p>
@@ -176,8 +193,18 @@
   </div>
 
   <div class="side">
+    <!-- 権限の承認（承認が足りないときだけ。ほかのカードの代わりに出す） -->
+    <section class="card auth-card" id="auth" role="status" aria-live="polite" hidden>
+      <span class="eyebrow" id="authState">権限の承認が必要です</span>
+      <span class="auth-text" id="authText">下のボタンを押し、開いたタブで承認してください。承認が済むと、ここにリクエストが表示されます。</span>
+      <a class="auth-btn" id="authBtn" target="_blank" rel="noopener noreferrer">
+        <svg width="13" height="13" viewBox="0 0 14 14"><rect x="2.5" y="6" width="9" height="6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.5 6V4.5a2.5 2.5 0 0 1 5 0V6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>承認する
+      </a>
+      <span class="auth-note" id="authNote">ボタンで開けないときは、メニュー「<?= menuTitle ?>」＞「リクエストを追加」からも承認できます。</span>
+    </section>
+
     <!-- 見出し（件数・再読み込み・追加した結果） -->
-    <section class="card head-card">
+    <section class="card head-card" id="headCard">
       <div class="row-top">
         <div class="counts" id="counts">
           <button type="button" class="chip main" id="openUnregistered" title="未登録のリクエストの一覧">未登録<span class="mono" id="remaining">–</span></button>
@@ -196,7 +223,7 @@
     </section>
 
     <!-- 絞り込み（左から順に選ぶ・文字で探す） -->
-    <section class="card filter-card" aria-label="絞り込み">
+    <section class="card filter-card" id="filterCard" aria-label="絞り込み">
       <div class="search">
         <svg width="13" height="13" viewBox="0 0 14 14"><circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9.2 9.2l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         <input type="search" id="query" placeholder="キーワード" aria-label="キーワードで探す" autocomplete="off">
@@ -213,7 +240,7 @@
       </div>
     </section>
 
-    <section class="card list-card">
+    <section class="card list-card" id="listCard">
       <div class="card-scroll" id="list"></div>
     </section>
   </div>
@@ -295,16 +322,96 @@
           stopTicker();
           $('loading').hidden = true;
           $('refresh').disabled = false;
+          hideAuth();
           show(result);
         })
         .withFailureHandler(error => {
           loading = false;
+          // 権限が足りない（承認を待っている間は、ほかの失敗でも）ときは「承認する」を出して読み直す
+          if (authShown || isAuthError(error)) { showAuth(); return; }
           if (!quiet) { showLoadError(error); return; }
           $('refresh').disabled = false;
           showBanner('error', '読み込めませんでした：' + errorText(error));
         })
         .getRequestPickerData();
     }
+
+    /* ---------- 権限の承認 ---------- */
+
+    // ここから呼ぶ関数は、開いた本人の権限で動く。メニューから開くときに承認の画面が出るが、開いたあとに権限が足りなくなった人
+    // （承認を取り消した・権限が増える更新があった など）は呼び出しが失敗するので、ほかのカードの代わりに「承認する」ボタンを出す。
+    // パネルの中からは承認の画面を出せないため、ボタンは Google の承認の画面（getAuthorizationLink。取れなければ承認用のウェブアプリ）を
+    // 新しいタブで開く。どちらも無ければメニューでの承認を案内する。承認が済めば、開き直さなくても読み込みが始まる。
+    const AUTHORIZE_URL = /^https:\/\//.test(document.body.dataset.authorizeUrl || '') ? document.body.dataset.authorizeUrl : '';
+    const MENU_TITLE = document.body.dataset.menuTitle || '';
+    const AUTH_TEXT = {
+      checking: '承認の画面を開く準備をしています…',
+      button: $('authText').textContent,
+      menu: 'メニュー「' + MENU_TITLE + '」＞「リクエストを追加」を実行し、表示される画面で承認してください。承認が済むと、ここにリクエストが表示されます。',
+      account: 'ブラウザで複数の Google アカウントにログインしていると、別のアカウントとして動くことがあります。' +
+        '1つのアカウントだけでログインした状態か、シークレットウィンドウで開き直してください。'
+    };
+    const SECTIONS = ['headCard', 'filterCard', 'listCard'];
+    let authShown = false;
+    // checking：行き先を問い合わせ中 / button：ボタンを出す / menu：メニューでの承認を案内する / account：承認は済んでいる（別のアカウントで動いている）
+    let authKind = 'checking';
+    let authClickedAt = 0;     // 「承認する」を押した時刻（しばらくは読み直しを早める）
+    let authTimer = 0;
+
+    const isAuthError = error => /authoriz|permission|承認|権限/i.test(errorText(error));
+    const authWaiting = () => authClickedAt && Date.now() - authClickedAt < 5 * 60 * 1000;
+
+    function showAuth() {
+      stopTicker();
+      $('loading').hidden = true;
+      $('refresh').disabled = false;
+      SECTIONS.forEach(id => { $(id).hidden = true; });
+      $('auth').hidden = false;
+      if (!authShown) {
+        authShown = true;
+        renderAuth(null);   // 行き先を問い合わせている間（ウェブアプリの URL があればそのボタン）
+        google.script.run
+          .withSuccessHandler(renderAuth)
+          .withFailureHandler(error => { console.error(error); renderAuth({required: true, url: ''}); })
+          .getAuthorizationLink();
+      }
+      renderAuthState();
+      clearTimeout(authTimer);
+      authTimer = setTimeout(() => load(true), authWaiting() ? 3000 : 10000);
+    }
+
+    /** info：getAuthorizationLink() の結果 {required, url}（問い合わせ中は null） */
+    function renderAuth(info) {
+      const url = info && /^https:\/\//.test(info.url || '') ? info.url : AUTHORIZE_URL;
+      authKind = !info ? (url ? 'button' : 'checking') : !info.required ? 'account' : url ? 'button' : 'menu';
+      $('authText').textContent = AUTH_TEXT[authKind];
+      $('authBtn').hidden = authKind !== 'button';
+      $('authNote').hidden = authKind !== 'button';
+      if (url) $('authBtn').href = url;
+      renderAuthState();
+    }
+
+    function renderAuthState() {
+      const waiting = authKind === 'button' && authWaiting();
+      $('authState').textContent = authKind === 'account' ? '読み込めません' : waiting ? '承認が済むのを待っています…' : '権限の承認が必要です';
+      $('authState').className = 'eyebrow' + (waiting ? ' busy' : '');
+    }
+
+    function hideAuth() {
+      if (!authShown) return;
+      authShown = false;
+      authClickedAt = 0;
+      clearTimeout(authTimer);
+      $('auth').hidden = true;
+      SECTIONS.forEach(id => { $(id).hidden = false; });
+    }
+
+    $('authBtn').addEventListener('click', () => {
+      authClickedAt = Date.now();
+      renderAuthState();
+      clearTimeout(authTimer);
+      authTimer = setTimeout(() => load(true), 3000);
+    });
 
     /* ---------- 表示 ---------- */
 
@@ -526,8 +633,9 @@
           }
           adding = null;
           $('refresh').disabled = false;
-          showBanner('error', '追加できませんでした：' + text);
           renderList();
+          if (isAuthError(error)) { showAuth(); return; }
+          showBanner('error', '追加できませんでした：' + text);
         })
         .addServiceRequest(item.key);
     }
@@ -591,7 +699,10 @@
       button.disabled = true;
       google.script.run
         .withSuccessHandler(() => { button.disabled = false; listOpened = true; })
-        .withFailureHandler(error => { button.disabled = false; showBanner('error', '一覧を開けませんでした：' + errorText(error)); })
+        .withFailureHandler(error => {
+          button.disabled = false;
+          if (isAuthError(error)) showAuth(); else showBanner('error', '一覧を開けませんでした：' + errorText(error));
+        })
         .openRequestListDialog(kind);
     }
     $('openUnregistered').addEventListener('click', () => openList('unregistered', $('openUnregistered')));

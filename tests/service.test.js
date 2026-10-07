@@ -181,18 +181,36 @@ test('メニュー「🟪RXサービスMTG用」→「リクエストを追加�
   assert.strictEqual(gas.alerts[0].message, 'このシートでは開けません。「リクエスト」のシートで開いてください。');
 
   gas.select(gas.ss.getSheetByName('リクエスト'), 'A2');
+  gas.scopeChecks.length = 0;
   assert.strictEqual(g.openRequestPicker(), true);
+  assert.deepStrictEqual(plain(gas.scopeChecks), ['FULL'], '承認が足りない人には、メニューで先に承認の画面を出す');
   assert.strictEqual(gas.sidebars.length, 1);
   assert.strictEqual(gas.sidebars[0].html.file, 'RequestPickerView');
   assert.strictEqual(gas.sidebars[0].html.title, 'リクエストを追加');
+  assert.deepStrictEqual(plain(gas.sidebars[0].html.data), {authorizeUrl: '', menuTitle: '🟪RXサービスMTG用'},
+    '「承認する」の予備の行き先（承認用のウェブアプリ。未設定なら空）と、案内に出すメニューの名前を渡す');
   assert.deepStrictEqual(gas.writes, [], '開くだけでは書き込まない');
 
   // 画面から呼ぶサーバーの関数がある（末尾 _ の内部用ではない）
   const html = gas.sidebars[0].html.getContent();
-  ['getRequestPickerData', 'addServiceRequest'].forEach(name => {
+  ['getRequestPickerData', 'addServiceRequest', 'openRequestListDialog', 'getAuthorizationLink'].forEach(name => {
     assert.match(html, new RegExp('\\.' + name + '\\('), name + ' を呼んでいない');
     assert.strictEqual(typeof g[name], 'function', name);
   });
+});
+
+test('画面：権限が足りないときは、ほかのカードの代わりに「承認する」を出す（案内のメニューの名前・項目名は実物と同じ）', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'RequestPickerView.html'), 'utf8');
+  assert.ok(html.includes('<body data-authorize-url="<?= authorizeUrl ?>" data-menu-title="<?= menuTitle ?>">'));
+  ['auth', 'authState', 'authText', 'authBtn', 'authNote', 'headCard', 'filterCard', 'listCard'].forEach(id =>
+    assert.ok(html.includes('id="' + id + '"'), id + ' がありません'));
+  const {gas, g} = setup();
+  g.svcAddMenu_();
+  const item = gas.menus[0].items.find(i => i.fn === 'openRequestPicker');
+  assert.ok(html.includes('メニュー「<?= menuTitle ?>」＞「' + item.label + '」からも承認できます'), 'ボタンの下の案内と項目の名前が違います');
+  assert.ok(html.includes("'」＞「" + item.label + "」を実行し"), 'ボタンが無いときの案内と項目の名前が違います');
 });
 
 test('getRequestPickerData：まだ登録していないリクエストを、取り込み元の順に返す（リクエストの無い行・同じリクエストは1つ）', () => {

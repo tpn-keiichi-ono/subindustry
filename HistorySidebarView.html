@@ -444,31 +444,45 @@
 
     // ここから呼ぶ関数は開いた本人の権限で動く。メニューから開くときに承認の画面が出るが、
     // 一部の権限を外して承認した人などは呼び出しが失敗するので、「承認する」ボタンを出す。
-    // サイドバーの中からは承認画面を出せないため、ボタンは承認用のウェブアプリ（doGet）を新しいタブで開く。
-    // ウェブアプリの URL が未設定なら、メニューでの承認を案内する（メニューの名前は CredentialHistory.gs の CRED_OPTIONS.menuTitle）。
+    // サイドバーの中からは承認画面を出せないため、ボタンは Google の承認の画面（getAuthorizationLink）を新しいタブで開く。
+    // その URL が取れなければ承認用のウェブアプリ（doGet）、どちらも無ければメニューでの承認を案内する
+    // （メニューの名前は CredentialHistory.gs の CRED_OPTIONS.menuTitle）。
     const AUTHORIZE_URL = /^https:\/\//.test(document.body.dataset.authorizeUrl || '') ? document.body.dataset.authorizeUrl : '';
     const MENU_TITLE = document.body.dataset.menuTitle || '';
+    const AUTH_BUTTON_TEXT = $('authText').textContent;
     const AUTH_MENU_TEXT = '初めて使うときは、権限の承認が必要です。メニュー「' + MENU_TITLE + '」＞「権限を承認する（初回のみ）」を実行し、表示される画面で承認してください。承認が済むと、サイドバーが開き直して履歴を表示します。';
+    const AUTH_ACCOUNT_TEXT = '権限は承認済みです。ブラウザで複数の Google アカウントにログインしていると、別のアカウントとして動くことがあります。' +
+      '1つのアカウントだけでログインした状態か、シークレットウィンドウで開き直してください。';
     let authClickedAt = 0;   // 「承認する」を押した時刻（しばらくは問い合わせを早める）
+    let authAsked = false;   // ボタンの行き先（getAuthorizationLink）を問い合わせたか（承認の案内を初めて出すときに1回だけ）
 
-    if (AUTHORIZE_URL) {
-      $('authBtn').href = AUTHORIZE_URL;
-      $('authBtn').addEventListener('click', () => {
-        authClickedAt = Date.now();
-        setState('承認が済むのを待っています…', 'busy');
-        if (!polling) schedulePoll(authDelay());   // 予約済みの問い合わせ（10秒後）を早める
-      });
-    } else {
-      $('authText').textContent = AUTH_MENU_TEXT;
-      $('authBtn').hidden = true;
-      $('authNote').hidden = true;
+    /** 承認の案内を出し分ける。url：ボタンの行き先（無ければメニューの案内）、signedIn：承認は済んでいる（別のアカウントで動いている） */
+    function renderAuth(url, signedIn) {
+      $('authText').textContent = signedIn ? AUTH_ACCOUNT_TEXT : url ? AUTH_BUTTON_TEXT : AUTH_MENU_TEXT;
+      $('authBtn').hidden = signedIn || !url;
+      $('authNote').hidden = signedIn || !url;
+      if (url) $('authBtn').href = url;
     }
+
+    renderAuth(AUTHORIZE_URL, false);
+    $('authBtn').addEventListener('click', () => {
+      authClickedAt = Date.now();
+      setState('承認が済むのを待っています…', 'busy');
+      if (!polling) schedulePoll(authDelay());   // 予約済みの問い合わせ（10秒後）を早める
+    });
 
     function isAuthError(error) {
       return /authoriz|permission|承認|権限/i.test(String((error && error.message) || error || ''));
     }
 
     function showAuthHint() {
+      if (!authAsked) {
+        authAsked = true;
+        google.script.run
+          .withSuccessHandler(info => renderAuth(/^https:\/\//.test(info.url || '') ? info.url : AUTHORIZE_URL, !info.required))
+          .withFailureHandler(error => console.error(error))
+          .getAuthorizationLink();
+      }
       $('loaded').textContent = '';
       $('loaded').className = 'loaded';
       if (current) {   // 表示中の行があるときはそのまま（承認の取り消しなど、途中で失敗した場合）

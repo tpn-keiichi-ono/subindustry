@@ -210,12 +210,36 @@ test('doGet：承認が済んでいれば完了のページ、足りなければ
   assert.deepStrictEqual(gas.writes, []);
 });
 
+test('getAuthorizationLink：承認が足りなければ Google の承認の画面の URL、取れなければ承認用のウェブアプリの URL を返す（読むだけ）', () => {
+  const {gas, g} = setupProject();
+  const options = gas.get('HS_OPTIONS');
+  gas.writes.length = 0;
+  assert.deepStrictEqual(plain(g.getAuthorizationLink()), {required: false, url: ''}, '承認が済んでいれば行き先は要らない');
+
+  gas.authRequired = true;
+  assert.deepStrictEqual(plain(g.getAuthorizationLink()), {required: true, url: 'https://script.google.com/macros/d/script-id/authorize'},
+    'ウェブアプリを用意していなくてもボタンを出せる');
+
+  const webApp = 'https://script.google.com/a/macros/example.com/s/AKfycbx123/exec';
+  options.authorizeUrl = webApp;
+  const original = g.ScriptApp.getAuthorizationInfo;
+  g.ScriptApp.getAuthorizationInfo = () => ({getAuthorizationStatus: () => 'REQUIRED', getAuthorizationUrl: () => null});
+  try {
+    assert.deepStrictEqual(plain(g.getAuthorizationLink()), {required: true, url: webApp}, '承認の画面の URL が取れなければウェブアプリ');
+  } finally {
+    g.ScriptApp.getAuthorizationInfo = original;
+    options.authorizeUrl = '';
+  }
+  assert.deepStrictEqual(gas.writes, []);
+});
+
 test('画面：サイドバーは承認用の URL を data-authorize-url で受け取り、承認のページは状態を data-status で受け取る', () => {
   const fs = require('fs');
   const path = require('path');
   const sidebar = fs.readFileSync(path.join(__dirname, '..', 'HistorySidebarView.html'), 'utf8');
   assert.ok(sidebar.includes('<body data-authorize-url="<?= authorizeUrl ?>" data-menu-title="<?= menuTitle ?>">'));
   ['auth', 'authText', 'authBtn', 'authNote'].forEach(id => assert.ok(sidebar.includes('id="' + id + '"'), id + ' がありません'));
+  assert.ok(sidebar.includes('.getAuthorizationLink()'), '承認の案内を出すときに、ボタンの行き先を問い合わせる');
   const page = fs.readFileSync(path.join(__dirname, '..', 'AuthorizeView.html'), 'utf8');
   assert.ok(page.includes('data-status="<?= status ?>"') && page.includes('data-retry-url="<?= retryUrl ?>"'));
 });
