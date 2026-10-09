@@ -253,6 +253,75 @@ test('パネルを開くたびには確かめない（候補・列・行数が�
   assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
 });
 
+test('候補を更新できなかったときは黙らずに知らせる：パネルの読み込み（ほかは済ませる）・追加・削除の結果に warning（ほかの処理が実行中のときは知らせない）', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  g.setupTaskSheet();
+  const original = g.svcLinkTaskServiceColumn_;
+  g.svcLinkTaskServiceColumn_ = () => { throw new Error('Exception: 保護されているセルやオブジェクトを編集しようとしています。'); };
+  try {
+    const data = g.getRequestPickerData();
+    assert.strictEqual(data.synced, true, 'ID・取り込み元に合わせるのは済ませる');
+    assert.strictEqual(data.warning, 'タスク管理 の「サービス案」の候補を更新できませんでした：保護されているセルやオブジェクトを編集しようとしています。' +
+      '（管理者に diagnoseTaskChoices() の実行を頼んでください）');
+    const added = g.addServiceRequest(data.items[0].key);
+    assert.strictEqual(added.ok, true, '追加はできる');
+    assert.match(added.warning, /候補を更新できませんでした/);
+    const fromList = g.addServiceRequestFromList(g.getRequestListData().unregistered[0].key);
+    assert.match(fromList.warning, /候補を更新できませんでした/);
+    const target = g.getRequestListData().registered[0];
+    assert.match(g.deleteServiceRequest(target.row, target.key, target.id).warning, /候補を更新できませんでした/);
+  } finally {
+    g.svcLinkTaskServiceColumn_ = original;
+  }
+  assert.strictEqual(g.getRequestPickerData().warning, '', '更新できれば知らせない');
+  assert.strictEqual(g.addServiceRequest(g.getRequestPickerData().items[0].key).warning, '');
+
+  gas.lockBusy = 'script';
+  const busy = g.getRequestPickerData();
+  gas.lockBusy = false;
+  assert.deepStrictEqual([busy.synced, busy.warning], [false, ''], 'ほかの処理が実行中のときは、読むだけにして知らせない');
+});
+
+test('diagnoseTaskChoices：コードの版・候補の数・候補のシート・プルダウンの参照先・最後に合わせた時刻・保護を画面に出す（読むだけ）', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  g.setupTaskSheet();
+  addAll(g);
+  const sheet = gas.ss.getSheetByName('タスク管理');
+  gas.writes.length = 0;
+  g.diagnoseTaskChoices();
+  assert.deepStrictEqual(gas.writes, [], '書き込まない');
+  const ok = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(ok, /コードの版：最新です。/);
+  assert.match(ok, /候補にするリクエスト（「リクエスト」の ID のある行）：2件（SR-0001〜SR-0002）/);
+  assert.match(ok, /候補のシート（__TASK_CHOICES）：2件（今のリクエストと同じ）。/);
+  assert.match(ok, /「タスク管理」の「サービス案」：A 列/);
+  assert.match(ok, /A2：__TASK_CHOICES!A1:A2 を参照（今の候補）。/);
+  assert.match(ok, /最後に候補を合わせた時刻：\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}/);
+  assert.match(ok, /保護：ありません。/);
+
+  // 前の版の関数が動いている・候補が古い・前の版のプルダウン・保護がある
+  const original = g.svcServiceRule_;
+  g.svcServiceRule_ = function svcServiceRule_(ss) { return null; };
+  gas.asUser(() => {
+    gas.ss.getSheetByName('__TASK_CHOICES').getRange('A2').setValue('SR-0002 古い文');
+    sheet.getRange('A2').setDataValidation(g.SpreadsheetApp.newDataValidation()
+      .requireValueInRange(gas.ss.getSheetByName('リクエスト').getRange('L2:L'), true).setAllowInvalid(false).build());
+    sheet.protect().addEditor('admin@example.com');
+  });
+  try {
+    g.diagnoseTaskChoices();
+  } finally {
+    g.svcServiceRule_ = original;
+  }
+  const bad = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(bad, /コードの版：前の版の処理が動いています（svcServiceRule_）。/);
+  assert.match(bad, /今のリクエストと合っていません（足りない 1件・余分 1件）。/);
+  assert.match(bad, /A2：リクエスト!L2:L\d+ を参照（前の版：サービス案の名前の列）。/);
+  assert.match(bad, /保護：「タスク管理」のシート全体（編集できる人：admin@example.com）。/);
+});
+
 test('タスク管理シートの編集で動く処理は無い（単純トリガーの onEdit を置かない。プルダウンは候補のシートを参照するだけ）', () => {
   const {g} = setup();
   assert.strictEqual(typeof g.onEdit, 'undefined');

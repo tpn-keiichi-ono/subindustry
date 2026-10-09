@@ -354,8 +354,9 @@ class Range {
 }
 
 class Protection {
-  constructor(range) {
+  constructor(range, type) {
     this.range = range;
+    this.type = type || 'RANGE';
     this.description = '';
     this.editors = [];
     this.domainEdit = true;
@@ -363,6 +364,8 @@ class Protection {
   }
   setDescription(text) { this.description = text; return this; }
   getDescription() { return this.description; }
+  getProtectionType() { return this.type; }
+  getRange() { return this.range; }
   setWarningOnly(warningOnly) { this.warningOnly = !!warningOnly; return this; }
   isWarningOnly() { return !!this.warningOnly; }
   addEditor(user) { this.editors.push(typeof user === 'string' ? user : user.getEmail()); return this; }
@@ -505,7 +508,13 @@ class Sheet {
   getFrozenRows() { return this.frozenRows; }
   setColumnWidth() { return this; }
   setColumnWidths() { return this; }
-  getProtections() { return this.protections.filter(p => !p.removed); }
+  /** type（RANGE・SHEET）を渡すとその種類だけ（本物と同じ）。 */
+  getProtections(type) { return this.protections.filter(p => !p.removed && (!type || p.getProtectionType() === type)); }
+  protect() {
+    const protection = new Protection(this.getRange(1, 1, this.maxRows, this.maxCols), 'SHEET');
+    this.protections.push(protection);
+    return protection;
+  }
 
   getActiveRange() {
     const sel = this.gas.selection;

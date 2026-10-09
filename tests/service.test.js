@@ -225,7 +225,7 @@ test('getRequestPickerData：まだ登録していないリクエストを、取
   ]);
   assert.strictEqual(new Set(data.items.map(item => item.key)).size, 3, 'キーは1件ずつ違う');
   assert.deepStrictEqual(plain(Object.assign({}, data, {items: null, loadedAt: null})), {
-    items: null, total: 3, registered: 0, remaining: 3, sources: ['新FMT'], requestSheet: 'リクエスト', loadedAt: null, synced: true
+    items: null, total: 3, registered: 0, remaining: 3, sources: ['新FMT'], requestSheet: 'リクエスト', loadedAt: null, synced: true, warning: ''
   });
   assert.match(data.loadedAt, /^\d{2}:\d{2}$/);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(data)), plain(data), 'google.script.run で返せる値だけ（Set・Date を含まない）');

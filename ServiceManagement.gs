@@ -146,26 +146,36 @@ function openRequestPicker() {
  * 選択パネルが読む内容（google.script.run から呼ぶ）。前の版の A〜D のプルダウンが残っていれば外し、
  * 登録した行を取り込み元に合わせてから、まだ登録していないリクエストを返す。
  * ほかの処理が実行中で合わせられないときは、合わせずに読むだけにする（パネルは開けるように）。
+ * それ以外の理由で合わせられなかったとき（タスク管理の候補を更新できなかったときなど）は、warning にその文を入れる（パネルに出す）。
  */
 function getRequestPickerData() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = svcRequestSheetOrThrow_(ss);
   const records = svcSourceRecords_(ss);
   let synced = true;
+  let warning = '';
   try {
     taskWithLock_(() => {
       const legacy = !PropertiesService.getDocumentProperties().getProperty(SVC_OPTIONS.legacyDoneKey);
       svcRemoveLegacyLists_(ss, sheet);   // 前の版のプルダウンが残っていると、スクリプトの書き込みも止まるため（済んでいれば何もしない）
       svcSync_(ss, sheet, records, {notes: legacy});
       const ids = svcEnsureIds_(sheet);   // ID の無い行・重複した ID（行のコピーなど）を直す
-      const link = svcLinkTaskServiceColumn_(ss);   // タスク管理のサービス案のプルダウンの候補を、今のリクエストに合わせる
+      // タスク管理のサービス案のプルダウンの候補を、今のリクエストに合わせる（できなくても、ほかは済ませる）
+      let link = null;
+      try {
+        link = svcLinkTaskServiceColumn_(ss);
+      } catch (e) {
+        warning = svcTaskChoiceWarning_(e);
+      }
       const notes = [ids.renumbered.length ? svcRenumberedMessage_(ids.renumbered) : '', svcTaskLinkMessage_(link)].filter(Boolean);
       if (notes.length) ss.toast(notes.join('\n'), SVC_OPTIONS.menuTitle, 10);
     }, 5000, 'パネルの読み込み');
-  } catch (_) {
+  } catch (e) {
     synced = false;
+    // ほかの処理が実行中（ロックを取れない）なら知らせない。それ以外は知らせる（黙っていると、候補が古いままになる）
+    if (!/他の処理.*実行中/.test(svcErrorText_(e))) warning = 'リクエストの ID・タスク管理の候補などを更新できませんでした：' + svcErrorText_(e);
   }
-  return Object.assign(svcPickerData_(sheet, records), {synced});
+  return Object.assign(svcPickerData_(sheet, records), {synced, warning});
 }
 
 /**
@@ -176,7 +186,8 @@ function getRequestPickerData() {
  */
 function addServiceRequest(key) {
   const result = svcAddRequest_(key);
-  return {ok: result.ok, row: result.row, id: result.id || '', message: result.message, data: svcPickerData_(result.sheet, result.records)};
+  return {ok: result.ok, row: result.row, id: result.id || '', message: result.message, warning: result.warning || '',
+    data: svcPickerData_(result.sheet, result.records)};
 }
 
 /**
@@ -185,12 +196,14 @@ function addServiceRequest(key) {
  */
 function addServiceRequestFromList(key) {
   const result = svcAddRequest_(key);
-  return {ok: result.ok, row: result.row, id: result.id || '', message: result.message, list: svcListData_(result.sheet, result.records)};
+  return {ok: result.ok, row: result.row, id: result.id || '', message: result.message, warning: result.warning || '',
+    list: svcListData_(result.sheet, result.records)};
 }
 
 /**
- * リクエストを1件登録する（ロックの中で読み直してから書く）。{ok, row, message, sheet, records}
+ * リクエストを1件登録する（ロックの中で読み直してから書く）。{ok, row, message, warning, sheet, records}
  * 取り込み元に無い・すでに登録されているときは書かずに ok: false。
+ * warning：追加はできたが、タスク管理の候補を更新できなかったときの文（できたときは空）。
  */
 function svcAddRequest_(key) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -227,8 +240,8 @@ function svcAddRequest_(key) {
       id = svcFormatId_(svcTakeIds_(1, svcMaxIdInSheet_(sheet, cols.id))[0]);
       sheet.getRange(row, cols.id).setValue(credText_(id));
     }
-    svcRefreshTaskChoices_(ss);   // タスク管理のサービス案で、すぐ選べるように
-    return {ok: true, row, id, sheet, records, message: (id ? id + ' として' : '') + row + '行目に追加しました。'};
+    const warning = svcRefreshTaskChoices_(ss);   // タスク管理のサービス案で、すぐ選べるように
+    return {ok: true, row, id, sheet, records, warning, message: (id ? id + ' として' : '') + row + '行目に追加しました。'};
   }, SVC_OPTIONS.pickerLockWaitMs, 'リクエストの追加');
 }
 
@@ -237,7 +250,7 @@ function svcAddRequest_(key) {
  * row は一覧を読んだときの行番号、key はその行のリクエストのキー、id はその行の ID（あれば）。
  * 同じ ID で同じリクエストの行があればその行を、無ければ同じキーの行を探して削除する
  * （並べ替え・行の追加などで行がずれていてもよい。1つに決まらないとき・見つからないときは削除しない）。
- * 判断・サービス案などの入力も行ごと消える（確認はモーダルで行う）。{ok, row, message, list}
+ * 判断・サービス案などの入力も行ごと消える（確認はモーダルで行う）。{ok, row, message, warning, list}
  */
 function deleteServiceRequest(row, key, id) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -258,9 +271,9 @@ function deleteServiceRequest(row, key, id) {
       sheet.insertRowsAfter(sheet.getMaxRows(), 1);
     }
     sheet.deleteRow(target.row);
-    svcRefreshTaskChoices_(ss);   // タスク管理のサービス案の候補から外す
+    const warning = svcRefreshTaskChoices_(ss);   // タスク管理のサービス案の候補から外す
     const label = target.values.id ? target.values.id + '（' + target.row + '行目）' : target.row + '行目';
-    return {ok: true, row: target.row, list: svcListData_(sheet, svcSourceRecords_(ss)), message: label + 'を削除しました。'};
+    return {ok: true, row: target.row, warning, list: svcListData_(sheet, svcSourceRecords_(ss)), message: label + 'を削除しました。'};
   }, SVC_OPTIONS.pickerLockWaitMs, 'リクエストの削除');
 }
 
@@ -832,14 +845,27 @@ function svcRelinkTaskValues_(task, col, choices) {
 
 /**
  * 追加・削除のあとに、タスク管理のサービス案の候補を合わせる（ロック取得中に呼ぶこと）。
- * うまくいかなくても追加・削除は済んでいるので止めない（次にパネルを開いたときに合わせる）。
+ * うまくいかなくても追加・削除は済んでいるので止めず、知らせる文を返す（できたときは空。パネル・モーダルに出す）。
  */
 function svcRefreshTaskChoices_(ss) {
   try {
     svcLinkTaskServiceColumn_(ss);
+    return '';
   } catch (e) {
-    console.warn('タスク管理のサービス案の候補を合わせられませんでした：' + (e && e.message ? e.message : e));
+    console.warn(e);
+    return svcTaskChoiceWarning_(e);
   }
+}
+
+/** タスク管理の候補を更新できなかったときの知らせ。 */
+function svcTaskChoiceWarning_(error) {
+  return TASK_OPTIONS.sheet + ' の「サービス案」の候補を更新できませんでした：' + svcErrorText_(error) +
+    '（管理者に diagnoseTaskChoices() の実行を頼んでください）';
+}
+
+/** エラーの文（先頭の「Exception: 」「Error: 」は外す）。 */
+function svcErrorText_(error) {
+  return String(error && error.message ? error.message : error).replace(/^(Exception|Error):\s*/, '');
 }
 
 /**
@@ -862,6 +888,127 @@ function svcTextHash_(text) {
   let hash = 5381;
   for (let i = 0; i < text.length; i++) hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0;
   return text.length + ':' + hash.toString(36);
+}
+
+/* ---------------- タスク管理の候補が更新されないときの確認（管理者がエディタから実行する） ---------------- */
+
+/**
+ * タスク管理の「サービス案」の候補（ID とリクエスト）が更新されないときに実行する（読むだけ。何も書き換えない）。
+ * 動いているコードの版・シートと列・候補にするリクエストの数・候補のシートの中身・プルダウンの参照先・最後に合わせた時刻・シートの保護を画面に出す。
+ * 直すときは setupTaskSheet() を実行する（候補を書き直してプルダウンを付け直す。うまくいかなければエラーの文が出る）。
+ */
+function diagnoseTaskChoices() {
+  const lines = svcTaskChoiceLines_(SpreadsheetApp.getActiveSpreadsheet());
+  console.log(lines.join('\n'));
+  const ui = SpreadsheetApp.getUi();
+  ui.alert(SVC_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
+}
+
+/** diagnoseTaskChoices() の中身。画面に出す文（行ごと）を返す。 */
+function svcTaskChoiceLines_(ss) {
+  const lines = [];
+  const headerRow = TASK_OPTIONS.headerRow;
+
+  // 動いているコードの版。貼り替えていないファイルや、同じ名前の関数が別のファイルに残っていると、前の版の処理が動く
+  const stale = [
+    ['svcServiceRule_', svcServiceRule_, 'svcWriteTaskChoices_'],
+    ['svcLinkTaskServiceColumn_', svcLinkTaskServiceColumn_, 'svcRelinkTaskValues_'],
+    ['svcAddRequest_', svcAddRequest_, 'svcRefreshTaskChoices_'],
+    ['deleteServiceRequest', deleteServiceRequest, 'svcRefreshTaskChoices_'],
+    ['setupTaskSheet', setupTaskSheet, 'svcLinkTaskServiceColumn_']
+  ].filter(([, fn, marker]) => String(fn).indexOf(marker) < 0).map(([name]) => name);
+  lines.push(stale.length
+    ? 'コードの版：前の版の処理が動いています（' + stale.join('・') + '）。ServiceManagement.gs と TaskManagement.gs を最新のものに貼り替えて保存してください。' +
+      '同じ名前の関数が別のファイル（コピーして残した古いファイルなど）にあれば、そのファイルを削除してください。'
+    : 'コードの版：最新です。');
+
+  const request = ss.getSheetByName(SVC_OPTIONS.requestSheet);
+  const task = ss.getSheetByName(TASK_OPTIONS.sheet);
+  if (!request) lines.push('「' + SVC_OPTIONS.requestSheet + '」シート：見つかりません。setupRequestSheet() を実行してください。');
+  if (!task) lines.push('「' + TASK_OPTIONS.sheet + '」シート：見つかりません。setupTaskSheet() を実行してください。');
+  if (!request || !task) return lines;
+
+  let choices = null;
+  try {
+    choices = svcTaskChoices_(request);
+  } catch (e) {
+    lines.push('「' + SVC_OPTIONS.requestSheet + '」シートを読めませんでした：' + svcErrorText_(e));
+    return lines;
+  }
+  if (!choices) {
+    lines.push('「' + SVC_OPTIONS.requestSheet + '」シート：ID の列がありません。setupRequestSheet() を実行してください。');
+    return lines;
+  }
+  lines.push('候補にするリクエスト（「' + SVC_OPTIONS.requestSheet + '」の ID のある行）：' + choices.length + '件' +
+    (choices.length ? '（' + svcFormatId_(choices[0].number) + '〜' + svcFormatId_(choices[choices.length - 1].number) + '）' : ''));
+
+  // 候補のシート（スクリプトが書く）が、今のリクエストと合っているか
+  const choiceSheet = ss.getSheetByName(SVC_OPTIONS.taskChoiceSheet);
+  const choiceName = '候補のシート（' + SVC_OPTIONS.taskChoiceSheet + '）';
+  if (!choiceSheet) {
+    lines.push(choiceName + '：まだありません（選択パネルを開いたとき・setupTaskSheet() のときに作ります）。');
+  } else {
+    const current = choiceSheet.getRange(1, 1, choiceSheet.getMaxRows(), 1).getDisplayValues().map(line => line[0]).filter(Boolean);
+    const wanted = choices.map(c => c.label);
+    const missing = wanted.filter(label => current.indexOf(label) < 0).length;
+    const extra = current.filter(label => wanted.indexOf(label) < 0).length;
+    lines.push(choiceName + '：' + current.length + '件' + (missing || extra
+      ? '。今のリクエストと合っていません（足りない ' + missing + '件・余分 ' + extra + '件）。'
+      : '（今のリクエストと同じ）。') + (choiceSheet.isSheetHidden() ? '' : '非表示になっていません。'));
+  }
+
+  // タスク管理のプルダウンが、候補のシートを参照しているか（先頭・真ん中・最後の行）
+  const col = taskColumnMap_(task, TASK_OPTIONS.columns.filter(c => c.type === 'service'), headerRow).service;
+  const rows = task.getMaxRows() - headerRow;
+  if (!col || rows < 1) {
+    lines.push('「' + TASK_OPTIONS.sheet + '」：' + (col ? 'データの行がありません。' : headerRow + '行目に「サービス案」の見出しがありません。') +
+      'setupTaskSheet() を実行してください。');
+  } else {
+    const letter = diffColumnLetter_(col);
+    lines.push('「' + TASK_OPTIONS.sheet + '」の「サービス案」：' + letter + ' 列（' + rows + '行）');
+    const first = headerRow + 1;
+    [first, first + Math.floor((rows - 1) / 2), first + rows - 1].filter((row, i, all) => all.indexOf(row) === i).forEach(row => {
+      lines.push('  ' + letter + row + '：' + svcDescribeTaskRule_(task.getRange(row, col).getDataValidation(), choiceSheet, request));
+    });
+  }
+
+  // 最後に合わせた記録（パネルを開いたとき・追加・削除のとき・setupRequestSheet()・setupTaskSheet() に書く）
+  let saved = {};
+  try { saved = JSON.parse(PropertiesService.getDocumentProperties().getProperty(SVC_OPTIONS.taskLinkKey) || '{}') || {}; } catch (_) {}
+  lines.push(saved.at && saved.choices
+    ? '最後に候補を合わせた時刻：' + Utilities.formatDate(new Date(saved.at), Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm')
+    : '最後に候補を合わせた時刻：記録がありません（今の版では、まだ一度も合わせていません）。');
+
+  // シートの保護（編集できない人は、パネルから追加・削除しても候補を書けない）
+  const protections = [];
+  [request, task, choiceSheet].filter(Boolean).forEach(sheet => {
+    sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET).concat(sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE)).forEach(p => {
+      let editors = '';
+      try { editors = p.getEditors().map(u => u.getEmail()).filter(Boolean).slice(0, 3).join('、'); } catch (_) {}
+      const where = p.getProtectionType() === SpreadsheetApp.ProtectionType.SHEET ? 'シート全体' : p.getRange().getA1Notation();
+      protections.push('「' + sheet.getName() + '」の' + where + (p.isWarningOnly() ? '（警告だけ）' : '（編集できる人：' + (editors || '不明') + '）'));
+    });
+  });
+  lines.push(protections.length
+    ? '保護：' + protections.join('、') + '。ここに無い人は、パネルから追加・削除したときに候補を書けません。'
+    : '保護：ありません。');
+
+  lines.push('直すときは、エディタで setupTaskSheet() を実行してください（候補を書き直してプルダウンを付け直します。うまくいかないときはエラーの文が出ます）。');
+  lines.push('「' + SVC_OPTIONS.requestSheet + '」に手で行を足した・書き換えたときは、選択パネルを開く（再読み込みでも）と候補に入ります。');
+  return lines;
+}
+
+/** タスク管理の「サービス案」のセルの入力規則の説明（diagnoseTaskChoices() 用）。 */
+function svcDescribeTaskRule_(rule, choiceSheet, request) {
+  if (!rule) return 'プルダウンがありません（パネルを開くと付け直します）。';
+  if (rule.getCriteriaType() !== SpreadsheetApp.DataValidationCriteria.VALUE_IN_RANGE) return 'ほかの種類のプルダウンです（パネルを開くと付け直します）。';
+  const range = rule.getCriteriaValues()[0];
+  const sheet = range.getSheet();
+  const name = sheet.getName() + '!' + range.getA1Notation() + ' を参照';
+  if (choiceSheet && sheet.getSheetId() === choiceSheet.getSheetId()) {
+    return name + (range.getNumRows() === choiceSheet.getMaxRows() ? '（今の候補）。' : '（候補の数と合っていません。パネルを開くと付け直します）。');
+  }
+  return name + (sheet.getSheetId() === request.getSheetId() ? '（前の版：サービス案の名前の列）。' : '（ほかの範囲）。');
 }
 
 /* ---------------- 「追加」が止まるときの確認（管理者がエディタから実行する） ---------------- */

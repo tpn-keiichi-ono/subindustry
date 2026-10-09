@@ -324,6 +324,8 @@
           $('refresh').disabled = false;
           hideAuth();
           show(result);
+          // タスク管理の候補などを更新できなかったとき（ほかの処理が実行中のときは空）
+          if (result.warning) showBanner('error', result.warning);
         })
         .withFailureHandler(error => {
           loading = false;
@@ -617,8 +619,10 @@
         .withSuccessHandler(result => {
           adding = null;
           $('refresh').disabled = false;
-          showBanner(result.ok ? 'ok' : 'error', result.ok
-            ? result.message.replace(/。$/, '') + '（' + [item.values[1], item.values[2]].filter(Boolean).join('／') + '）'
+          // 追加はできたが、タスク管理の候補を更新できなかったときは、その知らせも出す（赤）
+          showBanner(result.ok && !result.warning ? 'ok' : 'error', result.ok
+            ? result.message.replace(/。$/, '') + '（' + [item.values[1], item.values[2]].filter(Boolean).join('／') + '）' +
+              (result.warning ? '。' + result.warning : '')
             : result.message);
           if (result.data) show(Object.assign({}, data, result.data));
           else renderList();

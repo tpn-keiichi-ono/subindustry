@@ -561,7 +561,10 @@
         .withSuccessHandler(result => {
           done();
           if (result.list) data = result.list;
-          showNotice(result.ok ? 'ok' : 'error', result.ok ? result.message.replace(/。$/, '') + '（' + itemName(item) + '）' : result.message);
+          // 追加・削除はできたが、タスク管理の候補を更新できなかったときは、その知らせも出す（赤）
+          showNotice(result.ok && !result.warning ? 'ok' : 'error', result.ok
+            ? result.message.replace(/。$/, '') + '（' + itemName(item) + '）' + (result.warning ? '。' + result.warning : '')
+            : result.message);
           render();
         })
         .withFailureHandler(error => {
