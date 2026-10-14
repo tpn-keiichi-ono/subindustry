@@ -31,8 +31,8 @@ Google スプレッドシート「シナリオ攻略先リスト」に組み込�
   ServiceManagement.gs          サービスリクエスト（新FMT のリクエストを選択パネルで登録する。サービス案を付けてまとめる。メニューは onOpen から追加）
   RequestPickerView.html        サービスリクエストの選択パネル（サイドバー）
   RequestListDialog.html        サービスリクエストの未登録・登録済みの一覧（パネルの件数のバッジから開くモーダル）
-  MeetingSummary.gs             会議サマリ（追跡シートごとの会議資料の PDF。エディタから実行）
-  appsscript.json               マニフェスト（タイムゾーン・ランタイム）
+  MeetingSummary.gs             会議サマリ（追跡シートごとの会議資料。16:9 の Google スライドと PDF。エディタから実行）
+  appsscript.json               マニフェスト（タイムゾーン・ランタイム・拡張サービス Google Slides API）
 docs/
   DESIGN.md                     設計思想・データモデル・処理の流れ・判断の理由・画面のデザイン・テスト
   OPERATIONS.md                 導入・運用・同期・トラブル対応の手順

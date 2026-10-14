@@ -632,13 +632,14 @@ function createGas(options) {
     created: [],              // SpreadsheetApp.create で作ったスプレッドシート
     prompts: [],
     promptAnswer: '',
+    promptAnswers: [],        // 続けて聞かれるときの答え（先頭から使う。空になったら promptAnswer）
     promptButton: 'OK',
     fetches: [],              // UrlFetchApp.fetch の記録
     fetchStatus: 200,
     driveFiles: [],           // フォルダに作ったファイル
     driveFolders: [],         // 作ったフォルダ
     trashed: [],              // ゴミ箱に移したファイルの ID
-    decks: [],                // Slides（拡張サービス）で作ったスライド {id, title, pageSize, requests}
+    decks: [],                // Slides（拡張サービス）で作ったスライド {id, title, pageSize, requests, batches: batchUpdate ごとのリクエストの数}
     moved: [],                // moveTo で動かしたファイル {id, folder}
     selection: null,
     props: {document: new Map(), user: new Map(), script: new Map()},
@@ -716,10 +717,11 @@ function createGas(options) {
       return builder;
     },
     showModalDialog(html, title) { gas.dialogs.push({html, title}); },
-    /** 入力を聞かれたときは gas.promptAnswer（既定は空）と gas.promptButton（既定 'OK'）を返す */
+    /** 入力を聞かれたときは gas.promptAnswers の先頭（無ければ gas.promptAnswer。既定は空）と gas.promptButton（既定 'OK'）を返す */
     prompt(title, message, buttons) {
       gas.prompts.push({title, message, buttons});
-      return {getResponseText: () => gas.promptAnswer, getSelectedButton: () => gas.promptButton};
+      const answer = gas.promptAnswers.length ? gas.promptAnswers.shift() : gas.promptAnswer;
+      return {getResponseText: () => answer, getSelectedButton: () => gas.promptButton};
     },
     showModelessDialog(html, title) { gas.dialogs.push({html, title, modeless: true}); },
     showSidebar(html) { gas.sidebars.push({html}); },
@@ -969,13 +971,14 @@ function createGas(options) {
     Presentations: {
       create(resource) {
         const id = 'deck-' + (++deckSeq);
-        gas.decks.push({id, title: resource.title, pageSize: resource.pageSize, requests: []});
+        gas.decks.push({id, title: resource.title, pageSize: resource.pageSize, requests: [], batches: []});
         return {presentationId: id, slides: [{objectId: 'p'}]};
       },
       batchUpdate(resource, id) {
         const deck = gas.decks.find(d => d.id === id);
         if (!deck) throw new Error('Requested entity was not found.');
         if (gas.slidesError) throw new Error(gas.slidesError);
+        deck.batches.push(resource.requests.length);
         deck.requests.push(...resource.requests);
         return {replies: []};
       }
