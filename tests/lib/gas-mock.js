@@ -329,6 +329,7 @@ class Range {
     return this;
   }
   getFormat(key) { const cell = this.sheet.cell(this.row, this.col, false); return cell && cell.fmt ? cell.fmt[key] : undefined; }
+  merge() { this.sheet.merges.push(this.getA1Notation()); return this; }
 
   insertCheckboxes() {
     this.write('insertCheckboxes');
@@ -412,6 +413,7 @@ class Sheet {
     this.widths = {};        // 列の幅（setColumnWidth で付けたもの）
     this.heights = {};       // 行の高さ（setRowHeight(s) で付けたもの）
     this.borders = [];       // setBorder の記録
+    this.merges = [];        // merge したセルの範囲
     this.hidden = false;
     this.frozenRows = 0;
     this.protections = [];
