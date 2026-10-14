@@ -638,6 +638,8 @@ function createGas(options) {
     driveFiles: [],           // フォルダに作ったファイル
     driveFolders: [],         // 作ったフォルダ
     trashed: [],              // ゴミ箱に移したファイルの ID
+    decks: [],                // Slides（拡張サービス）で作ったスライド {id, title, pageSize, requests}
+    moved: [],                // moveTo で動かしたファイル {id, folder}
     selection: null,
     props: {document: new Map(), user: new Map(), script: new Map()},
     cache: new Map()
@@ -939,6 +941,14 @@ function createGas(options) {
           return {hasNext: () => parents.length > 0, next: () => parents.shift()};
         },
         setTrashed(flag) { if (flag) gas.trashed.push(id); return this; },
+        getName: () => id,
+        getUrl: () => 'https://docs.google.com/presentation/d/' + id + '/edit',
+        moveTo(folder) { gas.moved.push({id, folder: folder.getId()}); return this; },
+        /** PDF などに書き出した中身（名前を付けられる入れ物だけ） */
+        getAs(mimeType) {
+          return {name: '', from: id, setName(n) { this.name = String(n); return this; }, getName() { return this.name; },
+            getContentType: () => mimeType};
+        },
         makeCopy(name, folder) {
           const copyId = 'copy-' + (++copySeq);
           gas.driveCopies.push({from: id, name, folder: folder ? folder.getId() : null, locked: gas.lockHolders > 0});
@@ -951,6 +961,25 @@ function createGas(options) {
       };
     },
     getFolderById: id => folderOf(id)
+  };
+
+  /** Google Slides API（拡張サービス）。作ったスライドと batchUpdate のリクエストを gas.decks に残す */
+  let deckSeq = 0;
+  const Slides = {
+    Presentations: {
+      create(resource) {
+        const id = 'deck-' + (++deckSeq);
+        gas.decks.push({id, title: resource.title, pageSize: resource.pageSize, requests: []});
+        return {presentationId: id, slides: [{objectId: 'p'}]};
+      },
+      batchUpdate(resource, id) {
+        const deck = gas.decks.find(d => d.id === id);
+        if (!deck) throw new Error('Requested entity was not found.');
+        if (gas.slidesError) throw new Error(gas.slidesError);
+        deck.requests.push(...resource.requests);
+        return {replies: []};
+      }
+    }
   };
 
   /** 書き出し（PDF）の取得。gas.fetchStatus を返し、中身は名前を付けられる入れ物だけ */
@@ -974,10 +1003,13 @@ function createGas(options) {
 
   /* ----- プロジェクトの読み込み ----- */
 
-  const context = vm.createContext({
+  // 拡張サービス（Slides）は、有効にしていないプロジェクトを試すときは options.noSlides で外す
+  const globals = {
     SpreadsheetApp, HtmlService, PropertiesService, LockService, Utilities, Session,
     ScriptApp, CacheService, DriveApp, UrlFetchApp, Browser, console: logger
-  });
+  };
+  if (!options.noSlides) globals.Slides = Slides;
+  const context = vm.createContext(globals);
   gas.Date = vm.runInContext('Date', context);
   gas.global = context;
 
