@@ -312,6 +312,24 @@ class Range {
   setVerticalAlignment() { return this; }
   setWrap() { return this; }
 
+  /** 書式（まとめて付ける形）。セルの fmt に残す（テストと見た目の確認用） */
+  setFormats(key, matrix) {
+    this.checkShape(matrix);
+    this.each((cell, r, c) => { cell.fmt = Object.assign(cell.fmt || {}, {[key]: matrix[r][c]}); });
+    return this;
+  }
+  setBackgrounds(matrix) { return this.setFormats('bg', matrix); }
+  setFontColors(matrix) { return this.setFormats('fc', matrix); }
+  setFontWeights(matrix) { return this.setFormats('fw', matrix); }
+  setFontSizes(matrix) { return this.setFormats('fs', matrix); }
+  setHorizontalAlignments(matrix) { return this.setFormats('ha', matrix); }
+  setWrapStrategies(matrix) { return this.setFormats('wrap', matrix); }
+  setBorder(top, left, bottom, right, vertical, horizontal, color, style) {
+    this.sheet.borders.push({a1: this.getA1Notation(), top, left, bottom, right, color, style});
+    return this;
+  }
+  getFormat(key) { const cell = this.sheet.cell(this.row, this.col, false); return cell && cell.fmt ? cell.fmt[key] : undefined; }
+
   insertCheckboxes() {
     this.write('insertCheckboxes');
     this.each(cell => {
@@ -390,7 +408,10 @@ class Sheet {
     this.id = id;
     this.maxRows = maxRows;
     this.maxCols = maxCols;
-    this.data = [];          // data[行-1][列-1] = {v, f, rich, nf, checkbox, note}
+    this.data = [];          // data[行-1][列-1] = {v, f, rich, nf, checkbox, note, fmt}
+    this.widths = {};        // 列の幅（setColumnWidth で付けたもの）
+    this.heights = {};       // 行の高さ（setRowHeight(s) で付けたもの）
+    this.borders = [];       // setBorder の記録
     this.hidden = false;
     this.frozenRows = 0;
     this.protections = [];
@@ -506,8 +527,16 @@ class Sheet {
   isSheetHidden() { return this.hidden; }
   setFrozenRows(n) { this.frozenRows = n; return this; }
   getFrozenRows() { return this.frozenRows; }
-  setColumnWidth() { return this; }
-  setColumnWidths() { return this; }
+  setColumnWidth(col, width) { this.widths[col] = width; return this; }
+  setColumnWidths(start, count, width) {
+    for (let i = 0; i < count; i++) this.widths[start + i] = width;
+    return this;
+  }
+  setRowHeight(row, height) { this.heights[row] = height; return this; }
+  setRowHeights(start, count, height) {
+    for (let i = 0; i < count; i++) this.heights[start + i] = height;
+    return this;
+  }
   /** type（RANGE・SHEET）を渡すとその種類だけ（本物と同じ）。 */
   getProtections(type) { return this.protections.filter(p => !p.removed && (!type || p.getProtectionType() === type)); }
   protect() {
@@ -555,7 +584,8 @@ class Spreadsheet {
     const o = options || {};
     const sheet = new Sheet(this.gas, this, name, this.nextSheetId++, o.rows || 1000, o.columns || 26);
     this.sheets.push(sheet);
-    if (this.gas.selection) sheet.activate();   // 本物と同じく、作ったシートを開く（何も選んでいないテストでは選ばない）
+    // 本物と同じく、作ったシートを開く（何も選んでいないテスト・別のスプレッドシートでは選ばない）
+    if (this.gas.selection && this === this.gas.ss) sheet.activate();
     return sheet;
   }
 
@@ -597,6 +627,15 @@ function createGas(options) {
     scopeChecks: [],          // ScriptApp.requireAllScopes に渡された AuthMode
     authRequired: false,      // true にすると、getAuthorizationInfo が「承認が足りない」を返す
     driveCopies: [],
+    created: [],              // SpreadsheetApp.create で作ったスプレッドシート
+    prompts: [],
+    promptAnswer: '',
+    promptButton: 'OK',
+    fetches: [],              // UrlFetchApp.fetch の記録
+    fetchStatus: 200,
+    driveFiles: [],           // フォルダに作ったファイル
+    driveFolders: [],         // 作ったフォルダ
+    trashed: [],              // ゴミ箱に移したファイルの ID
     selection: null,
     props: {document: new Map(), user: new Map(), script: new Map()},
     cache: new Map()
@@ -652,7 +691,8 @@ function createGas(options) {
       sheet: range.getSheet().getName(),
       a1: range.getA1Notation(),
       kind,
-      locked: gas.lockHolders > 0
+      locked: gas.lockHolders > 0,
+      ss: range.getSheet().getParent().getId()   // 書いたスプレッドシート（SpreadsheetApp.create で作ったものと見分ける）
     });
   };
 
@@ -672,6 +712,11 @@ function createGas(options) {
       return builder;
     },
     showModalDialog(html, title) { gas.dialogs.push({html, title}); },
+    /** 入力を聞かれたときは gas.promptAnswer（既定は空）と gas.promptButton（既定 'OK'）を返す */
+    prompt(title, message, buttons) {
+      gas.prompts.push({title, message, buttons});
+      return {getResponseText: () => gas.promptAnswer, getSelectedButton: () => gas.promptButton};
+    },
     showModelessDialog(html, title) { gas.dialogs.push({html, title, modeless: true}); },
     showSidebar(html) { gas.sidebars.push({html}); },
     /** YES_NO などで聞かれたときは gas.confirmAnswer（既定 'YES'）を返す */
@@ -681,8 +726,18 @@ function createGas(options) {
     }
   };
 
+  let createdSeq = 0;
   const SpreadsheetApp = {
     ProtectionType: {RANGE: 'RANGE', SHEET: 'SHEET'},
+    WrapStrategy: {WRAP: 'WRAP', OVERFLOW: 'OVERFLOW', CLIP: 'CLIP'},
+    BorderStyle: {SOLID: 'SOLID', SOLID_MEDIUM: 'SOLID_MEDIUM', SOLID_THICK: 'SOLID_THICK', DOTTED: 'DOTTED', DASHED: 'DASHED'},
+    /** 新しいスプレッドシート（gas.created に残す。最初のシートは「シート1」） */
+    create(name) {
+      const created = new Spreadsheet(gas, {id: 'created-' + (++createdSeq), name: String(name), timeZone: ss.timeZone});
+      created.insertSheet('シート1');
+      gas.created.push(created);
+      return created;
+    },
     DataValidationCriteria,
     newDataValidation,
     getActiveSpreadsheet: () => ss,
@@ -809,6 +864,7 @@ function createGas(options) {
     AuthMode: {NONE: 'NONE', CUSTOM_FUNCTION: 'CUSTOM_FUNCTION', LIMITED: 'LIMITED', FULL: 'FULL'},
     // 本物は、承認が足りなければ実行を止めて承認の画面を出す。モックは呼ばれたことだけを残す
     requireAllScopes(authMode) { gas.scopeChecks.push(authMode); },
+    getOAuthToken: () => 'oauth-token',
     AuthorizationStatus: {REQUIRED: 'REQUIRED', NOT_REQUIRED: 'NOT_REQUIRED'},
     getAuthorizationInfo: () => ({
       getAuthorizationStatus: () => (gas.authRequired ? 'REQUIRED' : 'NOT_REQUIRED'),
@@ -854,10 +910,33 @@ function createGas(options) {
   const CacheService = {getUserCache: cacheStore, getDocumentCache: cacheStore, getScriptCache: cacheStore};
 
   let copySeq = 0;
+  let folderSeq = 0;
+  const folderOf = (id, name) => ({
+    getId: () => id,
+    getName: () => name || id,
+    getUrl: () => 'https://drive.google.com/drive/folders/' + id,
+    isTrashed: () => false,
+    createFolder(childName) {
+      const child = folderOf('folder-' + (++folderSeq), childName);
+      gas.driveFolders.push({id: child.getId(), name: childName, parent: id});
+      return child;
+    },
+    createFile(blob) {
+      const fileId = 'file-' + (gas.driveFiles.length + 1);
+      gas.driveFiles.push({id: fileId, folder: id, name: blob.getName(), blob});
+      return {getId: () => fileId, getName: () => blob.getName(), getUrl: () => 'https://drive.google.com/file/d/' + fileId + '/view'};
+    }
+  });
   const DriveApp = {
+    getRootFolder: () => folderOf('root', 'マイドライブ'),
     getFileById(id) {
       return {
         getId: () => id,
+        getParents() {
+          const parents = [folderOf('parent-of-' + id, 'スプレッドシートのフォルダ')];
+          return {hasNext: () => parents.length > 0, next: () => parents.shift()};
+        },
+        setTrashed(flag) { if (flag) gas.trashed.push(id); return this; },
         makeCopy(name, folder) {
           const copyId = 'copy-' + (++copySeq);
           gas.driveCopies.push({from: id, name, folder: folder ? folder.getId() : null, locked: gas.lockHolders > 0});
@@ -869,7 +948,17 @@ function createGas(options) {
         }
       };
     },
-    getFolderById: id => ({getId: () => id})
+    getFolderById: id => folderOf(id)
+  };
+
+  /** 書き出し（PDF）の取得。gas.fetchStatus を返し、中身は名前を付けられる入れ物だけ */
+  const UrlFetchApp = {
+    fetch(url, params) {
+      gas.fetches.push({url, params});
+      const blob = {name: '', setName(n) { this.name = String(n); return this; }, getName() { return this.name; },
+        getContentType: () => 'application/pdf'};
+      return {getResponseCode: () => gas.fetchStatus, getBlob: () => blob};
+    }
   };
 
   const Browser = {msgBox(message) { gas.alerts.push({message: String(message)}); return 'ok'; }};
@@ -885,7 +974,7 @@ function createGas(options) {
 
   const context = vm.createContext({
     SpreadsheetApp, HtmlService, PropertiesService, LockService, Utilities, Session,
-    ScriptApp, CacheService, DriveApp, Browser, console: logger
+    ScriptApp, CacheService, DriveApp, UrlFetchApp, Browser, console: logger
   });
   gas.Date = vm.runInContext('Date', context);
   gas.global = context;
