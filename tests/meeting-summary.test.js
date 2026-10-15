@@ -985,6 +985,193 @@ test('mtgTrashOld_：同じ名前の古い版をゴミ箱に移す（新しい�
   assert.deepStrictEqual(trashed, ['old-1', 'old-2']);
 });
 
+/* ---------------- Google チャットへの通知 ---------------- */
+
+const WEBHOOK = 'https://chat.googleapis.com/v1/spaces/AAAAtest123/messages?key=KEY123&token=TOKEN456';
+/** 通知を設定した状態にする（配布用フォルダは dist-folder-0001） */
+function withChat(g) {
+  const props = g.PropertiesService.getScriptProperties();
+  props.setProperty('MTG_CHAT_WEBHOOK', WEBHOOK);
+  props.setProperty('MTG_CHAT_FOLDER', 'dist-folder-0001');
+}
+/** 送った文（webhook に送った JSON の text） */
+const sentText = fetch => JSON.parse(fetch.params.payload).text;
+
+test('mtgNotifyDay_：会議日の2日前（平日で数える。土日は飛ばす）', () => {
+  const {gas, g} = setup({edits: false});
+  assert.strictEqual(g.mtgNotifyDay_('2026/10/23'), '2026/10/21', '金曜の会議 → 水曜');
+  assert.strictEqual(g.mtgNotifyDay_('2026/10/26'), '2026/10/22', '月曜の会議 → 木曜（土日は数えない）');
+  assert.strictEqual(g.mtgNotifyDay_('2026/10/27'), '2026/10/23', '火曜の会議 → 金曜');
+  gas.get('MTG_OPTIONS').chat.daysBefore = 3;
+  assert.strictEqual(g.mtgNotifyDay_('2026/10/23'), '2026/10/20');
+});
+
+test('setMeetingChat：webhook と配布用フォルダを登録し、通知のトリガー（毎日9時台）を1つだけ作る。確かめのメッセージを送れる。空欄でやめる', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getScriptProperties();
+  gas.promptAnswers = [WEBHOOK, 'https://drive.google.com/drive/folders/dist-folder-0001?usp=sharing'];
+  g.setMeetingChat();
+  assert.match(gas.prompts[0].message, /webhook の URL を貼り付けてください[\s\S]*会議日の 2日前（平日で数える）の 9時台に[\s\S]*今の設定：未設定$/);
+  assert.match(gas.prompts[1].message, /配布用フォルダの URL を貼り付けてください。[\s\S]*閲覧できるように共有したフォルダ/);
+  assert.deepStrictEqual([props.getProperty('MTG_CHAT_WEBHOOK'), props.getProperty('MTG_CHAT_FOLDER')], [WEBHOOK, 'dist-folder-0001'],
+    'URL はスクリプトのプロパティに残す（コードに書かない）');
+  const triggers = () => gas.triggers.filter(t => t.getHandlerFunction() === 'mtgNotifyScheduled');
+  assert.deepStrictEqual(triggers().map(t => [t.getEventType(), t.options.atHour, t.options.everyDays, t.options.inTimezone]),
+    [['CLOCK', 9, 1, 'Asia/Tokyo']]);
+  assert.strictEqual(gas.fetches.length, 1, '確かめのメッセージ（「はい」のとき）');
+  assert.strictEqual(gas.fetches[0].url, WEBHOOK);
+  assert.deepStrictEqual([gas.fetches[0].params.method, gas.fetches[0].params.contentType], ['post', 'application/json; charset=UTF-8']);
+  assert.match(sentText(gas.fetches[0]), /^会議サマリの通知の設定を確かめるためのメッセージです。/);
+  const done = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(done, /・送り先：スペース AAAAtest123\n・配布用フォルダ：dist-folder-0001/);
+  assert.ok(gas.alerts.concat(gas.prompts).every(a => !/KEY123|TOKEN456/.test(a.message)) &&
+    gas.logs.every(l => !/KEY123|TOKEN456/.test(l.line)), '鍵・トークンは画面・ログに出さない');
+
+  // もう一度実行してもトリガーは1つ。確かめのメッセージは「いいえ」なら送らない
+  gas.confirmAnswer = 'NO';
+  gas.promptAnswers = [WEBHOOK, 'dist-folder-0001'];
+  g.setMeetingChat();
+  assert.match(gas.prompts[2].message, /今の設定：スペース AAAAtest123 に送る$/);
+  assert.strictEqual(triggers().length, 1);
+  assert.strictEqual(gas.fetches.length, 1);
+
+  gas.promptAnswers = ['https://example.com/hook'];
+  assert.throws(() => g.setMeetingChat(), /Google チャットの webhook の URL ではありません。/);
+  gas.promptAnswers = [WEBHOOK, 'フォルダ'];
+  assert.throws(() => g.setMeetingChat(), /配布用フォルダの URL を読めません。/);
+  g.PropertiesService.getDocumentProperties().setProperty('MTG_FOLDER_ID', 'work-folder-0001');
+  gas.promptAnswers = [WEBHOOK, 'https://drive.google.com/drive/folders/work-folder-0001'];
+  assert.throws(() => g.setMeetingChat(), /資料の保存先のフォルダ（「会議サマリ」）は、配布用フォルダにできません/);
+  assert.strictEqual(triggers().length, 1, '間違えたときは今の設定のまま');
+
+  gas.promptAnswers = [''];
+  g.setMeetingChat();
+  assert.deepStrictEqual([props.getProperty('MTG_CHAT_WEBHOOK'), props.getProperty('MTG_CHAT_FOLDER'), triggers().length], [null, null, 0]);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /通知をやめました（トリガー 1件を外しました）/);
+});
+
+test('createMeetingSummaries：通知を設定していれば、本番の確かめと終わりの画面に通知の予定を出す。記録に本番の PDF を残す', () => {
+  const {gas, g} = setup();
+  withChat(g);
+  const later = day(20);
+  gas.promptAnswers = ['1', later];
+  g.createMeetingSummaries();
+  const notifyDay = g.mtgNotifyDay_(later);
+  const when = g.mtgShortDate_(notifyDay) + '（' + g.mtgWeekday_(notifyDay) + '）9時台';
+  const confirm = gas.alerts.filter(a => /本番の資料を作り/.test(a.message)).pop().message;
+  assert.ok(confirm.indexOf('Google チャットへの通知：' + when + 'に自動で送ります（それまでに中身を確かめてください）。') >= 0, confirm);
+  assert.ok(gas.alerts[gas.alerts.length - 1].message.indexOf(when + 'に自動で送ります') >= 0);
+  const record = JSON.parse(g.PropertiesService.getDocumentProperties().getProperty('MTG_MEETINGS_新FMT')).pop();
+  assert.deepStrictEqual([record.date, record.pdf, record.file, record.counts, record.notified],
+    [later, gas.driveFiles[0].id, gas.driveFiles[0].name, '変化のある案件 4・停滞 0・確認事項 3', undefined]);
+  assert.strictEqual(gas.fetches.length, 0, '作っただけでは送らない');
+
+  // 通知の日時を過ぎてから作った本番は、自動では送らない（中身を確かめてから手で送る）
+  gas.promptAnswers = ['1', day(1)];
+  g.createMeetingSummaries();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /通知の日時（.*）を過ぎているため、自動では送りません。中身を確かめてから notifyMeetingSummaries\(\) で送ってください。/);
+
+  // 試作は通知の予定を出さない
+  gas.promptAnswers = ['1', later];
+  g.previewMeetingSummaries();
+  assert.doesNotMatch(gas.alerts[gas.alerts.length - 1].message, /Google チャット/);
+});
+
+test('mtgNotifyScheduled：通知の日時を過ぎて、その前に作った本番の PDF を配布用フォルダにコピーし、会議日ごとに1つのメッセージで送る（1回だけ）', () => {
+  const {gas, g} = setup();
+  g.mtgNotifyScheduled();
+  assert.strictEqual(gas.fetches.length, 0, '設定が無ければ送らない');
+  withChat(g);
+  const meeting = day(1);   // 2日前（平日）の 9時は過ぎている
+  gas.promptAnswers = ['', meeting];
+  g.createMeetingSummaries();
+  const props = g.PropertiesService.getDocumentProperties();
+  // 新FMT は通知の日時より前に作った（中身を確かめる時間があった）。新FMT2 は今作った（通知の日時のあと）ので自動では送らない
+  const early = Date.now() - 10 * 86400000;
+  props.setProperty('MTG_MEETINGS_新FMT', JSON.stringify(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT')).map(m => Object.assign(m, {cutoff: early}))));
+  const pdf = gas.driveFiles.find(f => /新FMT_/.test(f.name));
+
+  g.mtgNotifyScheduled();
+  assert.strictEqual(gas.fetches.length, 1);
+  const copy = gas.driveFiles.find(f => f.copyOf === pdf.id);
+  assert.deepStrictEqual([copy.folder, copy.name], ['dist-folder-0001', pdf.name], '配布用フォルダに同じ名前でコピー');
+  const p = meeting.split('/').map(Number);
+  assert.strictEqual(sentText(gas.fetches[0]), [
+    '*RX Business MTG　事前資料（' + p[1] + '/' + p[2] + '（' + g.mtgWeekday_(meeting) + '）開催）*',
+    '会議の前に、資料を通読してください。',
+    '・新FMT（変化のある案件 4・停滞 0・確認事項 3）',
+    '　<https://drive.google.com/file/d/' + copy.id + '/view|' + pdf.name + '>'
+  ].join('\n'), '配布用フォルダのコピーのリンク（保存先の PDF のリンクは送らない）');
+  const notified = JSON.parse(props.getProperty('MTG_MEETINGS_新FMT')).pop().notified;
+  assert.ok(Math.abs(notified - Date.now()) < 60000, '送った時刻を残す');
+  assert.strictEqual(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT2')).pop().notified, undefined);
+
+  g.mtgNotifyScheduled();
+  assert.strictEqual(gas.fetches.length, 1, '送ったものは送らない');
+
+  // 送ったあとに作り直すと、確かめの画面で知らせる。通知済みのまま（自動では送り直さない）
+  gas.promptAnswers = ['1', meeting];
+  g.createMeetingSummaries();
+  assert.match(gas.alerts.filter(a => /本番の資料を作り/.test(a.message)).pop().message,
+    /※ \d{1,2}\/\d{1,2} \d{2}:\d{2} に Google チャットに通知済み。作り直しても自動では送り直しません。/);
+  assert.strictEqual(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT')).pop().notified, notified);
+  g.mtgNotifyScheduled();
+  assert.strictEqual(gas.fetches.length, 1);
+});
+
+test('notifyMeetingSummaries：会議日を聞き、本番の PDF を今すぐ送る（送り直すと古いコピーはゴミ箱へ）。失敗は1回だけやり直し、だめなら止める', () => {
+  const {gas, g} = setup();
+  assert.throws(() => g.notifyMeetingSummaries(), /先に setMeetingChat\(\) で webhook の URL と配布用フォルダを登録してください。/);
+  withChat(g);
+  const meeting = day(20);
+  gas.promptAnswers = ['1', meeting];
+  g.createMeetingSummaries();
+  const props = g.PropertiesService.getDocumentProperties();
+
+  gas.promptAnswers = ['', '10/1'];
+  g.notifyMeetingSummaries();
+  assert.match(gas.prompts[gas.prompts.length - 1].message,
+    new RegExp('本番の資料のある会議日\\n・新FMT：' + g.mtgShortDate_(meeting) + '\\n・新FMT2：本番の資料なし$'));
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /本番の資料がありません。/);
+
+  gas.confirmAnswer = 'NO';
+  gas.promptAnswers = ['', meeting];
+  g.notifyMeetingSummaries();
+  const ask = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(ask, /Google チャット（スペース AAAAtest123）に、会議日 .*の会議サマリを送ります。\n・新FMT：会議サマリ_新FMT_.*\.pdf\n本番の資料が無いシート（送らない）：新FMT2/);
+  assert.strictEqual(gas.fetches.length, 0, '「いいえ」なら送らない');
+
+  gas.confirmAnswer = 'YES';
+  gas.fetchStatuses = [503, 200];
+  gas.promptAnswers = ['1', meeting];
+  g.notifyMeetingSummaries();
+  assert.strictEqual(gas.fetches.length, 2, '一時的な失敗（5xx）は1回だけやり直す');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /会議サマリ（新FMT）を送りました。/);
+  const first = gas.driveFiles.filter(f => f.copyOf).pop();
+
+  // 送り直し：確かめの画面に通知済みと出し、配布用フォルダの古いコピーはゴミ箱へ
+  gas.promptAnswers = ['1', meeting];
+  g.notifyMeetingSummaries();
+  assert.match(gas.alerts.filter(a => /会議サマリを送ります/.test(a.message)).pop().message, /に通知済み。送り直す）/);
+  assert.ok(gas.trashed.indexOf(first.id) >= 0, '古いコピーはゴミ箱へ');
+  assert.strictEqual(gas.fetches.length, 3);
+
+  // 送れなければ止め、通知済みにしない。鍵・トークンはメッセージに出さない
+  const before = JSON.parse(props.getProperty('MTG_MEETINGS_新FMT')).pop().notified;
+  gas.fetchStatuses = [404];
+  gas.fetchText = '{"error": {"message": "Requested entity was not found."}}';
+  gas.promptAnswers = ['1', meeting];
+  assert.throws(() => g.notifyMeetingSummaries(), error => /Google チャットに送れませんでした（HTTP 404）：.*Requested entity/.test(error.message) &&
+    !/KEY123|TOKEN456/.test(error.message));
+  assert.strictEqual(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT')).pop().notified, before);
+
+  // PDF をゴミ箱に移していたら、送らずに知らせる
+  gas.fetchStatuses = [];
+  gas.trashed.push(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT')).pop().pdf);
+  gas.promptAnswers = ['1', meeting];
+  assert.throws(() => g.notifyMeetingSummaries(), /PDF（会議サマリ_新FMT_.*\.pdf）がゴミ箱にあります。/);
+});
+
 test('会議日・シートの番号の間違い、やめたときは作らない', () => {
   const {gas, g} = setup();
   gas.promptAnswers = ['3'];

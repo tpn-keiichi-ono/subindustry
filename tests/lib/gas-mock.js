@@ -640,6 +640,8 @@ function createGas(options) {
     promptButton: 'OK',
     fetches: [],              // UrlFetchApp.fetch の記録
     fetchStatus: 200,
+    fetchStatuses: [],        // 続けて呼ばれるときの応答のコード（先頭から使う。空になったら fetchStatus）
+    fetchText: '{}',          // 応答の本文
     driveFiles: [],           // フォルダに作ったファイル
     driveFolders: [],         // 作ったフォルダ
     trashed: [],              // ゴミ箱に移したファイルの ID
@@ -883,9 +885,10 @@ function createGas(options) {
     getProjectTriggers: () => gas.triggers.slice(),
     deleteTrigger(trigger) { gas.triggers = gas.triggers.filter(t => t !== trigger); },
     newTrigger(handler) {
-      const make = (eventType, source, sourceId) => ({
+      const make = (eventType, source, sourceId, options) => ({
         create() {
           const trigger = new Trigger(handler, eventType, source, sourceId);
+          trigger.options = options || {};   // 時間主導の設定（everyDays・atHour・inTimezone など）。テストで確かめる用
           gas.triggers.push(trigger);
           return trigger;
         }
@@ -901,10 +904,15 @@ function createGas(options) {
           };
         },
         timeBased() {
-          const builder = Object.assign(make('CLOCK', 'CLOCK', null), {
-            everyMinutes: () => builder,
-            everyHours: () => builder,
-            everyDays: () => builder
+          const options = {};
+          const set = key => value => { options[key] = value; return builder; };
+          const builder = Object.assign(make('CLOCK', 'CLOCK', null, options), {
+            everyMinutes: set('everyMinutes'),
+            everyHours: set('everyHours'),
+            everyDays: set('everyDays'),
+            atHour: set('atHour'),
+            nearMinute: set('nearMinute'),
+            inTimezone: set('inTimezone')
           });
           return builder;
         }
@@ -955,7 +963,8 @@ function createGas(options) {
           return {hasNext: () => parents.length > 0, next: () => parents.shift()};
         },
         setTrashed(flag) { if (flag) gas.trashed.push(id); return this; },
-        getName: () => id,
+        isTrashed: () => gas.trashed.indexOf(id) >= 0,
+        getName: () => (gas.driveFiles.find(f => f.id === id) || {name: id}).name,
         getMimeType: () => (gas.files[id] || {}).mimeType ||
           (gas.slideTemplates[id] ? 'application/vnd.google-apps.presentation' : 'application/vnd.google-apps.spreadsheet'),
         getUrl: () => 'https://docs.google.com/presentation/d/' + id + '/edit',
@@ -979,6 +988,12 @@ function createGas(options) {
             gas.decks.push({id: copyId, title: name, template: id, folder: folder ? folder.getId() : null, pageSize: template.pageSize,
               slides: template.slides.slice(), requests: [], batches: []});
             return DriveApp.getFileById(copyId);
+          }
+          const source = gas.driveFiles.find(f => f.id === id);
+          if (source) {
+            // フォルダに作ったファイル（PDF）のコピー：同じフォルダの一覧（getFilesByName）にも入れる
+            gas.driveFiles.push({id: copyId, folder: folder ? folder.getId() : null, name, blob: source.blob, copyOf: id});
+            return {getId: () => copyId, getName: () => name, getUrl: () => 'https://drive.google.com/file/d/' + copyId + '/view'};
           }
           return {
             getId: () => copyId,
@@ -1027,13 +1042,14 @@ function createGas(options) {
     }
   };
 
-  /** 書き出し（PDF）の取得。gas.fetchStatus を返し、中身は名前を付けられる入れ物だけ */
+  /** 外への送信（Google チャットの webhook など）。gas.fetchStatuses の先頭（無ければ gas.fetchStatus）と gas.fetchText を返す */
   const UrlFetchApp = {
     fetch(url, params) {
       gas.fetches.push({url, params});
+      const code = gas.fetchStatuses.length ? gas.fetchStatuses.shift() : gas.fetchStatus;
       const blob = {name: '', setName(n) { this.name = String(n); return this; }, getName() { return this.name; },
         getContentType: () => 'application/pdf'};
-      return {getResponseCode: () => gas.fetchStatus, getBlob: () => blob};
+      return {getResponseCode: () => code, getContentText: () => gas.fetchText, getBlob: () => blob};
     }
   };
 
