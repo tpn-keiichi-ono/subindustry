@@ -187,7 +187,7 @@ const MTG_SLIDE = {
   ruleY: 377,            // いちばん下の区切り線
   footY: 380,            // 出典の行の上端
   titleSize: 21,
-  leadSize: 10.5,        // リード文（1つ目の文も補足も同じ大きさ。補足はグレー）
+  leadSize: 10.5,        // リード文（1つ目の文も補足も同じ大きさ・同じ色）
   leadLine: 1.35,        // リード文の行の送り = 文字の大きさ × leadLine
   bodySize: 9,
   appendixSize: 8.5,
@@ -1257,7 +1257,7 @@ function mtgFrame_(frame, slide, page) {
 }
 
 /**
- * リード文（タイトルの下）。どのページも同じ大きさ（MTG_SLIDE.leadSize）で、改行の前（1つ目の文）は黒、改行のあと（補足）はグレー。
+ * リード文（タイトルの下）。どのページも同じ大きさ（MTG_SLIDE.leadSize）・同じ色（黒）。改行の前（1つ目の文）と改行のあと（補足）は行を分ける。
  * 1つ目の文は2行まで、補足は残りの行（合わせて3行まで）。入らなければ「…」で切る
  */
 function mtgLead_(text) {
@@ -1272,7 +1272,7 @@ function mtgLead_(text) {
   if (rest) {
     const second = mtgWrap_(rest, S.w, size, 3 - first.length);
     el.push(mtgBox_(S.x, S.leadY + step(first.length), S.w, step(second.length) + S.padY, second.join('\n'),
-      {size, color: c.muted, valign: 'TOP', role: 'lead'}));
+      {size, color: c.ink, valign: 'TOP', role: 'lead'}));
   }
   return el;
 }
@@ -1377,7 +1377,7 @@ function mtgNames_(items, note, width, lines) {
   return text(n);
 }
 
-/** 2 パイプラインの変化：期待値の増減（滝の図・凡例つき）と、ステータス別・受注月（四半期）別の期待値（表） */
+/** 2 パイプラインの変化：期待値の増減（滝の図・凡例つき）と、ステータス別・受注月（四半期）別の期待値（横棒のグラフ。同じ目盛り） */
 function mtgBridgeSlide_(s) {
   const S = MTG_SLIDE;
   const b = s.bridge;
@@ -1396,10 +1396,14 @@ function mtgBridgeSlide_(s) {
   }
   const right = S.x + 376;
   const width = S.w - 376;
-  const byStatus = mtgMiniTable_('ステータス別期待値（進行中・百万円）', ['ステータス', '件数', '期待値'],
-    shown.map(st => [st.status, st.count + '件', mtgAmount_(st.weighted)]), right, S.top, width);
-  const byMonth = mtgMiniTable_('受注月別期待値（進行中・百万円）', ['受注月（今期四半期）', '件数', '期待値'],
-    s.quarters.map(q => [q.label, q.count + '件', mtgAmount_(q.value)]), right, byStatus.bottom + 10, width);
+  const statusRows = shown.map(st => ({label: st.status, count: st.count, value: st.weighted || 0}));
+  const monthRows = s.quarters.map(q => ({label: q.label, count: q.count, value: q.value || 0}));
+  // 2つのグラフは同じ目盛り（どちらも進行中の期待値の内訳なので、棒の長さで比べられるように）。行の高さは、下まで入るように
+  const max = Math.max.apply(null, statusRows.concat(monthRows).map(r => r.value).concat([0]));
+  const gap = 14;
+  const rowH = Math.min(15, (S.bottom - S.top - 2 * 22 - gap) / Math.max(1, statusRows.length + monthRows.length));
+  const byStatus = mtgBarChart_('ステータス別期待値（進行中・百万円）', statusRows, right, S.top, width, max, rowH, '進行中案件なし');
+  const byMonth = mtgBarChart_('受注月別期待値（進行中・百万円）', monthRows, right, byStatus.bottom + gap, width, max, rowH, '進行中案件なし');
   el.push.apply(el, byStatus.elements.concat(byMonth.elements));
   return {
     title: MTG_TITLES.pipeline,
@@ -1459,28 +1463,35 @@ function mtgWaterfall_(s, x, y, w, h) {
 }
 
 /**
- * 小さな表（見出しの緑の帯・項目名の行・行）を箱で描く（行を低くして多く入れるため。Slides API の表はセルの余白で行が高くなる）。
- * rows = [[名前, 件数, 金額]]。左上 (x, y)・幅 w。戻り値 {elements, bottom: 下端}
+ * 横棒のグラフ（パイプラインの変化の右。ステータス別・受注月別の期待値）。見出しは滝の図と同じ形で、行ごとに 名前・件数・棒・値。
+ * 棒は期待値の色（greenDark。滝の図の「期待値」と同じ）。値は棒の先に書くので、目盛りは置かない（0 の線だけ）。
+ * rows = [{label, count, value}]（この順に上から）。max は棒の長さの基準（2つのグラフで同じにする）。左上 (x, y)・幅 w・行の高さ rowH。
+ * 戻り値 {elements, bottom}
  */
-function mtgMiniTable_(title, head, rows, x, y, w) {
+function mtgBarChart_(title, rows, x, y, w, max, rowH, empty) {
   const c = MTG_OPTIONS.colors;
-  const rowH = 13;
-  const size = 8;
-  const columns = [w - 112, 50, 62];
-  const el = [mtgBox_(x, y, w, 16, title, {size: 9, bold: true, color: c.white, fill: c.green, shape: 'RECTANGLE', align: 'CENTER'})];
-  const lines = rows.length ? rows : [['（なし）', '', '']];
-  [head].concat(lines).forEach((cells, r) => {
-    let cx = x;
-    const ry = y + 16 + r * rowH;
-    cells.forEach((text, i) => {
-      el.push(mtgBox_(cx, ry, columns[i], rowH, mtgWrap_(text, columns[i], size, 1)[0], {
-        size, bold: r === 0 || i === 0, color: c.ink, fill: r === 0 || i === 0 ? c.greenSoft : c.white, line: c.line, lineWeight: 0.75,
-        shape: 'RECTANGLE', align: r === 0 ? 'CENTER' : i ? 'END' : 'START'
-      }));
-      cx += columns[i];
-    });
+  const labelW = 92;
+  const countW = 40;                         // 件数の箱（右寄せ。「123件」が折り返さない幅。名前の箱に 10pt 重ねる）
+  const valueW = 51;                         // 値の箱（「1,234.5」が折り返さない幅）
+  const base = x + labelW + countW - 6;      // 棒の始まり（0 の線）
+  const room = x + w - base - (valueW - 3);  // 棒のいちばん長い長さ（右に値を書く分をあける。値は棒の先から 4pt あける）
+  const top = y + 22;
+  const el = [mtgBox_(x, y - 2, w, 20, title, {size: 10.5, bold: true, color: c.ink})];
+  if (!rows.length) {
+    el.push(mtgBox_(x, top, w, 18, empty, {size: 8.5, color: c.muted}));
+    return {elements: el, bottom: top + 18};
+  }
+  const bar = Math.min(9, rowH - 5);
+  el.push({type: 'box', x: base - 0.75, y: top, w: 0.75, h: rows.length * rowH, fill: c.faint, shape: 'RECTANGLE'});
+  rows.forEach((r, i) => {
+    const ry = top + i * rowH;
+    const len = max > 0 ? Math.max(0, r.value) / max * room : 0;
+    el.push(mtgBox_(x, ry, labelW, rowH, mtgWrap_(r.label, labelW, 8.5, 1)[0], {size: 8.5, color: c.ink, role: 'bar-label'}));
+    el.push(mtgBox_(x + labelW - 10, ry, countW, rowH, r.count + '件', {size: 8, color: c.muted, align: 'END'}));
+    if (len > 0) el.push({type: 'box', x: base, y: ry + (rowH - bar) / 2, w: Math.max(len, 1), h: bar, fill: c.greenDark, shape: 'RECTANGLE', role: 'bar'});
+    el.push(mtgBox_(base + len - 3, ry, valueW, rowH, mtgAmount_(r.value), {size: 8.5, bold: true, color: c.ink, role: 'bar-value'}));
   });
-  return {elements: el, bottom: y + 16 + (lines.length + 1) * rowH};
+  return {elements: el, bottom: top + rows.length * rowH};
 }
 
 /** 3 前回から変化のある案件：ステータス・期待値・受注月・活動状況が変わった案件（区分の順に上位。活動更新は最後）。区分はラベルで出す */

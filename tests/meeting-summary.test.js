@@ -409,11 +409,11 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
   ['決めて', '論点', '★', '支援', '候補', '確認したい', '要対応', '悪い', '打開', '重点', '付録'].forEach(word => assert.ok(all.indexOf(word) < 0, '使わない言葉：' + word));
   slides.forEach(slide => slide.elements.filter(el => el.type === 'table').forEach(t => assert.ok(!(t.borders || []).length, '赤枠で強調しない')));
 
-  // リード文（タイトルの下）に状態を書く。1つ目の文は黒、補足（改行のあと）はグレー。大きさはどのページも同じ
+  // リード文（タイトルの下）に状態を書く。1つ目の文と補足（改行のあと）は行を分ける。大きさ・色はどのページも同じ
   const lead = leadOf;
   assert.strictEqual(lead(slides[1]), '期待値 50百万円（直近14日間で ▲8）、進行中案件 3件。直近14日間の動きは受注 0件・失注 1件・前進 1件・後退 0件・新規 0件。');
-  assert.deepStrictEqual(roleOf(slides[2], 'lead').map(el => [el.color, el.size]), [[c.ink, S.leadSize], [c.muted, S.leadSize]]);
-  slides.forEach((slide, i) => roleOf(slide, 'lead').forEach(el => assert.strictEqual(el.size, S.leadSize, (i + 1) + '枚目：リード文の大きさ')));
+  assert.deepStrictEqual(roleOf(slides[2], 'lead').map(el => [el.color, el.size]), [[c.ink, S.leadSize], [c.ink, S.leadSize]]);
+  slides.forEach((slide, i) => roleOf(slide, 'lead').forEach(el => assert.deepStrictEqual([el.size, el.color], [S.leadSize, c.ink], (i + 1) + '枚目：リード文の大きさ・色')));
   assert.match(lead(slides[2]), /^期待値は 58 → 50百万円（▲8）。増加 ±0・減少 ▲8、最大の変動要因は失注（1件・▲5）。今期受注予定の期待値は /);
   assert.strictEqual(lead(slides[3]), '直近14日間に変化のある案件は 4件。', '区分ごとの件数（サマリーにある）・0件のものは書かない');
   assert.strictEqual(lead(slides[4]), '進行中案件のうち期待値上位 3件（進行中期待値の 100%）。', '該当事項の数は書かない（表のラベルで分かる）');
@@ -547,6 +547,33 @@ test('スライド：入力内容のチェック（責任者別）は責任者 �
   assert.ok(S.x + table.columns.reduce((a, b) => a + b, 0) <= S.x + S.w, '表がスライドの幅に入る');
   assert.ok(table.columns.every(w => w >= 32));
   table.rows[0].cells.forEach(cell => assert.ok(!/…/.test(cell.text), '見出しが切れない：' + cell.text));
+});
+
+test('パイプラインの変化：ステータス別・受注月別の期待値は横棒のグラフ（同じ目盛り。値は棒の先、件数は名前の右）', () => {
+  const {gas, g} = setup();
+  const S = gas.get('MTG_SLIDE');
+  const c = gas.get('MTG_OPTIONS').colors;
+  const s = summarize(g, '新FMT');
+  const slide = plain(g.mtgSlides_(s))[2];
+  assert.ok(!slide.elements.some(el => el.type === 'table'), '表ではなくグラフ');
+  const titles = slide.elements.filter(el => el.size === 10.5 && el.bold).map(el => el.text);
+  assert.deepStrictEqual(titles, ['期待値の増減（百万円）', 'ステータス別期待値（進行中・百万円）', '受注月別期待値（進行中・百万円）'], '見出しは滝の図と同じ形');
+  const labels = roleOf(slide, 'bar-label').map(el => el.text);
+  const values = roleOf(slide, 'bar-value');
+  const bars = roleOf(slide, 'bar');
+  const stages = plain(s.stages).filter(st => st.kind === 'active');
+  assert.deepStrictEqual(labels, stages.map(st => st.status).concat(plain(s.quarters).map(q => q.label)), 'ステータスはプルダウンの順、受注月は時間の順');
+  assert.deepStrictEqual(values.map(el => el.text), stages.map(st => g.mtgAmount_(st.weighted)).concat(plain(s.quarters).map(q => g.mtgAmount_(q.value))));
+  assert.ok(bars.every(el => el.fill === c.greenDark), '棒は期待値の色（滝の図と同じ）');
+  assert.strictEqual(new Set(bars.map(el => el.x)).size, 1, '棒は同じ線から');
+  const unit = bars.map(el => el.w / Number(values.find(v => Math.abs(v.y + v.h / 2 - (el.y + el.h / 2)) < 0.01).text));
+  assert.ok(unit.every(u => Math.abs(u - unit[0]) < 0.01), '2つのグラフは同じ目盛り');
+  bars.forEach(el => {
+    const value = values.find(v => Math.abs(v.y + v.h / 2 - (el.y + el.h / 2)) < 0.01);
+    assert.ok(Math.abs(value.x + 3 - (el.x + el.w)) < 0.01, '値は棒の先');
+  });
+  slide.elements.filter(el => el.x >= S.x + 370 && el.y >= S.top - 2 && el.y < S.ruleY)
+    .forEach(el => assert.ok(el.y + el.h <= S.bottom + 0.01 && el.x + el.w <= S.x + S.w + 0.01, 'はみ出さない：' + (el.text || el.role)));
 });
 
 test('サマリーの内訳：案件の名前は入る件数まで並べ、残りは「他 N件」（「…」で切らない）', () => {
