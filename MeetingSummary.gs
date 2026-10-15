@@ -14,7 +14,7 @@
  * 資料の構成（16:9。緑を基調にしたトンマナ：黒の見出し・リード文・緑の見出しの表・区分のラベル・区切り線と出典・ページ番号。
  *   表紙と扉は、いただいた表紙のひな形（Google スライド。setMeetingTemplate() で登録）をそのまま使う
  *   表紙：会議の名前と「事前資料」・サブインダストリー・会議日・データの時点・期間
- *   1 サマリー：4つの数字（期待値・受注／失注・前進／後退・停滞）・前回からの状況の内訳（区分ごとの件数と案件）
+ *   1 サマリー：期待値と進行中案件の数・前回以降の動き（案件ごとに1回だけ数える区分の件数と案件）・現在の状態（受注月超過・停滞）
  *   2 パイプラインの変化：前回からの期待値の増減（新規・増額・復帰・減額・受注・失注・保留・削除）・ステータス別・受注月（四半期）別の期待値
  *   3 前回から変化のある案件：ステータス・期待値・受注月・活動状況が変わった案件（区分の順に上位）
  *   4 期待値上位案件の状況・課題：進行中の案件の期待値の大きい順（ステータスの滞留日数・受注月・活動状況・課題・該当事項）
@@ -1288,8 +1288,10 @@ function mtgChangedLabel_(s) {
 }
 
 /**
- * 1 サマリー：4つの数字（緑の帯の見出しの箱）・前回からの状況の内訳（区分ごとの件数・想定売上・案件）。リード文は1行。
- * 数字の箱には数字だけを置く（前回比・件数はリード文、想定売上・案件は内訳の表にあるため）
+ * 1 サマリー：リード文に期待値と進行中案件の数（前回比）。その下に2つの表：
+ * 「前回以降の動き」（変化のある案件を区分ごとに1回だけ数える。行の件数を合わせると見出しの件数・「前回から変化のある案件」の件数になる）と、
+ * 「現在の状態」（進行中案件の受注月超過・停滞。重なることがあるので合計しない）。件数は表の中に大きく1回だけ書く
+ * （前の版は上に数字の箱を置いていたが、箱と表で区分のまとめ方が違い、同じ数に見えて別のものを数えていたため、表にまとめた）
  */
 function mtgSummarySlide_(s) {
   const o = MTG_OPTIONS;
@@ -1297,71 +1299,71 @@ function mtgSummarySlide_(s) {
   const S = MTG_SLIDE;
   const k = s.kpi;
   const b = s.bridge;
-  const delta = b.end - b.start;
   const period = mtgPeriodShort_(s);
-  const lead = '期待値 ' + mtgAmount_(b.end) + '百万円（' + (s.first ? period + 'で ' : '前回比 ') + mtgSigned_(delta) + '）、進行中案件 ' + k.active + '件。\n' +
-    period + 'の動きは受注 ' + k.won + '件・失注 ' + k.lost + '件・前進 ' + k.forward + '件・後退 ' + k.backward + '件・新規 ' + k.new + '件。';
+  const vs = s.first ? period + 'で ' : '前回比 ';
+  const lead = '期待値 ' + mtgAmount_(b.end) + '百万円（' + vs + mtgSigned_(b.end - b.start) + '）、進行中案件 ' + k.active + '件（' + vs +
+    mtgSigned_(k.active - b.startCount) + '件）。';
   // 中身はリード文の下から（リード文が2行になれば下げる）
   const top = Math.max(S.summaryTop, Math.max.apply(null, mtgLead_(lead).map(e => e.y + e.h)) + 2);
-  const el = [];
 
-  const tiles = [
-    {label: '進行中の期待値（百万円）', value: mtgAmount_(b.end)},
-    {label: '受注／失注（' + period + '）', value: k.won + '件／' + k.lost + '件'},
-    {label: '前進／後退（' + period + '）', value: k.forward + '件／' + k.backward + '件'},
-    {label: '停滞（' + o.stallDays + '日以上）', value: k.stalled + '件'}
-  ];
-  const tw = (S.w - 3 * 8) / 4;
-  const th = 54;
-  tiles.forEach((t, i) => {
-    const x = S.x + i * (tw + 8);
-    el.push({type: 'box', x, y: top, w: tw, h: th, fill: c.white, line: c.frame, lineWeight: 0.75, shape: 'RECTANGLE'});
-    el.push(mtgBox_(x, top, tw, 18, mtgWrap_(t.label, tw, 9, 1)[0],
-      {size: 9, bold: true, color: c.white, fill: c.green, shape: 'RECTANGLE', align: 'CENTER'}));
-    el.push(mtgBox_(x, top + 19, tw, th - 20, mtgWrap_(t.value, tw, 22, 1)[0], {size: 22, bold: true, color: c.greenDark, align: 'CENTER'}));
-  });
-
-  // 案件の名前は3行まで（表が下に入りきらなければ2行まで）。入る分だけ並べ、残りは「ほか N件」
-  const columns = [104, 52, 66, S.w - 222];
-  const y = top + th + 10;
-  const tableOf = lines => [mtgHeadRow_(columns, ['区分', '件数', '想定売上', '主な案件（想定売上順）'])].concat(mtgBreakdown_(s).map(line => mtgRow_(columns, [
+  // 案件の名前は2行まで。入る分だけ並べ、残りは「他 N件」。件数は大きな緑の字
+  const columns = [124, 60, 62, S.w - 246];
+  const rowOf = line => mtgRow_(columns, [
     {text: line.label, lines: 2, bold: true, color: c.ink, fill: c.greenSoft},
-    {text: line.items.length + '件', fill: c.white, align: 'CENTER'},
+    {text: line.items.length + '件', size: 12, bold: true, color: c.greenDark, fill: c.white, align: 'CENTER'},
     {text: line.items.length ? mtgAmount_(mtgSum_(line.items, 'amount')) : '—', fill: c.white, align: 'END'},
-    {text: mtgNames_(line.items, line.note, columns[3], lines), lines, fill: c.white}
-  ], 0)));
-  let rows = tableOf(3);
-  if (y + rows.reduce((sum, r) => sum + r.h, 0) > S.bottom) rows = tableOf(2);
-  // 下にあいた分は、内訳の行に分けて高くする（1行あたり 10pt まで。ページの下が空かないように）
-  const free = S.bottom - y - rows.reduce((sum, r) => sum + r.h, 0);
-  const extra = Math.floor(Math.min(10, free / (rows.length - 1)) * 10) / 10;
-  if (extra > 0) rows = rows.map((r, i) => (i ? Object.assign({}, r, {h: r.h + extra}) : r));
-  el.push({type: 'table', x: S.x, y, columns, rows});
-
+    {text: mtgNames_(line.items, line.note, columns[3], 2), lines: 2, fill: c.white}
+  ], 0);
+  const groups = mtgBreakdown_(s);
+  let moves = [mtgHeadRow_(columns, ['区分', '件数', '想定売上', '主な案件（想定売上順）'])].concat(groups.moves.map(rowOf));
+  let states = groups.states.map(rowOf);
+  const headH = 22;
+  const gap = 10;
+  const height = rows => rows.reduce((sum, r) => sum + r.h, 0);
+  // 下にあいた分は、表の行に分けて高くする（1行あたり 10pt まで。ページの下が空かないように）
+  const free = S.bottom - top - 2 * headH - gap - height(moves) - height(states);
+  const extra = Math.floor(Math.max(0, Math.min(10, free / (moves.length - 1 + states.length))) * 10) / 10;
+  if (extra > 0) {
+    moves = moves.map((r, i) => (i ? Object.assign({}, r, {h: r.h + extra}) : r));
+    states = states.map(r => Object.assign({}, r, {h: r.h + extra}));
+  }
+  const heading = (y, text) => mtgBox_(S.x, y, S.w, 20, text, {size: 10.5, bold: true, color: c.ink, role: 'heading'});
+  const statesY = top + headH + height(moves) + gap;
+  const el = [
+    heading(top, period + 'の動き（変化のある案件 ' + k.changed + '件）'),
+    {type: 'table', x: S.x, y: top + headH, columns, rows: moves},
+    heading(statesY, '現在の状態（進行中案件）'),
+    {type: 'table', x: S.x, y: statesY + headH, columns, rows: states}
+  ];
   return {title: MTG_TITLES.summary, lead, elements: el};
 }
 
 /**
- * サマリーの内訳の区分（どのシートでも同じ区分を、この順に出す。該当が無ければ0件）[{label, items, note: 案件の後ろの（）の中}]。
- * items は想定売上の大きい順
+ * サマリーの表の行 {moves, states}。どの行も {label, items, note: 案件の名前の後ろの（）の中}（items は想定売上の大きい順）。
+ * moves：前回以降の動き。案件ごとの区分（MTG_CATEGORIES）で1回だけ数え、すべての区分（その他更新を除く）をどれかの行に入れる
+ * （受注／新規・前進・復帰／失注・保留・後退・削除／その他の変化）。states：現在の状態（受注月超過・停滞）
  */
 function mtgBreakdown_(s) {
   const o = MTG_OPTIONS;
   const byAmount = list => list.slice().sort((a, b) => (b.amount || 0) - (a.amount || 0));
   const of = keys => byAmount(s.changes.filter(ch => keys.indexOf(ch.category) >= 0));
-  const slipped = s.changes.filter(ch => ch.flags.indexOf('slipped') >= 0 && !ch.removed);
-  const late = slipped.map(ch => Object.assign({}, ch, {note: mtgMonthLabel_(ch.monthFrom) + '→' + mtgMonthLabel_(ch.monthTo)}))
-    .concat(s.overdue.filter(d => !slipped.some(ch => ch.key === d.key))
-      .map(d => Object.assign({}, d, {note: '受注月 ' + mtgMonthLabel_(d.orderMonthText) + ' 超過'})));
-  return [
-    {label: '新規・前進', items: of(['new', 'forward']),
-      note: ch => (ch.category === 'new' ? '新規' : ch.statusFrom + '→' + ch.statusTo)},
-    {label: '受注', items: of(['won'])},
-    {label: '失注・後退・削除', items: of(['lost', 'backward', 'removed']),
-      note: ch => (ch.category === 'backward' ? ch.statusFrom + '→' + ch.statusTo : mtgCategory_(ch.category).label)},
-    {label: '受注月の延期・超過', items: byAmount(late), note: d => d.note},
-    {label: '停滞（' + o.stallDays + '日以上）', items: s.stalled, note: d => d.days + '日' + (d.atLeast ? '以上' : '')}
-  ];
+  const label = ch => mtgCategory_(ch.category).label;
+  const status = ch => ch.statusFrom + '→' + ch.statusTo;
+  const month = ch => mtgMonthLabel_(ch.monthFrom) + '→' + mtgMonthLabel_(ch.monthTo);
+  const value = ch => mtgAmount_(ch.weightedFrom) + '→' + mtgAmount_(ch.weightedTo);
+  return {
+    moves: [
+      {label: '受注', items: of(['won'])},
+      {label: '新規・前進・復帰', items: of(['new', 'forward', 'revived']), note: ch => (ch.category === 'forward' ? status(ch) : label(ch))},
+      {label: '失注・保留・後退・削除', items: of(['lost', 'hold', 'backward', 'removed']), note: ch => (ch.category === 'backward' ? status(ch) : label(ch))},
+      {label: 'その他の変化', items: of(['slipped', 'pulled', 'up', 'down', 'status', 'activity']),
+        note: ch => label(ch) + ({slipped: ' ' + month(ch), pulled: ' ' + month(ch), up: ' ' + value(ch), down: ' ' + value(ch), status: ' ' + status(ch)}[ch.category] || '')}
+    ],
+    states: [
+      {label: '受注月超過', items: byAmount(s.overdue), note: d => '受注月 ' + mtgMonthLabel_(d.orderMonthText)},
+      {label: '停滞（' + o.stallDays + '日以上）', items: s.stalled, note: d => d.days + '日' + (d.atLeast ? '以上' : '')}
+    ]
+  };
 }
 
 /**
@@ -1917,9 +1919,10 @@ function mtgWrap_(text, widthPt, size, max) {
     Array.from(part.replace(/[ \t]+/g, ' ').trim()).forEach(ch => {
       if (used + width(ch) > limit && line && !(hang.test(ch) && used + width(ch) <= room)) {
         const chars = Array.from(line);
-        // 「前 ▶ 今」は矢印のあとで、半角の語は語の前で改行する
+        // 「前 ▶ 今」は矢印のあとで、半角の語は語の前で改行する。空白の無い数字・英字の並び（「95日」の 95 など）も途中で切らない
         const arrow = hang.test(ch) ? null : /^(.*[▶▸]) (\S.*)$/.exec(line);
-        const word = arrow || (hang.test(ch) ? null : /[!-~]/.test(ch) ? /^(.*\S) ([!-~]+)$/.exec(line) : null);
+        const run = /[0-9A-Za-z]/.test(ch) ? /^(.*[^0-9A-Za-z.,:/%-])([0-9A-Za-z.,:/%-]+)$/.exec(line) : null;
+        const word = arrow || (hang.test(ch) ? null : /[!-~]/.test(ch) ? /^(.*\S) ([!-~]+)$/.exec(line) : null) || (run ? [run[0], run[1], run[2]] : null);
         let keep = word ? word[1] : hang.test(ch) && chars.length > 1 ? chars.slice(0, -1).join('') : line;
         let rest = word ? word[2] : line.slice(keep.length);
         // 行の終わりに来ない文字（開きかっこ）は次の行へ

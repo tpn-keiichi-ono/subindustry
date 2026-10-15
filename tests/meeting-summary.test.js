@@ -411,7 +411,7 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
 
   // リード文（タイトルの下）に状態を書く。1つ目の文と補足（改行のあと）は行を分ける。大きさ・色はどのページも同じ
   const lead = leadOf;
-  assert.strictEqual(lead(slides[1]), '期待値 50百万円（直近14日間で ▲8）、進行中案件 3件。直近14日間の動きは受注 0件・失注 1件・前進 1件・後退 0件・新規 0件。');
+  assert.strictEqual(lead(slides[1]), '期待値 50百万円（直近14日間で ▲8）、進行中案件 3件（直近14日間で ▲2件）。');
   assert.deepStrictEqual(roleOf(slides[2], 'lead').map(el => [el.color, el.size]), [[c.ink, S.leadSize], [c.ink, S.leadSize]]);
   slides.forEach((slide, i) => roleOf(slide, 'lead').forEach(el => assert.deepStrictEqual([el.size, el.color], [S.leadSize, c.ink], (i + 1) + '枚目：リード文の大きさ・色')));
   assert.match(lead(slides[2]), /^期待値は 58 → 50百万円（▲8）。増加 ±0・減少 ▲8、最大の変動要因は失注（1件・▲5）。今期受注予定の期待値は /);
@@ -441,23 +441,28 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
     });
   });
 
-  // 1枚目：4つの数字・前回からの状況の内訳（どのシートでも同じ区分。該当が無ければ0件）。今期の帯は置かない
+  // 1枚目：「動き」と「現在の状態」の2つの表（どのシートでも同じ区分。該当が無ければ0件）。数字の箱・今期の帯は置かない
   const first = textOf(slides[1]);
   assert.ok(!/今期|着地/.test(first), 'サマリーに今期の受注・着地見込みは置かない');
-  const tiles = slides[1].elements.filter(el => el.fill === c.green && el.type === 'box').map(el => el.text);
-  assert.deepStrictEqual(tiles, ['進行中の期待値（百万円）', '受注／失注（直近14日間）', '前進／後退（直近14日間）', '停滞（45日以上）'], '4つの数字の見出し（緑の帯）');
-  assert.match(first, /停滞（45日以上）\n2件/);
-  assert.match(first, /進行中の期待値（百万円）\n50/);
-  assert.ok(!/想定売上 80百万円|直近14日で ▲8・3件/.test(first), '数字の箱には数字だけ（前回比・件数はリード文、想定売上は内訳の表）');
-  const breakdown = slides[1].elements.find(el => el.type === 'table').rows.map(r => r.cells.map(cell => cell.text.replace(/\n/g, '')));
-  assert.deepStrictEqual(breakdown, [
+  assert.ok(!slides[1].elements.some(el => el.fill === c.green && el.type === 'box'), '数字の箱（表と区分のまとめ方が違うもの）は置かない');
+  assert.deepStrictEqual(roleOf(slides[1], 'heading').map(el => el.text), ['直近14日間の動き（変化のある案件 4件）', '現在の状態（進行中案件）']);
+  const [movesTable, statesTable] = slides[1].elements.filter(el => el.type === 'table');
+  const textsOf = t => t.rows.map(r => r.cells.map(cell => cell.text.replace(/\n/g, '')));
+  assert.deepStrictEqual(textsOf(movesTable), [
     ['区分', '件数', '想定売上', '主な案件（想定売上順）'],
-    ['新規・前進', '1件', '30', 'A社／アプリ刷新（初回訪問→提案中）'],
     ['受注', '0件', '—', '—'],
-    ['失注・後退・削除', '2件', '30', 'C社／店舗什器（失注）、F社／ブランド刷新（削除）'],
-    ['受注月の延期・超過', '1件', '30', 'A社／アプリ刷新（受注月 ' + month(-1).y + '/' + month(-1).m + ' 超過）'],
+    ['新規・前進・復帰', '1件', '30', 'A社／アプリ刷新（初回訪問→提案中）'],
+    ['失注・保留・後退・削除', '2件', '30', 'C社／店舗什器（失注）、F社／ブランド刷新（削除）'],
+    ['その他の変化', '1件', '0', 'D社／物流改善（活動更新）']
+  ]);
+  assert.strictEqual(movesTable.rows.slice(1).reduce((sum, r) => sum + Number(r.cells[1].text.replace('件', '')), 0), 4,
+    '動きの行の件数を合わせると、見出しの「変化のある案件」の件数になる（案件ごとに1回だけ数える）');
+  assert.deepStrictEqual(textsOf(statesTable), [
+    ['受注月超過', '1件', '30', 'A社／アプリ刷新（受注月 ' + month(-1).y + '/' + month(-1).m + '）'],
     ['停滞（45日以上）', '2件', '80', 'E社／販促DX（100日以上）、D社／物流改善（100日以上）']
   ]);
+  assert.ok(movesTable.rows.slice(1).concat(statesTable.rows).every(r => r.cells[1].size === 12 && r.cells[1].color === c.greenDark), '件数は大きな緑の字');
+  assert.deepStrictEqual(statesTable.columns, movesTable.columns, '2つの表の列はそろえる');
   // 表は緑の見出し・1列目は薄い緑（得意先は太字）・ほかは白
   const moves = slides[3].elements.find(el => el.type === 'table');
   assert.ok(moves.rows[0].cells.every(cell => cell.fill === c.green && cell.color === c.white && cell.bold));
@@ -612,6 +617,8 @@ test('ラベル：当てはまる状況が3つでも、行を高くしてセル�
 test('文字の折り返し：「前 ▶ 今」は矢印のあとで、開きかっこは行の終わりに残さない。表のセルは行の長さをそろえる', () => {
   const {g} = setup({edits: false});
   assert.deepStrictEqual(plain(g.mtgWrap_('提案中 ▶ 課題ヒアリング', 118, 9, 2)), ['提案中 ▶', '課題ヒアリング']);
+  g.mtgWrap_('青葉マート／需要予測による発注最適化（95日）、若葉フーズ／ネットスーパーの立ち上げ支援（52日）', 200, 9, 9)
+    .forEach(line => assert.ok(!/^\d*日/.test(line) && !/（\d*$/.test(line), '数字の並びの途中・かっこの直後で切らない：' + line));
   for (let w = 120; w <= 300; w += 4) {
     g.mtgWrap_('港町GMS／PB商品のパッケージ刷新（100日以上）、さくらスーパー／店舗DXの全体構想（75日）', w, 9, 9)
       .forEach(line => assert.ok(!/[（「]$/.test(line), w + 'pt：' + line));
