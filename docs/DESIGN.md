@@ -21,7 +21,7 @@
 | サンプルデータ | `サンプルデータ.gs` | 画面の確認用に、選んだ行の得意先へサンプルの履歴を追加する・まとめて削除する |
 | サービス管理 | `ServiceManagement.gs`・`RequestPickerView.html`・`RequestListDialog.html` | 新FMT のリクエストを選択パネル（サイドバー）で選んで「リクエスト」シートに登録し、リクエストをもとにサービス案を考えて名前でまとめる・棄却する |
 | タスク管理 | `TaskManagement.gs` | 別のシート「タスク管理」で、サービス案ごとの検討の進捗をタスクで管理する |
-| 会議サマリ | `MeetingSummary.gs` | RX Business MTG（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ってドライブに保存する（サマリー・パイプラインの変化・前回から変化のある案件・期待値上位案件の状況・課題、扉、Appendix。書くのは事実だけ）。いちばん新しく作った PDF（試作も）のリンクを Google チャットにすぐ送る（webhook。`notifyMeetingSummaries()`） |
+| 会議サマリ | `MeetingSummary.gs` | RX Business MTG（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ってドライブに保存する（サマリー・パイプラインの変化・前回から変化のある案件・期待値上位案件の状況・課題、扉、Appendix。書くのは事実だけ）。資料の格納先の URL を Google チャットにすぐ送る（webhook。`notifyMeetingSummaries()`） |
 
 ファイル名は Apps Script エディタ側の名前に合わせています（`clasp pull` で同じ名前になるように）。
 差分追跡のファイルが `test.gs` という名前なのはそのためです。
@@ -400,20 +400,13 @@ RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Goo
   資料のファイルは消しません。
 - **古い版の片付け**（`mtgTrashOld_`）：作ったあと、保存先のフォルダの同じ名前のファイル（作り直す前の Google スライドと PDF）をゴミ箱に移します（古い版を配らないように）。
   ファイル名に会議日（試作は「試作」も）が入るので、ほかの会議日・本番と試作の資料は消しません。終わりの画面にはシートごとの PDF の URL を出します。
-- **Google チャットへの通知**（webhook）：`setMeetingChat()`（エディタから実行）で、webhook の URL と配布用フォルダの ID（任意）をスクリプトのプロパティ
-  （`MTG_OPTIONS.chat` の `webhookKey`・`folderKey`）に残します。試作・本番を作るたびに、シートごとにいちばん新しく作った PDF を
-  ドキュメントのプロパティ `MTG_PDF_<シート名>`（`{pdf, file, counts, meeting, final, at, notified}`）に覚えます。
-  `notifyMeetingSummaries()`（エディタから実行）は、選んだシートのその PDF を、確かめの画面（「はい」のときだけ）のあと**すぐに**送り、
-  会議日・試作／本番ごとに1つのメッセージにまとめて（試作は見出しに【試作】）、`notified`（送った時刻）を残します（`mtgNotify_`）。自動では送りません
-  （前の版は会議日の2日前に時間主導のトリガーで送っていたが、まずは人が送る形にした。残ったトリガー `mtgNotifyScheduled` は、
-  その関数が動いたとき・`setMeetingChat()`・`notifyMeetingSummaries()` を実行したときに外す（`mtgRemoveLegacyTrigger_`））。
-  作り直した PDF はまだ送っていないので `notified` は持たず、本番の確かめの画面で、その会議日の本番を送ったあとなら送り直すよう知らせます。
-  - webhook はファイルを添付できないので、リンクを送ります。配布用フォルダを登録していれば、PDF をそこにコピーして（同じ名前の古いコピーはゴミ箱へ）そのリンクを、
-    無ければ保存先の PDF のリンクを送ります。資料の保存先のフォルダは試作・編集できる Google スライドが入るので、配布用フォルダにはできません。
-    PDF をゴミ箱に移していたら送らずに止めます。
-  - 送るのは `UrlFetchApp`（`application/json` の `{text}`。リンクは `<URL|ファイル名>`）。429・5xx は2秒待って1回だけやり直し、だめならエラーにします
+- **Google チャットへの通知**（webhook）：`setMeetingChat()`（エディタから実行）で、webhook の URL と資料の格納先の URL をスクリプトのプロパティ
+  （`MTG_OPTIONS.chat` の `webhookKey`・`urlKey`）に残します。`notifyMeetingSummaries()`（エディタから実行）は、確かめの画面（送る文をそのまま見せる。
+  「はい」のときだけ）のあと、会議の名前・通読のお願い・格納先の URL の文を**すぐに**送ります（`mtgChatText_`）。自動では送らず、資料のファイルも扱いません
+  （格納先は人が用意する。前の版は、会議日の2日前に時間主導のトリガーで、作った PDF をコピーして送っていたが、まずは知らせるだけのシンプルな形にした。
+  残ったトリガー `mtgNotifyScheduled` は、その関数が動いたとき・`setMeetingChat()`・`notifyMeetingSummaries()` を実行したときに外す（`mtgRemoveLegacyTrigger_`））。
+  - 送るのは `UrlFetchApp`（`application/json` の `{text}`）。429・5xx は2秒待って1回だけやり直し、だめならエラーにします。
     webhook の URL は鍵を含むので、コード・画面・ログに出しません（`mtgChatSpace_` はスペースの ID だけを出す）。
-  - 試作・本番の終わりの画面に、`notifyMeetingSummaries()` で送るよう出します（通知を設定しているとき）。
 - **基準**：旧フォーマットからの移行など、案件をまとめて貼り付けたあとに `setMeetingBaseline()` で今を基準として記録します（同じ `MTG_MEETINGS_<シート名>` に
   `{date, cutoff, baseline: true}`。シートごとに1つで、記録し直すと置き換える）。前回の会議より後の基準（会議日が今回の会議日まで）があれば、「前回から」は基準の `cutoff` から
   （貼り付けた行の「行追加」・空の行への入力を「新規」に数えないため）。会議の資料を作っても基準は消しませんが、そのあとの会議は前回の会議のほうが新しいので会議から数えます。

@@ -963,12 +963,10 @@ function createGas(options) {
           return {hasNext: () => parents.length > 0, next: () => parents.shift()};
         },
         setTrashed(flag) { if (flag) gas.trashed.push(id); return this; },
-        isTrashed: () => gas.trashed.indexOf(id) >= 0,
-        getName: () => (gas.driveFiles.find(f => f.id === id) || {name: id}).name,
+        getName: () => id,
         getMimeType: () => (gas.files[id] || {}).mimeType ||
           (gas.slideTemplates[id] ? 'application/vnd.google-apps.presentation' : 'application/vnd.google-apps.spreadsheet'),
-        getUrl: () => (gas.driveFiles.some(f => f.id === id) ? 'https://drive.google.com/file/d/' + id + '/view'
-          : 'https://docs.google.com/presentation/d/' + id + '/edit'),
+        getUrl: () => 'https://docs.google.com/presentation/d/' + id + '/edit',
         moveTo(folder) {
           gas.moved.push({id, folder: folder.getId()});
           const deck = gas.decks.find(d => d.id === id);
@@ -989,12 +987,6 @@ function createGas(options) {
             gas.decks.push({id: copyId, title: name, template: id, folder: folder ? folder.getId() : null, pageSize: template.pageSize,
               slides: template.slides.slice(), requests: [], batches: []});
             return DriveApp.getFileById(copyId);
-          }
-          const source = gas.driveFiles.find(f => f.id === id);
-          if (source) {
-            // フォルダに作ったファイル（PDF）のコピー：同じフォルダの一覧（getFilesByName）にも入れる
-            gas.driveFiles.push({id: copyId, folder: folder ? folder.getId() : null, name, blob: source.blob, copyOf: id});
-            return {getId: () => copyId, getName: () => name, getUrl: () => 'https://drive.google.com/file/d/' + copyId + '/view'};
           }
           return {
             getId: () => copyId,
