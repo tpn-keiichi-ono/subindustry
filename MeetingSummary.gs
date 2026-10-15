@@ -9,7 +9,7 @@
  * - 資料には、シートと変更の記録から分かる事実だけを書く。論点・決めてほしいこと・支援の要否などの判断は、各サブインダストリーのリーダーが
  *   会議で話すことなので、資料には入れない（資料が判断を先に書くと、読み手を誤った方向に導くおそれがある）。
  * - 資料はサブインダストリー（追跡シート）ごとに1つ。スライドの見出しはどのシートでも同じ（MTG_TITLES）で、状態は見出しの下のリード文に書く。
- *   使う言葉はAppendix ⑤（用語の定義）にまとめ、資料の中で同じ意味で使う。
+ *   使う言葉は docs/DESIGN.md（会議サマリの数え方）で決め、資料の中で同じ意味で使う。
  *
  * 資料の構成（16:9。緑を基調にしたトンマナ：黒の見出し・リード文・緑の見出しの表・区分のラベル・区切り線と出典・ページ番号。表紙と扉は緑のグラデーション）
  *   表紙：会議の名前と「事前資料」・サブインダストリー・会議日・データの時点・期間
@@ -19,10 +19,10 @@
  *   4 期待値の大きい案件の状況・課題：進行中の案件の期待値の大きい順（ステータスが同じ日数・受注月・活動状況・課題・当てはまる状況）
  *   扉（Appendix。Appendix の見出しとページ）
  *   Appendix（全件。入りきらなければ続きのページ）
- *   A 前回から変わった案件　B 停滞している案件　C 入力内容のチェック（責任者別・一覧）　D ステータスの分類　E 用語の定義
+ *   ① 前回から変わった案件　② 停滞している案件　③ 入力内容のチェック（責任者別・一覧）
  *   左上のラベルは置かない（どのサブインダストリー・会議日の資料かは、表紙・ファイル名・下の出典の行に書く。試作は表紙と出典の行に【試作】）
  *
- * ことばの決まり（どのページでも同じ数え方にする。Appendix ⑤ にも出す）
+ * ことばの決まり（どのページでも同じ数え方にする）
  * - ステータスの分類：進行中・受注・失注・保留（MTG_OPTIONS のことば・statusKinds で決める）。期待値は進行中の案件だけを数える。
  *   前進・後退は、案件ステータスのプルダウンの並び順で決める。
  * - 前回からの変化は、案件ごとに1つの区分にする（新規 > 受注 > 失注 > 保留 > 復帰 > 前進 > 後退 > 延期 > 前倒し > 増額 > 減額 > 変更 > 活動の更新 > 更新のみ）。
@@ -107,7 +107,7 @@ const MTG_OPTIONS = {
 };
 
 /*
- * 前回からの変化の区分（上ほど優先。案件ごとに1つ）。意味は Appendix ⑤（mtgGlossary_）。
+ * 前回からの変化の区分（上ほど優先。案件ごとに1つ）。意味は docs/DESIGN.md（会議サマリの数え方）。
  * tone は表のラベルの色（up 濃い緑：前向き・down 濃いグレー：後ろ向き・note 白に枠：そのほか。mtgPills_）
  */
 const MTG_CATEGORIES = [
@@ -142,9 +142,7 @@ const MTG_TITLES = {
   changes: 'Appendix ①　前回から変わった案件（一覧）',
   stalled: 'Appendix ②　停滞している案件（一覧）',
   owners: 'Appendix ③　入力内容のチェック（責任者別）',
-  alerts: 'Appendix ③　入力内容のチェック（一覧）',
-  status: 'Appendix ④　ステータスの分類',
-  glossary: 'Appendix ⑤　用語の定義'
+  alerts: 'Appendix ③　入力内容のチェック（一覧）'
 };
 
 /* 本編の「前回から変わった案件」に出す区分の順（更新のみは出さない） */
@@ -572,7 +570,7 @@ function mtgReadDeals_(sheet, rule) {
  * context = {since, previous, legacy, baseline: 基準を記録した時刻|null, draft, final, now, meeting, windowStart, trackedSince, log, snapshots, credentials}
  * 戻り値 {name, meeting, previous, legacy, since, first, final, now, windowStart, kpi, fiscal, bridge, stages, quarters,
  *         changes, stalled, focus: 期待値の大きい進行中の案件, overdue: 受注月を過ぎた進行中の案件, alerts: 入力内容のチェック,
- *         checks: このシートで見た入力内容のチェックの種類, resolved, unmatched}
+ *         resolved, unmatched}
  */
 function mtgSummarize_(ss, name, context) {
   const o = MTG_OPTIONS;
@@ -706,7 +704,6 @@ function mtgSummarize_(ss, name, context) {
     focus,
     overdue: items.filter(d => d.overdue).sort((a, b) => (b.amount || 0) - (a.amount || 0)),
     alerts,
-    checks: MTG_ALERT_TYPES.filter(t => (t !== '資料なし' || table.has.record) && (t !== 'デリバリー担当なし' || table.has.delivery)),
     resolved,
     unmatched: history.unmatched
   };
@@ -1192,7 +1189,7 @@ function mtgDealLabel_(item) {
 
 /**
  * 1つのシート（サブインダストリー）の会議サマリをスライドの並びにする（Slides API に送る前の形。テストと見た目の確認にも使う）。
- * 表紙、本編（サマリー → パイプラインの変化 → 前回から変わった案件 → 期待値の大きい案件の状況・課題）、扉（Appendix）、Appendix ①〜⑤。
+ * 表紙、本編（サマリー → パイプラインの変化 → 前回から変わった案件 → 期待値の大きい案件の状況・課題）、扉（Appendix）、Appendix ①〜③。
  * ページ番号は表紙を1枚目として数える（表紙・扉には出さない。PDF のページと同じ番号になる）。
  * 見出しは MTG_TITLES（どのシートでも同じ）。書くのはシートと変更の記録から分かる事実だけ（論点・決めてほしいことなどの判断は、会議でリーダーが話す）。
  * 戻り値 [{title, elements}]（elements は mtgSlideRequests_ の部品。タイトル・リード文・出典・ページ番号も含む）
@@ -1201,7 +1198,7 @@ function mtgSlides_(summary) {
   const cover = mtgCoverSlide_(summary);
   const main = [mtgSummarySlide_(summary), mtgBridgeSlide_(summary), mtgMovesSlide_(summary), mtgFocusSlide_(summary)];
   const appendix = [].concat(mtgAppendixChanges_(summary), mtgAppendixStalled_(summary), mtgAppendixOwners_(summary),
-    mtgAppendixAlerts_(summary), mtgAppendixStatus_(summary), mtgAppendixGlossary_(summary));
+    mtgAppendixAlerts_(summary));
   const divider = appendix.length ? [mtgDividerSlide_(appendix, 1 + main.length + 1 + 1)] : [];
   return mtgNumberSlides_(mtgSheetFrame_(summary), [cover].concat(main, divider, appendix));
 }
@@ -1647,7 +1644,8 @@ function mtgAppendixChanges_(s) {
     title: MTG_TITLES.changes,
     lead: mtgPeriodShort_(s) + '変わった案件は ' + s.changes.length + '件。' +
       (s.unmatched ? '案件に結び付けられなかった変更の記録 ' + s.unmatched + '件は数えていない。' : '') +
-      '\n区分は案件ごとに1つ（区分の意味と、当てはまるものが複数あるときの順は Appendix ⑤）。',
+      '\n区分は案件ごとに1つ（当てはまるものが複数あれば ' + MTG_CATEGORIES.filter(cat => cat.key !== 'removed').map(cat => cat.label).join(' > ') +
+      ' の順。行の削除は「削除」）。',
     columns,
     head: ['得意先／案件名', '区分', 'ステータス（前▶今）', '期待値\n（前▶今）', '受注月\n（前▶今）', '活動状況（現在）', '更新した項目', '責任者'],
     rows: s.changes.map(ch => [
@@ -1691,7 +1689,7 @@ function mtgAppendixStalled_(s) {
 
 /**
  * Appendix ③ 入力内容のチェック（責任者別）：責任者 × 種類の件数・種類の説明・試作から解消した件数（当てはまるものが無ければ作らない）。
- * 種類の説明は、表の右の枠にすべて入るときだけ置く（入らなければ置かず、Appendix ⑤ を案内する。Appendix ⑤ にはいつも書く）
+ * 種類の説明は、表の右の枠にすべて入るときだけ置く（入らなければ置かない。案件ごとの一覧には内容を書く）
  */
 function mtgAppendixOwners_(s) {
   const c = MTG_OPTIONS.colors;
@@ -1757,7 +1755,7 @@ function mtgAppendixOwners_(s) {
     title: MTG_TITLES.owners,
     lead: '入力内容のチェックに当てはまったのは ' + s.alerts.length + '件（責任者 ' + k.owners + '人）。' +
       (r ? '試作（' + Utilities.formatDate(new Date(r.at), Session.getScriptTimeZone(), 'MM/dd') + '）の時点から ' + r.fixed + '件が解消、新たに ' + r.added + '件。' : '') +
-      '\n責任者ごとの件数' + (fits ? 'と、チェックの種類（右）' : '（チェックの種類の意味は Appendix ⑤）') + '。案件ごとの一覧は次のページ。',
+      '\n責任者ごとの件数' + (fits ? 'と、チェックの種類（右）' : '') + '。案件ごとの一覧（内容つき）は次のページ。',
     elements: el
   }];
 }
@@ -1779,87 +1777,6 @@ function mtgAppendixAlerts_(s) {
       {text: a.owner || '—', fill: c.white, align: 'CENTER'}
     ])
   });
-}
-
-/** Appendix ④ ステータスの分類（件数・金額・数え方） */
-function mtgAppendixStatus_(s) {
-  const c = MTG_OPTIONS.colors;
-  const columns = [146, 58, 44, 68, 68, 276];
-  const kinds = {active: '進行中', won: '受注', lost: '失注', hold: '保留'};
-  const notes = {
-    active: '期待値に数える。プルダウンの順で前進・後退を判定',
-    won: '期待値に数えない（今期の受注に数える）',
-    lost: '期待値に数えない',
-    hold: '期待値に数えない（進行中に戻ったら「復帰」）'
-  };
-  const rows = s.stages.map(st => [
-    {text: st.status, bold: true, color: c.ink, fill: c.greenSoft},
-    {text: kinds[st.kind], fill: c.white, align: 'CENTER'},
-    {text: String(st.count), fill: c.white, align: 'END'},
-    {text: mtgAmount_(st.amount), fill: c.white, align: 'END'},
-    {text: mtgAmount_(st.weighted), fill: c.white, align: 'END'},
-    {text: (st.known ? '' : '選択肢外（プルダウンにない値）。') + notes[st.kind], lines: 2, fill: c.white}
-  ]);
-  rows.push([
-    {text: '合計', bold: true, color: c.ink, fill: c.greenSoft}, {text: '', fill: c.greenSoft},
-    {text: String(mtgSum_(s.stages, 'count')), bold: true, fill: c.greenSoft, align: 'END'},
-    {text: mtgAmount_(mtgSum_(s.stages, 'amount')), bold: true, fill: c.greenSoft, align: 'END'},
-    {text: mtgAmount_(mtgSum_(s.stages, 'weighted')), bold: true, fill: c.greenSoft, align: 'END'},
-    {text: '', fill: c.greenSoft}
-  ]);
-  return mtgPagedTable_({
-    title: MTG_TITLES.status,
-    lead: '案件 ' + s.kpi.deals + '件のうち、進行中 ' + s.kpi.active + '件（期待値 ' + mtgAmount_(s.kpi.weighted) + '百万円）。並びは案件ステータスのプルダウンの順。' +
-      '\n分類はステータスのことばで判定（MeetingSummary.gs の MTG_OPTIONS で変えられる）。',
-    columns,
-    head: ['案件ステータス', '分類', '件数', '想定売上', '期待値', '数え方'],
-    rows
-  });
-}
-
-/** Appendix ⑤ 用語の定義（資料で使う言葉の意味と数え方。mtgGlossary_） */
-function mtgAppendixGlossary_(s) {
-  const c = MTG_OPTIONS.colors;
-  return mtgPagedTable_({
-    title: MTG_TITLES.glossary,
-    lead: '資料で使っている言葉の意味と数え方。\n日数・期の始まりなどは MeetingSummary.gs の MTG_OPTIONS の設定による。',
-    columns: [130, 530],
-    head: ['用語', '意味'],
-    rows: mtgGlossary_(s).map(([term, meaning]) => [
-      {text: term, lines: 2, bold: true, color: c.ink, fill: c.greenSoft},
-      {text: meaning, lines: Math.max(2, meaning.split('\n').length * 2), fill: c.white}   // 改行で分けた意味（種類の一覧）は、それぞれ2行まで
-    ])
-  });
-}
-
-/** 資料で使う言葉の意味 [[用語, 意味]]（Appendix ⑤。設定の日数などを入れる） */
-function mtgGlossary_(s) {
-  const o = MTG_OPTIONS;
-  return [
-    ['前回', '前回の会議の資料を作った日時（そのあとに基準を記録していれば基準の日時。どちらの記録も無ければ、直近' + o.firstDays + '日）。' +
-      'この資料の期間：' + mtgPeriodText_(s)],
-    ['想定売上', '「想定売上規模（百万）」の値（百万円）'],
-    ['期待値', '「期待値調整済 想定売上規模（百万）」の値（百万円）。合計は進行中の案件だけ（空は0として計算）'],
-    ['進行中・受注・失注・保留', '案件ステータスの分類（Appendix ④）。受注・失注・保留のどれにも当たらないステータス（空も）は進行中'],
-    ['区分', '前回からの変化の分け方。案件ごとに1つで、当てはまるものが複数あれば ' +
-      MTG_CATEGORIES.map(c => c.label).filter(l => l !== '削除').join(' > ') + ' の順に選ぶ（行の削除は「削除」）'],
-    ['新規', '前回より後に追加された案件'],
-    ['受注・失注・保留（区分）', '前回より後に、ステータスがその分類に変わった案件'],
-    ['復帰', '前回より後に、受注・失注・保留から進行中に戻った案件'],
-    ['前進・後退', '進行中のまま、ステータスがプルダウンの並びで後ろ（前進）・前（後退）の値に変わった案件'],
-    ['延期・前倒し', '受注月が後ろ（延期）・前（前倒し）の月に変わった案件。「延期n回」は、変更の記録がある期間の回数'],
-    ['増額・減額', '期待値が増えた・減った案件'],
-    ['変更', 'ステータスが変わったが、前進・後退で比べられない案件（プルダウンにない値など）'],
-    ['削除', '前回より後に行が削除された案件（失注には数えない）'],
-    ['活動の更新', 'ステータス・期待値・受注月は変わらず、「活動状況」が変わった案件'],
-    ['更新のみ', '上のどれにも当たらず、ほかの項目だけ変わった案件'],
-    ['停滞', '進行中で、ステータスが' + o.stallDays + '日以上同じ案件（変更の記録を始める前・基準を記録する前から同じなら「N日以上」）'],
-    ['受注月超過', '進行中で、受注月が今月より前の案件'],
-    ['今期', s.fiscal.label],
-    ['着地見込み', '今期の受注（受注月が今期の、受注した案件の想定売上）＋ 今期に受注予定の期待値（受注月が今期の、進行中の案件の期待値）'],
-    ['入力内容のチェック', '入力の漏れ・予定日を過ぎた予定・値の不整合など（Appendix ③）。このシートで見る種類は次のとおり\n' +
-      (s.checks || MTG_ALERT_TYPES).map(type => '・' + type + '：' + mtgAlertNote_(type)).join('\n')]
-  ];
 }
 
 /**
