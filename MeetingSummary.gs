@@ -3,31 +3,28 @@
  * 差分追跡スクリプト（test.gs）・CredentialHistory.gs・HistorySidebar.gs と同じプロジェクトに置くファイル。
  *
  * 目的
- * - RX Business MTG（パイプライン会議。月1回）の会議資料。追跡シート（スーパー・GMS など。DIFF_RULES のシート）ごとの推進リーダーが説明に使い、
- *   本部長クラスがレビューする。発表は1シートあたり数分（報告＋フィードバック）なので、参加者は事前に通読してから会議に臨む。
- *   全リストをスクロールしなくても、全体感・前回からの動き・重点案件の状況と課題・不備をつかめるようにする。
- * - 「動いた案件・止まった案件・不備のある案件」のふるい分けに絞る。個別の案件を深く見るのは、オポチュニティキャンバスなど別の画面で行う。
- * - 文はすべてシートと変更の記録から作る（記入欄は無い）。スライドの見出しはどのシートでも同じ（MTG_TITLES）で、状態はリード文に書く。
+ * - RX Business MTG（パイプライン会議。月1回）の事前資料。会議の前に配り、参加者（営業の統括・リーダー、BX、サブインダストリーのリーダー）が
+ *   通読してから会議に臨む。発表は1サブインダストリー数分（報告＋フィードバック）なので、会議の目的（案件の進捗・受注見込みを確かめ、
+ *   優先順位と次のアクションを決める）に向けて、状況を事前に共有しておく。
+ * - 資料には、シートと変更の記録から分かる事実だけを書く。論点・決めてほしいこと・支援の要否などの判断は、各サブインダストリーのリーダーが
+ *   会議で話すことなので、資料には入れない（資料が判断を先に書くと、読み手を誤った方向に導くおそれがある）。
+ * - 資料はサブインダストリー（追跡シート）ごとに1つ。スライドの見出しはどのシートでも同じ（MTG_TITLES）で、状態は見出しの下のリード文に書く。
+ *   使う言葉は付録E（用語の定義）にまとめ、資料の中で同じ意味で使う。
  *
- * 資料の構成（16:9。社内資料のトンマナ：左上の紫のタグ・紫の見出し・リード文・表・赤枠・結論の帯・ページ番号）
- *   シートごとの資料（会議の議題の順）
- *   1 サマリー：今期の受注と着地見込み・4つの数字（期待値と前回比・受注／失注・前進／後退・停滞）・本日の論点
- *     （論点 ▶ 状況 ▶ 決めてほしいこと）
+ * 資料の構成（16:9。社内資料のトンマナ：左上の紫のタグ・紫の見出し・リード文・表・ページ番号）
+ *   1 サマリー：今期の受注と着地見込み・4つの数字（期待値と前回比・受注／失注・前進／後退・停滞）・前回からの状況の内訳（区分ごとの件数と案件）
  *   2 パイプラインの変化：前回からの期待値の増減（新規・増額・復帰・減額・受注・失注・保留・削除）・ステータス別・受注月（四半期）別の期待値
- *   3 前回からの進捗：受注・失注・後退・受注月の延期などの大きな動き（上位。悪い動きは赤枠）
- *   4 重点案件の状況・課題：★の案件と期待値の大きい進行中の案件（支援の要否を決めたい案件は赤枠。★はオポチュニティキャンバスで深掘りする候補）
+ *   3 前回から変わった案件：ステータス・期待値・受注月が変わった案件（区分の順に上位）
+ *   4 期待値の大きい案件の状況・課題：進行中の案件の期待値の大きい順（ステータスが同じ日数・受注月・活動状況・課題・当てはまる状況）
  *   付録（全件。入りきらなければ続きのページ）
- *   A 前回からの変化　B 停滞している案件　C 要対応（責任者別・一覧）　D ステータスの分類
- *   資料はサブインダストリー（追跡シート）ごとに1つ（シートをまとめた資料は作らない）。
+ *   A 前回から変わった案件　B 停滞している案件　C 入力内容のチェック（責任者別・一覧）　D ステータスの分類　E 用語の定義
  *
- * ことばの決まり（どのページでも同じ数え方にする）
- * - ステータスの分類：進行中・受注・失注・保留（MTG_OPTIONS のことば・statusKinds で決める）。期待値・パイプラインは進行中だけを数える。
+ * ことばの決まり（どのページでも同じ数え方にする。付録E にも出す）
+ * - ステータスの分類：進行中・受注・失注・保留（MTG_OPTIONS のことば・statusKinds で決める）。期待値は進行中の案件だけを数える。
  *   前進・後退は、案件ステータスのプルダウンの並び順で決める。
  * - 前回からの変化は、案件ごとに1つの区分にする（新規 > 受注 > 失注 > 保留 > 復帰 > 前進 > 後退 > 延期 > 前倒し > 増額 > 減額 > 変更 > 更新のみ）。
  *   行を削除した案件は「削除」（失注には数えない）。
- * - 停滞：進行中で、ステータスが最後に変わってから stallDays 日以上たった案件（記録より前から変わっていなければ「N日以上」）。
- * - 重点案件：★の案件を先に入れ、期待値の大きい進行中の案件で mainRows.focus 件まで。支援の要否を決めたい案件（停滞・受注月超過・
- *   受注月の延期が canvas.slips 回以上・課題に canvas.words の語）は赤枠。
+ * - 停滞：進行中で、ステータスが最後に変わってから stallDays 日以上同じ案件（変更の記録より前から同じなら「N日以上」）。
  *
  * 仕組み
  * - 管理者がエディタで createMeetingSummaries() を実行し、作るシートと今回の会議日を入力する（試すときは previewMeetingSummaries()）。
@@ -37,8 +34,8 @@
  *   シートごとにドキュメントのプロパティ（MTG_MEETINGS_シート名）に残す（同じ会議日で作り直したら、作った日時を上書きする）。
  *   前回の会議の記録が無ければ、MTG_OPTIONS.firstDays 日前から。previewMeetingSummaries() は会議日を記録しないので、何度でも試せる
  *   （ファイル名に「試作」が付く）。
- * - 会議日ごとに最初の試作の要対応を覚えておき（MTG_DRAFT_シート名）、同じ会議日の資料で「試作から解消した件数」を出す
- *   （試作を責任者に見せて、会議の前に直してもらう運用）。
+ * - 会議日ごとに最初の試作の入力内容のチェックの結果を覚えておき（MTG_DRAFT_シート名）、同じ会議日の資料に、試作から解消した件数を出す
+ *   （試作を各リーダーに見せて、会議の前に入力を直してもらう運用）。
  * - スプレッドシートは読むだけで、書き込まない。変更の記録は、変更時点スナップショット（その時の行の内容）で得意先＋案件名に結び付ける
  *   （行の追加・削除で行番号がずれても合う。得意先・案件名を書き換えた案件・あとから入れた案件も、前の名前の記録をつなげる）。
  *   どちらの記録も追記なので、下（新しいほう）から、読む期間（前回と MTG_OPTIONS.lookbackDays 日前の古いほう）より前に届くまでだけ読む。
@@ -52,18 +49,15 @@ const MTG_OPTIONS = {
   folderName: '会議サマリ',
   folderKey: 'MTG_FOLDER_ID',         // 作ったフォルダの ID（ドキュメントのプロパティ）
   meetingsKeyPrefix: 'MTG_MEETINGS_', // シートごとの会議日と資料を作った日時（ドキュメントのプロパティ。後ろにシート名）
-  draftKeyPrefix: 'MTG_DRAFT_',       // シートごとの、会議日ごとの最初の試作の要対応（解消した件数を出す用）
+  draftKeyPrefix: 'MTG_DRAFT_',       // シートごとの、会議日ごとの最初の試作の入力内容のチェックの結果（解消した件数を出す用）
   lastKeyPrefix: 'MTG_LAST_',         // 前の版の「前回の作成日時」（会議日の記録が無いときだけ使う）
   keepMeetings: 24,                  // 会議日の記録をいくつ残すか
   keepSlides: true,                  // Google スライドもフォルダに残す（推進リーダーが書き足せる。false なら PDF だけ）
   firstDays: 14,                     // 初回（前回の会議の記録が無い）は、何日前からの変化を出すか
   lookbackDays: 180,                 // ステータスの滞留・受注月の延期の回数を数えるために、何日前までの記録を読むか
-  stallDays: 45,                     // 停滞：ステータスがこの日数以上変わっていない進行中の案件
-  noUpdateDays: 30,                  // 要対応「更新なし」：最終更新日時がこの日数より前の進行中の案件
-  overdueDays: 90,                   // 要対応「予定超過」：予定日を過ぎてこの日数以内のもの（古いものは出さない）
-  // ★（オポチュニティキャンバスで深掘りする候補）：停滞の日数・受注月の延期の回数・活動における課題に含まれる語のどれかに当たる案件の、
-  // 想定の大きい max 件
-  canvas: {days: 60, slips: 2, words: ['決裁者', '上席'], max: 3},
+  stallDays: 45,                     // 停滞：ステータスがこの日数以上同じ進行中の案件
+  noUpdateDays: 30,                  // 入力内容のチェック「更新なし」：最終更新日時がこの日数より前の進行中の案件
+  overdueDays: 90,                   // 入力内容のチェック「予定日超過」：予定日を過ぎてこの日数以内のもの（古いものは出さない）
   fiscalStartMonth: 4,               // 期の始まりの月（今期の受注・着地見込み・四半期）
   targets: {},                       // シートごとの今期の受注の目標（百万円）。例 {'スーパー・GMS': 500}。空なら達成率を出さない
   // 読む列の見出し（改行・空白、全角・半角の違いは無視。customer・project・status はどのシートにも必要。ほかは無ければ使わない）
@@ -80,7 +74,7 @@ const MTG_OPTIONS = {
     owner: 'アカウント責任者',
     delivery: 'デリバリー担当'
   },
-  // 必須項目：進行中の案件で空なら要対応に出す（シートに無い見出しは見ない）
+  // 必須項目：進行中の案件で空なら、入力内容のチェックの「未入力」に出す（シートに無い見出しは見ない）
   required: ['想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '活動状況', 'アカウント責任者'],
   // ステータスの分類。statusKinds に書いたステータスはそのとおりに（'active' 進行中・'won' 受注・'lost' 失注・'hold' 保留）。
   // ほかは、その語を含むかで決める（失注 → 保留 → 受注 の順に見る。受注は notWonWords を含むもの（受注見込み など）を除く）
@@ -91,25 +85,25 @@ const MTG_OPTIONS = {
   notWonWords: ['見込', '予定', '前', '待'],
   logChunkRows: 2000,                // 変更の記録を下から読むときの1回の行数
   batchRequests: 1500,               // Slides API の1回の batchUpdate に入れるリクエストの数の目安（呼ぶ回数を減らす。1分あたりの回数に上限がある）
-  mainRows: {changes: 7, focus: 5, owners: 9},     // 本編の表に出す行の数（残りは付録）。owners は付録C の責任者別の表の行
-  // 色（社内資料のトンマナ：紫を基調に、薄い紫・薄いグレーの面、強調は赤枠、結論はピンクの帯）
+  mainRows: {changes: 7, focus: 5, owners: 9, deals: 4},   // 本編の表に出す行の数（残りは付録）。owners は付録C の責任者別の表の行、
+                                                           // deals はサマリーの内訳の1区分に名前を出す案件の数
+  // 色（社内資料のトンマナ：紫を基調に、薄い紫・薄いグレーの面。赤は失注・後退・延期・期限を過ぎたものの文字）
   colors: {
     purple: '#7030A0', purpleSoft: '#EEE3F5', up: '#A77BCA', down: '#BFBFBF', gray: '#F2F2F2', grayHead: '#A6A6A6',
-    arrow: '#A6A6A6', red: '#E60012', highlight: '#F6D5F7', ink: '#1B1B1C', body: '#262626', muted: '#595959', faint: '#8C8C8C',
-    white: '#FFFFFF'
+    red: '#E60012', ink: '#1B1B1C', body: '#262626', muted: '#595959', faint: '#8C8C8C', white: '#FFFFFF'
   }
 };
 
-/* 前回からの変化の区分（上ほど優先。案件ごとに1つ）。bad は赤枠で囲む悪い動き */
+/* 前回からの変化の区分（上ほど優先。案件ごとに1つ）。red は赤字で出す区分（失注・後退・延期）。意味は付録E（mtgGlossary_） */
 const MTG_CATEGORIES = [
   {key: 'new', label: '新規'},
   {key: 'won', label: '受注'},
-  {key: 'lost', label: '失注', bad: true},
+  {key: 'lost', label: '失注', red: true},
   {key: 'hold', label: '保留'},
   {key: 'revived', label: '復帰'},
   {key: 'forward', label: '前進'},
-  {key: 'backward', label: '後退', bad: true},
-  {key: 'slipped', label: '延期', bad: true},
+  {key: 'backward', label: '後退', red: true},
+  {key: 'slipped', label: '延期', red: true},
   {key: 'pulled', label: '前倒し'},
   {key: 'up', label: '増額'},
   {key: 'down', label: '減額'},
@@ -120,21 +114,22 @@ const MTG_CATEGORIES = [
 
 /*
  * スライドの見出し（タイトル）。どのサブインダストリーでも同じにする（状態はリード文に書く）。
- * RX Business MTG（パイプライン会議）の議題の順：サマリー → パイプラインの変化 → 前回からの進捗 → 重点案件の状況・課題。付録は全件の一覧
+ * 本編：サマリー → パイプラインの変化 → 前回から変わった案件 → 期待値の大きい案件の状況・課題。付録は全件の一覧と言葉の定義
  */
 const MTG_TITLES = {
   summary: 'サマリー',
   pipeline: 'パイプラインの変化',
-  progress: '前回からの進捗',
-  focus: '重点案件の状況・課題',
-  changes: '付録A　前回からの変化（一覧）',
+  progress: '前回から変わった案件',
+  focus: '期待値の大きい案件の状況・課題',
+  changes: '付録A　前回から変わった案件（一覧）',
   stalled: '付録B　停滞している案件（一覧）',
-  owners: '付録C　要対応（責任者別）',
-  alerts: '付録C　要対応（一覧）',
-  status: '付録D　ステータスの分類'
+  owners: '付録C　入力内容のチェック（責任者別）',
+  alerts: '付録C　入力内容のチェック（一覧）',
+  status: '付録D　ステータスの分類',
+  glossary: '付録E　用語の定義'
 };
 
-/* 本編の「前回からの進捗」に出す順（更新のみは出さない） */
+/* 本編の「前回から変わった案件」に出す区分の順（更新のみは出さない） */
 const MTG_MOVE_ORDER = ['won', 'lost', 'backward', 'slipped', 'forward', 'new', 'revived', 'hold', 'removed', 'pulled', 'up', 'down', 'status'];
 
 /* 期待値の増減の内訳（増える → 減るの順） */
@@ -144,11 +139,11 @@ const MTG_BRIDGE = [
   {key: 'removed', label: '削除'}
 ];
 
-/* 要対応の種類（この順に出す） */
-const MTG_ALERT_TYPES = ['予定超過', '受注月超過', '未入力', '更新なし', '金額の矛盾', '日付の矛盾', '未定義ステータス', '体制未登録'];
+/* 入力内容のチェックの種類（この順に出す。意味は mtgAlertNote_） */
+const MTG_ALERT_TYPES = ['予定日超過', '受注月超過', '未入力', '更新なし', '金額の不整合', '月の不整合', '選択肢外のステータス', 'デリバリー担当なし'];
 
 /*
- * スライドの形（pt。16:9 = 720 × 405）。本編は上から タグ・タイトル・リード文・中身（top〜bottom）・結論の帯・出典とページ番号。
+ * スライドの形（pt。16:9 = 720 × 405）。上から タグ・タイトル・リード文・中身（top〜bottom）・出典とページ番号。
  * 文字の幅と行の高さは見積もり（mtgWrap_・mtgLineHeight_）。本物より大きめに見積もって、はみ出さないようにする。
  */
 const MTG_SLIDE = {
@@ -158,8 +153,7 @@ const MTG_SLIDE = {
   x: 24,                 // 左の余白
   w: 672,                // 中身の幅
   top: 98,               // 中身の上端
-  bottom: 348,           // 本編の中身の下端（下に結論の帯）
-  appendixBottom: 378,   // 付録の中身の下端（帯なし）
+  bottom: 378,           // 中身の下端（下に出典とページ番号）
   titleSize: 20,
   leadSize: 9.5,
   bodySize: 8,
@@ -242,14 +236,14 @@ function mtgAskMeeting_(ui, names, now) {
   return date;
 }
 
-/** 完成した結果の件数の知らせ（「動いた 12・停滞 5・要対応 7」） */
+/** 完成した結果の件数の知らせ（「変わった案件 12・停滞 5・チェック 7」） */
 function mtgCountsText_(summary) {
-  return '動いた ' + summary.kpi.changed + '・停滞 ' + summary.stalled.length + '・要対応 ' + summary.alerts.length;
+  return '変わった案件 ' + summary.kpi.changed + '・停滞 ' + summary.stalled.length + '・チェック ' + summary.alerts.length;
 }
 
 /**
  * names のシート（サブインダストリー）ごとに会議サマリを作り、スライドと PDF を保存する。meeting は今回の会議日（yyyy/MM/dd）。
- * final なら会議日と今の日時を記録する。試作なら、その会議日の最初の試作の要対応を覚える。
+ * final なら会議日と今の日時を記録する。試作なら、その会議日の最初の試作の入力内容のチェックの結果を覚える。
  * 戻り値 [{summary, file: PDF, deck: Google スライド（残さないときは null）, folder}]
  */
 function mtgCreate_(ss, names, now, final, meeting) {
@@ -338,7 +332,7 @@ function mtgParseDate_(text, now) {
   return y + '/' + pad(m) + '/' + pad(d);
 }
 
-/** 短い文字のハッシュ（要対応を覚えておく用。プロパティの大きさを抑える） */
+/** 短い文字のハッシュ（入力内容のチェックの結果を覚えておく用。プロパティの大きさを抑える） */
 function mtgHash_(text) {
   let h = 2166136261;
   Array.from(String(text)).forEach(ch => {
@@ -507,7 +501,7 @@ function mtgReadDeals_(sheet, rule) {
  * 1つのシートの会議サマリの中身。
  * context = {since, previous, legacy, draft, final, now, meeting, windowStart, trackedSince, log, snapshots, credentials}
  * 戻り値 {name, meeting, previous, legacy, since, first, final, now, windowStart, kpi, fiscal, bridge, stages, quarters,
- *         changes, stalled, focus: 重点案件, alerts, resolved, unmatched}
+ *         changes, stalled, focus: 期待値の大きい進行中の案件, overdue: 受注月を過ぎた進行中の案件, alerts: 入力内容のチェック, resolved, unmatched}
  */
 function mtgSummarize_(ss, name, context) {
   const o = MTG_OPTIONS;
@@ -545,7 +539,7 @@ function mtgSummarize_(ss, name, context) {
   // 期待値の増減（前回の時点で進行中だった案件の期待値 → 今の進行中の期待値）。進行中から外れた分・入った分も内訳にする
   const bridge = mtgBridge_(deals, byKey, changed, changes);
 
-  // 進行中の案件の滞留：ステータスが最後に変わってから（または案件ができてから）の日数。変わった記録が無ければ、
+  // 進行中の案件の、ステータスが同じ日数：最後に変わってから（または案件ができてから）。変わった記録が無ければ、
   // 記録を読んだ期間の始まり・最終更新日時の古いほうからの「N日以上」（どちらも無ければ分からない）
   const tracked = context.trackedSince == null ? null : Math.max(context.trackedSince, context.windowStart.getTime());
   const month = mtgMonthIndex_(mtgMonth_(Utilities.formatDate(context.now, Session.getScriptTimeZone(), 'yyyy/MM')));
@@ -568,29 +562,18 @@ function mtgSummarize_(ss, name, context) {
       at = bounds.length ? Math.min.apply(null, bounds) : null;
     }
     const days = at == null ? null : Math.floor((now - at) / 86400000);
-    const words = o.canvas.words.filter(w => credNormalize_(deal.issue).indexOf(credNormalize_(w)) >= 0);
     const stalled = days != null && days >= o.stallDays;
     const overdue = !!deal.orderMonth && mtgMonthIndex_(deal.orderMonth) < month;
-    // 支援の要否を決めたい理由（重点案件の赤枠）
-    const reasons = [stalled && '停滞', overdue && '受注月超過', slips >= o.canvas.slips && '延期' + slips + '回',
-      words.length && '課題に' + words.join('・')].filter(Boolean);
-    items.push(Object.assign({}, deal, {
-      days, atLeast, slips, overdue, stalled, reasons, support: reasons.length > 0, star: false,
-      candidate: stalled && (days >= o.canvas.days || slips >= o.canvas.slips || words.length > 0),
-      decide: words.length ? '上席の同行の要否' : overdue || slips >= o.canvas.slips ? '受注月の見直しか、\nクローズか'
-        : stalled && days >= o.canvas.days ? '継続か、クローズか' : stalled ? '次の打ち手の確認' : '受注に向けた\n次のアクション'
-    }));
+    items.push(Object.assign({}, deal, {days, atLeast, slips, overdue, stalled}));
   });
-  // 停滞：滞留が stallDays 日以上（想定の大きい順）。★は当てはまる案件の想定の大きい canvas.max 件まで
+  // 停滞：ステータスが stallDays 日以上同じ（想定売上の大きい順）
   const stalled = items.filter(d => d.stalled)
     .sort((a, b) => ((b.amount || 0) - (a.amount || 0)) || ((b.weighted || 0) - (a.weighted || 0)) || (b.days - a.days));
-  stalled.filter(d => d.candidate).forEach((d, i) => { d.star = i < o.canvas.max; });
-  // 重点案件：★の案件と、期待値の大きい進行中の案件（★を先に入れて mainRows.focus 件まで。並びは期待値の大きい順）
-  const byWeighted = (a, b) => ((b.weighted || 0) - (a.weighted || 0)) || ((b.amount || 0) - (a.amount || 0));
-  const ranked = items.slice().sort(byWeighted);
-  const focus = ranked.filter(d => d.star).concat(ranked.filter(d => !d.star)).slice(0, o.mainRows.focus).sort(byWeighted);
+  // 期待値の大きい進行中の案件（mainRows.focus 件まで）
+  const focus = items.slice().sort((a, b) => ((b.weighted || 0) - (a.weighted || 0)) || ((b.amount || 0) - (a.amount || 0)))
+    .slice(0, o.mainRows.focus);
 
-  // 要対応と、試作から解消した件数
+  // 入力内容のチェックと、試作から解消した件数
   const alerts = mtgAlerts_(table, context, {slipsOf, changes, tracked, rank});
   let resolved = null;
   if (context.draft) {
@@ -634,13 +617,11 @@ function mtgSummarize_(ss, name, context) {
       removed: count('removed'),
       slipped: count('slipped'),
       slips: changes.filter(c => c.flags.indexOf('slipped') >= 0).length,
-      bad: changes.filter(c => mtgCategory_(c.category).bad).length,
       stalled: stalled.length,
       stalledAmount: mtgSum_(stalled, 'amount'),
-      stars: stalled.filter(d => d.star).length,
+      overdue: items.filter(d => d.overdue).length,
       alerts: alerts.length,
-      owners: owners.size,
-      support: focus.filter(d => d.support).length
+      owners: owners.size
     },
     fiscal: mtgFiscal_(name, deals, context.now),
     bridge,
@@ -649,6 +630,7 @@ function mtgSummarize_(ss, name, context) {
     changes,
     stalled,
     focus,
+    overdue: items.filter(d => d.overdue).sort((a, b) => (b.amount || 0) - (a.amount || 0)),
     alerts,
     resolved,
     unmatched: history.unmatched
@@ -830,7 +812,8 @@ function mtgBridge_(deals, byKey, changed, changes) {
 }
 
 /**
- * 要対応 [{type, key, dealKey, customer, project, text, amount, owner}]（MTG_ALERT_TYPES の順。種類の中は想定の大きい順。予定超過は過ぎた日数の多い順）。
+ * 入力内容のチェック [{type, key, dealKey, customer, project, text, amount, owner}]（MTG_ALERT_TYPES の順。種類の中は想定売上の大きい順。
+ * 予定日超過は過ぎた日数の多い順）。
  * info = {slipsOf: キー → 受注月の延期の回数, changes, tracked: 変更の記録がそろっている始まり（ms）, rank}
  */
 function mtgAlerts_(table, context, info) {
@@ -846,7 +829,7 @@ function mtgAlerts_(table, context, info) {
   const month = mtgMonthIndex_(mtgMonth_(today));
   const label = m => m.y + '/' + m.m;
 
-  // 予定超過：このシートに進行中の案件がある得意先の、予定日を過ぎても実施日が空のクレデンシャル・オファリング
+  // 予定日超過：このシートに進行中の案件がある得意先の、予定日を過ぎても実施日が空のクレデンシャル・オファリング
   const customers = new Map();
   active.forEach(d => {
     const key = credNormalize_(d.customer);
@@ -859,7 +842,7 @@ function mtgAlerts_(table, context, info) {
       if (!plan || mtgDateText_(c.values.date) || plan >= today) return;
       const days = Math.round((mtgDay_(today) - mtgDay_(plan)) / 86400000);
       if (days > o.overdueDays) return;
-      overdue.push({type: '予定超過', key: '予定超過|' + c.id, dealKey: '', customer, project: '', owner: c.values.owner || '', amount: null, days,
+      overdue.push({type: '予定日超過', key: '予定日超過|' + c.id, dealKey: '', customer, project: '', owner: c.values.owner || '', amount: null, days,
         text: (c.values.kind || '予定') + '「' + c.values.name + '」の予定日（' + plan.slice(5) + '）から ' + days + '日、実施日が空'});
     });
   });
@@ -877,38 +860,38 @@ function mtgAlerts_(table, context, info) {
       push('更新なし', d, '変更の記録を始めてから更新なし（' + Math.floor((now - info.tracked) / 86400000) + '日以上）');
     }
     if (d.amount != null && d.weighted != null && d.weighted > d.amount) {
-      push('金額の矛盾', d, '期待値 ' + mtgAmount_(d.weighted) + ' が想定 ' + mtgAmount_(d.amount) + ' より大きい');
+      push('金額の不整合', d, '期待値 ' + mtgAmount_(d.weighted) + ' が想定売上 ' + mtgAmount_(d.amount) + ' より大きい');
     }
   });
   deals.forEach(d => {
     if ((d.kind === 'active' || d.kind === 'won') && d.orderMonth && d.startMonth &&
         mtgMonthIndex_(d.startMonth) < mtgMonthIndex_(d.orderMonth)) {
-      push('日付の矛盾', d, '売上開始月 ' + label(d.startMonth) + ' が受注月 ' + label(d.orderMonth) + ' より前');
+      push('月の不整合', d, '売上開始月 ' + label(d.startMonth) + ' が受注月 ' + label(d.orderMonth) + ' より前');
     }
     if (table.statusOrder.length && d.status && info.rank(d.status) < 0) {
-      push('未定義ステータス', d, '「' + d.status + '」はプルダウンの選択肢にない（' + {active: '進行中', won: '受注', lost: '失注', hold: '保留'}[d.kind] + 'として数える）');
+      push('選択肢外のステータス', d, '「' + d.status + '」はプルダウンの選択肢にない（' + {active: '進行中', won: '受注', lost: '失注', hold: '保留'}[d.kind] + 'として数える）');
     }
   });
   if (table.has.delivery) {
     info.changes.filter(c => c.category === 'won' && c.deal && !c.deal.delivery)
-      .forEach(c => push('体制未登録', c.deal, '受注したが「' + MTG_OPTIONS.columns.delivery + '」が空'));
+      .forEach(c => push('デリバリー担当なし', c.deal, '受注したが「' + MTG_OPTIONS.columns.delivery + '」が空'));
   }
   const byAmount = (a, b) => (b.amount || 0) - (a.amount || 0);
   return overdue.concat(MTG_ALERT_TYPES.slice(1).reduce((list, type) => list.concat(out.filter(a => a.type === type).sort(byAmount)), []));
 }
 
-/** 要対応の種類の説明（要対応のページの右に出す） */
+/** 入力内容のチェックの種類の説明（付録C の右に出す） */
 function mtgAlertNote_(type) {
   const o = MTG_OPTIONS;
   return {
-    '予定超過': 'クレデンシャル・オファリングの予定日を過ぎても実施日が空（過ぎて' + o.overdueDays + '日以内）',
+    '予定日超過': 'クレデンシャル・オファリングの予定日を過ぎても実施日が空（過ぎて' + o.overdueDays + '日以内）',
     '受注月超過': '受注月を過ぎても進行中のまま',
     '未入力': '進行中の案件で、' + o.required.map(h => h.replace(/\s+/g, '')).join('・') + ' のどれかが空',
     '更新なし': '進行中で、最終更新日時が' + o.noUpdateDays + '日以上前',
-    '金額の矛盾': '期待値調整済が想定売上規模より大きい',
-    '日付の矛盾': '売上開始月が受注月より前',
-    '未定義ステータス': '案件ステータスが、プルダウンの選択肢にない値',
-    '体制未登録': '前回から受注になったが、' + o.columns.delivery + 'が空'
+    '金額の不整合': '期待値調整済 想定売上規模が、想定売上規模より大きい',
+    '月の不整合': '売上開始月が受注月より前',
+    '選択肢外のステータス': '案件ステータスが、プルダウンの選択肢にない値',
+    'デリバリー担当なし': '前回から受注になったが、' + o.columns.delivery + 'が空'
   }[type] || '';
 }
 
@@ -1129,14 +1112,15 @@ function mtgDealLabel_(item) {
 /* ---------------- 資料（スライド）にする ---------------- */
 
 /**
- * 1つのシートの会議サマリをスライドの並びにする（Slides API に送る前の形。テストと見た目の確認にも使う）。
- * 本編（サマリー → パイプラインの変化 → 前回からの進捗 → 重点案件の状況・課題）と付録 A〜D。見出しは MTG_TITLES（どのシートでも同じ）。
- * 戻り値 [{title, elements}]（elements は mtgSlideRequests_ の部品。タグ・タイトル・リード文・結論の帯・出典・ページ番号も含む）
+ * 1つのシート（サブインダストリー）の会議サマリをスライドの並びにする（Slides API に送る前の形。テストと見た目の確認にも使う）。
+ * 本編（サマリー → パイプラインの変化 → 前回から変わった案件 → 期待値の大きい案件の状況・課題）と付録 A〜E。見出しは MTG_TITLES（どのシートでも同じ）。
+ * 書くのはシートと変更の記録から分かる事実だけ（論点・決めてほしいことなどの判断は、会議でリーダーが話す）。
+ * 戻り値 [{title, elements}]（elements は mtgSlideRequests_ の部品。タグ・タイトル・リード文・出典・ページ番号も含む）
  */
 function mtgSlides_(summary) {
   const slides = [mtgSummarySlide_(summary), mtgBridgeSlide_(summary), mtgMovesSlide_(summary), mtgFocusSlide_(summary)]
     .concat(mtgAppendixChanges_(summary), mtgAppendixStalled_(summary), mtgAppendixOwners_(summary), mtgAppendixAlerts_(summary),
-      mtgAppendixStatus_(summary));
+      mtgAppendixStatus_(summary), mtgAppendixGlossary_(summary));
   return mtgNumberSlides_(mtgSheetFrame_(summary), slides);
 }
 
@@ -1154,7 +1138,7 @@ function mtgSheetFrame_(s) {
   };
 }
 
-/** どのスライドにも付ける部品：左上のタグ・タイトル・リード文・結論の帯（本編）・出典・ページ番号。frame = {tag, source} */
+/** どのスライドにも付ける部品：左上のタグ・タイトル・リード文・出典・ページ番号。frame = {tag, source} */
 function mtgFrame_(frame, slide, page) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
@@ -1168,10 +1152,6 @@ function mtgFrame_(frame, slide, page) {
     el.push(mtgBox_(S.x, 62, S.w, 34, mtgWrap_(slide.lead, S.w, S.leadSize, 2).join('\n'),
       {size: S.leadSize, bold: true, color: c.ink, valign: 'TOP'}));
   }
-  if (slide.band) {
-    el.push(mtgBox_(S.x, 354, S.w, 24, mtgWrap_(slide.band, S.w, 10.5, 1)[0],
-      {size: 10.5, bold: true, color: c.ink, fill: c.highlight, shape: 'RECTANGLE', align: 'CENTER'}));
-  }
   el.push(mtgBox_(S.x, 383, S.w - 60, 16, mtgWrap_(frame.source, S.w - 60, 6.5, 1)[0], {size: 6.5, color: c.faint}));
   el.push(mtgBox_(S.x + S.w - 60, 381, 60, 18, String(page), {size: 9, color: c.muted, align: 'END'}));
   return el;
@@ -1182,7 +1162,7 @@ function mtgPeriodShort_(s) {
   return s.first ? '直近' + MTG_OPTIONS.firstDays + '日で' : '前回から';
 }
 
-/** 1 サマリー：今期の帯・4つの数字・本日の論点。リード文は期待値の前回比・動いた件数・最優先の論点 */
+/** 1 サマリー：今期の帯・4つの数字・前回からの状況の内訳（区分ごとの件数・想定売上・案件） */
 function mtgSummarySlide_(s) {
   const o = MTG_OPTIONS;
   const c = o.colors;
@@ -1191,7 +1171,6 @@ function mtgSummarySlide_(s) {
   const b = s.bridge;
   const f = s.fiscal;
   const delta = b.end - b.start;
-  const issues = mtgIssues_(s);
   const el = [];
 
   const fy = '今期（' + f.label + '）　受注 ' + f.wonCount + '件・' + mtgAmount_(f.wonAmount) + '百万円' +
@@ -1202,11 +1181,12 @@ function mtgSummarySlide_(s) {
 
   const tiles = [
     {label: '進行中の期待値（百万円）', value: mtgAmount_(b.end),
-      sub: (s.first ? '直近' + o.firstDays + '日で ' : '前回比 ') + mtgSigned_(delta) + '・' + k.active + '件（想定 ' + mtgAmount_(k.amount) + '）'},
-    {label: '受注／失注', value: k.won + '件／' + k.lost + '件', sub: '受注の想定 ' + mtgAmount_(k.wonAmount) + '百万円・削除 ' + k.removed + '件'},
-    {label: '前進／後退', value: k.forward + '件／' + k.backward + '件', sub: '新規 ' + k.new + '件・受注月の延期 ' + k.slips + '件'},
-    {label: '停滞（' + o.stallDays + '日以上）', value: k.stalled + '件',
-      sub: '想定 ' + mtgAmount_(k.stalledAmount) + '百万円・★ ' + k.stars + '件'}
+      sub: (s.first ? '直近' + o.firstDays + '日で ' : '前回比 ') + mtgSigned_(delta) + '・' + k.active + '件（想定売上 ' + mtgAmount_(k.amount) + '）'},
+    {label: '受注／失注（' + mtgPeriodShort_(s).replace(/で$/, '') + '）', value: k.won + '件／' + k.lost + '件',
+      sub: '受注した案件の想定売上 ' + mtgAmount_(k.wonAmount) + '百万円'},
+    {label: '前進／後退（' + mtgPeriodShort_(s).replace(/で$/, '') + '）', value: k.forward + '件／' + k.backward + '件',
+      sub: '新規 ' + k.new + '件・受注月の延期 ' + k.slips + '件'},
+    {label: '停滞（ステータスが' + o.stallDays + '日以上同じ）', value: k.stalled + '件', sub: '想定売上 ' + mtgAmount_(k.stalledAmount) + '百万円'}
   ];
   const tw = (S.w - 3 * 8) / 4;
   tiles.forEach((t, i) => {
@@ -1217,95 +1197,68 @@ function mtgSummarySlide_(s) {
     el.push(mtgBox_(x, 162, tw, 15, mtgWrap_(t.sub, tw, 7, 1)[0], {size: 7, color: c.muted}));
   });
 
-  const columns = [128, 32, 282, 32, 198];
-  const rows = [mtgHeadRow_(columns, ['本日の論点', '', '状況', '', '決めてほしいこと'])];
-  issues.forEach(issue => rows.push(mtgRow_(columns, [
-    {text: issue.title + (issue.count ? '\n' + issue.count + '件' : ''), lines: 3, size: 9, bold: true, color: c.white, fill: c.purple},
-    mtgArrowCell_(),
-    {text: issue.status, lines: 3, fill: c.gray},
-    mtgArrowCell_(),
-    {text: issue.ask, lines: 3, bold: true, color: c.ink, fill: c.gray}
-  ], 46)));
-  el.push({type: 'table', x: S.x, y: 186, columns, rows,
-    borders: issues[0] && issues[0].focus ? [{row: 1, col: 0, rows: 1, cols: columns.length, color: c.red}] : []});
+  const columns = [150, 44, 64, 414];
+  const rows = [mtgHeadRow_(columns, ['区分', '件数', '想定売上', '案件（想定売上の大きい順）'])];
+  mtgBreakdown_(s).forEach(line => rows.push(mtgRow_(columns, [
+    {text: line.label, lines: 2, bold: true, color: c.ink, fill: c.purpleSoft},
+    {text: line.items.length + '件', fill: c.gray, align: 'CENTER'},
+    {text: line.items.length ? mtgAmount_(mtgSum_(line.items, 'amount')) : '—', fill: c.gray, align: 'END'},
+    {text: mtgNames_(line.items, line.note), lines: 2, fill: c.gray}
+  ], 0)));
+  el.push({type: 'table', x: S.x, y: 186, columns, rows});
 
   return {
     title: MTG_TITLES.summary,
-    lead: '期待値は ' + mtgAmount_(b.end) + '百万円（' + (s.first ? '直近' + o.firstDays + '日で ' : '前回比 ') + mtgSigned_(delta) + '）。' +
-      mtgPeriodShort_(s) + '受注 ' + k.won + '件・失注 ' + k.lost + '件・前進 ' + k.forward + '件・後退 ' + k.backward + '件・新規 ' + k.new + '件。\n' +
-      issues[0].lead + '。',
-    band: '本日決めたいこと：' + issues[0].ask.split('\n')[0],
+    lead: '期待値は ' + mtgAmount_(b.end) + '百万円（' + (s.first ? '直近' + o.firstDays + '日で ' : '前回比 ') + mtgSigned_(delta) + '）、進行中 ' +
+      k.active + '件。' + mtgPeriodShort_(s) + '受注 ' + k.won + '件・失注 ' + k.lost + '件・前進 ' + k.forward + '件・後退 ' + k.backward +
+      '件・新規 ' + k.new + '件。\nステータスが' + o.stallDays + '日以上同じ案件は ' + k.stalled + '件（想定売上 ' + mtgAmount_(k.stalledAmount) +
+      '百万円）、受注月を過ぎた案件は ' + k.overdue + '件。',
     elements: el
   };
 }
 
 /**
- * 本日の論点（上から3つまで）[{title, count, status, ask, lead: サマリーのリード文の2行目, focus}]。
- * 停滞している大型案件 → 受注月の遅れ → 失注・後退・削除 → 受注 → 要対応 の順に、中身のあるものを出す。
+ * サマリーの内訳の区分（どのシートでも同じ区分を、この順に出す。該当が無ければ0件）[{label, items, note: 案件の後ろの（）の中}]。
+ * items は想定売上の大きい順
  */
-function mtgIssues_(s) {
+function mtgBreakdown_(s) {
   const o = MTG_OPTIONS;
-  const k = s.kpi;
-  const names = (list, text) => list.slice(0, 3).map(text).join('、') + (list.length > 3 ? ' ほか' : '');
-  const out = [];
-  if (s.stalled.length) {
-    out.push({title: '停滞している\n大型案件', count: s.stalled.length, focus: true,
-      lead: '最優先の論点は、ステータスが' + o.stallDays + '日以上動いていない案件 ' + s.stalled.length + '件（想定 ' +
-        mtgAmount_(k.stalledAmount) + '百万円）の打開',
-      status: '想定 ' + mtgAmount_(k.stalledAmount) + '百万円が、ステータス' + o.stallDays + '日以上そのまま\n' +
-        names(s.stalled, d => mtgDealLabel_(d) + '（' + mtgAmount_(d.amount) + '・' + d.days + '日' + (d.atLeast ? '以上' : '') + '）'),
-      ask: '上席の同行と、継続かクローズかの判断' + (k.stars ? '\n（★' + k.stars + '件はオポチュニティキャンバスで深掘り）' : '')});
-  }
-  const slipped = s.changes.filter(c => c.flags.indexOf('slipped') >= 0);
-  const overdue = s.alerts.filter(a => a.type === '受注月超過' && !slipped.some(c => c.key === a.dealKey));
-  if (slipped.length || overdue.length) {
-    const count = slipped.length + overdue.length;
-    out.push({title: '受注月の遅れ', count, lead: '最優先の論点は、受注月の遅れ ' + count + '件の見通しと、今期の着地への影響',
-      status: '受注月を延ばした ' + slipped.length + '件・受注月を過ぎても進行中 ' + s.alerts.filter(a => a.type === '受注月超過').length + '件\n' +
-        names(slipped.map(c => ({label: mtgDealLabel_(c), text: mtgMonthLabel_(c.monthFrom) + '→' + mtgMonthLabel_(c.monthTo)}))
-          .concat(overdue.map(a => ({label: mtgDealLabel_(a), text: '超過'}))), x => x.label + '（' + x.text + '）'),
-      ask: '受注月の見通しと、今期の着地への影響'});
-  }
-  const losses = s.changes.filter(c => ['lost', 'backward', 'removed'].indexOf(c.category) >= 0);
-  if (losses.length) {
-    out.push({title: '失注・後退', count: losses.length, lead: '最優先の論点は、失注・後退 ' + losses.length + '件の要因と再アプローチの要否',
-      status: '失注 ' + k.lost + '件・後退 ' + k.backward + '件・削除 ' + k.removed + '件\n' +
-        names(losses, c => mtgDealLabel_(c) + '（' + mtgCategory_(c.category).label + '）'),
-      ask: '要因と、再アプローチの要否'});
-  }
-  const won = s.changes.filter(c => c.category === 'won');
-  if (won.length) {
-    out.push({title: '受注', count: won.length,
-      lead: '最優先の論点は、受注 ' + won.length + '件（想定 ' + mtgAmount_(k.wonAmount) + '百万円）の立ち上げと横展開',
-      status: '想定 ' + mtgAmount_(k.wonAmount) + '百万円\n' + names(won, c => mtgDealLabel_(c) + '（' + mtgAmount_(c.amount) + '）'),
-      ask: '立ち上げの体制と、ほかの得意先への横展開'});
-  }
-  if (s.alerts.length) {
-    const types = MTG_ALERT_TYPES.map(t => [t, s.alerts.filter(a => a.type === t).length]).filter(p => p[1]);
-    out.push({title: '要対応', count: s.alerts.length, lead: '最優先の論点は、要対応 ' + s.alerts.length + '件（責任者 ' + k.owners + '人）の解消',
-      status: '責任者 ' + k.owners + '人\n' + types.map(p => p[0] + ' ' + p[1]).join('・'),
-      ask: '各責任者への修正の依頼（次の会議まで）'});
-  }
-  if (!out.length) {
-    out.push({title: '大きな動きなし', count: 0, lead: mtgPeriodShort_(s) + '大きな動きは無く、各案件の次のアクションを確認したい',
-      status: mtgPeriodShort_(s) + '大きな動きはありません', ask: '各案件の次のアクションの確認'});
-  }
-  return out.slice(0, 3);
+  const byAmount = list => list.slice().sort((a, b) => (b.amount || 0) - (a.amount || 0));
+  const of = keys => byAmount(s.changes.filter(ch => keys.indexOf(ch.category) >= 0));
+  const slipped = s.changes.filter(ch => ch.flags.indexOf('slipped') >= 0 && !ch.removed);
+  const late = slipped.map(ch => Object.assign({}, ch, {note: mtgMonthLabel_(ch.monthFrom) + '→' + mtgMonthLabel_(ch.monthTo)}))
+    .concat(s.overdue.filter(d => !slipped.some(ch => ch.key === d.key))
+      .map(d => Object.assign({}, d, {note: mtgMonthLabel_(d.orderMonthText) + 'を過ぎて進行中'})));
+  return [
+    {label: '新規・前進', items: of(['new', 'forward']),
+      note: ch => (ch.category === 'new' ? '新規' : ch.statusFrom + '→' + ch.statusTo)},
+    {label: '受注', items: of(['won'])},
+    {label: '失注・後退・削除', items: of(['lost', 'backward', 'removed']),
+      note: ch => (ch.category === 'backward' ? ch.statusFrom + '→' + ch.statusTo : mtgCategory_(ch.category).label)},
+    {label: '受注月の延期・超過', items: byAmount(late), note: d => d.note},
+    {label: '停滞（' + o.stallDays + '日以上）', items: s.stalled, note: d => d.days + '日' + (d.atLeast ? '以上' : '')}
+  ];
+}
+
+/** 案件の名前を並べる（mainRows.deals 件まで。残りは「ほか N件」）。note(案件) があれば名前の後ろに（）で付ける */
+function mtgNames_(items, note) {
+  if (!items.length) return '—';
+  const n = MTG_OPTIONS.mainRows.deals;
+  return items.slice(0, n).map(d => mtgDealLabel_(d) + (note ? '（' + note(d) + '）' : '')).join('、') +
+    (items.length > n ? '　ほか ' + (items.length - n) + '件' : '');
 }
 
 /** 2 パイプラインの変化：期待値の増減（滝の図）・ステータス別・受注月（四半期）別の期待値 */
 function mtgBridgeSlide_(s) {
-  const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
   const b = s.bridge;
   const delta = b.end - b.start;
   const moves = b.steps.filter(st => st.count);
   const biggest = moves.slice().sort((x, y) => Math.abs(y.value) - Math.abs(x.value))[0];
-  const worst = moves.filter(st => st.value < 0).sort((x, y) => x.value - y.value)[0];
   const plus = mtgSum_(b.steps.filter(st => st.value > 0), 'value');
   const minus = mtgSum_(b.steps.filter(st => st.value < 0), 'value');
   const peak = s.quarters.filter(q => /Q/.test(q.label) && q.value > 0).sort((x, y) => y.value - x.value)[0];
-  const el = mtgWaterfall_(s, S.x, S.top, 360, 244);
+  const el = mtgWaterfall_(s, S.x, S.top, 360, 260);
   const stages = s.stages.filter(st => st.kind === 'active');
   const shown = stages.slice(0, 8);
   if (stages.length > 8) {
@@ -1319,11 +1272,10 @@ function mtgBridgeSlide_(s) {
   return {
     title: MTG_TITLES.pipeline,
     lead: '期待値は ' + mtgAmount_(b.start) + ' → ' + mtgAmount_(b.end) + '百万円（' + mtgSigned_(delta) + '）。増えた分 ' + mtgSigned_(plus) +
-      '・減った分 ' + mtgSigned_(minus) + (biggest && biggest.value ? '、最大の要因は' + biggest.label + '（' + biggest.count + '件・' + mtgSigned_(biggest.value) + '）' : '') +
-      '。\n今期に受注予定の期待値は ' + mtgAmount_(s.fiscal.planned) + '百万円' + (peak ? '（' + peak.label.replace(/（.*/, '') + 'が最も多い ' + mtgAmount_(peak.value) + '）' : '') +
+      '・減った分 ' + mtgSigned_(minus) + (biggest && biggest.value ? '、内訳で最も大きいのは' + biggest.label + '（' + biggest.count + '件・' +
+        mtgSigned_(biggest.value) + '）' : '') +
+      '。\n今期に受注予定の期待値は ' + mtgAmount_(s.fiscal.planned) + '百万円' + (peak ? '（' + peak.label.replace(/（.*/, '') + 'が最も多く ' + mtgAmount_(peak.value) + '）' : '') +
       (s.kpi.missingWeighted ? '。期待値が空の ' + s.kpi.missingWeighted + '件は0として計算' : '') + '。',
-    band: worst && -worst.value >= plus ? worst.label + 'の ' + worst.count + '件（' + mtgSigned_(worst.value) + '）の要因を確認したい'
-      : plus > 0 ? '増えた分（新規・増額・復帰）の確度と受注月を確認したい' : '前回から期待値の増減はありません',
     elements: el
   };
 }
@@ -1387,7 +1339,7 @@ function mtgBars_(title, items, x, y, w, rowH) {
   return el;
 }
 
-/** 3 前回からの進捗：ステータス・期待値・受注月が動いた案件（大きな動きの順に上位。悪い動きは赤枠） */
+/** 3 前回から変わった案件：ステータス・期待値・受注月が変わった案件（区分の順に上位） */
 function mtgMovesSlide_(s) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
@@ -1395,14 +1347,11 @@ function mtgMovesSlide_(s) {
   const moves = s.changes.filter(ch => ch.category !== 'updated');
   const top = moves.slice(0, MTG_OPTIONS.mainRows.changes);
   const columns = [146, 44, 130, 66, 80, 154, 52];
-  const rows = [mtgHeadRow_(columns, ['得意先／案件名', '区分', 'ステータス（前▶今）', '期待値\n（前▶今）', '受注月\n（前▶今）', '活動状況（今）', '責任者'])];
-  const borders = [];
+  const rows = [mtgHeadRow_(columns, ['得意先／案件名', '区分', 'ステータス（前▶今）', '期待値\n（前▶今）', '受注月\n（前▶今）', '活動状況（現在）', '責任者'])];
   top.forEach(ch => {
-    const bad = mtgCategory_(ch.category).bad;
-    if (bad) borders.push({row: rows.length, col: 0, rows: 1, cols: columns.length, color: c.red});
     rows.push(mtgRow_(columns, [
-      mtgDealCell_(ch, columns[0], false),
-      {text: mtgCategory_(ch.category).label, bold: true, color: bad ? c.red : c.purple, fill: c.gray, align: 'CENTER'},
+      mtgDealCell_(ch, columns[0]),
+      {text: mtgCategory_(ch.category).label, bold: true, color: mtgCategory_(ch.category).red ? c.red : c.purple, fill: c.gray, align: 'CENTER'},
       {text: mtgStatusMove_(ch), lines: 2, fill: c.gray},
       {text: mtgValueMove_(ch.weightedFrom, ch.weightedTo, ch), lines: 2, fill: c.gray, align: 'CENTER'},
       {text: mtgMonthMove_(ch), lines: 2, fill: c.gray, align: 'CENTER'},
@@ -1412,72 +1361,112 @@ function mtgMovesSlide_(s) {
   });
   const el = [];
   if (top.length) {
-    el.push({type: 'table', x: S.x, y: S.top, columns, rows, borders});
+    el.push({type: 'table', x: S.x, y: S.top, columns, rows});
   } else {
-    el.push(mtgBox_(S.x, S.top + 20, S.w, 30, '前回から、ステータス・期待値・受注月が動いた案件はありません', {size: 10, color: c.muted, align: 'CENTER'}));
+    el.push(mtgBox_(S.x, S.top + 20, S.w, 30, mtgPeriodShort_(s) + 'ステータス・期待値・受注月が変わった案件はありません',
+      {size: 10, color: c.muted, align: 'CENTER'}));
   }
-  const lead = moves.length
-    ? mtgPeriodShort_(s) + '動いた案件は ' + moves.length + '件（受注 ' + k.won + '・失注 ' + k.lost + '・前進 ' + k.forward + '・後退 ' + k.backward +
-      '・延期 ' + k.slipped + '・新規 ' + k.new + '）。' + (k.bad ? '悪い動き（失注・後退・延期）の ' + k.bad + '件は赤枠。' : '悪い動きはなし。') +
-      '\n' + (moves.length > top.length ? '大きな動きの順に上位' + top.length + '件。' : '') + '全件と、ほかの項目だけ更新した ' + k.updated + '件は付録A。'
-    : mtgPeriodShort_(s) + 'ステータス・期待値・受注月が動いた案件はありません。\nほかの項目だけ更新した案件は ' + k.updated + '件（付録A）。';
   return {
     title: MTG_TITLES.progress,
-    lead,
-    band: k.bad ? '失注・後退・延期の ' + k.bad + '件は、要因と次の打ち手を確認したい'
-      : moves.length ? '前進した案件の次のアクションを確認したい' : '各案件の次のアクションを確認したい',
+    lead: moves.length
+      ? mtgPeriodShort_(s) + 'ステータス・期待値・受注月が変わった案件は ' + moves.length + '件（受注 ' + k.won + '・失注 ' + k.lost + '・前進 ' +
+        k.forward + '・後退 ' + k.backward + '・延期 ' + k.slipped + '・新規 ' + k.new + '）。\n' +
+        (moves.length > top.length ? '区分の順（受注・失注・後退・延期・前進・新規…）に上位' + top.length + '件。' : '') +
+        '全件と、ほかの項目だけ更新した ' + k.updated + '件は付録A。'
+      : mtgPeriodShort_(s) + 'ステータス・期待値・受注月が変わった案件はありません。\nほかの項目だけ更新した案件は ' + k.updated + '件（付録A）。',
     elements: el
   };
 }
 
-/**
- * 4 重点案件の状況・課題：★の案件と、期待値の大きい進行中の案件（summary.focus）。
- * 支援の要否を決めたい案件（停滞・受注月超過・受注月の延期が多い・課題に決裁者／上席）は赤枠。ラップアップMTG（BX本部内会議）の「支援が必要な案件」にもつながる
- */
+/** 4 期待値の大きい案件の状況・課題：進行中の案件の期待値の大きい順（summary.focus）。当てはまる状況（停滞・受注月超過・延期）は事実だけ */
 function mtgFocusSlide_(s) {
   const o = MTG_OPTIONS;
   const c = o.colors;
   const S = MTG_SLIDE;
   const k = s.kpi;
-  const columns = [130, 50, 84, 52, 98, 32, 92, 32, 102];
-  const rows = [mtgHeadRow_(columns, ['得意先／案件名', '期待値／\n想定', 'ステータス\n（滞留）', '受注月', '活動状況', '', '活動における課題', '', '決めること'])];
-  const borders = [];
-  s.focus.forEach(d => {
-    if (d.support) borders.push({row: rows.length, col: 0, rows: 1, cols: columns.length, color: c.red});
-    rows.push(mtgRow_(columns, [
-      mtgDealCell_(d, columns[0], d.star),
-      {text: mtgAmount_(d.weighted) + '\n' + mtgAmount_(d.amount), lines: 2, fill: c.gray, align: 'CENTER'},
-      {text: (d.status || '（空欄）') + '\n' + (d.days == null ? '—' : d.days + '日' + (d.atLeast ? '以上' : '')), lines: 2, fill: c.gray, align: 'CENTER'},
-      {text: mtgMonthLabel_(d.orderMonthText) + (d.slips ? '\n延期' + d.slips + '回' : d.overdue ? '\n超過' : ''), lines: 2, fill: c.gray,
-        align: 'CENTER', color: d.overdue ? c.red : c.body},
-      {text: d.activity || '—', lines: 3, fill: c.gray},
-      mtgArrowCell_(),
-      {text: d.issue || '—', lines: 3, fill: c.gray},
-      mtgArrowCell_(),
-      {text: d.decide, lines: 3, bold: true, color: c.ink, fill: c.gray}
-    ], 44));
-  });
+  const columns = [140, 56, 88, 56, 136, 124, 72];
+  const rows = [mtgHeadRow_(columns, ['得意先／案件名', '期待値／\n想定売上', 'ステータス\n（同じ日数）', '受注月', '活動状況', '活動における課題',
+    '当てはまる\n状況'])];
+  s.focus.forEach(d => rows.push(mtgRow_(columns, [
+    mtgDealCell_(d, columns[0]),
+    {text: mtgAmount_(d.weighted) + '\n' + mtgAmount_(d.amount), lines: 2, fill: c.gray, align: 'CENTER'},
+    {text: (d.status || '（空欄）') + '\n' + (d.days == null ? '—' : d.days + '日' + (d.atLeast ? '以上' : '')), lines: 2, fill: c.gray, align: 'CENTER'},
+    {text: mtgMonthLabel_(d.orderMonthText), fill: c.gray, align: 'CENTER', color: d.overdue ? c.red : c.body},
+    {text: d.activity || '—', lines: 3, fill: c.gray},
+    {text: d.issue || '—', lines: 3, fill: c.gray},
+    {text: mtgFlags_(d).join('\n') || '—', lines: 3, fill: c.gray, align: 'CENTER', color: mtgFlags_(d).length ? c.red : c.body}
+  ], 44)));
   const el = [];
   if (s.focus.length) {
-    el.push({type: 'table', x: S.x, y: S.top, columns, rows, borders});
+    el.push({type: 'table', x: S.x, y: S.top, columns, rows});
   } else {
     el.push(mtgBox_(S.x, S.top + 20, S.w, 30, '進行中の案件はありません', {size: 10, color: c.muted, align: 'CENTER'}));
   }
   const share = k.weighted > 0 ? Math.round(mtgSum_(s.focus, 'weighted') / k.weighted * 100) : 0;
+  const count = test => s.focus.filter(test).length;
   return {
     title: MTG_TITLES.focus,
     lead: s.focus.length
-      ? '期待値の大きい進行中の案件' + (k.stars ? 'と★の案件' : '') + 'の ' + s.focus.length + '件（進行中の期待値の ' + share + '%）。' +
-        (k.stalled ? '停滞の全 ' + k.stalled + '件は付録B。' : '停滞している案件はなし。') +
-        '\n赤枠の ' + k.support + '件は支援の要否を決めたい案件（停滞・受注月の遅れ・課題に上席など）。' + (k.stars ? '★はキャンバスで深掘りする候補。' : '')
+      ? '進行中の案件のうち、期待値の大きい ' + s.focus.length + '件（進行中の期待値の ' + share + '%）。\nこのうち停滞 ' + count(d => d.stalled) +
+        '件・受注月超過 ' + count(d => d.overdue) + '件・受注月の延期あり ' + count(d => d.slips > 0) + '件。停滞の全 ' + k.stalled + '件は付録B。'
       : '進行中の案件はありません。',
-    band: k.support ? '赤枠の ' + k.support + '件は、支援の要否（上席の同行・クローズ）を決めたい'
-      : s.focus.length ? '重点案件の次のアクションと受注月の見通しを確認したい' : '進行中の案件はありません',
     elements: el
   };
 }
 
-/** 付録C 要対応（責任者別）：責任者 × 種類の件数・種類の説明・試作から解消した件数（要対応が無ければ作らない） */
+/** 案件に当てはまる状況（停滞・受注月超過・延期n回） */
+function mtgFlags_(d) {
+  return [d.stalled && '停滞', d.overdue && '受注月超過', d.slips && '延期' + d.slips + '回'].filter(Boolean);
+}
+
+/** 付録A 前回から変わった案件（一覧。更新のみ・削除も） */
+function mtgAppendixChanges_(s) {
+  const c = MTG_OPTIONS.colors;
+  const columns = [150, 50, 118, 72, 84, 146, 52];
+  return mtgPagedTable_({
+    title: MTG_TITLES.changes,
+    lead: mtgPeriodShort_(s) + '変わった案件は ' + s.changes.length + '件。' +
+      (s.unmatched ? '案件に結び付けられなかった変更の記録 ' + s.unmatched + '件は数えていない。' : '') +
+      '\n区分は案件ごとに1つ（新規 > 受注 > 失注 > 保留 > 復帰 > 前進 > 後退 > 延期 > 前倒し > 増額 > 減額 > 変更 > 更新のみ）。区分の意味は付録E。',
+    columns,
+    head: ['得意先／案件名', '区分', 'ステータス（前▶今）', '期待値\n（前▶今）', '受注月\n（前▶今）', '更新した項目', '責任者'],
+    rows: s.changes.map(ch => [
+      {text: mtgDealLabel_(ch), lines: 2, bold: true, color: c.ink, fill: c.purpleSoft},
+      {text: mtgCategory_(ch.category).label, bold: true, color: mtgCategory_(ch.category).red ? c.red : c.purple, fill: c.gray, align: 'CENTER'},
+      {text: mtgStatusMove_(ch), lines: 2, fill: c.gray},
+      {text: mtgValueMove_(ch.weightedFrom, ch.weightedTo, ch), lines: 2, fill: c.gray, align: 'CENTER'},
+      {text: mtgMonthMove_(ch), lines: 2, fill: c.gray, align: 'CENTER'},
+      {text: ch.columns.map(mtgShortHeader_).join('・') || (ch.removed ? '（行を削除）' : '—'), lines: 2, fill: c.gray},
+      {text: ch.owner || '—', fill: c.gray, align: 'CENTER'}
+    ])
+  });
+}
+
+/** 付録B 停滞している案件（一覧） */
+function mtgAppendixStalled_(s) {
+  const c = MTG_OPTIONS.colors;
+  const columns = [150, 44, 44, 84, 58, 56, 34, 56, 146];
+  return mtgPagedTable_({
+    title: MTG_TITLES.stalled,
+    lead: '進行中で、ステータスが' + MTG_OPTIONS.stallDays + '日以上同じ案件は ' + s.stalled.length + '件（想定売上 ' +
+      mtgAmount_(s.kpi.stalledAmount) + '百万円。想定売上の大きい順）。\n「以上」は、変更の記録を始める前から同じもの。',
+    columns,
+    head: ['得意先／案件名', '想定\n売上', '期待値', 'ステータス', '同じ日数', '受注月', '延期', '責任者', '活動における課題'],
+    rows: s.stalled.map(d => [
+      {text: mtgDealLabel_(d), lines: 2, bold: true, color: c.ink, fill: c.purpleSoft},
+      {text: mtgAmount_(d.amount), fill: c.gray, align: 'END'},
+      {text: mtgAmount_(d.weighted), fill: c.gray, align: 'END'},
+      {text: d.status || '（空欄）', fill: c.gray},
+      {text: d.days + '日' + (d.atLeast ? '以上' : ''), fill: c.gray, align: 'CENTER'},
+      {text: mtgMonthLabel_(d.orderMonthText), fill: c.gray, align: 'CENTER', color: d.overdue ? c.red : c.body},
+      {text: d.slips ? d.slips + '回' : '', fill: c.gray, align: 'CENTER'},
+      {text: d.owner || '—', fill: c.gray, align: 'CENTER'},
+      {text: d.issue || '—', lines: 2, fill: c.gray}
+    ])
+  });
+}
+
+/** 付録C 入力内容のチェック（責任者別）：責任者 × 種類の件数・種類の説明・試作から解消した件数（当てはまるものが無ければ作らない） */
 function mtgAppendixOwners_(s) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
@@ -1499,8 +1488,8 @@ function mtgAppendixOwners_(s) {
   }
   lines.push({label: '合計', list: s.alerts, total: true});
   const columns = [96].concat(types.map(() => 52), [40]);
-  const short = {'予定超過': '予定\n超過', '受注月超過': '受注月\n超過', '更新なし': '更新\nなし', '金額の矛盾': '金額の\n矛盾', '日付の矛盾': '日付の\n矛盾',
-    '未定義ステータス': '未定義の\nステータス', '体制未登録': '体制\n未登録'};
+  const short = {'予定日超過': '予定日\n超過', '受注月超過': '受注月\n超過', '更新なし': '更新\nなし', '金額の不整合': '金額の\n不整合',
+    '月の不整合': '月の\n不整合', '選択肢外のステータス': '選択肢外の\nステータス', 'デリバリー担当なし': 'デリバリー\n担当なし'};
   const rows = [mtgHeadRow_(columns, ['責任者'].concat(types.map(t => short[t] || t), ['計']), 6.5)];
   lines.forEach(line => {
     const fill = line.total ? c.purpleSoft : c.gray;
@@ -1514,152 +1503,142 @@ function mtgAppendixOwners_(s) {
   const tableW = columns.reduce((a, b) => a + b, 0);
   const noteX = S.x + tableW + 16;
   const noteW = S.w - tableW - 16;
-  el.push(mtgBox_(noteX, S.top, noteW, 16, '要対応の種類', {size: 8.5, bold: true, color: c.purple}));
+  el.push(mtgBox_(noteX, S.top, noteW, 16, 'チェックの種類', {size: 8.5, bold: true, color: c.purple}));
   let y = S.top + 18;
   types.forEach(t => {
     const text = mtgWrap_(t + '：' + mtgAlertNote_(t), noteW, 7, 3);
     const h = mtgLineHeight_(text.length, 7);
-    if (y + h > S.appendixBottom) return;
+    if (y + h > S.bottom) return;
     el.push(mtgBox_(noteX, y, noteW, h, text.join('\n'), {size: 7, color: c.body, valign: 'TOP'}));
     y += h;
   });
   const r = s.resolved;
   return [{
     title: MTG_TITLES.owners,
-    lead: '要対応は ' + s.alerts.length + '件（責任者 ' + k.owners + '人）。' +
-      (r ? '試作（' + Utilities.formatDate(new Date(r.at), Session.getScriptTimeZone(), 'MM/dd') + '）の時点から ' + r.fixed + '件を解消・新たに ' + r.added + '件。' : '') +
-      '\n会議の前に、責任者ごとに修正を依頼する（案件ごとの一覧は次のページ）。',
+    lead: '入力内容のチェックに当てはまったのは ' + s.alerts.length + '件（責任者 ' + k.owners + '人）。' +
+      (r ? '試作（' + Utilities.formatDate(new Date(r.at), Session.getScriptTimeZone(), 'MM/dd') + '）の時点から ' + r.fixed + '件が解消、新たに ' + r.added + '件。' : '') +
+      '\n責任者ごとの件数と、チェックの種類（右）。案件ごとの一覧は次のページ。',
     elements: el
   }];
 }
 
-/** 付録A 前回からの変化（一覧。更新のみ・削除も） */
-function mtgAppendixChanges_(s) {
-  const c = MTG_OPTIONS.colors;
-  const columns = [150, 50, 118, 72, 84, 146, 52];
-  return mtgPagedTable_({
-    title: MTG_TITLES.changes,
-    lead: mtgPeriodShort_(s) + '変わった案件は ' + s.changes.length + '件。' +
-      (s.unmatched ? '案件に結び付けられなかった変更の記録 ' + s.unmatched + '件は数えていない。' : '') +
-      '\n区分は案件ごとに1つ（新規 > 受注 > 失注 > 保留 > 復帰 > 前進 > 後退 > 延期 > 前倒し > 増額 > 減額 > 変更 > 更新のみ）。前進・後退はプルダウンの並び順で判定。',
-    columns,
-    head: ['得意先／案件名', '区分', 'ステータス（前▶今）', '期待値\n（前▶今）', '受注月\n（前▶今）', '更新した項目', '責任者'],
-    rows: s.changes.map(ch => ({bad: mtgCategory_(ch.category).bad, cells: [
-      {text: mtgDealLabel_(ch), lines: 2, bold: true, color: c.ink, fill: c.purpleSoft},
-      {text: mtgCategory_(ch.category).label, bold: true, color: mtgCategory_(ch.category).bad ? c.red : c.purple, fill: c.gray, align: 'CENTER'},
-      {text: mtgStatusMove_(ch), lines: 2, fill: c.gray},
-      {text: mtgValueMove_(ch.weightedFrom, ch.weightedTo, ch), lines: 2, fill: c.gray, align: 'CENTER'},
-      {text: mtgMonthMove_(ch), lines: 2, fill: c.gray, align: 'CENTER'},
-      {text: ch.columns.map(mtgShortHeader_).join('・') || (ch.removed ? '（行を削除）' : '—'), lines: 2, fill: c.gray},
-      {text: ch.owner || '—', fill: c.gray, align: 'CENTER'}
-    ]}))
-  });
-}
-
-/** 付録B 停滞している案件（一覧） */
-function mtgAppendixStalled_(s) {
-  const c = MTG_OPTIONS.colors;
-  const columns = [150, 44, 44, 84, 58, 56, 34, 56, 146];
-  return mtgPagedTable_({
-    title: MTG_TITLES.stalled,
-    lead: '進行中で、ステータスが' + MTG_OPTIONS.stallDays + '日以上変わっていない案件は ' + s.stalled.length + '件（想定 ' +
-      mtgAmount_(s.kpi.stalledAmount) + '百万円。想定の大きい順）。\n「以上」は記録より前から変わっていないもの。★（赤枠）はオポチュニティキャンバスで深掘りする候補。',
-    columns,
-    head: ['得意先／案件名', '想定', '期待値', 'ステータス', '滞留', '受注月', '延期', '責任者', '活動における課題'],
-    rows: s.stalled.map(d => ({bad: d.star, cells: [
-      {text: (d.star ? '★ ' : '') + mtgDealLabel_(d), lines: 2, bold: true, color: c.ink, fill: c.purpleSoft},
-      {text: mtgAmount_(d.amount), fill: c.gray, align: 'END'},
-      {text: mtgAmount_(d.weighted), fill: c.gray, align: 'END'},
-      {text: d.status || '（空欄）', fill: c.gray},
-      {text: d.days + '日' + (d.atLeast ? '以上' : ''), fill: c.gray, align: 'CENTER'},
-      {text: mtgMonthLabel_(d.orderMonthText), fill: c.gray, align: 'CENTER'},
-      {text: d.slips ? d.slips + '回' : '', fill: c.gray, align: 'CENTER'},
-      {text: d.owner || '—', fill: c.gray, align: 'CENTER'},
-      {text: d.issue || '—', lines: 2, fill: c.gray}
-    ]}))
-  });
-}
-
-/** 付録C 要対応（一覧） */
+/** 付録C 入力内容のチェック（一覧） */
 function mtgAppendixAlerts_(s) {
   const c = MTG_OPTIONS.colors;
   const columns = [170, 70, 296, 52, 84];
   return mtgPagedTable_({
     title: MTG_TITLES.alerts,
-    lead: '要対応は ' + s.alerts.length + '件。\n種類の順（' + MTG_ALERT_TYPES.join('・') + '）。種類の中は想定の大きい順。',
+    lead: '入力内容のチェックに当てはまったのは ' + s.alerts.length + '件。\n並びは種類の順（前のページの表の列の順）、種類の中は想定売上の大きい順。',
     columns,
-    head: ['得意先／案件名', '種類', '内容', '想定', '責任者'],
-    rows: s.alerts.map(a => ({cells: [
+    head: ['得意先／案件名', '種類', '内容', '想定\n売上', '責任者'],
+    rows: s.alerts.map(a => [
       {text: mtgDealLabel_(a), lines: 2, bold: true, color: c.ink, fill: c.purpleSoft},
-      {text: a.type, bold: true, color: c.red, fill: c.gray, align: 'CENTER'},
+      {text: a.type, lines: 2, bold: true, color: c.red, fill: c.gray, align: 'CENTER'},
       {text: a.text, lines: 2, fill: c.gray},
       {text: mtgAmount_(a.amount), fill: c.gray, align: 'END'},
       {text: a.owner || '—', fill: c.gray, align: 'CENTER'}
-    ]}))
+    ])
   });
 }
 
-/** 付録D ステータスの分類（件数・金額。期待値・前進／後退の数え方） */
+/** 付録D ステータスの分類（件数・金額・数え方） */
 function mtgAppendixStatus_(s) {
   const c = MTG_OPTIONS.colors;
   const columns = [150, 60, 44, 70, 70, 278];
   const kinds = {active: '進行中', won: '受注', lost: '失注', hold: '保留'};
   const notes = {
-    active: '期待値・パイプラインに数える。プルダウンの順で前進・後退を判定',
-    won: 'パイプラインから外す（今期の受注に数える）',
-    lost: 'パイプラインから外す',
-    hold: 'パイプラインから外す（進行中に戻ったら「復帰」）'
+    active: '期待値に数える。プルダウンの順で前進・後退を判定',
+    won: '期待値に数えない（今期の受注に数える）',
+    lost: '期待値に数えない',
+    hold: '期待値に数えない（進行中に戻ったら「復帰」）'
   };
-  const rows = s.stages.map(st => ({bad: !st.known, cells: [
+  const rows = s.stages.map(st => [
     {text: st.status, bold: true, color: c.ink, fill: c.purpleSoft},
     {text: kinds[st.kind], fill: c.gray, align: 'CENTER'},
     {text: String(st.count), fill: c.gray, align: 'END'},
     {text: mtgAmount_(st.amount), fill: c.gray, align: 'END'},
     {text: mtgAmount_(st.weighted), fill: c.gray, align: 'END'},
-    {text: (st.known ? '' : 'プルダウンにない値。') + notes[st.kind], fill: c.gray}
-  ]}));
-  rows.push({cells: [
+    {text: (st.known ? '' : '選択肢外（プルダウンにない値）。') + notes[st.kind], fill: c.gray, color: st.known ? c.body : c.red}
+  ]);
+  rows.push([
     {text: '合計', bold: true, color: c.ink, fill: c.purpleSoft}, {text: '', fill: c.purpleSoft},
     {text: String(mtgSum_(s.stages, 'count')), bold: true, fill: c.purpleSoft, align: 'END'},
     {text: mtgAmount_(mtgSum_(s.stages, 'amount')), bold: true, fill: c.purpleSoft, align: 'END'},
     {text: mtgAmount_(mtgSum_(s.stages, 'weighted')), bold: true, fill: c.purpleSoft, align: 'END'},
     {text: '', fill: c.purpleSoft}
-  ]});
+  ]);
   return mtgPagedTable_({
     title: MTG_TITLES.status,
     lead: '案件 ' + s.kpi.deals + '件のうち、進行中 ' + s.kpi.active + '件（期待値 ' + mtgAmount_(s.kpi.weighted) + '百万円）。' +
-      (s.stages.some(st => !st.known) ? 'プルダウンにない値（赤枠）がある。' : '') +
       '\n分類はステータスのことばで判定（MeetingSummary.gs の MTG_OPTIONS で変えられる）。並びは案件ステータスのプルダウンの順。',
     columns,
-    head: ['案件ステータス', '分類', '件数', '想定', '期待値', '数え方'],
+    head: ['案件ステータス', '分類', '件数', '想定売上', '期待値', '数え方'],
     rows
   });
 }
 
+/** 付録E 用語の定義（資料で使う言葉の意味と数え方。mtgGlossary_） */
+function mtgAppendixGlossary_(s) {
+  const c = MTG_OPTIONS.colors;
+  return mtgPagedTable_({
+    title: MTG_TITLES.glossary,
+    lead: '資料で使っている言葉の意味と数え方。\n日数・期の始まりなどは MeetingSummary.gs の MTG_OPTIONS の設定による。',
+    columns: [132, 540],
+    head: ['用語', '意味'],
+    rows: mtgGlossary_(s).map(([term, meaning]) => [
+      {text: term, lines: 2, bold: true, color: c.ink, fill: c.purpleSoft},
+      {text: meaning, lines: 2, fill: c.gray}
+    ])
+  });
+}
+
+/** 資料で使う言葉の意味 [[用語, 意味]]（付録E。設定の日数などを入れる） */
+function mtgGlossary_(s) {
+  const o = MTG_OPTIONS;
+  return [
+    ['前回', '前回の会議の資料を作った日時（前回の会議の記録が無ければ、直近' + o.firstDays + '日）。この資料の期間：' + mtgPeriodText_(s)],
+    ['想定売上', '「想定売上規模（百万）」の値（百万円）'],
+    ['期待値', '「期待値調整済 想定売上規模（百万）」の値（百万円）。合計は進行中の案件だけ（空は0として計算）'],
+    ['進行中・受注・失注・保留', '案件ステータスの分類（付録D）。受注・失注・保留のどれにも当たらないステータス（空も）は進行中'],
+    ['新規', '前回より後に追加された案件'],
+    ['受注・失注・保留（区分）', '前回より後に、ステータスがその分類に変わった案件'],
+    ['復帰', '前回より後に、受注・失注・保留から進行中に戻った案件'],
+    ['前進・後退', '進行中のまま、ステータスがプルダウンの並びで後ろ（前進）・前（後退）の値に変わった案件'],
+    ['延期・前倒し', '受注月が後ろ（延期）・前（前倒し）の月に変わった案件。「延期n回」は、変更の記録がある期間の回数'],
+    ['増額・減額', '期待値が増えた・減った案件'],
+    ['変更', 'ステータスが変わったが、前進・後退で比べられない案件（プルダウンにない値など）'],
+    ['削除', '前回より後に行が削除された案件（失注には数えない）'],
+    ['更新のみ', '上のどれにも当たらず、ほかの項目だけ変わった案件'],
+    ['停滞', '進行中で、ステータスが' + o.stallDays + '日以上同じ案件（変更の記録を始める前から同じなら「N日以上」）'],
+    ['受注月超過', '進行中で、受注月が今月より前の案件'],
+    ['今期', s.fiscal.label],
+    ['着地見込み', '今期の受注（受注月が今期の、受注した案件の想定売上）＋ 今期に受注予定の期待値（受注月が今期の、進行中の案件の期待値）'],
+    ['入力内容のチェック', '入力の漏れ・予定日を過ぎた予定・値の不整合など（付録C）']
+  ];
+}
+
 /**
  * 付録の表を、入りきる行ずつのページに分ける（見出しの行は各ページに）。行が無ければページを作らない。
- * spec = {title, lead, columns, head, rows: [{cells, bad}]}。bad の行は赤枠
+ * spec = {title, lead, columns, head, rows: [[セル]]}
  */
 function mtgPagedTable_(spec) {
   const S = MTG_SLIDE;
-  const red = MTG_OPTIONS.colors.red;
   const head = mtgHeadRow_(spec.columns, spec.head);
   const pages = [];
   let page = null;
-  spec.rows.forEach(line => {
-    const row = mtgRow_(spec.columns, line.cells.map(cell => Object.assign({size: S.appendixSize}, cell)), 0);
-    if (!page || page.y + row.h > S.appendixBottom) {
-      page = {rows: [head], borders: [], y: S.top + head.h};
+  spec.rows.forEach(cells => {
+    const row = mtgRow_(spec.columns, cells.map(cell => Object.assign({size: S.appendixSize}, cell)), 0);
+    if (!page || page.y + row.h > S.bottom) {
+      page = {rows: [head], y: S.top + head.h};
       pages.push(page);
     }
-    if (line.bad) page.borders.push({row: page.rows.length, col: 0, rows: 1, cols: spec.columns.length, color: red});
     page.rows.push(row);
     page.y += row.h;
   });
   return pages.map((p, i) => ({
     title: spec.title + (i ? '（続き）' : ''),
     lead: spec.lead,
-    elements: [{type: 'table', x: S.x, y: S.top, columns: spec.columns, rows: p.rows, borders: p.borders}]
+    elements: [{type: 'table', x: S.x, y: S.top, columns: spec.columns, rows: p.rows}]
   }));
 }
 
@@ -1718,16 +1697,11 @@ function mtgBox_(x, y, w, h, text, style) {
   return Object.assign({type: 'box', x, y, w, h, text}, style || {});
 }
 
-/** 表の矢印のセル */
-function mtgArrowCell_() {
-  return {text: '▶', size: 9, color: MTG_OPTIONS.colors.arrow, align: 'CENTER'};
-}
-
 /** 得意先（1行目）と案件名（2行目）のセル */
-function mtgDealCell_(item, width, star) {
+function mtgDealCell_(item, width) {
   const c = MTG_OPTIONS.colors;
   const size = MTG_SLIDE.bodySize;
-  const customer = (star ? '★ ' : '') + (item.customer || '（得意先なし）');
+  const customer = item.customer || '（得意先なし）';
   return {text: mtgWrap_(customer, width, size, 1)[0] + '\n' + mtgWrap_(item.project || '—', width, size, 1)[0],
     lines: 2, bold: true, color: c.ink, fill: c.purpleSoft};
 }
