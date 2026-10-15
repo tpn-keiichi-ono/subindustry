@@ -370,22 +370,27 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
     'Appendix ③　入力内容のチェック（一覧）'], 'ステータスの分類・用語の定義の Appendix は作らない');
   assert.ok(!('status' in T) && !('glossary' in T));
 
-  // 表紙：緑のグラデーションに大きな「R」「X」、白い字で会議の名前と事前資料・サブインダストリー・会議日・データの時点・期間。出典の行・ページ番号は置かない
+  // 表紙（いただいたひな形）：緑のグラデーションに大きな「RX」、白い字でサブインダストリー・会議の名前と事前資料・会議日・データの時点・期間。
+  // 出典の行・ページ番号は置かない
   const coverText = slide => slide.elements.filter(el => el.type === 'box' && el.role !== 'motif').map(el => el.text).join('\n');
-  assert.match(coverText(slides[0]), new RegExp('^RX Business MTG　事前資料\\n新FMT\\n\\d{4}年10月23日（[日月火水木金土]）\\n' +
+  assert.match(coverText(slides[0]), new RegExp('^新FMT\\nRX Business MTG　事前資料\\n\\d{4}年10月23日（[日月火水木金土]）\\n' +
     'データ：\\d{4}/\\d{2}/\\d{2} \\d{2}:\\d{2} 時点の「新FMT」シートと変更履歴_差分\\n期間：初回のため直近14日（\\d{2}/\\d{2}〜）の変化$'));
   assert.deepStrictEqual(slides[0].elements[0].type, 'gradient');
   assert.deepStrictEqual(slides[0].elements[0].stops, plain(c.cover));
-  assert.deepStrictEqual(roleOf(slides[0], 'motif').map(el => el.text), ['R', 'X']);
+  assert.deepStrictEqual(plain(c.cover), [[0, '#3A7D22'], [0.26, '#3A7D22'], [1, '#8CD872']], 'ひな形のグラデーション');
+  assert.deepStrictEqual(roleOf(slides[0], 'motif').map(el => [el.text, el.font, el.color, el.size]), [['RX', 'Arial Black', c.motif, 642.75]],
+    'ひな形の大きな「RX」（960pt 幅のひな形の 857pt を 0.75 倍）');
+  const motifStyle = plain(g.mtgSlideRequests_(slides[0], 'mtg_p1', 0)).find(r => r.updateTextStyle && r.updateTextStyle.objectId === 'mtg_p1_1').updateTextStyle;
+  assert.deepStrictEqual([motifStyle.style.fontFamily, motifStyle.style.fontSize.magnitude], ['Arial Black', 642.75]);
   assert.ok(slides[0].elements.filter(el => el.type === 'box' && el.role !== 'motif').every(el => el.color === c.white && el.align === 'CENTER'));
   assert.ok(!['title', 'footer', 'page', 'lead'].some(role => roleOf(slides[0], role).length), '表紙には見出し・出典の行・ページ番号を置かない');
-  assert.strictEqual(coverText(plain(g.mtgSlides_(Object.assign({}, s, {final: false})))[0]).split('\n')[0], 'RX Business MTG　事前資料【試作】');
+  assert.strictEqual(coverText(plain(g.mtgSlides_(Object.assign({}, s, {final: false})))[0]).split('\n')[1], 'RX Business MTG　事前資料【試作】');
   assert.match(coverText(plain(g.mtgSlides_(Object.assign({}, s, {meeting: '2026/11/06'})))[0]), /2026年11月6日（金）/);
 
-  // 扉：緑のグラデーションに大きな「Appendix」と、Appendix の見出し・始まりのページ（「（続き）」のページは出さない）
+  // 扉：表紙と同じひな形に、大きな「Appendix」と、Appendix の見出し・始まりのページ（「（続き）」のページは出さない）
   const divider = slides[5];
   assert.ok(!['title', 'footer', 'page'].some(role => roleOf(divider, role).length), '扉には見出し・出典の行・ページ番号を置かない');
-  assert.deepStrictEqual(divider.elements[0].stops, plain(c.divider));
+  assert.deepStrictEqual(divider.elements.slice(0, 2), slides[0].elements.slice(0, 2), '背景と大きな「RX」は表紙と同じ');
   assert.ok(divider.elements.some(el => el.text === 'Appendix' && el.size >= 30 && el.color === c.white));
   const toc = roleOf(divider, 'toc').map(el => el.text);
   const contents = toc.filter((_, i) => i % 3 === 0).map((label, i) => [label, toc[i * 3 + 1], toc[i * 3 + 2]]);
@@ -427,7 +432,7 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
   slides.forEach((slide, i) => {
     const page = roleOf(slide, 'page')[0];
     assert.ok(i === 0 || i === 5 ? !page : page && page.text === String(i + 1) && page.x > 600 && page.y > 370, (i + 1) + '枚目のページ番号（表紙・扉には出さない）');
-    slide.elements.forEach(el => {
+    slide.elements.filter(el => el.role !== 'motif').forEach(el => {   // 大きな「RX」は、ひな形どおりスライドからはみ出す
       const w = el.type === 'table' ? el.columns.reduce((a, b) => a + b, 0) : el.w;
       const h = el.type === 'table' ? el.rows.reduce((a, r) => a + r.h, 0) : el.h;
       assert.ok(el.x >= 0 && el.y >= 0 && el.x + w <= S.width + 0.01 && el.y + h <= S.height, (i + 1) + '枚目：はみ出す部品 ' + JSON.stringify(el).slice(0, 80));
@@ -641,7 +646,7 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   const requests = gas.decks[0].requests;
   assert.strictEqual(requests.filter(r => r.createSlide).length, 9, '表紙・本編4枚・扉・Appendix ①・③（責任者別・一覧）（停滞が無いので ② は無い）');
   const inserted = deck => deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
-  assert.match(inserted(gas.decks[1]), /^R\nX\nRX Business MTG　事前資料\n新FMT2\n/);
+  assert.match(inserted(gas.decks[1]), /^RX\n新FMT2\nRX Business MTG　事前資料\n/);
   assert.match(inserted(gas.decks[1]), /\nサマリー\n/);
   assert.match(inserted(gas.decks[1]), /\n新FMT2（10\/23 会議）\n/);
   assert.deepStrictEqual(requests.filter(r => r.deleteObject).map(r => r.deleteObject.objectId), ['p'], '作ったときの白紙のスライドを消す');

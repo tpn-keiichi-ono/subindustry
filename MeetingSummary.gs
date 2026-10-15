@@ -11,7 +11,8 @@
  * - 資料はサブインダストリー（追跡シート）ごとに1つ。スライドの見出しはどのシートでも同じ（MTG_TITLES）で、状態は見出しの下のリード文に書く。
  *   使う言葉は docs/DESIGN.md（会議サマリの数え方）で決め、資料の中で同じ意味で使う。
  *
- * 資料の構成（16:9。緑を基調にしたトンマナ：黒の見出し・リード文・緑の見出しの表・区分のラベル・区切り線と出典・ページ番号。表紙と扉は緑のグラデーション）
+ * 資料の構成（16:9。緑を基調にしたトンマナ：黒の見出し・リード文・緑の見出しの表・区分のラベル・区切り線と出典・ページ番号。
+ *   表紙と扉は、いただいた表紙のひな形（緑のグラデーションに大きな「RX」）
  *   表紙：会議の名前と「事前資料」・サブインダストリー・会議日・データの時点・期間
  *   1 サマリー：今期の受注と着地見込み・4つの数字（期待値と前回比・受注／失注・前進／後退・停滞）・前回からの状況の内訳（区分ごとの件数と案件）
  *   2 パイプラインの変化：前回からの期待値の増減（新規・増額・復帰・減額・受注・失注・保留・削除）・ステータス別・受注月（四半期）別の期待値
@@ -100,9 +101,8 @@ const MTG_OPTIONS = {
     up: '#8FD36B', down: '#A6A6A6', dark: '#595959',
     ink: '#1A1A1A', body: '#1A1A1A', sub: '#404040', muted: '#595959', faint: '#7F7F7F',
     line: '#D0D0D0', frame: '#BFBFBF', rule: '#D9D9D9', white: '#FFFFFF',
-    // 表紙・扉の背景（左上 → 右下のグラデーション。[位置 0〜1, 色]）と、大きな「R」「X」の色（背景に薄く重ねた色）
-    cover: [[0, '#2F6B1E'], [0.45, '#45902F'], [0.75, '#6CB24C'], [1, '#8FD36B']], coverR: '#2C661C', coverX: '#5FA347',
-    divider: [[0, '#2F6B1E'], [0.55, '#3F8429'], [1, '#5A9F3C']], dividerX: '#4A8A35'
+    // 表紙・扉（いただいた表紙のひな形）：背景は左上 → 右下のグラデーション（[位置 0〜1, 色]）、大きな「RX」は濃い緑（motif。Arial Black）
+    cover: [[0, '#3A7D22'], [0.26, '#3A7D22'], [1, '#8CD872']], motif: '#275316'
   }
 };
 
@@ -1204,8 +1204,21 @@ function mtgSlides_(summary) {
 }
 
 /**
- * 表紙：緑のグラデーションに大きな「R」「X」。会議の名前と「事前資料」・サブインダストリー・会議日・データの時点・期間（試作は【試作】）。
- * 文字はすべて白で中央寄せ
+ * 表紙・扉の背景（いただいた表紙のひな形。960 × 540pt を 720 × 405pt に縮めた位置）：緑のグラデーションと、スライドからはみ出す大きな「RX」
+ * （Arial Black・濃い緑）。文字は白で中央寄せ
+ */
+function mtgCoverBase_() {
+  const c = MTG_OPTIONS.colors;
+  const S = MTG_SLIDE;
+  return [
+    {type: 'gradient', x: 0, y: 0, w: S.width, h: S.height, stops: c.cover},
+    mtgBox_(-125.3, -189.6, 1020.9, 784.5, 'RX', {size: 642.75, font: 'Arial Black', color: c.motif, align: 'CENTER', role: 'motif'})
+  ];
+}
+
+/**
+ * 表紙（いただいた表紙のひな形）：大きな見出しにサブインダストリー、その下に会議の名前と「事前資料」（試作は【試作】）、
+ * 下に会議日と、データの時点・期間（ひな形の名前の欄の位置。小さく）
  */
 function mtgCoverSlide_(s) {
   const o = MTG_OPTIONS;
@@ -1217,22 +1230,19 @@ function mtgCoverSlide_(s) {
   return {
     title: MTG_TITLES.cover,
     cover: true,
-    elements: [
-      {type: 'gradient', x: 0, y: 0, w: S.width, h: S.height, stops: c.cover},
-      mtgBox_(15, 0, 210, 215, 'R', {size: 190, bold: true, color: c.coverR, valign: 'TOP', role: 'motif'}),
-      mtgBox_(395, 0, 210, 215, 'X', {size: 190, bold: true, color: c.coverX, valign: 'TOP', role: 'motif'}),
-      line(160, 24, o.meetingName + '　事前資料' + (s.final ? '' : '【試作】'), 13.5),
-      line(186, 56, s.name, 36, true),
-      line(294, 22, p[0] + '年' + p[1] + '月' + p[2] + '日（' + week + '）', 12.5),
-      line(318, 18, 'データ：' + Utilities.formatDate(s.now, Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm') + ' 時点の「' + s.name + '」シートと' +
-        DIFF_OPTIONS.logSheet, 10.5),
-      line(337, 18, '期間：' + mtgPeriodText_(s) + 'の変化', 10.5)
-    ]
+    elements: mtgCoverBase_().concat([
+      line(170, 46, s.name, 30, true),
+      line(226, 26, o.meetingName + '　事前資料' + (s.final ? '' : '【試作】'), 15, true),
+      line(326, 20, p[0] + '年' + p[1] + '月' + p[2] + '日（' + week + '）', 12),
+      line(346, 16, 'データ：' + Utilities.formatDate(s.now, Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm') + ' 時点の「' + s.name + '」シートと' +
+        DIFF_OPTIONS.logSheet, 9),
+      line(361, 16, '期間：' + mtgPeriodText_(s) + 'の変化', 9)
+    ])
   };
 }
 
 /**
- * 扉（Appendix）：緑のグラデーションに大きな「X」と「Appendix」、Appendix の見出し・始まりのページの一覧（白い線で区切る）。
+ * 扉（Appendix。表紙と同じひな形）：大きな見出しに「Appendix」、その下に Appendix の見出し・始まりのページの一覧（白い線で区切る）。
  * appendix は Appendix のスライド、firstPage はその1枚目のページ番号
  */
 function mtgDividerSlide_(appendix, firstPage) {
@@ -1244,19 +1254,15 @@ function mtgDividerSlide_(appendix, firstPage) {
     const m = /^(\S+ \S+)　(.*)$/.exec(slide.title) || [slide.title, slide.title, ''];
     items.push({label: m[1], title: m[2], page: firstPage + i});
   });
-  const rowH = 31;
-  const top = Math.round(202 - items.length * rowH / 2);
-  const el = [
-    {type: 'gradient', x: 0, y: 0, w: S.width, h: S.height, stops: c.divider},
-    mtgBox_(405, 0, 210, 215, 'X', {size: 190, bold: true, color: c.dividerX, valign: 'TOP', role: 'motif'}),
-    mtgBox_(54, 176, 230, 50, MTG_TITLES.appendix, {size: 36, bold: true, color: c.white})
-  ];
+  const el = mtgCoverBase_().concat([mtgBox_(S.x, 140, S.w, 46, MTG_TITLES.appendix, {size: 30, bold: true, color: c.white, align: 'CENTER'})]);
+  const x = 180;
+  const rowH = 26;
   items.forEach((it, i) => {
-    const y = top + i * rowH;
-    el.push(mtgBox_(300, y, 112, 22, it.label, {size: 12, bold: true, color: c.white, role: 'toc'}));
-    el.push(mtgBox_(404, y, 220, 22, mtgWrap_(it.title, 220, 12, 1)[0], {size: 12, color: c.white, role: 'toc'}));
-    el.push(mtgBox_(624, y, 36, 22, String(it.page), {size: 12, color: c.white, align: 'END', role: 'toc'}));
-    el.push({type: 'box', x: 300, y: y + 25, w: 360, h: 0.75, fill: c.white, alpha: 0.5, shape: 'RECTANGLE'});
+    const y = 200 + i * rowH;
+    el.push(mtgBox_(x, y, 104, 22, it.label, {size: 12, bold: true, color: c.white, role: 'toc'}));
+    el.push(mtgBox_(x + 98, y, 222, 22, mtgWrap_(it.title, 222, 12, 1)[0], {size: 12, color: c.white, role: 'toc'}));
+    el.push(mtgBox_(x + 320, y, 40, 22, String(it.page), {size: 12, color: c.white, align: 'END', role: 'toc'}));
+    el.push({type: 'box', x, y: y + 23, w: 360, h: 0.75, fill: c.white, alpha: 0.5, shape: 'RECTANGLE'});
   });
   return {title: MTG_TITLES.appendix, divider: true, elements: el};
 }
@@ -1985,7 +1991,7 @@ function mtgLineHeight_(lines, size) {
 
 /*
  * スライドの部品（位置・大きさは pt。スライドは MTG_SLIDE.width × height）
- * - 箱：{type: 'box', x, y, w, h, text, size, bold, color, fill, alpha（塗りの濃さ 0〜1）, line, lineWeight, align: 'START'|'CENTER'|'END',
+ * - 箱：{type: 'box', x, y, w, h, text, size, bold, color, font（既定は MTG_SLIDE.font）, fill, alpha（塗りの濃さ 0〜1）, line, lineWeight, align: 'START'|'CENTER'|'END',
  *        valign: 'TOP'|'MIDDLE'|'BOTTOM', shape: 'TEXT_BOX'|'RECTANGLE'|'ROUND_RECTANGLE', spans: [{start, end, bold, color, size}]（一部の文字の書式）}
  * - 表：{type: 'table', x, y, columns: [列の幅], rows: [{h, cells: [{text, size, bold, color, fill, align, spans}]}],
  *        borders: [{row, col, rows, cols, color, weight}]}（区切り線は薄いグレー。borders はそのあとに外枠として付ける）
@@ -2008,7 +2014,7 @@ function mtgPt_(value) {
 function mtgTextStyle_(item) {
   return {
     style: {
-      fontFamily: MTG_SLIDE.font,
+      fontFamily: item.font || MTG_SLIDE.font,
       fontSize: mtgPt_(item.size || MTG_SLIDE.bodySize),
       bold: !!item.bold,
       foregroundColor: {opaqueColor: {rgbColor: mtgRgb_(item.color || MTG_OPTIONS.colors.body)}}
