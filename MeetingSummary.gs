@@ -67,14 +67,12 @@ const MTG_OPTIONS = {
   lastKeyPrefix: 'MTG_LAST_',         // 前の版の「前回の作成日時」（会議日の記録が無いときだけ使う）
   keepMeetings: 24,                  // 会議日の記録をいくつ残すか
   keepSlides: true,                  // Google スライドもフォルダに残す（推進リーダーが書き足せる。false なら PDF だけ）
-  // Google チャットへの通知（webhook）。setMeetingChat() で webhook の URL と配布用フォルダを登録すると、会議日の daysBefore 日前の hour 時台に、
-  // その会議日の本番の PDF を配布用フォルダにコピーして、リンクをチャットに送る（notifyMeetingSummaries() で今すぐ送ることもできる）
+  // Google チャットへの通知（webhook）。setMeetingChat() で webhook の URL と配布用フォルダを登録し、notifyMeetingSummaries() を実行すると、
+  // その場で本番の PDF を配布用フォルダにコピーして、リンクをチャットに送る（自動では送らない）
   chat: {
-    daysBefore: 2,                   // 会議日の何日前に送るか（平日で数える。土日は飛ばす。祝日は考えない）
-    hour: 9,                         // 送る時刻（この時台。時間主導のトリガーは1時間の幅のどこかで動く）
-    handler: 'mtgNotifyScheduled',   // 時間主導のトリガーの関数（毎日1回。setMeetingChat() が1つだけ作る）
     webhookKey: 'MTG_CHAT_WEBHOOK',  // スクリプトのプロパティ：webhook の URL（鍵を含むので、コードやシートに書かない）
-    folderKey: 'MTG_CHAT_FOLDER'     // スクリプトのプロパティ：配布用フォルダの ID（参加者が閲覧できるように共有したフォルダ）
+    folderKey: 'MTG_CHAT_FOLDER',    // スクリプトのプロパティ：配布用フォルダの ID（参加者が閲覧できるように共有したフォルダ）
+    legacyHandler: 'mtgNotifyScheduled' // 前の版の自動通知（2日前）のトリガーの関数。残っていれば setMeetingChat()・notifyMeetingSummaries() で外す
   },
   firstDays: 14,                     // 初回（前回の会議の記録が無い）は、何日前からの変化を出すか
   lookbackDays: 180,                 // ステータスの滞留・受注月の延期の回数を数えるために、何日前までの記録を読むか
@@ -310,12 +308,10 @@ function mtgConfirmFinal_(ui, names, meeting) {
           : '直近' + MTG_OPTIONS.firstDays + '日間（前回の会議の記録なし）';
     return '・' + name + '：' + from +
       (same ? '\n　※ この会議日の資料は ' + fmt(same.cutoff) + ' に作成済み。作り直すと、次の会議の起点が今になります。' : '') +
-      (same && same.notified ? '\n　※ ' + fmt(same.notified) + ' に Google チャットに通知済み。作り直しても自動では送り直しません。' : '');
+      (same && same.notified ? '\n　※ ' + fmt(same.notified) + ' に Google チャットに通知済み。作り直したら notifyMeetingSummaries() で送り直してください。' : '');
   });
-  const chat = mtgChatPlanText_(meeting, new Date());
   const answer = ui.alert(CRED_OPTIONS.menuTitle,
     '本番の資料を作り、会議日を記録します。\n\n会議日：' + p[0] + '/' + p[1] + '/' + p[2] + '（' + week + '）\n対象期間\n' + lines.join('\n') +
-    (chat ? '\n\n' + chat : '') +
     '\n\n記録した会議日は、次の会議の資料の起点になります。配布したあとは作り直さないでください。\n作成してよろしいですか？', ui.ButtonSet.YES_NO);
   return answer === ui.Button.YES;
 }
@@ -333,10 +329,10 @@ function mtgRun_(final) {
   const lines = results.map(r => '「' + r.summary.name + '」：' + r.file.getName() + '（' + mtgCountsText_(r.summary) + '）\n　' + r.file.getUrl());
   lines.push('', '保存先：' + results[0].folder.getUrl());
   if (MTG_OPTIONS.keepSlides) lines.push('同じフォルダに、Google スライド（同じ名前）も保存しました。');
-  const chat = final ? mtgChatPlanText_(meeting, new Date()) : '';
   lines.push(final
     ? '会議日（' + meeting + '）を記録しました。次の会議の資料は、今以降の変化を出します。' +
-      (chat ? '\n' + chat : '配るときは、PDF を参加者に共有してください（保存先のフォルダは共有しない）。')
+      (mtgChatSettings_() ? '\nGoogle チャットに送るときは、中身を確かめてから notifyMeetingSummaries() を実行してください（自動では送りません）。'
+        : '配るときは、PDF を参加者に共有してください（保存先のフォルダは共有しない）。')
     : '試作のため、会議日は記録していません。');
   console.log(lines.join('\n'));
   ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
@@ -345,9 +341,9 @@ function mtgRun_(final) {
 /* ---------------- Google チャットへの通知（webhook） ---------------- */
 
 /**
- * Google チャットへの通知を設定する（エディタから実行する。管理者が1回）。webhook の URL と配布用フォルダの URL を聞き、
- * スクリプトのプロパティに残して、毎日 hour 時台に動く時間主導のトリガーを1つだけ作る（実行した人がトリガーの持ち主になる）。
- * webhook の URL を空欄で OK にすると、設定とトリガーを外す（通知をやめる）
+ * Google チャットへの通知を設定する（エディタから実行する。管理者が1回）。webhook の URL と配布用フォルダの URL を聞き、スクリプトのプロパティに残す。
+ * 送るのは notifyMeetingSummaries() を実行したとき（自動では送らない）。webhook の URL を空欄で OK にすると、設定を外す。
+ * 前の版の自動通知のトリガーが残っていれば外す
  */
 function setMeetingChat() {
   const ui = SpreadsheetApp.getUi();
@@ -356,16 +352,16 @@ function setMeetingChat() {
   const current = mtgChatSettings_();
   const response = ui.prompt(CRED_OPTIONS.menuTitle,
     'Google チャットの webhook の URL を貼り付けてください（スペースの「アプリと統合」→「Webhook」で作ったもの）。\n' +
-    '会議日の ' + o.daysBefore + '日前（平日で数える）の ' + o.hour + '時台に、その会議日の本番の PDF のリンクを送ります。\n' +
-    '空欄で OK を押すと、通知をやめます。\n\n今の設定：' + (current ? mtgChatSpace_(current.webhook) + ' に送る' : '未設定'),
+    'notifyMeetingSummaries() を実行すると、本番の PDF のリンクをすぐに送ります。\n' +
+    '空欄で OK を押すと、設定を外します。\n\n今の設定：' + (current ? mtgChatSpace_(current.webhook) + ' に送る' : '未設定'),
     ui.ButtonSet.OK_CANCEL);
   if (response.getSelectedButton() !== ui.Button.OK) return;
   const webhook = String(response.getResponseText() || '').trim();
   if (!webhook) {
     props.deleteProperty(o.webhookKey);
     props.deleteProperty(o.folderKey);
-    const removed = mtgRemoveNotifyTrigger_();
-    const message = 'Google チャットへの通知をやめました（トリガー ' + removed + '件を外しました）。';
+    mtgRemoveLegacyTrigger_();
+    const message = 'Google チャットへの通知の設定を外しました。';
     console.log(message);
     ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
     return;
@@ -394,14 +390,14 @@ function setMeetingChat() {
   }
   props.setProperty(o.webhookKey, webhook);
   props.setProperty(o.folderKey, match[1]);
-  mtgInstallNotifyTrigger_();
+  const removed = mtgRemoveLegacyTrigger_();
   const lines = ['Google チャットへの通知を設定しました。',
     '・送り先：' + mtgChatSpace_(webhook), '・配布用フォルダ：' + folderName,
-    '・会議日の ' + o.daysBefore + '日前（平日で数える）の ' + o.hour + '時台に、その時刻までに作った本番の PDF のリンクを送ります。'];
+    '・本番を作って中身を確かめたら、notifyMeetingSummaries() を実行すると、すぐに PDF のリンクを送ります。']
+    .concat(removed ? ['・前の版の自動通知（2日前）のトリガーを外しました。'] : []);
   const test = ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n') + '\n\n確かめのメッセージを、いまチャットに送りますか？', ui.ButtonSet.YES_NO);
   if (test === ui.Button.YES) {
-    mtgPostChat_(webhook, '会議サマリの通知の設定を確かめるためのメッセージです。会議日の ' + o.daysBefore + '日前の ' + o.hour +
-      '時台に、' + MTG_OPTIONS.meetingName + ' の事前資料（PDF）のリンクをここに送ります。');
+    mtgPostChat_(webhook, '会議サマリの通知の設定を確かめるためのメッセージです。' + MTG_OPTIONS.meetingName + ' の事前資料（PDF）のリンクをここに送ります。');
     lines.push('確かめのメッセージを送りました。チャットに届いたか確かめてください。');
   }
   console.log(lines.join('\n'));
@@ -409,78 +405,39 @@ function setMeetingChat() {
 }
 
 /**
- * 会議サマリ（本番の PDF）を今すぐ Google チャットに送る（エディタから実行する）。自動の時刻を過ぎてから本番を作ったとき・送り直すときに。
- * シートと会議日を聞き、その会議日の本番の PDF を配布用フォルダにコピーしてリンクを送る（「はい」のときだけ）
+ * 会議サマリ（本番の PDF）を、すぐに Google チャットに送る（エディタから実行する。本番を作って中身を確かめたあとに）。
+ * シートを聞き（空欄ならすべて）、シートごとに最新の会議日の本番の PDF を配布用フォルダにコピーして、リンクを送る（「はい」のときだけ）。
+ * 会議日ごとに1つのメッセージ。送り直しも同じ（配布用フォルダの古いコピーはゴミ箱へ）
  */
 function notifyMeetingSummaries() {
   const chat = mtgChatSettings_();
   if (!chat) throw new Error('Google チャットへの通知が設定されていません。先に setMeetingChat() で webhook の URL と配布用フォルダを登録してください。');
+  mtgRemoveLegacyTrigger_();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = SpreadsheetApp.getUi();
-  const names = mtgAskSheets_(ss, ui, '会議サマリ（本番の PDF）を Google チャットに送ります。');
+  const names = mtgAskSheets_(ss, ui, '会議サマリ（本番の PDF）を、すぐに Google チャットに送ります。');
   if (!names) return;
   const props = PropertiesService.getDocumentProperties();
-  const tz = Session.getScriptTimeZone();
-  const fmt = at => Utilities.formatDate(new Date(at), tz, 'M/d HH:mm');
-  const recorded = names.map(name => '・' + name + '：' + (mtgMeetings_(props, name).filter(m => !m.baseline && m.pdf)
-    .map(m => mtgShortDate_(m.date) + (m.notified ? '（' + fmt(m.notified) + ' に通知済み）' : '')).join('、') || '本番の資料なし'));
-  const response = ui.prompt(CRED_OPTIONS.menuTitle, '送る会議日を入力してください（例：10/23）。\n\n本番の資料のある会議日\n' + recorded.join('\n'),
-    ui.ButtonSet.OK_CANCEL);
-  if (response.getSelectedButton() !== ui.Button.OK) return;
-  const text = String(response.getResponseText() || '').trim();
-  const meeting = text && mtgParseDate_(text, new Date());
-  if (!meeting) throw new Error('「' + text + '」を会議日として読めません。10/23 か 2026/10/23 のように入力してください。');
-  const entries = names.map(name => ({name, record: mtgMeetings_(props, name).find(m => !m.baseline && m.date === meeting && m.pdf)}))
-    .filter(e => e.record);
+  const fmt = at => Utilities.formatDate(new Date(at), Session.getScriptTimeZone(), 'M/d HH:mm');
+  const entries = names.map(name => ({name, record: mtgMeetings_(props, name).filter(m => !m.baseline && m.pdf).pop()})).filter(e => e.record);
   const missing = names.filter(name => !entries.some(e => e.name === name));
   if (!entries.length) {
-    ui.alert(CRED_OPTIONS.menuTitle, '「' + names.join('」「') + '」に、会議日 ' + meeting + ' の本番の資料がありません。先に createMeetingSummaries() で作ってください。',
-      ui.ButtonSet.OK);
+    ui.alert(CRED_OPTIONS.menuTitle, '「' + names.join('」「') + '」に、本番の資料がありません。先に createMeetingSummaries() で作ってください。', ui.ButtonSet.OK);
     return;
   }
+  const meetings = entries.map(e => e.record.date).filter((date, i, all) => all.indexOf(date) === i).sort();
   const answer = ui.alert(CRED_OPTIONS.menuTitle,
-    'Google チャット（' + mtgChatSpace_(chat.webhook) + '）に、会議日 ' + mtgShortDate_(meeting) + '（' + mtgWeekday_(meeting) + '）の会議サマリを送ります。\n' +
-    entries.map(e => '・' + e.name + '：' + e.record.file + (e.record.notified ? '（' + fmt(e.record.notified) + ' に通知済み。送り直す）' : '')).join('\n') +
+    'Google チャット（' + mtgChatSpace_(chat.webhook) + '）に、会議サマリをすぐに送ります。\n' +
+    entries.map(e => '・' + e.name + '：会議日 ' + mtgShortDate_(e.record.date) + '（' + mtgWeekday_(e.record.date) + '）の ' + e.record.file +
+      '（' + fmt(e.record.cutoff) + ' 作成' + (e.record.notified ? '。' + fmt(e.record.notified) + ' に通知済み。送り直す' : '') + '）').join('\n') +
     (missing.length ? '\n本番の資料が無いシート（送らない）：' + missing.join('、') : '') +
     '\n\nPDF を配布用フォルダにコピーし、そのリンクを送ります。中身を確かめましたか？送ってよろしいですか？', ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return;
-  mtgNotify_(chat, meeting, entries.map(e => e.name), new Date());
-  const message = 'Google チャットに、会議日 ' + meeting + ' の会議サマリ（' + entries.map(e => e.name).join('・') + '）を送りました。';
+  const now = new Date();
+  meetings.forEach(meeting => mtgNotify_(chat, meeting, entries.filter(e => e.record.date === meeting).map(e => e.name), now));
+  const message = 'Google チャットに会議サマリを送りました（' + entries.map(e => e.name + '：' + mtgShortDate_(e.record.date) + ' 会議').join('、') + '）。';
   console.log(message);
   ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
-}
-
-/**
- * 時間主導のトリガー（毎日 hour 時台）から呼ばれる。通知の日時（会議日の daysBefore 日前の hour 時）を過ぎて、会議日より前で、まだ送っていない
- * 本番の資料を、会議日ごとに1つのメッセージで送る。通知の日時より後に作った本番は送らない（中身を確かめる時間が無いため。notifyMeetingSummaries() で送る）。
- * エディタから実行しても、送るものが無ければ何もしない
- */
-function mtgNotifyScheduled() {
-  const chat = mtgChatSettings_();
-  if (!chat) {
-    console.log('会議サマリ：Google チャットへの通知が設定されていません（setMeetingChat()）。');
-    return;
-  }
-  const now = new Date();
-  const props = PropertiesService.getDocumentProperties();
-  const today = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/MM/dd');
-  const nowKey = mtgHourKey_(now.getTime());
-  const due = new Map();
-  Object.keys(DIFF_RULES).forEach(name => mtgMeetings_(props, name).forEach(m => {
-    if (m.baseline || !m.pdf || m.notified || !(m.date > today)) return;
-    const at = mtgNotifyDay_(m.date) + ' ' + String(MTG_OPTIONS.chat.hour).padStart(2, '0');
-    if (nowKey < at || mtgHourKey_(m.cutoff) >= at) return;
-    if (!due.has(m.date)) due.set(m.date, []);
-    due.get(m.date).push(name);
-  }));
-  if (!due.size) {
-    console.log('会議サマリ：今は Google チャットに送る資料はありません。');
-    return;
-  }
-  due.forEach((names, meeting) => {
-    mtgNotify_(chat, meeting, names, now);
-    console.log('会議サマリ：会議日 ' + meeting + ' の資料（' + names.join('・') + '）を Google チャットに送りました。');
-  });
 }
 
 /**
@@ -544,24 +501,6 @@ function mtgChatSpace_(webhook) {
   return 'スペース ' + (m ? m[1] : '（不明）');
 }
 
-/** 会議日（yyyy/MM/dd）の通知日：daysBefore 日前（土日は数えない）。yyyy/MM/dd */
-function mtgNotifyDay_(meeting) {
-  const p = meeting.split('/').map(Number);
-  const d = new Date(Date.UTC(p[0], p[1] - 1, p[2]));
-  let left = MTG_OPTIONS.chat.daysBefore;
-  while (left > 0) {
-    d.setUTCDate(d.getUTCDate() - 1);
-    if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) left--;
-  }
-  const pad = n => String(n).padStart(2, '0');
-  return d.getUTCFullYear() + '/' + pad(d.getUTCMonth() + 1) + '/' + pad(d.getUTCDate());
-}
-
-/** 時刻（ms）を「yyyy/MM/dd HH」に（スクリプトのタイムゾーン。通知の日時と比べる用） */
-function mtgHourKey_(at) {
-  return Utilities.formatDate(new Date(at), Session.getScriptTimeZone(), 'yyyy/MM/dd HH');
-}
-
 /** 会議日（yyyy/MM/dd）の曜日（「金」） */
 function mtgWeekday_(date) {
   const p = date.split('/').map(Number);
@@ -569,30 +508,23 @@ function mtgWeekday_(date) {
 }
 
 /**
- * 本番を作るときの、チャットへの通知の予定の文。通知を設定していなければ空。
- * 通知の日時より前なら「M/d（水）9時台に自動で送る」、過ぎていれば notifyMeetingSummaries() で送るよう知らせる
+ * 前の版で、会議日の2日前に自動で送っていた時間主導のトリガーの関数。今は自動では送らない（notifyMeetingSummaries() ですぐ送る）。
+ * トリガーが残っていても「関数が見つからない」エラーにならないよう名前だけを残し、動いたらそのトリガーを外す（何も送らない）。
  */
-function mtgChatPlanText_(meeting, now) {
-  if (!mtgChatSettings_()) return '';
-  const o = MTG_OPTIONS.chat;
-  const day = mtgNotifyDay_(meeting);
-  const when = mtgShortDate_(day) + '（' + mtgWeekday_(day) + '）' + o.hour + '時台';
-  if (mtgHourKey_(now.getTime()) < day + ' ' + String(o.hour).padStart(2, '0')) {
-    return 'Google チャットへの通知：' + when + 'に自動で送ります（それまでに中身を確かめてください）。';
+function mtgNotifyScheduled() {
+  try {
+    mtgRemoveLegacyTrigger_();
+  } catch (error) {
+    console.warn('前の版の自動通知のトリガーを外せませんでした：' + (error && error.message));
   }
-  return 'Google チャットへの通知：通知の日時（' + when + '）を過ぎているため、自動では送りません。中身を確かめてから notifyMeetingSummaries() で送ってください。';
 }
 
-/** 通知のトリガー（毎日 hour 時台）を作り直して1つだけにする（setMeetingChat() から。実行した人が持ち主） */
-function mtgInstallNotifyTrigger_() {
-  mtgRemoveNotifyTrigger_();
-  ScriptApp.newTrigger(MTG_OPTIONS.chat.handler).timeBased().atHour(MTG_OPTIONS.chat.hour).everyDays(1)
-    .inTimezone(Session.getScriptTimeZone()).create();
-}
-
-/** 通知のトリガーを外す。外した数を返す */
-function mtgRemoveNotifyTrigger_() {
-  const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === MTG_OPTIONS.chat.handler);
+/**
+ * 前の版の自動通知のトリガー（mtgNotifyScheduled）を外す。外した数を返す。
+ * トリガーは持ち主にしか見えないので、前の版で setMeetingChat() を実行した人が実行したとき（またはトリガーが動いたとき）に外れる
+ */
+function mtgRemoveLegacyTrigger_() {
+  const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === MTG_OPTIONS.chat.legacyHandler);
   triggers.forEach(t => ScriptApp.deleteTrigger(t));
   return triggers.length;
 }
@@ -689,11 +621,9 @@ function mtgCreate_(ss, names, now, final, meeting) {
   });
   plans.forEach((p, i) => {
     if (final) {
-      // 本番の PDF（Google チャットに送る）を覚える。作り直す前に通知済みなら、通知済みのまま（自動では送り直さない）
-      const before = p.meetings.find(m => !m.baseline && m.date === meeting);
+      // 本番の PDF（notifyMeetingSummaries() で Google チャットに送る）を覚える。作り直した PDF はまだ送っていないので、通知済みは引き継がない
       const record = {date: meeting, cutoff: now.getTime(), pdf: results[i].file.getId(), file: results[i].file.getName(),
         counts: mtgCountsText_(summaries[i])};
-      if (before && before.notified) record.notified = before.notified;
       const list = p.meetings.filter(m => m.baseline || m.date !== meeting).concat([record])
         .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).slice(-o.keepMeetings);
       props.setProperty(o.meetingsKeyPrefix + p.name, JSON.stringify(list));
