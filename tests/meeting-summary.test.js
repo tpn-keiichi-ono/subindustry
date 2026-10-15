@@ -1007,7 +1007,7 @@ test('setMeetingChat：webhook の URL と資料の格納先の URL を登録す
   assert.strictEqual(gas.fetches[0].url, WEBHOOK);
   assert.deepStrictEqual([gas.fetches[0].params.method, gas.fetches[0].params.contentType], ['post', 'application/json; charset=UTF-8']);
   assert.strictEqual(sentText(gas.fetches[0]), '【テスト送信】会議サマリの通知の設定を確認するためのメッセージです。\n' +
-    '今後、RX Business MTG の事前資料のご案内をこちらにお送りいたします。どうぞよろしくお願いいたします。');
+    '今後、RX Business MTG の事前資料のご案内をこちらにお送りいたします。');
   assert.match(gas.alerts[gas.alerts.length - 1].message,
     new RegExp('・送り先：スペース AAAAtest123\n・送る URL：' + DEMO_URL + '\n・notifyMeetingSummaries\\(\\) を実行すると、資料のファイルのリンクをすぐに送ります（フォルダなら、その中でいちばん新しい PDF）。\n・前の版の自動通知（2日前）のトリガーを外しました。'));
 
@@ -1034,13 +1034,15 @@ test('setMeetingChat：webhook の URL と資料の格納先の URL を登録す
   assert.match(gas.alerts[gas.alerts.length - 1].message, /通知の設定を外しました。/);
 });
 
-test('notifyMeetingSummaries：格納先のフォルダの、いちばん新しい PDF のリンク（ファイル名で表示）を、確かめのあとすぐに送る。失敗は1回だけやり直し、だめなら止める', () => {
+test('notifyMeetingSummaries：会議日程を聞き、格納先のフォルダの、いちばん新しい PDF のリンク（ファイル名で表示）と一緒に、確かめのあとすぐに送る。失敗は1回だけやり直し、だめなら止める', () => {
   const {gas, g} = setup({edits: false});
+  gas.promptAnswer = '2026/10/23';   // 会議日程（ほかの答えを決めていなければこれ）
   assert.throws(() => g.notifyMeetingSummaries(), /先に setMeetingChat\(\) で webhook の URL と資料の格納先の URL を登録してください。/);
   const props = g.PropertiesService.getScriptProperties();
   props.setProperty('MTG_CHAT_WEBHOOK', WEBHOOK);
   props.setProperty('MTG_CHAT_URL', DEMO_URL);
   assert.throws(() => g.notifyMeetingSummaries(), /資料の格納先のフォルダ（demo-folder-0001）にファイルがありません。資料を置いてから送ってください。/);
+  assert.strictEqual(gas.prompts.length, 0, '資料が無ければ、会議日程を聞かずに知らせる');
 
   // 格納先のフォルダ：古い PDF・新しい PDF・もっと新しいスライド（PDF を選ぶ）・ほかのフォルダの PDF
   const file = (id, folder, name, type, daysAgo) => gas.driveFiles.push({id, folder, name, blob: {getContentType: () => type},
@@ -1049,17 +1051,25 @@ test('notifyMeetingSummaries：格納先のフォルダの、いちばん新し�
   file('pdf-new', 'demo-folder-0001', '会議サマリ_デモ.pdf', 'application/pdf', 1);
   file('slide-1', 'demo-folder-0001', '会議サマリ_デモ（スライド）', 'application/vnd.google-apps.presentation', 0);
   file('pdf-other-0001', 'other-folder-0001', '別の資料.pdf', 'application/pdf', 0);
-  const lines = link => [
+  const lines = (link, schedule) => [
     '*【RX Business MTG】事前資料のご案内*',
-    '皆さま、お疲れさまです。',
     'RX Business MTG の事前資料を、下記に格納いたしました。',
     'お手数ですが、会議の前にご一読いただけますと幸いです。',
     '',
-    '▼ 事前資料',
-    link,
+    '▼ 会議日程',
+    schedule || '2026年10月23日（金）9:00〜10:30',
     '',
-    'ご不明な点がございましたら、お気軽にお知らせください。',
-    'どうぞよろしくお願いいたします。'
+    '▼ 目的',
+    '案件の進捗・受注見込みを確認し、優先順位と次のアクションを決める',
+    '',
+    '▼ 議題',
+    '・更新シートで進捗報告',
+    '・重点案件の状況・課題',
+    '・質疑・フィードバック',
+    '・サービス連携テーマ',
+    '',
+    '▼ 事前資料',
+    link
   ].join('\n');
   const url = 'https://drive.google.com/file/d/pdf-new/view';
 
@@ -1069,13 +1079,39 @@ test('notifyMeetingSummaries：格納先のフォルダの、いちばん新し�
     'Google チャット（スペース AAAAtest123）に、次のメッセージをすぐに送ります。よろしいですか？\n\n' + lines('会議サマリ_デモ.pdf\n' + url),
     '確かめの画面には、ファイル名と URL を出す');
   assert.strictEqual(gas.fetches.length, 0, '「いいえ」なら送らない');
-  assert.strictEqual(gas.prompts.length, 0, 'ほかには何も聞かない');
+  assert.deepStrictEqual(gas.prompts.map(pr => pr.message), [
+    '会議日程を入力してください（例：10/23）。\n時刻を省くと「9:00〜10:30」にします。ほかの時刻のときは「10/23 13:00〜14:30」のように入力してください。'
+  ], '聞くのは会議日程だけ');
 
   gas.confirmAnswer = 'YES';
   g.notifyMeetingSummaries();
   assert.deepStrictEqual(gas.fetches.map(f => [f.url, sentText(f)]), [[WEBHOOK, lines('<' + url + '|会議サマリ_デモ.pdf>')]],
     'フォルダの中のいちばん新しい PDF のリンク（ファイル名で表示）');
   assert.strictEqual(gas.alerts[gas.alerts.length - 1].message, 'Google チャットに送りました：会議サマリ_デモ.pdf\n' + url);
+
+  // 会議日程：時刻を書けばその時刻（全角でもよい）。やめたら送らない。読めなければ止める
+  gas.promptAnswers = ['１０／２３　１３：００～１４：３０'];
+  gas.confirmAnswer = 'NO';
+  g.notifyMeetingSummaries();
+  assert.ok(gas.alerts[gas.alerts.length - 1].message.indexOf('▼ 会議日程\n' + g.mtgParseDate_('10/23', new Date()).slice(0, 4) +
+    '年10月23日（') >= 0 && /）13:00〜14:30\n/.test(gas.alerts[gas.alerts.length - 1].message), gas.alerts[gas.alerts.length - 1].message);
+  gas.confirmAnswer = 'YES';
+  gas.promptButton = 'CANCEL';
+  g.notifyMeetingSummaries();
+  assert.strictEqual(gas.fetches.length, 1, '会議日程を聞かれてやめたら送らない');
+  gas.promptButton = 'OK';
+  gas.promptAnswers = ['あした'];
+  assert.throws(() => g.notifyMeetingSummaries(), /「あした」を会議日程として読めません。/);
+  assert.strictEqual(gas.fetches.length, 1);
+  gas.get('MTG_OPTIONS').chat.meetingTime = '';
+  gas.promptAnswers = ['2026/11/6 15:00〜16:00'];
+  g.notifyMeetingSummaries();
+  assert.match(sentText(gas.fetches[1]), /\n▼ 会議日程\n2026年11月6日（金）15:00〜16:00\n/);
+  gas.fetches.pop();
+  g.notifyMeetingSummaries();
+  assert.match(sentText(gas.fetches[1]), /\n▼ 会議日程\n2026年10月23日（金）\n/, '時刻の設定が空なら日付だけ');
+  gas.fetches.pop();
+  gas.get('MTG_OPTIONS').chat.meetingTime = '9:00〜10:30';
 
   // ゴミ箱に移した PDF は選ばない。PDF が無ければ、いちばん新しいファイル
   gas.trashed.push('pdf-new');
@@ -1088,19 +1124,19 @@ test('notifyMeetingSummaries：格納先のフォルダの、いちばん新し�
   // ファイルの URL を登録したときは、そのファイル。ドライブ以外の URL はそのまま
   props.setProperty('MTG_CHAT_URL', 'https://drive.google.com/file/d/pdf-other-0001/view?usp=sharing');
   g.notifyMeetingSummaries();
-  assert.match(sentText(gas.fetches[3]), /\n<https:\/\/drive\.google\.com\/file\/d\/pdf-other-0001\/view\|別の資料\.pdf>\n/);
+  assert.match(sentText(gas.fetches[3]), /\n<https:\/\/drive\.google\.com\/file\/d\/pdf-other-0001\/view\|別の資料\.pdf>$/);
   props.setProperty('MTG_CHAT_URL', 'https://example.com/demo.pdf');
   g.notifyMeetingSummaries();
-  assert.match(sentText(gas.fetches[4]), /\n<https:\/\/example\.com\/demo\.pdf\|https:\/\/example\.com\/demo\.pdf>\n/);
+  assert.match(sentText(gas.fetches[4]), /\n<https:\/\/example\.com\/demo\.pdf\|https:\/\/example\.com\/demo\.pdf>$/);
 
-  // 文は MTG_OPTIONS.chat.message で変えられる（{meeting}・{file}・{url} を置き換える）
+  // 文は MTG_OPTIONS.chat.message で変えられる（{meeting}・{date}・{file}・{url} を置き換える）
   props.setProperty('MTG_CHAT_URL', 'https://drive.google.com/file/d/pdf-other-0001/view');
-  gas.get('MTG_OPTIONS').chat.message = ['{meeting}：{file}（{url}）'];
+  gas.get('MTG_OPTIONS').chat.message = ['{meeting}（{date}）：{file}（{url}）'];
   gas.fetchStatuses = [503, 200];
   g.notifyMeetingSummaries();
   assert.strictEqual(gas.fetches.length, 7, '一時的な失敗（5xx）は1回だけやり直す');
   assert.strictEqual(sentText(gas.fetches[6]),
-    'RX Business MTG：<https://drive.google.com/file/d/pdf-other-0001/view|別の資料.pdf>（https://drive.google.com/file/d/pdf-other-0001/view）');
+    'RX Business MTG（2026年10月23日（金）9:00〜10:30）：<https://drive.google.com/file/d/pdf-other-0001/view|別の資料.pdf>（https://drive.google.com/file/d/pdf-other-0001/view）');
 
   gas.fetchStatuses = [404];
   gas.fetchText = '{"error": {"message": "Requested entity was not found."}}';

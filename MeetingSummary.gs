@@ -72,19 +72,29 @@ const MTG_OPTIONS = {
   chat: {
     webhookKey: 'MTG_CHAT_WEBHOOK',  // スクリプトのプロパティ：webhook の URL（鍵を含むので、コードやシートに書かない）
     urlKey: 'MTG_CHAT_URL',          // スクリプトのプロパティ：送る資料の格納先の URL（ドライブのフォルダかファイル）
-    // 送る文（1行ずつ）。{meeting} は会議の名前（meetingName）、{file} は資料のファイルのリンク（ファイル名で表示）、{url} はファイルの URL に置き換える。
+    meetingTime: '9:00〜10:30',      // 会議の時刻（会議日程の日付のあとに書く。送るときに時刻を入力すれば、そちら。空なら日付だけ）
+    // 送る文（1行ずつ。目的・議題もここで変える）。{meeting} は会議の名前（meetingName）、{date} は会議日程（2026年10月23日（金）9:00〜10:30）、
+    // {file} は資料のファイルのリンク（ファイル名で表示）、{url} はファイルの URL に置き換える。
     // 格納先がフォルダなら、送るときにその中でいちばん新しく更新した PDF（PDF が無ければいちばん新しいファイル）を送る。*〜* は太字
     message: [
       '*【{meeting}】事前資料のご案内*',
-      '皆さま、お疲れさまです。',
       '{meeting} の事前資料を、下記に格納いたしました。',
       'お手数ですが、会議の前にご一読いただけますと幸いです。',
       '',
-      '▼ 事前資料',
-      '{file}',
+      '▼ 会議日程',
+      '{date}',
       '',
-      'ご不明な点がございましたら、お気軽にお知らせください。',
-      'どうぞよろしくお願いいたします。'
+      '▼ 目的',
+      '案件の進捗・受注見込みを確認し、優先順位と次のアクションを決める',
+      '',
+      '▼ 議題',
+      '・更新シートで進捗報告',
+      '・重点案件の状況・課題',
+      '・質疑・フィードバック',
+      '・サービス連携テーマ',
+      '',
+      '▼ 事前資料',
+      '{file}'
     ],
     legacyHandler: 'mtgNotifyScheduled' // 前の版の自動通知（2日前）のトリガーの関数。残っていれば setMeetingChat()・notifyMeetingSummaries() で外す
   },
@@ -394,7 +404,7 @@ function setMeetingChat() {
   const test = ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n') + '\n\n確かめのメッセージを、いまチャットに送りますか？', ui.ButtonSet.YES_NO);
   if (test === ui.Button.YES) {
     mtgPostChat_(webhook, '【テスト送信】会議サマリの通知の設定を確認するためのメッセージです。\n今後、' + MTG_OPTIONS.meetingName +
-      ' の事前資料のご案内をこちらにお送りいたします。どうぞよろしくお願いいたします。');
+      ' の事前資料のご案内をこちらにお送りいたします。');
     lines.push('確かめのメッセージを送りました。チャットに届いたか確かめてください。');
   }
   console.log(lines.join('\n'));
@@ -402,19 +412,27 @@ function setMeetingChat() {
 }
 
 /**
- * 資料のファイルのリンクを、すぐに Google チャットに送る（エディタから実行する。「はい」のときだけ）。
- * 格納先がフォルダなら、その中でいちばん新しく更新した PDF（mtgChatFile_）
+ * 会議日程と、資料のファイルのリンクを、すぐに Google チャットに送る（エディタから実行する。「はい」のときだけ）。
+ * 会議日程（日付。時刻は省けば MTG_OPTIONS.chat.meetingTime）を聞く。格納先がフォルダなら、その中でいちばん新しく更新した PDF（mtgChatFile_）
  */
 function notifyMeetingSummaries() {
   const chat = mtgChatSettings_();
   if (!chat || !chat.url) throw new Error('Google チャットへの通知が設定されていません。先に setMeetingChat() で webhook の URL と資料の格納先の URL を登録してください。');
   mtgRemoveLegacyTrigger_();
   const ui = SpreadsheetApp.getUi();
-  const file = mtgChatFile_(chat.url);
+  const file = mtgChatFile_(chat.url);   // 先に確かめる（資料が無ければ、会議日程を聞かずに知らせる）
+  const time = MTG_OPTIONS.chat.meetingTime;
+  const response = ui.prompt(CRED_OPTIONS.menuTitle,
+    '会議日程を入力してください（例：10/23）。\n' +
+    (time ? '時刻を省くと「' + time + '」にします。ほかの時刻のときは「10/23 13:00〜14:30」のように入力してください。' : '時刻を書くときは「10/23 13:00〜14:30」のように入力してください。'),
+    ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+  const schedule = mtgChatSchedule_(response.getResponseText(), new Date());
   const answer = ui.alert(CRED_OPTIONS.menuTitle,
-    'Google チャット（' + mtgChatSpace_(chat.webhook) + '）に、次のメッセージをすぐに送ります。よろしいですか？\n\n' + mtgChatText_(file, true), ui.ButtonSet.YES_NO);
+    'Google チャット（' + mtgChatSpace_(chat.webhook) + '）に、次のメッセージをすぐに送ります。よろしいですか？\n\n' + mtgChatText_(file, schedule, true),
+    ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return;
-  mtgPostChat_(chat.webhook, mtgChatText_(file));
+  mtgPostChat_(chat.webhook, mtgChatText_(file, schedule));
   const message = 'Google チャットに送りました：' + file.name + '\n' + file.url;
   console.log(message);
   ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
@@ -458,13 +476,33 @@ function mtgChatFile_(url) {
 }
 
 /**
- * チャットに送る文（MTG_OPTIONS.chat.message の {meeting} を会議の名前に、{file} をファイルのリンク（<URL|ファイル名>）に、{url} をファイルの URL に置き換える）。
- * plain なら、確かめの画面に出す形（リンクは「ファイル名」と URL の2行）
+ * 入力した会議日程（「10/23」「2026/10/23」、時刻つきなら「10/23 13:00〜14:30」）を「2026年10月23日（金）9:00〜10:30」にする。
+ * 時刻を省けば MTG_OPTIONS.chat.meetingTime。読めなければ止める
  */
-function mtgChatText_(file, plain) {
+function mtgChatSchedule_(text, now) {
+  const t = String(text || '').normalize('NFKC').trim();
+  const at = /\s*(\d{1,2}:\d{2}.*)$/.exec(t);
+  const date = mtgParseDate_(at ? t.slice(0, at.index) : t, now);
+  if (!date) {
+    throw new Error('「' + t + '」を会議日程として読めません。10/23 か 2026/10/23（時刻を書くときは 10/23 13:00〜14:30）のように入力してください。');
+  }
+  return mtgDateLabel_(date) + (at ? at[1].replace(/~/g, '〜') : MTG_OPTIONS.chat.meetingTime || '');
+}
+
+/** 日付（yyyy/MM/dd）を「2026年10月23日（金）」に（表紙の会議日・チャットの会議日程） */
+function mtgDateLabel_(date) {
+  const p = date.split('/').map(Number);
+  return p[0] + '年' + p[1] + '月' + p[2] + '日（' + '日月火水木金土'.charAt(new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay()) + '）';
+}
+
+/**
+ * チャットに送る文（MTG_OPTIONS.chat.message の {meeting} を会議の名前に、{date} を会議日程に、{file} をファイルのリンク（<URL|ファイル名>）に、
+ * {url} をファイルの URL に置き換える）。plain なら、確かめの画面に出す形（リンクは「ファイル名」と URL の2行）
+ */
+function mtgChatText_(file, schedule, plain) {
   const name = String(file.name).replace(/[|<>]/g, ' ');
   const link = plain ? name + '\n' + file.url : '<' + file.url + '|' + name + '>';
-  return MTG_OPTIONS.chat.message.join('\n').replace(/\{meeting\}/g, MTG_OPTIONS.meetingName)
+  return MTG_OPTIONS.chat.message.join('\n').replace(/\{meeting\}/g, MTG_OPTIONS.meetingName).replace(/\{date\}/g, schedule)
     .replace(/\{file\}/g, link).replace(/\{url\}/g, file.url);
 }
 
@@ -1460,14 +1498,12 @@ function mtgCoverSlide_(s) {
   const o = MTG_OPTIONS;
   const c = o.colors;
   const S = MTG_SLIDE;
-  const p = s.meeting.split('/').map(Number);
-  const week = '日月火水木金土'.charAt(new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay());
   const line = (y, text) => mtgBox_(S.x, y, S.w, 16, mtgWrap_(text, S.w, 9, 1)[0], {size: 9, color: c.white, align: 'CENTER'});
   return {
     title: MTG_TITLES.cover,
     cover: true,
     template: {title: s.name, subtitle: o.meetingName + '　事前資料' + (s.final ? '' : '【試作】'),
-      date: p[0] + '年' + p[1] + '月' + p[2] + '日（' + week + '）', name: ''},
+      date: mtgDateLabel_(s.meeting), name: ''},
     elements: [
       line(350, '出典：「' + s.name + '」シートおよび変更履歴（' + Utilities.formatDate(s.now, Session.getScriptTimeZone(), 'yyyy/M/d HH:mm') + ' 時点）'),
       line(365, '対象期間：' + mtgPeriodText_(s))
