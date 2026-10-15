@@ -411,7 +411,7 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
 
   // リード文（タイトルの下）に状態を書く。1つ目の文と補足（改行のあと）は行を分ける。大きさ・色はどのページも同じ
   const lead = leadOf;
-  assert.strictEqual(lead(slides[1]), '期待値 50百万円（直近14日間で ▲8）、進行中案件 3件（直近14日間で ▲2件）。');
+  assert.strictEqual(lead(slides[1]), '期待値合計 50百万円（直近14日間で ▲8）、進行中案件 3件（直近14日間で ▲2件）。');
   assert.deepStrictEqual(roleOf(slides[2], 'lead').map(el => [el.color, el.size]), [[c.ink, S.leadSize], [c.ink, S.leadSize]]);
   slides.forEach((slide, i) => roleOf(slide, 'lead').forEach(el => assert.deepStrictEqual([el.size, el.color], [S.leadSize, c.ink], (i + 1) + '枚目：リード文の大きさ・色')));
   assert.match(lead(slides[2]), /^期待値は 58 → 50百万円（▲8）。増加 ±0・減少 ▲8、最大の変動要因は失注（1件・▲5）。今期受注予定の期待値は /);
@@ -441,10 +441,28 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
     });
   });
 
+  // 見出しとリード文の間はあける。表はどれも中身の幅いっぱい（列の幅を中身の幅に合わせる）
+  slides.forEach((slide, i) => {
+    const t = roleOf(slide, 'title')[0];
+    const l = roleOf(slide, 'lead')[0];
+    if (t && l) assert.ok(l.y - (t.y + 30) >= 5, (i + 1) + '枚目：見出しとリード文の間');
+    slide.elements.filter(el => el.type === 'table' && el.columns.length > 4 && !/責任者別/.test(slide.title))
+      .forEach(el => assert.ok(Math.abs(el.x + el.columns.reduce((a, b) => a + b, 0) - (S.x + S.w)) < 0.01, (i + 1) + '枚目：表が中身の幅いっぱい'));
+  });
   // 1枚目：「動き」と「現在の状態」の2つの表（どのシートでも同じ区分。該当が無ければ0件）。数字の箱・今期の帯は置かない
   const first = textOf(slides[1]);
   assert.ok(!/今期|着地/.test(first), 'サマリーに今期の受注・着地見込みは置かない');
-  assert.ok(!slides[1].elements.some(el => el.fill === c.green && el.type === 'box'), '数字の箱（表と区分のまとめ方が違うもの）は置かない');
+  // 上の数字は進行中案件全体の合計（下の表の区分とは重ならない）。前回比つき
+  assert.deepStrictEqual(roleOf(slides[1], 'tile').map(el => el.text), ['進行中案件', '想定売上合計（百万円）', '期待値合計（百万円）', '入力内容の確認事項']);
+  const sum = plain(summarize(g, '新FMT'));
+  assert.strictEqual(sum.bridge.amountEnd, sum.kpi.amount, '想定売上合計は進行中案件の想定売上の合計');
+  assert.deepStrictEqual(roleOf(slides[1], 'tile-value').map(el => el.text), [
+    '3件　直近14日間で ▲2件',
+    g.mtgAmount_(sum.bridge.amountEnd) + '　直近14日間で ' + g.mtgSigned_(sum.bridge.amountEnd - sum.bridge.amountStart),
+    '50　直近14日間で ▲8',
+    '3件　責任者 3名'
+  ]);
+  assert.ok(roleOf(slides[1], 'tile-value').every(el => el.spans[0].size === 16 && el.spans[0].color === c.greenDark), '数字は大きく、前回比は小さく');
   assert.deepStrictEqual(roleOf(slides[1], 'heading').map(el => el.text), ['直近14日間の動き（変化のある案件 4件）', '現在の状態（進行中案件）']);
   const [movesTable, statesTable] = slides[1].elements.filter(el => el.type === 'table');
   const textsOf = t => t.rows.map(r => r.cells.map(cell => cell.text.replace(/\n/g, '')));
@@ -453,8 +471,9 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
     ['受注', '0件', '—', '—'],
     ['新規・前進・復帰', '1件', '30', 'A社／アプリ刷新（初回訪問→提案中）'],
     ['失注・保留・後退・削除', '2件', '30', 'C社／店舗什器（失注）、F社／ブランド刷新（削除）'],
-    ['その他の変化', '1件', '0', 'D社／物流改善（活動更新）']
-  ]);
+    ['活動更新', '1件', '0', 'D社／物流改善（10/12 打ち合わせ）'],
+    ['その他の変化', '0件', '—', '—']
+  ], '活動更新は独立した行にし、最新の活動状況を書く');
   assert.strictEqual(movesTable.rows.slice(1).reduce((sum, r) => sum + Number(r.cells[1].text.replace('件', '')), 0), 4,
     '動きの行の件数を合わせると、見出しの「変化のある案件」の件数になる（案件ごとに1回だけ数える）');
   assert.deepStrictEqual(textsOf(statesTable), [
@@ -816,7 +835,7 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
     '表紙の次から本編を入れると、複製した扉は本編のあとになり、Appendix はそのあと');
   // 本編はページの大きさ（960 × 540pt）に合わせて 4/3 倍
   const title = r.find(q => q.createShape && q.createShape.elementProperties.pageObjectId === 'mtg_p2').createShape;
-  assert.deepStrictEqual([title.elementProperties.size.width.magnitude, title.elementProperties.transform.translateX], [880, 40]);
+  assert.deepStrictEqual([title.elementProperties.size.width.magnitude, title.elementProperties.transform.translateX], [901.33, 29.33]);
   const titleStyle = r.find(q => q.updateTextStyle && q.updateTextStyle.objectId === title.objectId).updateTextStyle.style;
   assert.strictEqual(titleStyle.fontSize.magnitude, 28);
   assert.ok(r.some(q => q.createShape && q.createShape.elementProperties.pageObjectId === 'g_cover'), '表紙にデータの時点・期間を足す');
