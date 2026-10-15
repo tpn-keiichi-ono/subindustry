@@ -463,19 +463,22 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
   assert.ok(moves.rows[0].cells.every(cell => cell.fill === c.green && cell.color === c.white && cell.bold));
   assert.deepStrictEqual([moves.rows[1].cells[0].fill, moves.rows[1].cells[0].spans, moves.rows[1].cells[2].fill],
     [c.greenSoft, [{start: 0, end: 2, bold: true}], c.white]);
-  // 3枚目：区分はセルに重ねたラベル（前向きは濃い緑・後ろ向きは濃いグレー・そのほかは白に枠）。活動状況だけ変わった案件（活動の更新）も、最後に活動状況と一緒に出す
+  // 3枚目：区分はセルに重ねたラベル（前向きは濃い緑・後ろ向きは濃いグレー・そのほかは薄いグレー。枠なし）。活動状況だけ変わった案件（活動の更新）も、最後に活動状況と一緒に出す
   assert.match(moves.rows[1].cells.map(cell => cell.text).join(' | '), /^C社\n店舗什器 \|  \| 提案中 ▶ 失注 \| 5 \|/);
   const pills = roleOf(slides[3], 'pill');
   assert.deepStrictEqual(pills.map(el => [el.text, el.fill, el.color, el.line || null, el.shape]), [
     ['失注', c.dark, c.white, null, 'ROUND_RECTANGLE'],
     ['前進', c.greenDeep, c.white, null, 'ROUND_RECTANGLE'],
     ['削除', c.dark, c.white, null, 'ROUND_RECTANGLE'],
-    ['活動の更新', c.white, c.ink, c.faint, 'ROUND_RECTANGLE']
+    ['活動の更新', c.graySoft, c.sub, null, 'ROUND_RECTANGLE']
   ]);
+  assert.strictEqual(new Set(pills.map(el => el.w)).size, 1, '区分のラベルの幅は同じ');
+  assert.ok(pills.every(el => el.h === S.pill.h && el.size === S.pill.size));
   pills.forEach((el, i) => {
     const x0 = moves.x + moves.columns[0];
     const y0 = moves.y + moves.rows.slice(0, i + 1).reduce((a, r) => a + r.h, 0);
-    assert.ok(el.x >= x0 && el.x + el.w <= x0 + moves.columns[1] && el.y >= y0 && el.y + el.h <= y0 + moves.rows[i + 1].h, 'ラベルがセルに入る：' + el.text);
+    assert.ok(el.x >= x0 + 4 && el.x + el.w <= x0 + moves.columns[1] - 4 && el.y >= y0 + 4 && el.y + el.h <= y0 + moves.rows[i + 1].h - 4,
+      'ラベルがセルに余白をあけて入る：' + el.text);
     assert.deepStrictEqual(plain(g.mtgWrap_(el.text, el.w, el.size, 2)), [el.text], 'ラベルの文字が1行に入る：' + el.text);
   });
   assert.deepStrictEqual([moves.rows[4].cells[0].text.split('\n')[0], moves.rows[4].cells[5].text], ['D社', '10/12 打ち合わせ']);
@@ -484,7 +487,8 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
   assert.deepStrictEqual(focus.rows[0].cells.map(cell => cell.text.replace(/\n/g, '')),
     ['得意先／案件名', '期待値／想定売上', 'ステータス（同じ日数）', '受注月', '活動状況', '活動における課題', '当てはまる状況']);
   assert.deepStrictEqual(roleOf(slides[4], 'pill').map(el => [el.text, el.fill, el.line || null]),
-    [['停滞', c.greenSoft, c.green], ['受注月超過', c.dark, null], ['停滞', c.greenSoft, c.green]], '当てはまる状況のラベル（E社・A社・D社の順）');
+    [['停滞', c.greenSoft, null], ['受注月超過', c.graySoft, null], ['停滞', c.greenSoft, null]], '当てはまる状況のラベル（E社・A社・D社の順。停滞は薄い緑、ほかは薄いグレー）');
+  assert.strictEqual(new Set(roleOf(slides[4], 'pill').map(el => el.w)).size, 1, '当てはまる状況のラベルの幅は同じ');
   assert.match(focus.rows[2].cells.map(cell => cell.text).join(' | '), /^A社\nアプリ刷新 \| 10\n30 \| 提案中\n0日 \| \d{4}\/\d+ \|/);
   assert.deepStrictEqual([focus.rows[2].cells[1].spans, focus.rows[2].cells[2].spans],
     [[{start: 0, end: 2, bold: true, color: c.greenDark, size: 11}], [{start: 4, end: 6, color: c.muted}]], '期待値は大きく緑、日数はグレー');
@@ -557,6 +561,42 @@ test('サマリーの内訳：案件の名前は入る件数まで並べ、残�
   assert.ok(shown < 4 && new RegExp('　ほか ' + (12 - shown) + '件$').test(fit), fit);
   assert.strictEqual(g.mtgNames_(items.slice(0, 1), note, 300, 2), '得意先0／ネットスーパーの立ち上げ支援0（100日以上）');
   assert.strictEqual(g.mtgNames_([], note, 300, 2), '—');
+});
+
+test('ラベル：当てはまる状況が3つでも、行を高くしてセルに余白をあけて入れる（幅は列の中で同じ）', () => {
+  const {gas, g} = setup();
+  const S = gas.get('MTG_SLIDE');
+  const s = summarize(g, '新FMT');
+  const focus = s.focus.map((d, i) => (i === 0 ? Object.assign({}, d, {stalled: true, overdue: true, slips: 2}) : d));
+  const slide = plain(g.mtgSlides_(Object.assign({}, s, {focus})))[4];
+  const table = slide.elements.find(el => el.type === 'table');
+  const pills = roleOf(slide, 'pill');
+  const row1 = pills.filter(el => el.y < table.y + table.rows[0].h + table.rows[1].h);
+  assert.deepStrictEqual(row1.map(el => el.text), ['停滞', '受注月超過', '延期2回']);
+  assert.ok(table.rows[1].h >= g.mtgPillsHeight_(3), '3つ並べても行に入る');
+  const y0 = table.y + table.rows[0].h;
+  assert.ok(row1[0].y >= y0 + S.pill.margin - 0.01 && row1[2].y + row1[2].h <= y0 + table.rows[1].h - S.pill.margin + 0.01, '上下に余白');
+  assert.ok(row1.every((el, i) => !i || el.y - (row1[i - 1].y + row1[i - 1].h) === S.pill.gap), '間は同じ');
+  assert.strictEqual(new Set(pills.map(el => el.w)).size, 1, '幅は列の中で同じ');
+  assert.strictEqual(new Set(pills.map(el => el.x)).size, 1, '左右の中央にそろえる');
+  assert.ok(table.y + table.rows.reduce((sum, r) => sum + r.h, 0) <= S.bottom, '表が下にはみ出さない');
+});
+
+test('文字の折り返し：「前 ▶ 今」は矢印のあとで、開きかっこは行の終わりに残さない。表のセルは行の長さをそろえる', () => {
+  const {g} = setup({edits: false});
+  assert.deepStrictEqual(plain(g.mtgWrap_('提案中 ▶ 課題ヒアリング', 118, 9, 2)), ['提案中 ▶', '課題ヒアリング']);
+  for (let w = 120; w <= 300; w += 4) {
+    g.mtgWrap_('港町GMS／PB商品のパッケージ刷新（100日以上）、さくらスーパー／店舗DXの全体構想（75日）', w, 9, 9)
+      .forEach(line => assert.ok(!/[（「]$/.test(line), w + 'pt：' + line));
+  }
+  assert.deepStrictEqual(plain(g.mtgWrap_('決裁者（社長）に会えていない', 142, 9, 3)).map(t => t.length), [13, 1]);
+  assert.deepStrictEqual(plain(g.mtgBalance_('決裁者（社長）に会えていない', 142, 9, 3)).map(t => t.length), [7, 7], '最後の行に1文字だけ残さない');
+  assert.deepStrictEqual(plain(g.mtgBalance_('期待値・受注月', 74, 8.5, 2)), ['期待値・', '受注月']);
+  assert.deepStrictEqual(plain(g.mtgBalance_('短い', 142, 9, 3)), ['短い'], '1行に入るものはそのまま');
+  const para = '東西マート／物流センターの改善（失注）、富士ストア／店舗アプリ改修（提案中→課題ヒアリング）、海風マート／来店分析（削除）';
+  assert.deepStrictEqual(plain(g.mtgBalance_(para, 438, 9, 3)), plain(g.mtgWrap_(para, 438, 9, 3)), '最後の行が十分に長ければ、そのまま（行をいっぱいに使う）');
+  const long = 'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめも';
+  assert.deepStrictEqual(plain(g.mtgBalance_(long, 100, 9, 2)), plain(g.mtgWrap_(long, 100, 9, 2)), '「…」で切れるものはそのまま');
 });
 
 test('文字の折り返し：見積もりの幅で分け、最後の行は「…」。行の頭に来ない文字はぶら下げ、半角の語は途中で切らない', () => {

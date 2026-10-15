@@ -106,14 +106,14 @@ const MTG_OPTIONS = {
     green: '#70AD47', greenDark: '#38761D', greenDeep: '#548235', greenSoft: '#E2EFDA', greenText: '#274E13',
     up: '#8FD36B', down: '#A6A6A6', dark: '#595959',
     ink: '#1A1A1A', body: '#1A1A1A', sub: '#404040', muted: '#595959', faint: '#7F7F7F',
-    line: '#D0D0D0', frame: '#BFBFBF', rule: '#D9D9D9', white: '#FFFFFF',
+    line: '#D0D0D0', frame: '#BFBFBF', rule: '#D9D9D9', white: '#FFFFFF', graySoft: '#EDEDED',
     cover: '#3A7D22'                 // ひな形が無いときの表紙・扉の背景
   }
 };
 
 /*
  * 前回からの変化の区分（上ほど優先。案件ごとに1つ）。意味は docs/DESIGN.md（会議サマリの数え方）。
- * tone は表のラベルの色（up 濃い緑：前向き・down 濃いグレー：後ろ向き・note 白に枠：そのほか。mtgPills_）
+ * tone は表のラベルの色（up 濃い緑：前向き・down 濃いグレー：後ろ向き・note 薄いグレー：そのほか。mtgPills_）
  */
 const MTG_CATEGORIES = [
   {key: 'new', label: '新規', tone: 'up'},
@@ -191,7 +191,9 @@ const MTG_SLIDE = {
   lineFactor: 1.5,       // 表の行の高さ = 文字の大きさ × lineFactor（Google スライドで行が伸びないよう、多めに見積もる）
   padX: 14.4,            // 箱・表のセルの左右の余白（合わせて）
   padY: 7.2,             // 上下の余白（合わせて）
-  headRow: 20            // 表の見出しの行の高さ（1行）
+  headRow: 20,           // 表の見出しの行の高さ（1行）
+  // ラベル（区分・当てはまる状況）：高さ・文字の大きさ・縦に並べるときの間・セルの上下の余白。幅は列ごとに同じ（mtgPillWidth_）
+  pill: {h: 12, size: 8, gap: 2, margin: 4}
 };
 
 /* ---------------- エディタから実行する ---------------- */
@@ -1321,6 +1323,10 @@ function mtgSummarySlide_(s) {
   ], 0)));
   let rows = tableOf(3);
   if (y + rows.reduce((sum, r) => sum + r.h, 0) > S.bottom) rows = tableOf(2);
+  // 下にあいた分は、内訳の行に分けて高くする（1行あたり 10pt まで。ページの下が空かないように）
+  const free = S.bottom - y - rows.reduce((sum, r) => sum + r.h, 0);
+  const extra = Math.floor(Math.min(10, free / (rows.length - 1)) * 10) / 10;
+  if (extra > 0) rows = rows.map((r, i) => (i ? Object.assign({}, r, {h: r.h + extra}) : r));
   el.push({type: 'table', x: S.x, y, columns, rows});
 
   return {
@@ -1497,7 +1503,7 @@ function mtgMovesSlide_(s) {
   if (top.length) {
     const table = {type: 'table', x: S.x, y: S.top, columns, rows};
     el.push(table);
-    top.forEach((ch, i) => el.push.apply(el, mtgPills_(table, i + 1, 1, [mtgCategoryPill_(ch.category)])));
+    top.forEach((ch, i) => el.push.apply(el, mtgPills_(table, i + 1, 1, [mtgCategoryPill_(ch.category)], mtgCategoryPillWidth_(columns[1]))));
   } else {
     el.push(mtgBox_(S.x, S.top + 20, S.w, 30, mtgPeriodShort_(s) + 'ステータス・期待値・受注月・活動状況が変わった案件はありません',
       {size: 10, color: c.muted, align: 'CENTER'}));
@@ -1532,14 +1538,14 @@ function mtgFocusSlide_(s) {
     {text: d.activity || '—', lines: 3, fill: c.white},
     {text: d.issue || '—', lines: 3, fill: c.white},
     {text: mtgFlags_(d).length ? '' : '—', fill: c.white, align: 'CENTER'}
-  ], 44)));
+  ], Math.max(44, mtgPillsHeight_(mtgFlags_(d).length)))));
   const el = [];
   if (s.focus.length) {
     const table = {type: 'table', x: S.x, y: S.top, columns, rows};
     el.push(table);
-    s.focus.forEach((d, i) => el.push.apply(el, mtgPills_(table, i + 1, 6, mtgFlags_(d).map(flag => ({
-      text: flag, tone: flag === '停滞' ? 'stall' : flag === '受注月超過' ? 'down' : 'note'
-    })))));
+    const width = mtgPillWidth_(['停滞', '受注月超過', '延期9回'], columns[6]);
+    s.focus.forEach((d, i) => el.push.apply(el, mtgPills_(table, i + 1, 6, mtgFlags_(d).map(flag => ({text: flag, tone: flag === '停滞' ? 'stall' : 'note'})),
+      width)));
   } else {
     el.push(mtgBox_(S.x, S.top + 20, S.w, 30, '進行中の案件はありません', {size: 10, color: c.muted, align: 'CENTER'}));
   }
@@ -1564,31 +1570,43 @@ function mtgCategoryPill_(key) {
 
 /**
  * 表のセルの上に重ねるラベル（角の丸い四角。区分・当てはまる状況）。table は表の部品（x・y・columns・rows）、row・col はセルの位置
- * （見出しの行が 0）、labels は [{text, tone}]（tone：up 前向き＝濃い緑・down 後ろ向き＝濃いグレー・note そのほか＝白に枠・stall 停滞＝薄い緑に緑の枠）。
- * 複数は縦に並べる。セルの文字は空にしておく
+ * （見出しの行が 0）、labels は [{text, tone}]（tone：up 前向き＝濃い緑・down 後ろ向き＝濃いグレー・note そのほか＝薄いグレー・stall 停滞＝薄い緑。
+ * どれも枠なし）。width はラベルの幅（列の中で同じにする。mtgPillWidth_）。複数は縦に並べ、セルの上下の中央に置く。セルの文字は空にしておく
  */
-function mtgPills_(table, row, col, labels) {
+function mtgPills_(table, row, col, labels, width) {
   const c = MTG_OPTIONS.colors;
-  const S = MTG_SLIDE;
-  const size = 8.5;
-  const ph = 13;
-  const gap = 3;
+  const P = MTG_SLIDE.pill;
   const styles = {
     up: {fill: c.greenDeep, color: c.white},
     down: {fill: c.dark, color: c.white},
-    note: {fill: c.white, color: c.ink, line: c.faint},
-    stall: {fill: c.greenSoft, color: c.greenText, line: c.green}
+    note: {fill: c.graySoft, color: c.sub},
+    stall: {fill: c.greenSoft, color: c.greenText}
   };
   const x0 = table.x + table.columns.slice(0, col).reduce((a, b) => a + b, 0);
   const y0 = table.y + table.rows.slice(0, row).reduce((a, r) => a + r.h, 0);
   const cw = table.columns[col];
-  const total = labels.length * ph + Math.max(labels.length - 1, 0) * gap;
-  return labels.map((label, i) => {
-    const units = Array.from(label.text).reduce((sum, ch) => sum + mtgCharWidth_(ch), 0);
-    const pw = Math.min(cw - 4, Math.ceil(units * size / 0.92 + S.padX + 2));
-    return mtgBox_(x0 + (cw - pw) / 2, y0 + (table.rows[row].h - total) / 2 + i * (ph + gap), pw, ph, label.text,
-      Object.assign({size, bold: true, align: 'CENTER', shape: 'ROUND_RECTANGLE', lineWeight: 0.75, role: 'pill'}, styles[label.tone] || styles.note));
-  });
+  const pw = Math.min(width || mtgPillWidth_(labels.map(label => label.text), cw), cw - 8);
+  const total = mtgPillsHeight_(labels.length) - 2 * P.margin;
+  return labels.map((label, i) => mtgBox_(x0 + (cw - pw) / 2, y0 + (table.rows[row].h - total) / 2 + i * (P.h + P.gap), pw, P.h, label.text,
+    Object.assign({size: P.size, bold: true, align: 'CENTER', shape: 'ROUND_RECTANGLE', role: 'pill'}, styles[label.tone] || styles.note)));
+}
+
+/** ラベルの幅：texts のうちいちばん長いものが1行に入る幅（列の幅 cw から左右 4pt ずつあける）。列の中のラベルをそろえるため、出しうる文字をすべて渡す */
+function mtgPillWidth_(texts, cw) {
+  const P = MTG_SLIDE.pill;
+  const need = Math.max.apply(null, texts.map(text => Array.from(text).reduce((sum, ch) => sum + mtgCharWidth_(ch), 0)));
+  return Math.min(cw - 8, Math.ceil(need * P.size / 0.92 + MTG_SLIDE.padX + 4));
+}
+
+/** ラベルを n 個縦に並べたときに要るセルの高さ（上下の余白を含む） */
+function mtgPillsHeight_(n) {
+  const P = MTG_SLIDE.pill;
+  return n ? n * P.h + (n - 1) * P.gap + 2 * P.margin : 0;
+}
+
+/** 区分のラベルの幅（どの区分でも同じ幅） */
+function mtgCategoryPillWidth_(cw) {
+  return mtgPillWidth_(MTG_CATEGORIES.map(cat => cat.label), cw);
 }
 
 /** Appendix ① 前回から変わった案件（一覧。更新のみ・削除も）。区分はラベルで出す */
@@ -1612,7 +1630,7 @@ function mtgAppendixChanges_(s) {
         fill: c.white},
       {text: ch.owner || '—', fill: c.white, align: 'CENTER'}
     ]),
-    pills: {col: 1, labels: i => [mtgCategoryPill_(s.changes[i].category)]}
+    pills: {col: 1, labels: i => [mtgCategoryPill_(s.changes[i].category)], width: mtgCategoryPillWidth_(columns[1])}
   });
 }
 
@@ -1695,15 +1713,17 @@ function mtgAppendixOwners_(s) {
 /** Appendix ③ 入力内容のチェック（一覧） */
 function mtgAppendixAlerts_(s) {
   const c = MTG_OPTIONS.colors;
-  const columns = [164, 70, 290, 52, 84];
+  const columns = [164, 80, 280, 52, 84];
+  // 種類の名前は、長いものだけ言葉の切れ目で改行する（語の途中で折り返さない）
+  const typeText = {'選択肢外のステータス': '選択肢外の\nステータス', 'デリバリー担当なし': 'デリバリー\n担当なし'};
   return mtgPagedTable_({
     title: MTG_TITLES.alerts,
     lead: '入力内容のチェックに当てはまったのは ' + s.alerts.length + '件。',
     columns,
     head: ['得意先／案件名', '種類', '内容', '想定\n売上', '責任者'],
     rows: s.alerts.map(a => [
-      {text: mtgDealLabel_(a), lines: 2, bold: true, color: c.ink, fill: c.greenSoft},
-      {text: a.type, lines: 2, bold: true, color: c.ink, fill: c.white},
+      mtgDealCell_(a, columns[0], MTG_SLIDE.appendixSize),
+      {text: typeText[a.type] || a.type, lines: 2, bold: true, color: c.ink, fill: c.white},
       {text: a.text, lines: 2, fill: c.white},
       {text: mtgAmount_(a.amount), fill: c.white, align: 'END'},
       {text: a.owner || '—', fill: c.white, align: 'CENTER'}
@@ -1733,7 +1753,7 @@ function mtgPagedTable_(spec) {
   return pages.map((p, i) => {
     const table = {type: 'table', x: S.x, y: S.top, columns: spec.columns, rows: p.rows};
     const el = [table];
-    if (spec.pills) p.index.forEach((index, n) => el.push.apply(el, mtgPills_(table, n + 1, spec.pills.col, spec.pills.labels(index))));
+    if (spec.pills) p.index.forEach((index, n) => el.push.apply(el, mtgPills_(table, n + 1, spec.pills.col, spec.pills.labels(index), spec.pills.width)));
     return {title: spec.title + (i ? '（続き）' : ''), lead: spec.lead, elements: el};
   });
 }
@@ -1812,7 +1832,7 @@ function mtgRow_(columns, cells, min) {
   let h = min || 0;
   const out = cells.map((cell, i) => {
     const size = cell.size || MTG_SLIDE.bodySize;
-    const lines = mtgWrap_(cell.text, columns[i], size, cell.lines || 1);
+    const lines = mtgBalance_(cell.text, columns[i], size, cell.lines || 1);
     h = Math.max(h, mtgLineHeight_(lines.length, size));
     const text = lines.join('\n');
     return Object.assign({}, cell, {text, size}, cell.parts ? {spans: mtgPartSpans_(String(cell.text), cell.parts, columns[i], size, lines)} : {});
@@ -1868,7 +1888,7 @@ function mtgCharWidth_(ch) {
  * 文を、幅 widthPt の箱（セル）の中に収まる行に分ける（改行はそのまま行の区切り。pt で数える）。max 行を超えたら最後の行を「…」の分をあけて切る。
  * 文字の幅は見積もり（mtgCharWidth_。箱の左右の余白 MTG_SLIDE.padX を引き、さらに 8% の余裕をとる）なので、本物の折り返しより早めに分ける。
  * 行の頭に来てはいけない文字（、。）」など）は、本当の幅に収まるなら前の行の終わりにぶら下げ、収まらなければ前の文字と一緒に次の行へ送る。
- * 半角の語（「2026/12」など）の途中では切らず、語の前の空白で折り返す。
+ * 半角の語（「2026/12」など）の途中では切らず、語の前の空白で折り返す。「前 ▶ 今」は矢印のあとで折り返す。開きかっこは行の終わりに残さない。
  */
 function mtgWrap_(text, widthPt, size, max) {
   const room = (widthPt - MTG_SLIDE.padX) / (size || MTG_SLIDE.bodySize);
@@ -1882,10 +1902,19 @@ function mtgWrap_(text, widthPt, size, max) {
     Array.from(part.replace(/[ \t]+/g, ' ').trim()).forEach(ch => {
       if (used + width(ch) > limit && line && !(hang.test(ch) && used + width(ch) <= room)) {
         const chars = Array.from(line);
-        const word = hang.test(ch) ? null : /[!-~]/.test(ch) ? /^(.*\S) ([!-~]+)$/.exec(line) : null;
-        const keep = word ? word[1] : hang.test(ch) && chars.length > 1 ? chars.slice(0, -1).join('') : line;
+        // 「前 ▶ 今」は矢印のあとで、半角の語は語の前で改行する
+        const arrow = hang.test(ch) ? null : /^(.*[▶▸]) (\S.*)$/.exec(line);
+        const word = arrow || (hang.test(ch) ? null : /[!-~]/.test(ch) ? /^(.*\S) ([!-~]+)$/.exec(line) : null);
+        let keep = word ? word[1] : hang.test(ch) && chars.length > 1 ? chars.slice(0, -1).join('') : line;
+        let rest = word ? word[2] : line.slice(keep.length);
+        // 行の終わりに来ない文字（開きかっこ）は次の行へ
+        const open = /[（「『【〔〈《(［\[]$/.exec(keep);
+        if (open && Array.from(keep).length > 1) {
+          keep = keep.slice(0, -open[0].length);
+          rest = open[0] + rest;
+        }
         out.push(keep);
-        line = word ? word[2] : line.slice(keep.length);
+        line = rest;
         used = Array.from(line).reduce((sum, c) => sum + width(c), 0);
       }
       line += ch;
@@ -1909,6 +1938,25 @@ function mtgWrap_(text, widthPt, size, max) {
 }
 
 /** 行の高さ（pt）の見積もり：lines 行・文字の大きさ size（上下の余白を含む） */
+/**
+ * 最後の行が短い（いちばん長い行の 1/3 未満。「い」だけが残るなど）ときは、行の長さをそろえて折り返す
+ * （mtgWrap_ と同じ行数のまま、いちばん狭い幅で折り返す）。「…」で切れるときと、最後の行が十分に長いときは、そのまま
+ */
+function mtgBalance_(text, widthPt, size, max) {
+  const lines = mtgWrap_(text, widthPt, size, max);
+  if (lines.length < 2 || /…$/.test(lines[lines.length - 1])) return lines;
+  const units = line => Array.from(line).reduce((sum, ch) => sum + mtgCharWidth_(ch), 0);
+  if (units(lines[lines.length - 1]) >= Math.max.apply(null, lines.map(units)) / 3) return lines;
+  let lo = MTG_SLIDE.padX + (size || MTG_SLIDE.bodySize);
+  let hi = widthPt;
+  for (let k = 0; k < 12; k++) {
+    const mid = (lo + hi) / 2;
+    if (mtgWrap_(text, mid, size, 99).length > lines.length) lo = mid;
+    else hi = mid;
+  }
+  return mtgWrap_(text, hi, size, lines.length);
+}
+
 function mtgLineHeight_(lines, size) {
   return lines * (size || MTG_SLIDE.bodySize) * MTG_SLIDE.lineFactor + MTG_SLIDE.padY;
 }
