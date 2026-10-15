@@ -319,13 +319,12 @@ test('入力内容のチェック「資料なし」：商談記録（ＵＲＬ�
   const slides = plain(g.mtgSlides_(summarize(g, '新FMT')));
   const owners = slides.find(sl => sl.title === 'Appendix ③　入力内容のチェック（責任者別）');
   assert.ok(owners.elements.find(el => el.type === 'table').rows[0].cells.some(cell => cell.text === '資料\nなし'));
-  const notes = owners.elements.filter(el => el.type === 'box' && el.spans).map(el => el.text.replace(/\n/g, ''));
-  assert.ok(notes.indexOf('資料なし：進行中で「商談記録（ＵＲＬ）」が空') >= 0, notes.join(' / '));
+  const list = slides.find(sl => sl.title === 'Appendix ③　入力内容のチェック（一覧）').elements.find(el => el.type === 'table');
+  assert.ok(list.rows.some(r => r.cells[1].text === '資料なし' && r.cells[2].text === empty), '内容は案件ごとの一覧に書く');
 });
 
-test('今期の受注と着地見込み・受注月（四半期）別の期待値・ステータス別（プルダウンの順。進行中 → 保留 → 受注 → 失注）', () => {
-  const {gas, g} = setup();
-  gas.get('MTG_OPTIONS').targets['新FMT'] = 200;
+test('受注月（四半期）別の期待値・今期に受注予定の期待値・ステータス別（プルダウンの順。進行中 → 保留 → 受注 → 失注）', () => {
+  const {g} = setup();
   const s = plain(summarize(g, '新FMT'));
   assert.deepStrictEqual(s.stages.map(p => [p.status, p.kind, p.count, p.amount, p.weighted]), [
     ['提案中', 'active', 2, 110, 50],
@@ -338,9 +337,9 @@ test('今期の受注と着地見込み・受注月（四半期）別の期待�
     const start = (now.m >= 4 ? now.y : now.y - 1) * 12 + 4;
     return m.y * 12 + m.m >= start && m.y * 12 + m.m < start + 12;
   };
-  const won = inYear(month(-2)) ? 50 : 0;
   const planned = [[month(-1), 10], [month(1), 40]].filter(p => inYear(p[0])).reduce((sum, p) => sum + p[1], 0);
-  assert.deepStrictEqual([s.fiscal.wonAmount, s.fiscal.planned, s.fiscal.landing, s.fiscal.target], [won, planned, won + planned, 200]);
+  assert.ok(leadOf(plain(g.mtgSlides_(summarize(g, '新FMT')))[2]).indexOf('今期に受注予定の期待値は ' + planned + '百万円') >= 0, '受注月別の表（今期の四半期）の合計');
+  assert.strictEqual(s.fiscal, undefined, '今期の受注・着地見込み（サマリーの帯）は作らない');
   assert.strictEqual(s.quarters.reduce((sum, q) => sum + q.count, 0), 3, '進行中の3件をどこかに入れる');
   assert.ok(s.quarters.some(q => q.label === '受注月なし' && q.count === 1));
   assert.deepStrictEqual(s.quarters.filter(q => /Q/.test(q.label)).map(q => q.label), ['1Q（4〜6月）', '2Q（7〜9月）', '3Q（10〜12月）', '4Q（1〜3月）']);
@@ -390,9 +389,8 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
   assert.deepStrictEqual(divider.template, {title: 'Appendix', subtitle: '', date: '', name: ''});
   const toc = roleOf(divider, 'toc').map(el => el.text);
   const contents = toc.filter((_, i) => i % 3 === 0).map((label, i) => [label, toc[i * 3 + 1], toc[i * 3 + 2]]);
-  assert.deepStrictEqual(contents, titles.map((t, i) => [t, i + 1]).filter(([t]) => /^Appendix \S/.test(t) && !/（続き）$/.test(t))
-    .map(([t, page]) => [t.split('　')[0], t.split('　')[1], String(page)]));
-  assert.deepStrictEqual(contents[0], ['Appendix ①', '前回から変わった案件（一覧）', '7']);
+  assert.deepStrictEqual(contents, [['Appendix ①', '前回から変わった案件', '7'], ['Appendix ②', '停滞している案件', '8'], ['Appendix ③', '入力内容のチェック', '9']],
+    'Appendix ごとに1行（③の責任者別・一覧も1行。見出しの（一覧）などは付けない）');
 
   // 左上のラベルは置かない。どのサブインダストリー・会議日の資料かは、表紙といちばん下の出典の行（区切り線の下）に書く
   slides.forEach((slide, i) => {
@@ -417,9 +415,8 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
   assert.deepStrictEqual(roleOf(slides[2], 'lead').map(el => [el.color, el.size <= S.leadSize]), [[c.ink, true], [c.muted, true]]);
   assert.ok(roleOf(slides[2], 'lead')[1].size < roleOf(slides[2], 'lead')[0].size);
   assert.match(lead(slides[2]), /^期待値は 58 → 50百万円（▲8）。増えた分 ±0・減った分 ▲8、内訳で最も大きいのは失注（1件・▲5）。今期に受注予定の期待値は /);
-  assert.strictEqual(lead(slides[3]), '直近14日で変わった案件は 4件（受注 0・失注 1・前進 1・後退 0・延期 0・新規 0・活動の更新 1）。' +
-    '全件と、ほかの項目だけ更新した 0件は Appendix ①。');
-  assert.strictEqual(lead(slides[4]), '進行中の案件のうち、期待値の大きい 3件（進行中の期待値の 100%）。このうち停滞 2件・受注月超過 1件・受注月の延期あり 0件。停滞の全 2件は Appendix ②。');
+  assert.strictEqual(lead(slides[3]), '直近14日で変わった案件は 4件。', '区分ごとの件数（サマリーにある）・0件のものは書かない');
+  assert.strictEqual(lead(slides[4]), '進行中の案件のうち、期待値の大きい 3件（進行中の期待値の 100%）。', '当てはまる状況の数は書かない（表のラベルで分かる）');
   slides.forEach((slide, i) => roleOf(slide, 'lead').forEach(el => {
     assert.ok(!/…$/.test(el.text), (i + 1) + '枚目：リード文が切れている ' + el.text);
     assert.ok(el.y + el.h <= S.top + 0.01, (i + 1) + '枚目：リード文が中身にかかる');
@@ -444,13 +441,14 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
     });
   });
 
-  // 1枚目：今期の帯・4つの数字・前回からの状況の内訳（どのシートでも同じ区分。該当が無ければ0件）
+  // 1枚目：4つの数字・前回からの状況の内訳（どのシートでも同じ区分。該当が無ければ0件）。今期の帯は置かない
   const first = textOf(slides[1]);
-  assert.match(first, /今期（\d{4}\/4〜\d{4}\/3）　　受注 /);
+  assert.ok(!/今期|着地/.test(first), 'サマリーに今期の受注・着地見込みは置かない');
   const tiles = slides[1].elements.filter(el => el.fill === c.green && el.type === 'box').map(el => el.text);
   assert.deepStrictEqual(tiles, ['進行中の期待値（百万円）', '受注／失注（直近14日）', '前進／後退（直近14日）', '停滞（45日以上同じ）'], '4つの数字の見出し（緑の帯）');
-  assert.match(first, /停滞（45日以上同じ）\n2件\n想定売上 80百万円・受注月超過 1件/);
-  assert.match(first, /進行中の期待値（百万円）\n50\n直近14日で ▲8・3件（想定売上 110）/);
+  assert.match(first, /停滞（45日以上同じ）\n2件/);
+  assert.match(first, /進行中の期待値（百万円）\n50/);
+  assert.ok(!/想定売上 80百万円|直近14日で ▲8・3件/.test(first), '数字の箱には数字だけ（前回比・件数はリード文、想定売上は内訳の表）');
   const breakdown = slides[1].elements.find(el => el.type === 'table').rows.map(r => r.cells.map(cell => cell.text.replace(/\n/g, '')));
   assert.deepStrictEqual(breakdown, [
     ['区分', '件数', '想定売上', '案件（想定売上の大きい順）'],
@@ -490,15 +488,15 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
   assert.match(focus.rows[2].cells.map(cell => cell.text).join(' | '), /^A社\nアプリ刷新 \| 10\n30 \| 提案中\n0日 \| \d{4}\/\d+ \|/);
   assert.deepStrictEqual([focus.rows[2].cells[1].spans, focus.rows[2].cells[2].spans],
     [[{start: 0, end: 2, bold: true, color: c.greenDark, size: 11}], [{start: 4, end: 6, color: c.muted}]], '期待値は大きく緑、日数はグレー');
-  // Appendix ①：区分の順はリード文に書く（用語の定義のページは無い）
-  assert.strictEqual(lead(slides[6]), '直近14日で変わった案件は 4件。区分は案件ごとに1つ（当てはまるものが複数あれば 新規 > 受注 > 失注 > 保留 > 復帰 > ' +
-    '前進 > 後退 > 延期 > 前倒し > 増額 > 減額 > 変更 > 活動の更新 > 更新のみ の順。行の削除は「削除」）。');
+  // Appendix：件数だけ（区分の決め方・並びの説明は書かない）
+  assert.strictEqual(lead(slides[6]), '直近14日で変わった案件は 4件。');
+  assert.strictEqual(lead(slides[7]), '進行中で、ステータスが45日以上同じ案件は 2件（想定売上 80百万円）。');
+  assert.strictEqual(lead(slides[9]), '入力内容のチェックに当てはまったのは 3件。');
   assert.ok(all.indexOf('Appendix ④') < 0 && all.indexOf('Appendix ⑤') < 0, '無い Appendix を案内しない');
-  // Appendix ③：チェックの種類の説明（見出しの無いシートでは資料なしを見ない）
-  const notes = slides[8].elements.filter(el => el.type === 'box' && el.spans).map(el => el.text.replace(/\n/g, ''));
-  assert.deepStrictEqual(notes, ['受注月超過：受注月を過ぎても進行中のまま',
-    '未入力：進行中で、想定売上規模（百万）・期待値調整済想定売上規模（百万）・受注月・活動状況・アカウント責任者 のどれかが空', '更新なし：進行中で、最終更新が30日以上前']);
-  assert.ok(!notes.some(t => /^資料なし：/.test(t)));
+  // Appendix ③：責任者別は表だけ（種類の説明は置かない。内容は一覧に書く）。見出しの無いシートでは資料なしを見ない
+  assert.strictEqual(lead(slides[8]), '入力内容のチェックに当てはまったのは 3件（責任者 3人）。');
+  assert.deepStrictEqual(slides[8].elements.filter(el => !el.role && el.type === 'table').length, 1);
+  assert.ok(all.indexOf('チェックの種類') < 0 && all.indexOf('資料なし') < 0);
 });
 
 test('スライド：Appendix は入りきらなければ続きのページに分け、見出しの行を繰り返す（全件を出す）。中身の無い Appendix は作らない', () => {
@@ -517,13 +515,13 @@ test('スライド：Appendix は入りきらなければ続きのページに�
   assert.deepStrictEqual(slides.map(sl => sl.title), ['表紙', 'サマリー', 'パイプラインの変化', '前回から変わった案件', '期待値の大きい案件の状況・課題'],
     'Appendix が1つも無ければ扉も作らない');
   const onlyAlerts = plain(g.mtgSlides_(Object.assign({}, empty, {alerts: s.alerts})));
-  assert.deepStrictEqual(roleOf(onlyAlerts[5], 'toc').filter((_, i) => i % 3 === 0).map(el => el.text), ['Appendix ③', 'Appendix ③'],
+  assert.deepStrictEqual(roleOf(onlyAlerts[5], 'toc').filter((_, i) => i % 3 === 0).map(el => el.text), ['Appendix ③'],
     '扉には、作った Appendix だけを出す');
   const breakdown = slides[1].elements.find(el => el.type === 'table').rows.slice(1).map(r => r.cells.map(cell => cell.text));
   assert.ok(breakdown.every(r => r[1] === '0件' && r[3] === '—'), '区分は同じまま、0件で出す');
 });
 
-test('スライド：入力内容のチェック（責任者別）は、種類の説明が表の右に入りきらなければ置かない', () => {
+test('スライド：入力内容のチェック（責任者別）は責任者 × 種類の件数の表だけ（種類の説明は置かない）。種類が多くてもページの幅に入る', () => {
   const {gas, g} = setup();
   const S = gas.get('MTG_SLIDE');
   const s = summarize(g, '新FMT');
@@ -531,19 +529,34 @@ test('スライド：入力内容のチェック（責任者別）は、種類�
   const lead = leadOf;
 
   const few = ownersOf(s);
-  assert.ok(few.elements.some(el => el.text === 'チェックの種類'), '種類が少なければ右に説明');
-  assert.match(lead(few), /責任者ごとの件数と、チェックの種類（右）。/);
+  assert.ok(!few.elements.some(el => el.text === 'チェックの種類'));
+  assert.strictEqual(lead(few), '入力内容のチェックに当てはまったのは 3件（責任者 3人）。');
+  const narrow = few.elements.find(el => el.type === 'table');
+  assert.deepStrictEqual(narrow.columns, [120, 80, 80, 80, 40], '種類が少なければ、種類の列は 80pt まで（左に寄せる）');
 
   const types = gas.get('MTG_ALERT_TYPES');
   const alerts = types.map((type, i) => ({type, key: type + '|' + i, customer: 'X社', project: '案件' + i, text: '内容', amount: 1, owner: '担当' + (i % 3)}));
   const many = ownersOf(Object.assign({}, s, {alerts}));
   assert.ok(!many.elements.some(el => el.text === 'チェックの種類'));
-  assert.match(lead(many), /責任者ごとの件数。案件ごとの一覧（内容つき）は次のページ。$/);
   const table = many.elements.find(el => el.type === 'table');
   assert.strictEqual(table.columns.length, types.length + 2, '責任者・種類ごと・計');
   assert.ok(S.x + table.columns.reduce((a, b) => a + b, 0) <= S.x + S.w, '表がスライドの幅に入る');
   assert.ok(table.columns.every(w => w >= 32));
   table.rows[0].cells.forEach(cell => assert.ok(!/…/.test(cell.text), '見出しが切れない：' + cell.text));
+});
+
+test('サマリーの内訳：案件の名前は入る件数まで並べ、残りは「ほか N件」（「…」で切らない）', () => {
+  const {g} = setup({edits: false});
+  const items = Array.from({length: 12}, (_, i) => ({customer: '得意先' + i, project: 'ネットスーパーの立ち上げ支援' + i, amount: 1}));
+  const note = () => '100日以上';
+  assert.strictEqual(g.mtgNames_(items, note).split('、').length, 4, '幅を渡さなければ mainRows.deals 件');
+  const fit = g.mtgNames_(items, note, 300, 2);
+  const lines = g.mtgWrap_(fit, 300, 9, 99);
+  assert.ok(lines.length <= 2 && !/…$/.test(lines[lines.length - 1]), fit);
+  const shown = fit.split('　ほか ')[0].split('、').length;
+  assert.ok(shown < 4 && new RegExp('　ほか ' + (12 - shown) + '件$').test(fit), fit);
+  assert.strictEqual(g.mtgNames_(items.slice(0, 1), note, 300, 2), '得意先0／ネットスーパーの立ち上げ支援0（100日以上）');
+  assert.strictEqual(g.mtgNames_([], note, 300, 2), '—');
 });
 
 test('文字の折り返し：見積もりの幅で分け、最後の行は「…」。行の頭に来ない文字はぶら下げ、半角の語は途中で切らない', () => {
