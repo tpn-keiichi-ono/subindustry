@@ -64,8 +64,9 @@ function formatDate(date, timeZone, format) {
     timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit'
   }).formatToParts(date).forEach(p => { parts[p.type] = p.value; });
-  const map = {yyyy: parts.year, MM: parts.month, dd: parts.day, HH: parts.hour, mm: parts.minute, ss: parts.second};
-  return String(format).replace(/yyyy|MM|dd|HH|mm|ss/g, t => map[t]);
+  const map = {yyyy: parts.year, MM: parts.month, M: String(Number(parts.month)), dd: parts.day, d: String(Number(parts.day)),
+    HH: parts.hour, mm: parts.minute, ss: parts.second};
+  return String(format).replace(/yyyy|MM|M|dd|d|HH|mm|ss/g, t => map[t]);
 }
 
 /* ---------------- RichTextValue / TextStyle ---------------- */
@@ -934,6 +935,14 @@ function createGas(options) {
       const fileId = 'file-' + (gas.driveFiles.length + 1);
       gas.driveFiles.push({id: fileId, folder: id, name: blob.getName(), blob});
       return {getId: () => fileId, getName: () => blob.getName(), getUrl: () => 'https://drive.google.com/file/d/' + fileId + '/view'};
+    },
+    /** フォルダの中の、その名前のファイル（作った PDF と、フォルダに置いた Google スライド。ゴミ箱のものは除く） */
+    getFilesByName(fileName) {
+      const files = gas.driveFiles.filter(f => f.folder === id && f.name === fileName).map(f => f.id)
+        .concat(gas.decks.filter(d => d.folder === id && d.title === fileName).map(d => d.id))
+        .filter(fileId => gas.trashed.indexOf(fileId) < 0)
+        .map(fileId => ({getId: () => fileId, getName: () => fileName, setTrashed(flag) { if (flag) gas.trashed.push(fileId); return this; }}));
+      return {hasNext: () => files.length > 0, next: () => files.shift()};
     }
   });
   const DriveApp = {
@@ -950,7 +959,12 @@ function createGas(options) {
         getMimeType: () => (gas.files[id] || {}).mimeType ||
           (gas.slideTemplates[id] ? 'application/vnd.google-apps.presentation' : 'application/vnd.google-apps.spreadsheet'),
         getUrl: () => 'https://docs.google.com/presentation/d/' + id + '/edit',
-        moveTo(folder) { gas.moved.push({id, folder: folder.getId()}); return this; },
+        moveTo(folder) {
+          gas.moved.push({id, folder: folder.getId()});
+          const deck = gas.decks.find(d => d.id === id);
+          if (deck) deck.folder = folder.getId();
+          return this;
+        },
         /** PDF などに書き出した中身（名前を付けられる入れ物だけ） */
         getAs(mimeType) {
           return {name: '', from: id, setName(n) { this.name = String(n); return this; }, getName() { return this.name; },
@@ -962,7 +976,8 @@ function createGas(options) {
           const template = gas.slideTemplates[id];
           if (template) {
             // Google スライドのコピー：Slides（拡張サービス）で開ける資料にする
-            gas.decks.push({id: copyId, title: name, template: id, pageSize: template.pageSize, slides: template.slides.slice(), requests: [], batches: []});
+            gas.decks.push({id: copyId, title: name, template: id, folder: folder ? folder.getId() : null, pageSize: template.pageSize,
+              slides: template.slides.slice(), requests: [], batches: []});
             return DriveApp.getFileById(copyId);
           }
           return {
