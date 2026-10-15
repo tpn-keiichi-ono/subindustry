@@ -18,8 +18,7 @@
  *   4 重点案件の状況・課題：★の案件と期待値の大きい進行中の案件（支援の要否を決めたい案件は赤枠。★はオポチュニティキャンバスで深掘りする候補）
  *   付録（全件。入りきらなければ続きのページ）
  *   A 前回からの変化　B 停滞している案件　C 要対応（責任者別・一覧）　D ステータスの分類
- *   全体サマリー（追跡シートが2枚以上のとき。すべての追跡シートをまとめる。事務局が会議の冒頭で報告する）
- *   1 全体サマリー：シートごとの数字と入力状況（前回から更新した案件・最終更新日時）　2 本日の論点（サブインダストリー別）
+ *   資料はサブインダストリー（追跡シート）ごとに1つ（シートをまとめた資料は作らない）。
  *
  * ことばの決まり（どのページでも同じ数え方にする）
  * - ステータスの分類：進行中・受注・失注・保留（MTG_OPTIONS のことば・statusKinds で決める）。期待値・パイプラインは進行中だけを数える。
@@ -32,7 +31,7 @@
  *
  * 仕組み
  * - 管理者がエディタで createMeetingSummaries() を実行し、作るシートと今回の会議日を入力する（試すときは previewMeetingSummaries()）。
- *   シートごとの Google スライドと PDF、全体サマリーをドライブのフォルダに保存する（MTG_OPTIONS.folderId。空なら、このスプレッドシートと
+ *   シートごとに Google スライドと PDF をドライブのフォルダに保存する（MTG_OPTIONS.folderId。空なら、このスプレッドシートと
  *   同じフォルダの中に MTG_OPTIONS.folderName のフォルダを作る）。配る（共有する）のは手動。
  * - 「前回から」は、前回の会議（今回の会議日より前で、いちばん新しい会議日）の資料を作った日時から。会議日と作った日時は
  *   シートごとにドキュメントのプロパティ（MTG_MEETINGS_シート名）に残す（同じ会議日で作り直したら、作った日時を上書きする）。
@@ -93,7 +92,6 @@ const MTG_OPTIONS = {
   logChunkRows: 2000,                // 変更の記録を下から読むときの1回の行数
   batchRequests: 1500,               // Slides API の1回の batchUpdate に入れるリクエストの数の目安（呼ぶ回数を減らす。1分あたりの回数に上限がある）
   mainRows: {changes: 7, focus: 5, owners: 9},     // 本編の表に出す行の数（残りは付録）。owners は付録C の責任者別の表の行
-  overallName: '全体',               // 全体サマリー（すべての追跡シートを1枚の表にした資料）のファイル名に入れる名前
   // 色（社内資料のトンマナ：紫を基調に、薄い紫・薄いグレーの面、強調は赤枠、結論はピンクの帯）
   colors: {
     purple: '#7030A0', purpleSoft: '#EEE3F5', up: '#A77BCA', down: '#BFBFBF', gray: '#F2F2F2', grayHead: '#A6A6A6',
@@ -125,8 +123,6 @@ const MTG_CATEGORIES = [
  * RX Business MTG（パイプライン会議）の議題の順：サマリー → パイプラインの変化 → 前回からの進捗 → 重点案件の状況・課題。付録は全件の一覧
  */
 const MTG_TITLES = {
-  overall: '全体サマリー',
-  overallIssues: '本日の論点（サブインダストリー別）',
   summary: 'サマリー',
   pipeline: 'パイプラインの変化',
   progress: '前回からの進捗',
@@ -197,10 +193,9 @@ function mtgRun_(final) {
   const now = new Date();
   const meeting = mtgAskMeeting_(ui, names, now);
   if (!meeting) return;
-  const created = mtgCreate_(ss, names, now, final, meeting);
-  const lines = created.results.map(r => '「' + r.summary.name + '」：' + r.file.getName() + '（' + mtgCountsText_(r.summary) + '）');
-  if (created.overall) lines.push('全体サマリー：' + created.overall.pdf.getName() + '（追跡シート ' + created.overall.sheets + '枚）');
-  lines.push('', '保存先：' + created.folder.getUrl());
+  const results = mtgCreate_(ss, names, now, final, meeting);
+  const lines = results.map(r => '「' + r.summary.name + '」：' + r.file.getName() + '（' + mtgCountsText_(r.summary) + '）');
+  lines.push('', '保存先：' + results[0].folder.getUrl());
   if (MTG_OPTIONS.keepSlides) lines.push('同じフォルダに、Google スライド（同じ名前）も保存しました。');
   lines.push(final
     ? '会議日（' + meeting + '）を記録しました。次の会議の資料は、今以降の変化を出します。配るときは、保存先のフォルダから共有してください。'
@@ -253,23 +248,20 @@ function mtgCountsText_(summary) {
 }
 
 /**
- * names のシートの会議サマリを作り、スライドと PDF を保存する。meeting は今回の会議日（yyyy/MM/dd）。
- * 追跡シートが2枚以上あれば、すべての追跡シート（names 以外も）をまとめた全体サマリーも作る（事務局のサマリ報告用）。
- * final なら names のシートに会議日と今の日時を記録する。試作なら、その会議日の最初の試作の要対応を覚える。
- * 戻り値 {results: [{summary, file: PDF, deck: Google スライド（残さないときは null）}], overall: {pdf, deck, sheets}|null, folder}
+ * names のシート（サブインダストリー）ごとに会議サマリを作り、スライドと PDF を保存する。meeting は今回の会議日（yyyy/MM/dd）。
+ * final なら会議日と今の日時を記録する。試作なら、その会議日の最初の試作の要対応を覚える。
+ * 戻り値 [{summary, file: PDF, deck: Google スライド（残さないときは null）, folder}]
  */
 function mtgCreate_(ss, names, now, final, meeting) {
   const o = MTG_OPTIONS;
   const props = PropertiesService.getDocumentProperties();
-  const all = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
-  const targets = all.length > 1 ? all : names;
-  const plans = targets.map(name => {
+  const plans = names.map(name => {
     const meetings = mtgMeetings_(props, name);
     const previous = meetings.filter(m => m.date < meeting).pop() || null;
     const legacy = previous ? 0 : Number(props.getProperty(o.lastKeyPrefix + name)) || 0;
     const since = previous ? previous.cutoff : (legacy || now.getTime() - o.firstDays * 86400000);
     const draft = mtgReadJson_(props, o.draftKeyPrefix + name);
-    return {name, selected: names.indexOf(name) >= 0, meetings, previous, legacy: legacy || null, since: new Date(since),
+    return {name, meetings, previous, legacy: legacy || null, since: new Date(since),
       draft: draft && draft.meeting === meeting && Array.isArray(draft.keys) ? draft : null};
   });
   const windowStart = new Date(Math.min.apply(null,
@@ -288,19 +280,11 @@ function mtgCreate_(ss, names, now, final, meeting) {
   }, context)));
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
-  const results = [];
-  plans.forEach((p, i) => {
-    if (!p.selected) return;
-    const out = mtgExportDeck_(mtgFileName_(p.name, meeting, final), mtgSlides_(summaries[i]), folder);
-    results.push({summary: summaries[i], file: out.pdf, deck: out.deck});
+  const results = summaries.map(summary => {
+    const out = mtgExportDeck_(mtgFileName_(summary.name, meeting, final), mtgSlides_(summary), folder);
+    return {summary, file: out.pdf, deck: out.deck, folder};
   });
-  let overall = null;
-  if (summaries.length > 1) {
-    overall = mtgExportDeck_(mtgFileName_(o.overallName, meeting, final), mtgOverallSlides_(summaries, {meeting, final, now}), folder);
-    overall.sheets = summaries.length;
-  }
   plans.forEach((p, i) => {
-    if (!p.selected) return;
     if (final) {
       const list = p.meetings.filter(m => m.date !== meeting).concat([{date: meeting, cutoff: now.getTime()}])
         .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).slice(-o.keepMeetings);
@@ -311,7 +295,7 @@ function mtgCreate_(ss, names, now, final, meeting) {
       }));
     }
   });
-  return {results, overall, folder};
+  return results;
 }
 
 /** シートの会議の記録 [{date: 'yyyy/MM/dd', cutoff: 資料を作った時刻（ms）}]（会議日の古い順） */
@@ -523,7 +507,7 @@ function mtgReadDeals_(sheet, rule) {
  * 1つのシートの会議サマリの中身。
  * context = {since, previous, legacy, draft, final, now, meeting, windowStart, trackedSince, log, snapshots, credentials}
  * 戻り値 {name, meeting, previous, legacy, since, first, final, now, windowStart, kpi, fiscal, bridge, stages, quarters,
- *         changes, stalled, focus: 重点案件, alerts, resolved, unmatched, lastUpdated: いちばん新しい最終更新日時（ms）}
+ *         changes, stalled, focus: 重点案件, alerts, resolved, unmatched}
  */
 function mtgSummarize_(ss, name, context) {
   const o = MTG_OPTIONS;
@@ -667,8 +651,7 @@ function mtgSummarize_(ss, name, context) {
     focus,
     alerts,
     resolved,
-    unmatched: history.unmatched,
-    lastUpdated: deals.reduce((max, d) => (d.updatedAt != null && (max == null || d.updatedAt > max) ? d.updatedAt : max), null)
+    unmatched: history.unmatched
   };
 }
 
@@ -1654,19 +1637,18 @@ function mtgAppendixStatus_(s) {
 }
 
 /**
- * 表を、入りきる行ずつのページに分ける（見出しの行は各ページに）。行が無ければページを作らない。
- * spec = {title, lead, columns, head, rows: [{cells, bad}], band}。bad の行は赤枠。band（結論の帯）があれば帯の上まで（無ければ付録の下端まで）
+ * 付録の表を、入りきる行ずつのページに分ける（見出しの行は各ページに）。行が無ければページを作らない。
+ * spec = {title, lead, columns, head, rows: [{cells, bad}]}。bad の行は赤枠
  */
 function mtgPagedTable_(spec) {
   const S = MTG_SLIDE;
   const red = MTG_OPTIONS.colors.red;
   const head = mtgHeadRow_(spec.columns, spec.head);
-  const bottom = spec.band ? S.bottom : S.appendixBottom;
   const pages = [];
   let page = null;
   spec.rows.forEach(line => {
     const row = mtgRow_(spec.columns, line.cells.map(cell => Object.assign({size: S.appendixSize}, cell)), 0);
-    if (!page || page.y + row.h > bottom) {
+    if (!page || page.y + row.h > S.appendixBottom) {
       page = {rows: [head], borders: [], y: S.top + head.h};
       pages.push(page);
     }
@@ -1677,101 +1659,8 @@ function mtgPagedTable_(spec) {
   return pages.map((p, i) => ({
     title: spec.title + (i ? '（続き）' : ''),
     lead: spec.lead,
-    band: spec.band,
     elements: [{type: 'table', x: S.x, y: S.top, columns: spec.columns, rows: p.rows, borders: p.borders}]
   }));
-}
-
-/* ---------------- 全体サマリー（事務局のサマリ報告） ---------------- */
-
-/**
- * すべての追跡シートを1つにまとめた資料（事務局が会議の冒頭で報告する全体サマリー）。summaries はシートの並び（DIFF_RULES の順）。
- * 1 全体サマリー：シートごとの数字の表（入力状況として、前回から更新した案件の数と最終更新日時も）
- * 2 本日の論点（サブインダストリー別）：シートごとの、いちばん上の論点と決めてほしいこと
- * info = {meeting, final, now}
- */
-function mtgOverallSlides_(summaries, info) {
-  const o = MTG_OPTIONS;
-  const frame = {
-    tag: o.title + '｜' + o.overallName + '（' + mtgShortDate_(info.meeting) + ' 会議）' + (info.final ? '' : '　試作'),
-    source: '出典：追跡シート ' + summaries.length + '枚・' + DIFF_OPTIONS.logSheet + '（' +
-      Utilities.formatDate(info.now, Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm') + ' 時点）　期間：シートごとに、前回の会議の資料を作った時点以降'
-  };
-  return mtgNumberSlides_(frame, mtgOverallTable_(summaries).concat(mtgOverallIssues_(summaries)));
-}
-
-/** 全体サマリーの表（シートごとの1行と合計）。前回比がマイナス・前回から更新の無いシートは赤字 */
-function mtgOverallTable_(summaries) {
-  const c = MTG_OPTIONS.colors;
-  const tz = Session.getScriptTimeZone();
-  const sum = (key, part) => summaries.reduce((total, s) => total + (s[part][key] || 0), 0);
-  const delta = s => s.bridge.end - s.bridge.start;
-  const quiet = s => !s.changes.length;
-  const red = bad => (bad ? c.red : c.body);
-  const line = (name, v, total) => ({cells: [
-    {text: name, bold: true, color: c.ink, fill: c.purpleSoft},
-    {text: String(v.active), fill: total ? c.purpleSoft : c.gray, align: 'END', bold: total},
-    {text: mtgAmount_(v.weighted), fill: total ? c.purpleSoft : c.gray, align: 'END', bold: total},
-    {text: mtgSigned_(v.delta), fill: total ? c.purpleSoft : c.gray, align: 'END', bold: total, color: red(v.delta < -0.05)},
-    {text: mtgAmount_(v.won), fill: total ? c.purpleSoft : c.gray, align: 'END', bold: total},
-    {text: mtgAmount_(v.landing), fill: total ? c.purpleSoft : c.gray, align: 'END', bold: total},
-    {text: v.wonCount + '／' + v.lost, fill: total ? c.purpleSoft : c.gray, align: 'CENTER', bold: total},
-    {text: v.forward + '／' + v.backward, fill: total ? c.purpleSoft : c.gray, align: 'CENTER', bold: total},
-    {text: String(v.stalled), fill: total ? c.purpleSoft : c.gray, align: 'END', bold: total},
-    {text: String(v.alerts), fill: total ? c.purpleSoft : c.gray, align: 'END', bold: total},
-    {text: String(v.updated), fill: total ? c.purpleSoft : c.gray, align: 'END', bold: total || v.updated === 0, color: red(v.updated === 0)},
-    {text: v.last == null ? '—' : Utilities.formatDate(new Date(v.last), tz, 'MM/dd HH:mm'), fill: total ? c.purpleSoft : c.gray, align: 'CENTER',
-      bold: total, color: red(v.stale)}
-  ]});
-  const values = s => ({active: s.kpi.active, weighted: s.bridge.end, delta: delta(s), won: s.fiscal.wonAmount, landing: s.fiscal.landing,
-    wonCount: s.kpi.won, lost: s.kpi.lost, forward: s.kpi.forward, backward: s.kpi.backward, stalled: s.kpi.stalled, alerts: s.kpi.alerts,
-    updated: s.changes.length, last: s.lastUpdated, stale: quiet(s)});
-  const totals = {active: sum('active', 'kpi'), weighted: summaries.reduce((t, s) => t + s.bridge.end, 0),
-    delta: summaries.reduce((t, s) => t + delta(s), 0), won: sum('wonAmount', 'fiscal'), landing: sum('landing', 'fiscal'),
-    wonCount: sum('won', 'kpi'), lost: sum('lost', 'kpi'), forward: sum('forward', 'kpi'), backward: sum('backward', 'kpi'),
-    stalled: sum('stalled', 'kpi'), alerts: sum('alerts', 'kpi'), updated: summaries.reduce((t, s) => t + s.changes.length, 0),
-    last: summaries.reduce((m, s) => (s.lastUpdated != null && (m == null || s.lastUpdated > m) ? s.lastUpdated : m), null), stale: false};
-  const rows = summaries.map(s => line(s.name, values(s), false)).concat([line('合計', totals, true)]);
-  const most = key => summaries.filter(s => s.kpi[key] > 0).sort((a, b) => b.kpi[key] - a.kpi[key])[0];
-  const stalled = most('stalled');
-  const alerts = most('alerts');
-  const quietNames = summaries.filter(quiet).map(s => s.name);
-  return mtgPagedTable_({
-    title: MTG_TITLES.overall,
-    lead: '全体（' + summaries.length + 'シート）の期待値は ' + mtgAmount_(totals.weighted) + '百万円（前回比 ' + mtgSigned_(totals.delta) + '）。今期の受注 ' +
-      mtgAmount_(totals.won) + '百万円・着地見込み ' + mtgAmount_(totals.landing) + '百万円。\n受注 ' + totals.wonCount + '件・失注 ' + totals.lost +
-      '件・停滞 ' + totals.stalled + '件・要対応 ' + totals.alerts + '件' + (quietNames.length ? '。前回から更新の無いシート：' + quietNames.join('・') : '') + '。',
-    columns: [104, 40, 54, 50, 52, 56, 52, 52, 40, 44, 52, 76],
-    head: ['サブインダストリー', '進行中', '期待値', '前回比', '今期の\n受注', '着地\n見込み', '受注／\n失注', '前進／\n後退', '停滞', '要対応',
-      '更新した\n案件', '最終更新'],
-    rows,
-    band: stalled && alerts && stalled !== alerts
-      ? '停滞の多い「' + stalled.name + '」（' + stalled.kpi.stalled + '件）と、要対応の多い「' + alerts.name + '」（' + alerts.kpi.alerts + '件）を重点的に確認したい'
-      : stalled || alerts ? '「' + (stalled || alerts).name + '」の停滞 ' + (stalled || alerts).kpi.stalled + '件・要対応 ' + (stalled || alerts).kpi.alerts +
-        '件を重点的に確認したい'
-        : '各サブインダストリーの論点を確認したい'
-  });
-}
-
-/** 本日の論点（サブインダストリー別）：シートごとの、いちばん上の論点 ▶ 状況 ▶ 決めてほしいこと */
-function mtgOverallIssues_(summaries) {
-  const c = MTG_OPTIONS.colors;
-  return mtgPagedTable_({
-    title: MTG_TITLES.overallIssues,
-    lead: 'サブインダストリーごとの、いちばん上の論点と決めてほしいこと（' + summaries.length + 'シート。発表の順）。' +
-      '\n状況の詳しい内容は、各サブインダストリーの資料の「サマリー」。',
-    columns: [104, 120, 268, 180],
-    head: ['サブインダストリー', '論点', '状況', '決めてほしいこと'],
-    rows: summaries.map(s => {
-      const issue = mtgIssues_(s)[0];
-      return {cells: [
-        {text: s.name, lines: 2, bold: true, color: c.ink, fill: c.purpleSoft},
-        {text: issue.title.replace(/\n/g, '') + (issue.count ? ' ' + issue.count + '件' : ''), lines: 2, bold: true, color: c.white, fill: c.purple},
-        {text: issue.status, lines: 2, fill: c.gray},
-        {text: issue.ask.split('\n')[0], lines: 2, bold: true, color: c.ink, fill: c.gray}
-      ]};
-    })
-  });
 }
 
 /** ステータスの動き（「提案中 ▶ 受注」。変わっていなければ今の値） */
@@ -2041,7 +1930,7 @@ function mtgFileName_(name, meeting, final) {
 }
 
 /**
- * スライドの並び（mtgSlides_・mtgOverallSlides_）を、Google スライド（16:9）と PDF にしてフォルダに保存する。
+ * スライドの並び（mtgSlides_）を、Google スライド（16:9）と PDF にしてフォルダに保存する。
  * スライドは Slides API（拡張サービス「Google Slides API」）で作り、できたスライドを PDF に書き出す。
  * MTG_OPTIONS.keepSlides なら Google スライドもフォルダに残す（推進リーダーが書き足せる）。うまくいかなかったときはゴミ箱に移す。
  * 戻り値 {pdf, deck}（deck は残さないときは null）

@@ -394,34 +394,6 @@ test('スライド：付録は入りきらなければ続きのページに分�
   assert.match(textOf(slides[0]), /直近14日で大きな動きは無く、各案件の次のアクションを確認したい。/);
 });
 
-test('全体サマリー：すべての追跡シートの数字と入力状況（前回から更新した案件・最終更新日時）、シートごとの本日の論点', () => {
-  const {gas, g} = setup();
-  const red = gas.get('MTG_OPTIONS').colors.red;
-  const slides = plain(g.mtgOverallSlides_([summarize(g, '新FMT'), summarize(g, '新FMT2')], {meeting: '2026/10/23', final: true, now: new Date()}));
-  assert.deepStrictEqual(slides.map(sl => sl.title), ['全体サマリー', '本日の論点（サブインダストリー別）']);
-  assert.strictEqual(slides[0].elements[0].text, 'RXビジネスMTG｜全体（10/23 会議）');
-  const table = slides[0].elements.find(el => el.type === 'table');
-  const rows = table.rows.map(r => r.cells.map(c => c.text.replace(/\n/g, '')));
-  assert.deepStrictEqual(rows[0], ['サブインダストリー', '進行中', '期待値', '前回比', '今期の受注', '着地見込み', '受注／失注', '前進／後退', '停滞', '要対応',
-    '更新した案件', '最終更新']);
-  assert.deepStrictEqual(rows.slice(1).map(r => [r[0], r[1], r[2], r[3], r[6], r[7], r[10]]), [
-    ['新FMT', '3', '50', '▲8', '0／1', '1／0', '4'],
-    ['新FMT2', '1', '10', '±0', '0／0', '0／0', '0'],
-    ['合計', '4', '60', '▲8', '0／1', '1／0', '4']
-  ]);
-  assert.strictEqual(table.rows[2].cells[10].color, red, '前回から更新の無いシートは赤');
-  assert.strictEqual(table.rows[1].cells[3].color, red, '前回比がマイナスは赤');
-  const lead = slides[0].elements.find(el => el.y === 62).text.replace(/\n/g, '');
-  assert.match(lead, /^全体（2シート）の期待値は 60百万円（前回比 ▲8）。今期の受注 \d+百万円・着地見込み \d+百万円。受注 0件・失注 1件・停滞 0件・要対応 4件。前回から更新の無いシート：新FMT2。$/);
-  assert.ok(slides[0].elements.some(el => el.fill === gas.get('MTG_OPTIONS').colors.highlight), '全体サマリーは結論の帯つき');
-
-  const issues = slides[1].elements.find(el => el.type === 'table').rows.slice(1).map(r => r.cells.map(c => c.text.replace(/\n/g, '')));
-  assert.deepStrictEqual(issues.map(r => [r[0], r[1], r[3]]), [
-    ['新FMT', '受注月の遅れ 1件', '受注月の見通しと、今期の着地への影響'],
-    ['新FMT2', '受注月の遅れ 1件', '受注月の見通しと、今期の着地への影響']
-  ], '新FMT2 も A社 の受注月（先月）を過ぎている');
-});
-
 test('文字の折り返し：見積もりの幅で分け、最後の行は「…」。行の頭に来ない文字はぶら下げ、半角の語は途中で切らない', () => {
   const {g} = setup({edits: false});
   assert.deepStrictEqual(plain(g.mtgWrap_('あいうえおかきくけこ', 100, 9, 3)), ['あいうえおかきく', 'けこ']);
@@ -468,12 +440,11 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   assert.match(gas.prompts[0].message, /1\. 新FMT\n2\. 新FMT2/);
   assert.match(gas.prompts[1].message, /今回の会議日を入力してください（例：10\/23）。[\s\S]*・新FMT：記録なし\n・新FMT2：記録なし$/);
   assert.deepStrictEqual(gas.decks.map(d => [d.title, d.pageSize.width.magnitude, d.pageSize.height.magnitude]),
-    [['会議サマリ_新FMT_' + file, 720, 405], ['会議サマリ_新FMT2_' + file, 720, 405], ['会議サマリ_全体_' + file, 720, 405]]);
+    [['会議サマリ_新FMT_' + file, 720, 405], ['会議サマリ_新FMT2_' + file, 720, 405]], 'サブインダストリー（シート）ごとに1つ。まとめた資料は作らない');
   const requests = gas.decks[0].requests;
   assert.strictEqual(requests.filter(r => r.createSlide).length, 8, '本編4枚と付録A・C（責任者別・一覧）・D（停滞が無いので付録B は無い）');
   const inserted = deck => deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
-  assert.match(inserted(gas.decks[2]), /^RXビジネスMTG｜全体（10\/23 会議）\n全体サマリー\n/);
-  assert.strictEqual(gas.decks[2].requests.filter(r => r.createSlide).length, 2);
+  assert.match(inserted(gas.decks[1]), /^RXビジネスMTG｜新FMT2（10\/23 会議）\nサマリー\n/);
   assert.deepStrictEqual(requests.filter(r => r.deleteObject).map(r => r.deleteObject.objectId), ['p'], '作ったときの白紙のスライドを消す');
   const batches = gas.decks[0].batches;
   assert.ok(batches.length >= 2 && batches.length < 8, '何枚かずつまとめて送る（' + batches.length + '回）');
@@ -482,15 +453,14 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
     'スプレッドシートと同じフォルダの中に作る');
   assert.deepStrictEqual(gas.driveFiles.map(f => [f.name, f.folder, f.blob.from, f.blob.getContentType()]), [
     ['会議サマリ_新FMT_' + file + '.pdf', 'folder-1', 'deck-1', 'application/pdf'],
-    ['会議サマリ_新FMT2_' + file + '.pdf', 'folder-1', 'deck-2', 'application/pdf'],
-    ['会議サマリ_全体_' + file + '.pdf', 'folder-1', 'deck-3', 'application/pdf']
+    ['会議サマリ_新FMT2_' + file + '.pdf', 'folder-1', 'deck-2', 'application/pdf']
   ]);
-  assert.deepStrictEqual(plain(gas.moved).map(m => m.folder), ['folder-1', 'folder-1', 'folder-1'], 'スライドも同じフォルダに残す');
+  assert.deepStrictEqual(plain(gas.moved), [{id: 'deck-1', folder: 'folder-1'}, {id: 'deck-2', folder: 'folder-1'}], 'スライドも同じフォルダに残す');
   assert.deepStrictEqual(gas.trashed, []);
   assert.deepStrictEqual(gas.writes.filter(w => w.ss === gas.ss.getId()), [], 'スプレッドシートには書き込まない');
   const done = gas.alerts[gas.alerts.length - 1].message;
   assert.match(done, /「新FMT」：会議サマリ_新FMT_.*\.pdf（動いた 3・停滞 0・要対応 3）/);
-  assert.match(done, /全体サマリー：会議サマリ_全体_.*\.pdf（追跡シート 2枚）/);
+  assert.doesNotMatch(done, /全体/);
   assert.match(done, /保存先：https:\/\/drive\.google\.com\/drive\/folders\/folder-1/);
   assert.match(done, /会議日（\d{4}\/10\/23）を記録しました。/);
   const props = g.PropertiesService.getDocumentProperties();
@@ -506,9 +476,7 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   assert.match(gas.prompts[3].message, new RegExp('・新FMT：' + meeting + '$'));
   assert.strictEqual(gas.driveFolders.length, 1);
   assert.match(gas.alerts[gas.alerts.length - 1].message, /「新FMT」：.*（動いた 1・停滞 0・要対応 2）/);
-  assert.deepStrictEqual(gas.driveFiles.slice(3).map(f => f.name.replace(/_\d{4}-\d{2}-\d{2}/, '')), ['会議サマリ_新FMT.pdf', '会議サマリ_全体.pdf'],
-    '選んだシートだけ作る（全体サマリーはいつも作る）');
-  assert.match(inserted(gas.decks[4]), /\n新FMT2\n/, '全体サマリーには、選ばなかったシートも入れる');
+  assert.deepStrictEqual(gas.driveFiles.slice(2).map(f => f.name.replace(/_\d{4}-\d{2}-\d{2}/, '')), ['会議サマリ_新FMT.pdf'], '選んだシートだけ作る');
   // 同じ会議日で作り直しても、前回（10/23）からの変化（作った日時だけ上書き）
   gas.promptAnswers = ['1', '10/30'];
   g.createMeetingSummaries();
@@ -529,16 +497,15 @@ test('previewMeetingSummaries：試作は会議日を記録しない（ファイ
   assert.strictEqual(props.getProperty('MTG_MEETINGS_新FMT'), null);
   const draft = JSON.parse(props.getProperty('MTG_DRAFT_新FMT'));
   assert.deepStrictEqual([draft.meeting, draft.keys.length], [g.mtgParseDate_('10/23', new Date()), 3]);
-  assert.deepStrictEqual(gas.decks.map(d => d.title.replace(/_\d{4}-\d{2}-\d{2}/, '')),
-    ['会議サマリ_新FMT_試作', '会議サマリ_全体_試作', '会議サマリ_新FMT_試作', '会議サマリ_全体_試作']);
+  assert.deepStrictEqual(gas.decks.map(d => d.title.replace(/_\d{4}-\d{2}-\d{2}/, '')), ['会議サマリ_新FMT_試作', '会議サマリ_新FMT_試作']);
   const inserted = deck => deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
-  assert.match(inserted(gas.decks[2]), /要対応は 3件（責任者 3人）。試作（\d{2}\/\d{2}）の時点から 0件を解消・新たに 0件。/, '2回目の試作：まだ解消していない');
+  assert.match(inserted(gas.decks[1]), /要対応は 3件（責任者 3人）。試作（\d{2}\/\d{2}）の時点から 0件を解消・新たに 0件。/, '2回目の試作：まだ解消していない');
 
   // E社の活動状況を書いて「更新なし」を解消してから、本番を作る
   g.recordDiffEdit(gas.edit(sheet, 'J7', '10/20 決裁者と面談を設定'));
   gas.promptAnswers = ['1', '10/23'];
   g.createMeetingSummaries();
-  assert.match(inserted(gas.decks[4]), /要対応は 2件（責任者 2人）。試作（\d{2}\/\d{2}）の時点から 1件を解消・新たに 0件。/);
+  assert.match(inserted(gas.decks[2]), /要対応は 2件（責任者 2人）。試作（\d{2}\/\d{2}）の時点から 1件を解消・新たに 0件。/);
 });
 
 test('会議日・シートの番号の間違い、やめたときは作らない', () => {

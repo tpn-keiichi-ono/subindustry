@@ -31,7 +31,7 @@ Google スプレッドシート「シナリオ攻略先リスト」に組み込�
   ServiceManagement.gs          サービスリクエスト（新FMT のリクエストを選択パネルで登録する。サービス案を付けてまとめる。メニューは onOpen から追加）
   RequestPickerView.html        サービスリクエストの選択パネル（サイドバー）
   RequestListDialog.html        サービスリクエストの未登録・登録済みの一覧（パネルの件数のバッジから開くモーダル）
-  MeetingSummary.gs             会議サマリ（RX Business MTG の会議資料。シートごとの資料と全体サマリー。16:9 の Google スライドと PDF。エディタから実行）
+  MeetingSummary.gs             会議サマリ（RX Business MTG の会議資料。サブインダストリー（シート）ごと。16:9 の Google スライドと PDF。エディタから実行）
   appsscript.json               マニフェスト（タイムゾーン・ランタイム・拡張サービス Google Slides API）
 docs/
   DESIGN.md                     設計思想・データモデル・処理の流れ・判断の理由・画面のデザイン・テスト
