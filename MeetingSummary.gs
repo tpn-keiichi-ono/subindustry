@@ -71,7 +71,21 @@ const MTG_OPTIONS = {
   // notifyMeetingSummaries() を実行すると、その場で格納先の URL をチャットに送る（自動では送らない）
   chat: {
     webhookKey: 'MTG_CHAT_WEBHOOK',  // スクリプトのプロパティ：webhook の URL（鍵を含むので、コードやシートに書かない）
-    urlKey: 'MTG_CHAT_URL',          // スクリプトのプロパティ：送る資料の格納先の URL（ドライブのフォルダ・ファイルなど）
+    urlKey: 'MTG_CHAT_URL',          // スクリプトのプロパティ：送る資料の格納先の URL（ドライブのフォルダかファイル）
+    // 送る文（1行ずつ）。{meeting} は会議の名前（meetingName）、{file} は資料のファイルのリンク（ファイル名で表示）、{url} はファイルの URL に置き換える。
+    // 格納先がフォルダなら、送るときにその中でいちばん新しく更新した PDF（PDF が無ければいちばん新しいファイル）を送る。*〜* は太字
+    message: [
+      '*【{meeting}】事前資料のご案内*',
+      '皆さま、お疲れさまです。',
+      '{meeting} の事前資料を、下記に格納いたしました。',
+      'お手数ですが、会議の前にご一読いただけますと幸いです。',
+      '',
+      '▼ 事前資料',
+      '{file}',
+      '',
+      'ご不明な点がございましたら、お気軽にお知らせください。',
+      'どうぞよろしくお願いいたします。'
+    ],
     legacyHandler: 'mtgNotifyScheduled' // 前の版の自動通知（2日前）のトリガーの関数。残っていれば setMeetingChat()・notifyMeetingSummaries() で外す
   },
   firstDays: 14,                     // 初回（前回の会議の記録が無い）は、何日前からの変化を出すか
@@ -365,7 +379,8 @@ function setMeetingChat() {
     throw new Error('Google チャットの webhook の URL ではありません。https://chat.googleapis.com/v1/spaces/…/messages?key=…&token=… の形の URL を貼り付けてください。');
   }
   const answer = ui.prompt(CRED_OPTIONS.menuTitle,
-    '送る資料の格納先の URL を貼り付けてください（ドライブのフォルダ・ファイルなど。参加者が開けるように共有しておく）。' +
+    '送る資料の格納先の URL を貼り付けてください（ドライブのフォルダかファイル。参加者が開けるように共有しておく）。\n' +
+    'フォルダなら、送るときに、その中でいちばん新しく更新した PDF のリンクを送ります。' +
     (current && current.url ? '\n空欄なら今の URL のまま：' + current.url : ''), ui.ButtonSet.OK_CANCEL);
   if (answer.getSelectedButton() !== ui.Button.OK) return;
   const url = String(answer.getResponseText() || '').trim() || (current && current.url) || '';
@@ -374,36 +389,83 @@ function setMeetingChat() {
   props.setProperty(o.urlKey, url);
   const removed = mtgRemoveLegacyTrigger_();
   const lines = ['Google チャットへの通知を設定しました。', '・送り先：' + mtgChatSpace_(webhook), '・送る URL：' + url,
-    '・notifyMeetingSummaries() を実行すると、この URL をすぐに送ります。']
+    '・notifyMeetingSummaries() を実行すると、資料のファイルのリンクをすぐに送ります（フォルダなら、その中でいちばん新しい PDF）。']
     .concat(removed ? ['・前の版の自動通知（2日前）のトリガーを外しました。'] : []);
   const test = ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n') + '\n\n確かめのメッセージを、いまチャットに送りますか？', ui.ButtonSet.YES_NO);
   if (test === ui.Button.YES) {
-    mtgPostChat_(webhook, '会議サマリの通知の設定を確かめるためのメッセージです。' + MTG_OPTIONS.meetingName + ' の事前資料の URL をここに送ります。');
+    mtgPostChat_(webhook, '【テスト送信】会議サマリの通知の設定を確認するためのメッセージです。\n今後、' + MTG_OPTIONS.meetingName +
+      ' の事前資料のご案内をこちらにお送りいたします。どうぞよろしくお願いいたします。');
     lines.push('確かめのメッセージを送りました。チャットに届いたか確かめてください。');
   }
   console.log(lines.join('\n'));
   ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
 }
 
-/** 登録した資料の格納先の URL を、すぐに Google チャットに送る（エディタから実行する。「はい」のときだけ） */
+/**
+ * 資料のファイルのリンクを、すぐに Google チャットに送る（エディタから実行する。「はい」のときだけ）。
+ * 格納先がフォルダなら、その中でいちばん新しく更新した PDF（mtgChatFile_）
+ */
 function notifyMeetingSummaries() {
   const chat = mtgChatSettings_();
   if (!chat || !chat.url) throw new Error('Google チャットへの通知が設定されていません。先に setMeetingChat() で webhook の URL と資料の格納先の URL を登録してください。');
   mtgRemoveLegacyTrigger_();
   const ui = SpreadsheetApp.getUi();
-  const text = mtgChatText_(chat.url);
+  const file = mtgChatFile_(chat.url);
   const answer = ui.alert(CRED_OPTIONS.menuTitle,
-    'Google チャット（' + mtgChatSpace_(chat.webhook) + '）に、次のメッセージをすぐに送ります。よろしいですか？\n\n' + text, ui.ButtonSet.YES_NO);
+    'Google チャット（' + mtgChatSpace_(chat.webhook) + '）に、次のメッセージをすぐに送ります。よろしいですか？\n\n' + mtgChatText_(file, true), ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return;
-  mtgPostChat_(chat.webhook, text);
-  const message = 'Google チャットに送りました：' + chat.url;
+  mtgPostChat_(chat.webhook, mtgChatText_(file));
+  const message = 'Google チャットに送りました：' + file.name + '\n' + file.url;
   console.log(message);
   ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
 }
 
-/** チャットに送る文（会議の名前と、資料の格納先の URL） */
-function mtgChatText_(url) {
-  return '*' + MTG_OPTIONS.meetingName + '　事前資料*\n会議の前に、資料を通読してください。\n' + url;
+/**
+ * 送る資料のファイル {name, url}。格納先がドライブのフォルダなら、その中でいちばん新しく更新した PDF（PDF が無ければいちばん新しいファイル。ゴミ箱のものは除く）。
+ * ドライブのファイルの URL ならそのファイル。ドライブ以外の URL なら、名前は URL のまま
+ */
+function mtgChatFile_(url) {
+  const folderId = /\/folders\/([\w-]{10,})/.exec(url);
+  if (folderId) {
+    let folder;
+    try {
+      folder = DriveApp.getFolderById(folderId[1]);
+    } catch (error) {
+      throw new Error('資料の格納先のフォルダ（ID：' + folderId[1] + '）を開けません。このアカウントで開けるか確かめ、setMeetingChat() で登録し直してください。');
+    }
+    const newest = files => {
+      let best = null;
+      while (files.hasNext()) {
+        const f = files.next();
+        if (!f.isTrashed() && (!best || f.getLastUpdated().getTime() > best.getLastUpdated().getTime())) best = f;
+      }
+      return best;
+    };
+    const file = newest(folder.getFilesByType(MimeType.PDF)) || newest(folder.getFiles());
+    if (!file) throw new Error('資料の格納先のフォルダ（' + folder.getName() + '）にファイルがありません。資料を置いてから送ってください。');
+    return {name: file.getName(), url: file.getUrl()};
+  }
+  const fileId = /\/d\/([\w-]{10,})/.exec(url) || /[?&]id=([\w-]{10,})/.exec(url);
+  if (fileId) {
+    try {
+      const file = DriveApp.getFileById(fileId[1]);
+      return {name: file.getName(), url: file.getUrl()};
+    } catch (error) {
+      throw new Error('資料のファイル（ID：' + fileId[1] + '）を開けません。このアカウントで開けるか確かめ、setMeetingChat() で登録し直してください。');
+    }
+  }
+  return {name: url, url};
+}
+
+/**
+ * チャットに送る文（MTG_OPTIONS.chat.message の {meeting} を会議の名前に、{file} をファイルのリンク（<URL|ファイル名>）に、{url} をファイルの URL に置き換える）。
+ * plain なら、確かめの画面に出す形（リンクは「ファイル名」と URL の2行）
+ */
+function mtgChatText_(file, plain) {
+  const name = String(file.name).replace(/[|<>]/g, ' ');
+  const link = plain ? name + '\n' + file.url : '<' + file.url + '|' + name + '>';
+  return MTG_OPTIONS.chat.message.join('\n').replace(/\{meeting\}/g, MTG_OPTIONS.meetingName)
+    .replace(/\{file\}/g, link).replace(/\{url\}/g, file.url);
 }
 
 /** webhook にメッセージを送る（混んでいる・一時的な失敗は1回だけやり直す）。失敗したら止める（URL は鍵を含むので出さない） */

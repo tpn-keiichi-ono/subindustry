@@ -944,6 +944,15 @@ function createGas(options) {
       gas.driveFiles.push({id: fileId, folder: id, name: blob.getName(), blob});
       return {getId: () => fileId, getName: () => blob.getName(), getUrl: () => 'https://drive.google.com/file/d/' + fileId + '/view'};
     },
+    /** フォルダの中のファイル（gas.driveFiles。種類は blob の getContentType、更新日時は updated）。mimeType を渡せばその種類だけ */
+    getFiles(mimeType) {
+      const files = gas.driveFiles.filter(f => f.folder === id && (!mimeType || f.blob.getContentType() === mimeType)).map(f => ({
+        getId: () => f.id, getName: () => f.name, getUrl: () => 'https://drive.google.com/file/d/' + f.id + '/view',
+        getLastUpdated: () => new Date(f.updated || 0), isTrashed: () => gas.trashed.indexOf(f.id) >= 0
+      }));
+      return {hasNext: () => files.length > 0, next: () => files.shift()};
+    },
+    getFilesByType(mimeType) { return this.getFiles(mimeType); },
     /** フォルダの中の、その名前のファイル（作った PDF と、フォルダに置いた Google スライド。ゴミ箱のものは除く） */
     getFilesByName(fileName) {
       const files = gas.driveFiles.filter(f => f.folder === id && f.name === fileName).map(f => f.id)
@@ -963,10 +972,11 @@ function createGas(options) {
           return {hasNext: () => parents.length > 0, next: () => parents.shift()};
         },
         setTrashed(flag) { if (flag) gas.trashed.push(id); return this; },
-        getName: () => id,
+        getName: () => (gas.driveFiles.find(f => f.id === id) || {name: id}).name,
         getMimeType: () => (gas.files[id] || {}).mimeType ||
           (gas.slideTemplates[id] ? 'application/vnd.google-apps.presentation' : 'application/vnd.google-apps.spreadsheet'),
-        getUrl: () => 'https://docs.google.com/presentation/d/' + id + '/edit',
+        getUrl: () => (gas.driveFiles.some(f => f.id === id) ? 'https://drive.google.com/file/d/' + id + '/view'
+          : 'https://docs.google.com/presentation/d/' + id + '/edit'),
         moveTo(folder) {
           gas.moved.push({id, folder: folder.getId()});
           const deck = gas.decks.find(d => d.id === id);
