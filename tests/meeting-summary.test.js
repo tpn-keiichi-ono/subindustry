@@ -455,6 +455,7 @@ test('文字の折り返し：見積もりの幅で分け、最後の行は「�
   assert.deepStrictEqual(plain(g.mtgWrap_('期待値（前▶今）', 72, 7.5, 3)), ['期待値（前▶', '今）'], '収まらなければ前の文字と一緒に送る');
   assert.deepStrictEqual(plain(g.mtgWrap_('2026/11 ▶ 2026/12', 80, 7.5, 2)), ['2026/11 ▶', '2026/12']);
   assert.deepStrictEqual(plain(g.mtgWrap_('一行目\n二行目', 300, 9, 2)), ['一行目', '二行目']);
+  assert.strictEqual(g.mtgWrap_('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 150, 8, 3).length, 2, '英大文字は幅を広めに見積もる（BIZ UDPゴシックでは約 0.72）');
 });
 
 test('mtgSlideRequests_：スライド・箱・表を Slides API のリクエストにする（空のセルにも空白を入れる・赤枠）', () => {
@@ -473,7 +474,7 @@ test('mtgSlideRequests_：スライド・箱・表を Slides API のリクエス
   const texts = requests.filter(r => r.insertText).map(r => r.insertText.text);
   assert.deepStrictEqual(texts, ['タグ', '見出し', ' ', 'A', 'B'], '空のセルには空白（既定の大きな文字で行が伸びないように）');
   const style = requests.find(r => r.updateTextStyle && r.updateTextStyle.objectId === 'mtg_p1_0').updateTextStyle.style;
-  assert.deepStrictEqual([style.fontFamily, style.fontSize.magnitude, style.bold], ['Noto Sans JP', 10, true]);
+  assert.deepStrictEqual([style.fontFamily, style.fontSize.magnitude, style.bold], ['BIZ UDPGothic', 10, true], 'BIZ UDPゴシック');
   const borders = requests.filter(r => r.updateTableBorderProperties).map(r => r.updateTableBorderProperties);
   assert.deepStrictEqual(borders.map(b => [b.borderPosition, b.tableRange.location.rowIndex, b.tableBorderProperties.weight.magnitude]),
     [['ALL', 0, 1.5], ['OUTER', 1, 2.25]]);

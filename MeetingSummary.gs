@@ -155,7 +155,7 @@ const MTG_ALERT_TYPES = ['予定日超過', '受注月超過', '未入力', '更
 const MTG_SLIDE = {
   width: 720,
   height: 405,
-  font: 'Noto Sans JP',
+  font: 'BIZ UDPGothic',  // BIZ UDPゴシック（Google スライド・Google Fonts での名前）
   x: 24,                 // 左の余白
   w: 672,                // 中身の幅
   titleY: 16,            // 見出しの上端
@@ -1803,21 +1803,25 @@ function mtgTitleFit_(text) {
   return {text: mtgWrap_(text, S.w, size, 1)[0], size};
 }
 
-/** 文字の幅の見積もり（pt。全角は文字の大きさ、半角は 0.6 倍） */
-function mtgTextWidth_(text, size) {
-  return Array.from(String(text == null ? '' : text)).reduce((sum, ch) => sum + (/[\u0000-\u00ff\uff61-\uff9f]/.test(ch) ? 0.6 : 1), 0) * size;
+/**
+ * 文字1つの幅の見積もり（文字の大きさに対する割合）。BIZ UDPゴシックで測った幅より少し大きめ：
+ * 全角 1（かなは 1.02 のものもあるが、mtgWrap_ の余裕に収まる）、半角の英大文字 0.75（実際は 0.72 前後）、ほかの半角 0.6（数字は 0.5）
+ */
+function mtgCharWidth_(ch) {
+  if (/[A-Z]/.test(ch)) return 0.75;
+  return /[\u0000-\u00ff\uff61-\uff9f]/.test(ch) ? 0.6 : 1;
 }
 
 /**
  * 文を、幅 widthPt の箱（セル）の中に収まる行に分ける（改行はそのまま行の区切り。pt で数える）。max 行を超えたら最後の行を「…」の分をあけて切る。
- * 文字の幅は見積もり（全角は文字の大きさ、半角は 0.6 倍。箱の左右の余白 MTG_SLIDE.padX を引く）なので、本物の折り返しより早めに分ける。
+ * 文字の幅は見積もり（mtgCharWidth_。箱の左右の余白 MTG_SLIDE.padX を引き、さらに 8% の余裕をとる）なので、本物の折り返しより早めに分ける。
  * 行の頭に来てはいけない文字（、。）」など）は、本当の幅に収まるなら前の行の終わりにぶら下げ、収まらなければ前の文字と一緒に次の行へ送る。
  * 半角の語（「2026/12」など）の途中では切らず、語の前の空白で折り返す。
  */
 function mtgWrap_(text, widthPt, size, max) {
   const room = (widthPt - MTG_SLIDE.padX) / (size || MTG_SLIDE.bodySize);
   const limit = room * 0.92;
-  const width = ch => (/[\u0000-\u00ff\uff61-\uff9f]/.test(ch) ? 0.6 : 1);
+  const width = mtgCharWidth_;
   const hang = /[、。，．,.)）」』】〕〉》・ーぁぃぅぇぉっゃゅょァィゥェォッャュョ！？!?%％:：;；]/;
   const out = [];
   String(text == null ? '' : text).split('\n').forEach(part => {
