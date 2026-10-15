@@ -12,7 +12,7 @@
  *   使う言葉は docs/DESIGN.md（会議サマリの数え方）で決め、資料の中で同じ意味で使う。
  *
  * 資料の構成（16:9。緑を基調にしたトンマナ：黒の見出し・リード文・緑の見出しの表・区分のラベル・区切り線と出典・ページ番号。
- *   表紙と扉は、いただいた表紙のひな形（緑のグラデーションに大きな「RX」）
+ *   表紙と扉は、いただいた表紙のひな形（Google スライド。setMeetingTemplate() で登録）をそのまま使う
  *   表紙：会議の名前と「事前資料」・サブインダストリー・会議日・データの時点・期間
  *   1 サマリー：今期の受注と着地見込み・4つの数字（期待値と前回比・受注／失注・前進／後退・停滞）・前回からの状況の内訳（区分ごとの件数と案件）
  *   2 パイプラインの変化：前回からの期待値の増減（新規・増額・復帰・減額・受注・失注・保留・削除）・ステータス別・受注月（四半期）別の期待値
@@ -47,6 +47,7 @@
  *   （行の追加・削除で行番号がずれても合う。得意先・案件名を書き換えた案件・あとから入れた案件も、前の名前の記録をつなげる）。
  *   どちらの記録も追記なので、下（新しいほう）から、読む期間（前回と MTG_OPTIONS.lookbackDays 日前の古いほう）より前に届くまでだけ読む。
  * - スライドは Slides API（拡張サービス「Google Slides API」。appsscript.json に書いてある）で作り、PDF に書き出す。
+ *   表紙・扉のひな形を登録してあれば（setMeetingTemplate()）、ひな形をコピーした資料に作り、ひな形の表紙の決まった文字を置き換える。
  */
 
 const MTG_OPTIONS = {
@@ -55,6 +56,12 @@ const MTG_OPTIONS = {
   folderId: '',                      // 保存先のフォルダの ID（空なら、このスプレッドシートと同じフォルダの中に folderName を作る）
   folderName: '会議サマリ',
   folderKey: 'MTG_FOLDER_ID',         // 作ったフォルダの ID（ドキュメントのプロパティ）
+  // 表紙・扉のひな形（Google スライド。いただいた .pptx を Google スライドにしたもの）。資料はひな形のコピーに作る（ページの大きさもひな形のまま）。
+  // ID は setMeetingTemplate() で登録する（ドキュメントのプロパティ templateKey）。templateId を書けば、そちらを使う。どちらも無ければ、ひな形なしで作る
+  templateId: '',
+  templateKey: 'MTG_TEMPLATE_ID',
+  // ひな形の1枚目（表紙）の、置き換える文字（長いものから置き換える）。扉は表紙を複製して同じように置き換える
+  templateTexts: {title: 'XXXXXX', subtitle: 'XXXXX', date: '2026年 4月 17日', name: 'XXXX'},
   meetingsKeyPrefix: 'MTG_MEETINGS_', // シートごとの会議日と資料を作った日時（ドキュメントのプロパティ。後ろにシート名）
   draftKeyPrefix: 'MTG_DRAFT_',       // シートごとの、会議日ごとの最初の試作の入力内容のチェックの結果（解消した件数を出す用）
   lastKeyPrefix: 'MTG_LAST_',         // 前の版の「前回の作成日時」（会議日の記録が無いときだけ使う）
@@ -101,8 +108,7 @@ const MTG_OPTIONS = {
     up: '#8FD36B', down: '#A6A6A6', dark: '#595959',
     ink: '#1A1A1A', body: '#1A1A1A', sub: '#404040', muted: '#595959', faint: '#7F7F7F',
     line: '#D0D0D0', frame: '#BFBFBF', rule: '#D9D9D9', white: '#FFFFFF',
-    // 表紙・扉（いただいた表紙のひな形）：背景は左上 → 右下のグラデーション（[位置 0〜1, 色]）、大きな「RX」は濃い緑（motif。Arial Black）
-    cover: [[0, '#3A7D22'], [0.26, '#3A7D22'], [1, '#8CD872']], motif: '#275316'
+    cover: '#3A7D22'                 // ひな形が無いときの表紙・扉の背景
   }
 };
 
@@ -1204,21 +1210,8 @@ function mtgSlides_(summary) {
 }
 
 /**
- * 表紙・扉の背景（いただいた表紙のひな形。960 × 540pt を 720 × 405pt に縮めた位置）：緑のグラデーションと、スライドからはみ出す大きな「RX」
- * （Arial Black・濃い緑）。文字は白で中央寄せ
- */
-function mtgCoverBase_() {
-  const c = MTG_OPTIONS.colors;
-  const S = MTG_SLIDE;
-  return [
-    {type: 'gradient', x: 0, y: 0, w: S.width, h: S.height, stops: c.cover},
-    mtgBox_(-125.3, -189.6, 1020.9, 784.5, 'RX', {size: 642.75, font: 'Arial Black', color: c.motif, align: 'CENTER', role: 'motif'})
-  ];
-}
-
-/**
- * 表紙（いただいた表紙のひな形）：大きな見出しにサブインダストリー、その下に会議の名前と「事前資料」（試作は【試作】）、
- * 下に会議日と、データの時点・期間（ひな形の名前の欄の位置。小さく）
+ * 表紙（ひな形の1枚目）：ひな形の決まった文字を置き換える（template。見出しにサブインダストリー、その下に会議の名前と「事前資料」
+ * （試作は【試作】）、日付に会議日、名前の欄は空）。その下にデータの時点・期間を小さく足す（elements）
  */
 function mtgCoverSlide_(s) {
   const o = MTG_OPTIONS;
@@ -1226,50 +1219,52 @@ function mtgCoverSlide_(s) {
   const S = MTG_SLIDE;
   const p = s.meeting.split('/').map(Number);
   const week = '日月火水木金土'.charAt(new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay());
-  const line = (y, h, text, size, bold) => mtgBox_(S.x, y, S.w, h, mtgWrap_(text, S.w, size, 1)[0], {size, bold: !!bold, color: c.white, align: 'CENTER'});
+  const line = (y, text) => mtgBox_(S.x, y, S.w, 16, mtgWrap_(text, S.w, 9, 1)[0], {size: 9, color: c.white, align: 'CENTER'});
   return {
     title: MTG_TITLES.cover,
     cover: true,
-    elements: mtgCoverBase_().concat([
-      line(170, 46, s.name, 30, true),
-      line(226, 26, o.meetingName + '　事前資料' + (s.final ? '' : '【試作】'), 15, true),
-      line(326, 20, p[0] + '年' + p[1] + '月' + p[2] + '日（' + week + '）', 12),
-      line(346, 16, 'データ：' + Utilities.formatDate(s.now, Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm') + ' 時点の「' + s.name + '」シートと' +
-        DIFF_OPTIONS.logSheet, 9),
-      line(361, 16, '期間：' + mtgPeriodText_(s) + 'の変化', 9)
-    ])
+    template: {title: s.name, subtitle: o.meetingName + '　事前資料' + (s.final ? '' : '【試作】'),
+      date: p[0] + '年' + p[1] + '月' + p[2] + '日（' + week + '）', name: ''},
+    elements: [
+      line(350, 'データ：' + Utilities.formatDate(s.now, Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm') + ' 時点の「' + s.name + '」シートと' +
+        DIFF_OPTIONS.logSheet),
+      line(365, '期間：' + mtgPeriodText_(s) + 'の変化')
+    ]
   };
 }
 
 /**
- * 扉（Appendix。表紙と同じひな形）：大きな見出しに「Appendix」、その下に Appendix の見出し・始まりのページの一覧（白い線で区切る）。
- * appendix は Appendix のスライド、firstPage はその1枚目のページ番号
+ * 扉（Appendix。ひな形の1枚目を複製）：見出しを「Appendix」にし（ほかの決まった文字は空）、その下に Appendix の見出し・始まりのページの一覧
+ * （白い字と白い線）。appendix は Appendix のスライド、firstPage はその1枚目のページ番号
  */
 function mtgDividerSlide_(appendix, firstPage) {
   const c = MTG_OPTIONS.colors;
-  const S = MTG_SLIDE;
   const items = [];
   appendix.forEach((slide, i) => {
     if (/（続き）$/.test(slide.title)) return;
     const m = /^(\S+ \S+)　(.*)$/.exec(slide.title) || [slide.title, slide.title, ''];
     items.push({label: m[1], title: m[2], page: firstPage + i});
   });
-  const el = mtgCoverBase_().concat([mtgBox_(S.x, 140, S.w, 46, MTG_TITLES.appendix, {size: 30, bold: true, color: c.white, align: 'CENTER'})]);
+  const el = [];
   const x = 180;
   const rowH = 26;
   items.forEach((it, i) => {
-    const y = 200 + i * rowH;
+    const y = 228 + i * rowH;
     el.push(mtgBox_(x, y, 104, 22, it.label, {size: 12, bold: true, color: c.white, role: 'toc'}));
     el.push(mtgBox_(x + 98, y, 222, 22, mtgWrap_(it.title, 222, 12, 1)[0], {size: 12, color: c.white, role: 'toc'}));
     el.push(mtgBox_(x + 320, y, 40, 22, String(it.page), {size: 12, color: c.white, align: 'END', role: 'toc'}));
     el.push({type: 'box', x, y: y + 23, w: 360, h: 0.75, fill: c.white, alpha: 0.5, shape: 'RECTANGLE'});
   });
-  return {title: MTG_TITLES.appendix, divider: true, elements: el};
+  return {title: MTG_TITLES.appendix, divider: true, template: {title: MTG_TITLES.appendix, subtitle: '', date: '', name: ''}, elements: el};
 }
 
-/** スライドに、どのスライドにも付ける部品（mtgFrame_）とページ番号を付ける */
+/** スライドに、どのスライドにも付ける部品（mtgFrame_）とページ番号を付ける（表紙・扉の印と、ひな形の置き換える文字は残す） */
 function mtgNumberSlides_(frame, slides) {
-  return slides.map((slide, i) => ({title: slide.title, elements: mtgFrame_(frame, slide, i + 1).concat(slide.elements)}));
+  return slides.map((slide, i) => {
+    const out = {title: slide.title, elements: mtgFrame_(frame, slide, i + 1).concat(slide.elements)};
+    ['cover', 'divider', 'template'].forEach(key => { if (slide[key]) out[key] = slide[key]; });
+    return out;
+  });
 }
 
 /** シートの資料のいちばん下の行（どのサブインダストリー・会議日の資料か。試作は先頭に【試作】）{source}。データの時点・期間は表紙に書く */
@@ -1996,8 +1991,8 @@ function mtgLineHeight_(lines, size) {
  * - 表：{type: 'table', x, y, columns: [列の幅], rows: [{h, cells: [{text, size, bold, color, fill, align, spans}]}],
  *        borders: [{row, col, rows, cols, color, weight}]}（区切り線は薄いグレー。borders はそのあとに外枠として付ける）
  *   列の幅は 32pt 以上にする（Slides API は、それより狭い列の幅をエラーにする）。
- * - グラデーション：{type: 'gradient', x, y, w, h, stops: [[位置 0〜1, 色]]}（左上 → 右下。斜めの細い帯を並べて描く。mtgGradientRequests_）
- * - role（'title'・'lead'・'footer'・'page'・'pill'・'toc'・'motif'）は部品の役割の目印（スライドには使わない。テスト・確認用）
+ * - role（'title'・'lead'・'footer'・'page'・'pill'・'toc'）は部品の役割の目印（スライドには使わない。テスト・確認用）
+ * - 表紙・扉の slide.template（{title, subtitle, date, name}）は、ひな形の決まった文字を置き換える文字（mtgSlideRequests_）
  */
 
 /** 色（#7030A0）を Slides API の形に。 */
@@ -2010,12 +2005,12 @@ function mtgPt_(value) {
   return {magnitude: Math.round(value * 100) / 100, unit: 'PT'};
 }
 
-/** 文字の書式（Slides API の updateTextStyle の style と fields）。 */
-function mtgTextStyle_(item) {
+/** 文字の書式（Slides API の updateTextStyle の style と fields）。scale は大きさの倍率（ひな形のページの大きさに合わせる） */
+function mtgTextStyle_(item, scale) {
   return {
     style: {
       fontFamily: item.font || MTG_SLIDE.font,
-      fontSize: mtgPt_(item.size || MTG_SLIDE.bodySize),
+      fontSize: mtgPt_((item.size || MTG_SLIDE.bodySize) * (scale || 1)),
       bold: !!item.bold,
       foregroundColor: {opaqueColor: {rgbColor: mtgRgb_(item.color || MTG_OPTIONS.colors.body)}}
     },
@@ -2034,11 +2029,25 @@ function mtgParagraphStyle_(item) {
 /**
  * 1枚のスライドを作る Slides API のリクエスト（batchUpdate に渡す）。pageId はスライドの ID（5文字以上）、index は何枚目か（0 から）。
  * 表の空のセルにも空白を1つ入れて文字の大きさをそろえる（空のままだと既定の大きな文字の高さで行が伸びる）。
+ * options = {scale: 位置・大きさ・文字の倍率（ひな形のページの大きさ ÷ MTG_SLIDE.width。既定 1）, existing: true ならスライドは作らない（ひな形のページ）,
+ *            idPrefix: 部品の ID の先頭（既定は pageId）}。
+ * slide.template（表紙・扉）は、ひな形のページなら決まった文字（MTG_OPTIONS.templateTexts）を置き換え、ひな形が無ければ同じ位置に描く（mtgTemplateFallback_）
  */
-function mtgSlideRequests_(slide, pageId, index) {
-  const requests = [{createSlide: {objectId: pageId, insertionIndex: index, slideLayoutReference: {predefinedLayout: 'BLANK'}}}];
+function mtgSlideRequests_(slide, pageId, index, options) {
+  const opt = options || {};
+  const k = opt.scale || 1;
+  const pt = v => mtgPt_(v * k);
+  const requests = [];
+  let elements = slide.elements;
+  if (opt.existing) {
+    mtgTemplateReplacements_(slide.template).forEach(([from, to]) => requests.push({replaceAllText: {
+      containsText: {text: from, matchCase: true}, replaceText: to, pageObjectIds: [pageId]}}));
+  } else {
+    requests.push({createSlide: {objectId: pageId, insertionIndex: index, slideLayoutReference: {predefinedLayout: 'BLANK'}}});
+    if (slide.template) elements = mtgTemplateFallback_(slide.template).concat(elements);
+  }
   const styleText = (target, item, text) => {
-    const font = mtgTextStyle_(item);
+    const font = mtgTextStyle_(item, k);
     const para = mtgParagraphStyle_(item);
     requests.push({insertText: Object.assign({text, insertionIndex: 0}, target)});
     requests.push({updateTextStyle: Object.assign({textRange: {type: 'ALL'}, style: font.style, fields: font.fields}, target)});
@@ -2050,7 +2059,7 @@ function mtgSlideRequests_(slide, pageId, index) {
       const fields = [];
       if ('bold' in span) { style.bold = !!span.bold; fields.push('bold'); }
       if (span.color) { style.foregroundColor = {opaqueColor: {rgbColor: mtgRgb_(span.color)}}; fields.push('foregroundColor'); }
-      if (span.size) { style.fontSize = mtgPt_(span.size); fields.push('fontSize'); }
+      if (span.size) { style.fontSize = pt(span.size); fields.push('fontSize'); }
       if (fields.length) {
         requests.push({updateTextStyle: Object.assign({textRange: {type: 'FIXED_RANGE', startIndex: span.start, endIndex: end}, style,
           fields: fields.join(',')}, target)});
@@ -2060,25 +2069,21 @@ function mtgSlideRequests_(slide, pageId, index) {
   const fill = (color, alpha) => (color
     ? {solidFill: Object.assign({color: {rgbColor: mtgRgb_(color)}}, alpha != null ? {alpha} : {})}
     : {propertyState: 'NOT_RENDERED'});
-  slide.elements.forEach((el, n) => {
-    const id = pageId + '_' + n;
-    if (el.type === 'gradient') {
-      requests.push.apply(requests, mtgGradientRequests_(el, pageId, id));
-      return;
-    }
+  elements.forEach((el, n) => {
+    const id = (opt.idPrefix || pageId) + '_' + n;
     const width = el.type === 'table' ? el.columns.reduce((a, b) => a + b, 0) : el.w;
     const height = el.type === 'table' ? el.rows.reduce((sum, r) => sum + r.h, 0) : el.h;
     const elementProperties = {
       pageObjectId: pageId,
-      size: {width: mtgPt_(width), height: mtgPt_(height)},
-      transform: {scaleX: 1, scaleY: 1, translateX: Math.round(el.x * 100) / 100, translateY: Math.round(el.y * 100) / 100, unit: 'PT'}
+      size: {width: pt(width), height: pt(height)},
+      transform: {scaleX: 1, scaleY: 1, translateX: Math.round(el.x * k * 100) / 100, translateY: Math.round(el.y * k * 100) / 100, unit: 'PT'}
     };
     if (el.type === 'table') {
       requests.push({createTable: {objectId: id, elementProperties, rows: el.rows.length, columns: el.columns.length}});
       el.columns.forEach((w, c) => requests.push({updateTableColumnProperties: {objectId: id, columnIndices: [c],
-        tableColumnProperties: {columnWidth: mtgPt_(w)}, fields: 'columnWidth'}}));
+        tableColumnProperties: {columnWidth: pt(w)}, fields: 'columnWidth'}}));
       el.rows.forEach((row, r) => {
-        requests.push({updateTableRowProperties: {objectId: id, rowIndices: [r], tableRowProperties: {minRowHeight: mtgPt_(row.h)}, fields: 'minRowHeight'}});
+        requests.push({updateTableRowProperties: {objectId: id, rowIndices: [r], tableRowProperties: {minRowHeight: pt(row.h)}, fields: 'minRowHeight'}});
         row.cells.forEach((cell, c) => {
           const location = {rowIndex: r, columnIndex: c};
           requests.push({updateTableCellProperties: {objectId: id, tableRange: {location, rowSpan: 1, columnSpan: 1},
@@ -2092,7 +2097,7 @@ function mtgSlideRequests_(slide, pageId, index) {
         range: {location: {rowIndex: b.row, columnIndex: b.col}, rowSpan: b.rows, columnSpan: b.cols}, position: 'OUTER',
         color: b.color, weight: b.weight || 2.25
       }))).forEach(b => requests.push({updateTableBorderProperties: {objectId: id, tableRange: b.range, borderPosition: b.position,
-        tableBorderProperties: {tableBorderFill: {solidFill: {color: {rgbColor: mtgRgb_(b.color)}}}, weight: mtgPt_(b.weight), dashStyle: 'SOLID'},
+        tableBorderProperties: {tableBorderFill: {solidFill: {color: {rgbColor: mtgRgb_(b.color)}}}, weight: pt(b.weight), dashStyle: 'SOLID'},
         fields: 'tableBorderFill,weight,dashStyle'}}));
       return;
     }
@@ -2100,7 +2105,7 @@ function mtgSlideRequests_(slide, pageId, index) {
     requests.push({updateShapeProperties: {objectId: id, shapeProperties: {
       shapeBackgroundFill: fill(el.fill, el.alpha),
       outline: el.line
-        ? {outlineFill: {solidFill: {color: {rgbColor: mtgRgb_(el.line)}}}, weight: mtgPt_(el.lineWeight || 2.25), dashStyle: 'SOLID'}
+        ? {outlineFill: {solidFill: {color: {rgbColor: mtgRgb_(el.line)}}}, weight: pt(el.lineWeight || 2.25), dashStyle: 'SOLID'}
         : {propertyState: 'NOT_RENDERED'},
       contentAlignment: el.valign || 'MIDDLE'
     }, fields: 'shapeBackgroundFill,outline,contentAlignment'}});
@@ -2110,49 +2115,93 @@ function mtgSlideRequests_(slide, pageId, index) {
 }
 
 /**
- * グラデーション（表紙・扉の背景）の Slides API のリクエスト。Slides API の塗りにはグラデーションが無いので、
- * 左上 → 右下の向きに細い帯（45度に回した長方形）を並べ、帯ごとに stops の色を混ぜて塗る。はみ出した部分はスライドの外になる。
- * 帯は1つのグループにまとめる（Google スライドで開いたとき、背景が1つの部品になるように）
+ * ひな形の決まった文字の置き換え [[ひな形の文字, 置き換える文字]]（ひな形の文字の長い順。「XXXXXX」を「XXXXX」より先に置き換えるため）。
+ * template = {title, subtitle, date, name}
  */
-function mtgGradientRequests_(el, pageId, id) {
-  const count = 100;
-  const r = Math.SQRT1_2;
-  const length = el.w + el.h;              // 帯の長さ（どの角まで届く長さ）
-  const band = (el.w + el.h) * r / count;  // 帯の幅（斜めの長さを等分）
-  const out = [];
-  for (let i = 0; i < count; i++) {
-    const d = (i + 0.5) * band;
-    const w = band + 3;                    // すき間が出ないように重ねる
-    const cx = el.x + d * r;
-    const cy = el.y + d * r;
-    const objectId = id + '_g' + i;
-    out.push({createShape: {objectId, shapeType: 'RECTANGLE', elementProperties: {
-      pageObjectId: pageId,
-      size: {width: mtgPt_(w), height: mtgPt_(length)},
-      transform: {scaleX: r, scaleY: r, shearX: -r, shearY: r, unit: 'PT',
-        translateX: Math.round((cx - (r * w / 2 - r * length / 2)) * 100) / 100,
-        translateY: Math.round((cy - (r * w / 2 + r * length / 2)) * 100) / 100}
-    }}});
-    out.push({updateShapeProperties: {objectId, shapeProperties: {
-      shapeBackgroundFill: {solidFill: {color: {rgbColor: mtgRgb_(mtgMix_(el.stops, (i + 0.5) / count))}}},
-      outline: {propertyState: 'NOT_RENDERED'}
-    }, fields: 'shapeBackgroundFill,outline'}});
-  }
-  out.push({groupObjects: {groupObjectId: id + '_g', childrenObjectIds: out.filter(r => r.createShape).map(r => r.createShape.objectId)}});
-  return out;
+function mtgTemplateReplacements_(template) {
+  const texts = MTG_OPTIONS.templateTexts;
+  return Object.keys(texts).filter(key => texts[key] && template && key in template)
+    .sort((a, b) => texts[b].length - texts[a].length)
+    .map(key => [texts[key], String(template[key] == null ? '' : template[key])]);
 }
 
-/** stops（[[位置 0〜1, 色]]）の t の位置の色（前後の色を混ぜる）。'#RRGGBB' */
-function mtgMix_(stops, t) {
-  const next = stops.findIndex(st => st[0] >= t);
-  if (next <= 0) return stops[next < 0 ? stops.length - 1 : 0][1];
-  const [p0, c0] = stops[next - 1];
-  const [p1, c1] = stops[next];
-  const k = p1 > p0 ? (t - p0) / (p1 - p0) : 0;
-  const a = parseInt(c0.slice(1), 16);
-  const b = parseInt(c1.slice(1), 16);
-  const ch = shift => Math.round(((a >> shift) & 255) + (((b >> shift) & 255) - ((a >> shift) & 255)) * k);
-  return '#' + [16, 8, 0].map(shift => ch(shift).toString(16).padStart(2, '0')).join('').toUpperCase();
+/**
+ * ひな形が無いときの表紙・扉：緑の背景に、ひな形と同じ位置（ひな形の 960 × 540pt を 0.75 倍）で見出し・その下の文字・日付・名前を白で描く
+ */
+function mtgTemplateFallback_(template) {
+  const c = MTG_OPTIONS.colors;
+  const S = MTG_SLIDE;
+  const line = (y, h, text, size, bold) => mtgBox_(S.x, y, S.w, h, mtgWrap_(text, S.w, size, 1)[0], {size, bold: !!bold, color: c.white, align: 'CENTER'});
+  return [
+    {type: 'box', x: 0, y: 0, w: S.width, h: S.height, fill: c.cover, shape: 'RECTANGLE'},
+    line(170, 46, template.title, 30, true),
+    line(226, 26, template.subtitle, 15, true),
+    line(326, 20, template.date, 12),
+    line(344, 20, template.name, 12)
+  ].filter(el => el.fill || el.text);
+}
+
+/** 表紙・扉のひな形の ID（MTG_OPTIONS.templateId か、setMeetingTemplate() で登録したもの。無ければ空） */
+function mtgTemplateId_() {
+  return MTG_OPTIONS.templateId || PropertiesService.getDocumentProperties().getProperty(MTG_OPTIONS.templateKey) || '';
+}
+
+/** 「https://docs.google.com/presentation/d/ID/edit」や ID だけの文字から ID を取り出す（読めなければ空） */
+function mtgFileIdOf_(text) {
+  const t = String(text || '').trim();
+  const m = /\/d\/([A-Za-z0-9_-]{20,})/.exec(t) || /^([A-Za-z0-9_-]{20,})$/.exec(t);
+  return m ? m[1] : '';
+}
+
+/**
+ * 表紙・扉のひな形（Google スライド）を登録する（URL を聞く。空欄なら登録を外し、ひな形なしで作る）。
+ * いただいた .pptx は、ドライブにアップロードして Google スライドで開き、「ファイル」→「Google スライドとして保存」したものを登録する
+ */
+function setMeetingTemplate() {
+  const ui = SpreadsheetApp.getUi();
+  const props = PropertiesService.getDocumentProperties();
+  const current = props.getProperty(MTG_OPTIONS.templateKey);
+  const response = ui.prompt(CRED_OPTIONS.menuTitle,
+    '会議サマリの表紙・扉のひな形（Google スライド）の URL を入力してください。\n空欄なら登録を外します（ひな形なしで作ります）。\n\n' +
+    '今の登録：' + (current ? 'https://docs.google.com/presentation/d/' + current + '/edit' : 'なし'), ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+  const text = String(response.getResponseText() || '').trim();
+  if (!text) {
+    props.deleteProperty(MTG_OPTIONS.templateKey);
+    ui.alert(CRED_OPTIONS.menuTitle, 'ひな形の登録を外しました。会議サマリは、ひな形なしで作ります。', ui.ButtonSet.OK);
+    return;
+  }
+  const id = mtgFileIdOf_(text);
+  if (!id) throw new Error('「' + text + '」から Google スライドの ID を読めません。Google スライドを開いたときのアドレス（URL）を貼り付けてください。');
+  mtgRequireSlides_();
+  mtgTemplateCheck_(id);
+  props.setProperty(MTG_OPTIONS.templateKey, id);
+  const deck = Slides.Presentations.get(id);
+  const message = 'ひな形を登録しました（' + (deck.slides || []).length + '枚。1枚目を表紙・扉に使います）。次に作る会議サマリから使います。';
+  console.log(message);
+  ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+}
+
+/** ひな形が Google スライドか確かめる（.pptx のままなら、Google スライドにしてもらう） */
+function mtgTemplateCheck_(id) {
+  let file;
+  try {
+    file = DriveApp.getFileById(id);
+  } catch (e) {
+    throw new Error('ひな形（ID：' + id + '）を開けません。ファイルがあるか、この管理者のアカウントで開けるかを確かめてください（' + e.message + '）。');
+  }
+  if (file.getMimeType() !== MimeType.GOOGLE_SLIDES) {
+    throw new Error('ひな形が Google スライドではありません（.pptx のままなど）。ドライブで開いて「ファイル」→「Google スライドとして保存」し、' +
+      'できた Google スライドを setMeetingTemplate() で登録してください。');
+  }
+  return file;
+}
+
+/** 資料のページの幅（pt）。Slides API の pageSize（EMU か PT） */
+function mtgPageWidth_(deck) {
+  const w = deck.pageSize && deck.pageSize.width;
+  if (!w) return MTG_SLIDE.width;
+  return w.unit === 'EMU' ? w.magnitude / 12700 : w.magnitude;
 }
 
 /** Google Slides API（拡張サービス）が使えるか（使えなければ、追加のしかたを知らせて止める） */
@@ -2169,31 +2218,53 @@ function mtgFileName_(name, meeting, final) {
 
 /**
  * スライドの並び（mtgSlides_）を、Google スライド（16:9）と PDF にしてフォルダに保存する。
+ * 表紙・扉のひな形（mtgTemplateId_）があれば、ひな形をコピーした資料に作る：1枚目（表紙のひな形）の決まった文字を置き換えて表紙にし、
+ * 1枚目を複製して扉にする（2枚目以降は消す）。ほかのスライドは白紙のスライドを足して描き、位置・大きさ・文字はひな形のページの大きさに合わせて
+ * 拡大する（MTG_SLIDE の 720 × 405pt を基準に描いているため）。ひな形が無ければ、新しい資料（720 × 405pt）に作る。
  * スライドは Slides API（拡張サービス「Google Slides API」）で作り、できたスライドを PDF に書き出す。
  * MTG_OPTIONS.keepSlides なら Google スライドもフォルダに残す（推進リーダーが書き足せる）。うまくいかなかったときはゴミ箱に移す。
  * 戻り値 {pdf, deck}（deck は残さないときは null）
  */
 function mtgExportDeck_(name, slides, folder) {
-  const deck = Slides.Presentations.create({title: name,
-    pageSize: {width: mtgPt_(MTG_SLIDE.width), height: mtgPt_(MTG_SLIDE.height)}});
-  const file = DriveApp.getFileById(deck.presentationId);
+  const templateId = mtgTemplateId_();
+  let file;
+  let deck;
+  if (templateId) {
+    file = mtgTemplateCheck_(templateId).makeCopy(name, folder);
+    deck = Slides.Presentations.get(file.getId());
+  } else {
+    deck = Slides.Presentations.create({title: name, pageSize: {width: mtgPt_(MTG_SLIDE.width), height: mtgPt_(MTG_SLIDE.height)}});
+    file = DriveApp.getFileById(deck.presentationId);
+  }
   try {
-    // 何枚かずつまとめて送る（作ったときの白紙のスライドは、1回目の終わりに消す）
+    const scale = mtgPageWidth_(deck) / MTG_SLIDE.width;
+    const pages = (deck.slides || []).map(sl => sl.objectId);
+    const cover = templateId ? pages[0] : null;
+    // ひな形：2枚目以降を消し、1枚目を複製して扉にする（表紙の次に入る。本編を表紙の次から順に入れると、扉は本編のあとになる）
     let requests = [];
+    if (cover) {
+      pages.slice(1).forEach(id => requests.push({deleteObject: {objectId: id}}));
+      if (slides.some(sl => sl.divider)) requests.push({duplicateObject: {objectId: cover, objectIds: {[cover]: 'mtg_divider'}}});
+    }
     let first = true;
     const flush = () => {
-      if (first) (deck.slides || []).forEach(s => requests.push({deleteObject: {objectId: s.objectId}}));
+      if (first && !cover) pages.forEach(id => requests.push({deleteObject: {objectId: id}}));   // 作ったときの白紙のスライド
       Slides.Presentations.batchUpdate({requests}, deck.presentationId);
       requests = [];
       first = false;
     };
     slides.forEach((slide, i) => {
-      const add = mtgSlideRequests_(slide, 'mtg_p' + (i + 1), i);
+      const own = 'mtg_p' + (i + 1);
+      const add = cover && slide.cover ? mtgSlideRequests_(slide, cover, i, {scale, existing: true, idPrefix: own})
+        : cover && slide.divider ? mtgSlideRequests_(slide, 'mtg_divider', i, {scale, existing: true, idPrefix: own})
+          : mtgSlideRequests_(slide, own, i, {scale});
       if (requests.length && requests.length + add.length > MTG_OPTIONS.batchRequests) flush();
       requests = requests.concat(add);
     });
     flush();
-    file.moveTo(folder);
+    const extra = mtgPlaceholderRequests_(Slides.Presentations.get(deck.presentationId), slides.map((slide, i) => 'mtg_p' + (i + 1)));
+    if (extra.length) Slides.Presentations.batchUpdate({requests: extra}, deck.presentationId);
+    if (!templateId) file.moveTo(folder);
     const pdf = folder.createFile(file.getAs('application/pdf').setName(name + '.pdf'));
     if (!MTG_OPTIONS.keepSlides) file.setTrashed(true);
     return {pdf, deck: MTG_OPTIONS.keepSlides ? file : null};
@@ -2201,6 +2272,18 @@ function mtgExportDeck_(name, slides, folder) {
     try { file.setTrashed(true); } catch (_) {}
     throw e;
   }
+}
+
+/**
+ * 足したスライド（pageIds）に付いたレイアウトのプレースホルダ（ページ番号・日付・フッターの枠）を消すリクエスト。
+ * ひな形のレイアウトにはページ番号の枠があり、白紙のスライドにも付くと、mtgFrame_ のページ番号と2つ出るため。表紙・扉（ひな形のページ）はそのまま
+ */
+function mtgPlaceholderRequests_(deck, pageIds) {
+  const own = new Set(pageIds);
+  const requests = [];
+  (deck.slides || []).filter(sl => own.has(sl.objectId)).forEach(sl => (sl.pageElements || [])
+    .filter(el => el.shape && el.shape.placeholder).forEach(el => requests.push({deleteObject: {objectId: el.objectId}})));
+  return requests;
 }
 
 /** 保存先のフォルダ（MTG_OPTIONS.folderId。空なら、このスプレッドシートと同じフォルダの中に folderName を作り、次からも使う）。 */

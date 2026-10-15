@@ -629,6 +629,9 @@ function createGas(options) {
     scopeChecks: [],          // ScriptApp.requireAllScopes に渡された AuthMode
     authRequired: false,      // true にすると、getAuthorizationInfo が「承認が足りない」を返す
     driveCopies: [],
+    files: {},                // DriveApp のファイルの種類 {ID: {mimeType}}（無ければスプレッドシート）
+    slideTemplates: {},       // コピーすると Slides の資料になる Google スライド {ID: {pageSize, slides: [{objectId}]}}
+    layoutPlaceholders: [],   // 白紙のスライドに付くレイアウトのプレースホルダの種類（例 ['SLIDE_NUMBER']）
     created: [],              // SpreadsheetApp.create で作ったスプレッドシート
     prompts: [],
     promptAnswer: '',
@@ -944,6 +947,8 @@ function createGas(options) {
         },
         setTrashed(flag) { if (flag) gas.trashed.push(id); return this; },
         getName: () => id,
+        getMimeType: () => (gas.files[id] || {}).mimeType ||
+          (gas.slideTemplates[id] ? 'application/vnd.google-apps.presentation' : 'application/vnd.google-apps.spreadsheet'),
         getUrl: () => 'https://docs.google.com/presentation/d/' + id + '/edit',
         moveTo(folder) { gas.moved.push({id, folder: folder.getId()}); return this; },
         /** PDF などに書き出した中身（名前を付けられる入れ物だけ） */
@@ -954,6 +959,12 @@ function createGas(options) {
         makeCopy(name, folder) {
           const copyId = 'copy-' + (++copySeq);
           gas.driveCopies.push({from: id, name, folder: folder ? folder.getId() : null, locked: gas.lockHolders > 0});
+          const template = gas.slideTemplates[id];
+          if (template) {
+            // Google スライドのコピー：Slides（拡張サービス）で開ける資料にする
+            gas.decks.push({id: copyId, title: name, template: id, pageSize: template.pageSize, slides: template.slides.slice(), requests: [], batches: []});
+            return DriveApp.getFileById(copyId);
+          }
           return {
             getId: () => copyId,
             getName: () => name,
@@ -971,8 +982,14 @@ function createGas(options) {
     Presentations: {
       create(resource) {
         const id = 'deck-' + (++deckSeq);
-        gas.decks.push({id, title: resource.title, pageSize: resource.pageSize, requests: [], batches: []});
-        return {presentationId: id, slides: [{objectId: 'p'}]};
+        gas.decks.push({id, title: resource.title, pageSize: resource.pageSize, slides: [{objectId: 'p'}], requests: [], batches: []});
+        return {presentationId: id, pageSize: resource.pageSize, slides: [{objectId: 'p'}]};
+      },
+      /** 資料（作ったもの・ひな形のコピー）の大きさとスライドの ID */
+      get(id) {
+        const deck = gas.decks.find(d => d.id === id) || (gas.slideTemplates[id] && Object.assign({id}, gas.slideTemplates[id]));
+        if (!deck) throw new Error('Requested entity was not found.');
+        return {presentationId: id, pageSize: deck.pageSize, slides: deck.slides.map(sl => ({objectId: sl.objectId, pageElements: (sl.pageElements || []).slice()}))};
       },
       batchUpdate(resource, id) {
         const deck = gas.decks.find(d => d.id === id);
@@ -980,6 +997,16 @@ function createGas(options) {
         if (gas.slidesError) throw new Error(gas.slidesError);
         deck.batches.push(resource.requests.length);
         deck.requests.push(...resource.requests);
+        // 白紙のスライドには、レイアウトのプレースホルダ（gas.layoutPlaceholders の種類）が付く。消したものは除く
+        resource.requests.forEach(q => {
+          if (q.createSlide) deck.slides.push({objectId: q.createSlide.objectId,
+            pageElements: (gas.layoutPlaceholders || []).map((type, n) => ({objectId: q.createSlide.objectId + '_ph' + n, shape: {placeholder: {type}}}))});
+          if (q.deleteObject) {
+            const gone = q.deleteObject.objectId;
+            deck.slides = deck.slides.filter(sl => sl.objectId !== gone)
+              .map(sl => (sl.pageElements ? Object.assign({}, sl, {pageElements: sl.pageElements.filter(el => el.objectId !== gone)}) : sl));
+          }
+        });
         return {replies: []};
       }
     }
@@ -1007,9 +1034,11 @@ function createGas(options) {
   /* ----- プロジェクトの読み込み ----- */
 
   // 拡張サービス（Slides）は、有効にしていないプロジェクトを試すときは options.noSlides で外す
+  const MimeType = {GOOGLE_SLIDES: 'application/vnd.google-apps.presentation', GOOGLE_SHEETS: 'application/vnd.google-apps.spreadsheet',
+    PDF: 'application/pdf'};
   const globals = {
     SpreadsheetApp, HtmlService, PropertiesService, LockService, Utilities, Session,
-    ScriptApp, CacheService, DriveApp, UrlFetchApp, Browser, console: logger
+    ScriptApp, CacheService, DriveApp, MimeType, UrlFetchApp, Browser, console: logger
   };
   if (!options.noSlides) globals.Slides = Slides;
   const context = vm.createContext(globals);
