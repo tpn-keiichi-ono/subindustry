@@ -67,11 +67,12 @@ const MTG_OPTIONS = {
   lastKeyPrefix: 'MTG_LAST_',         // 前の版の「前回の作成日時」（会議日の記録が無いときだけ使う）
   keepMeetings: 24,                  // 会議日の記録をいくつ残すか
   keepSlides: true,                  // Google スライドもフォルダに残す（推進リーダーが書き足せる。false なら PDF だけ）
-  // Google チャットへの通知（webhook）。setMeetingChat() で webhook の URL と配布用フォルダを登録し、notifyMeetingSummaries() を実行すると、
-  // その場で本番の PDF を配布用フォルダにコピーして、リンクをチャットに送る（自動では送らない）
+  // Google チャットへの通知（webhook）。setMeetingChat() で webhook の URL（と配布用フォルダ）を登録し、notifyMeetingSummaries() を実行すると、
+  // その場で、シートごとにいちばん新しく作った PDF（試作も）のリンクをチャットに送る（自動では送らない）
   chat: {
     webhookKey: 'MTG_CHAT_WEBHOOK',  // スクリプトのプロパティ：webhook の URL（鍵を含むので、コードやシートに書かない）
-    folderKey: 'MTG_CHAT_FOLDER',    // スクリプトのプロパティ：配布用フォルダの ID（参加者が閲覧できるように共有したフォルダ）
+    folderKey: 'MTG_CHAT_FOLDER',    // スクリプトのプロパティ：配布用フォルダの ID（任意。あれば PDF をコピーしてそのリンクを送る）
+    pdfKeyPrefix: 'MTG_PDF_',        // ドキュメントのプロパティ：シートごとに、いちばん新しく作った PDF（後ろにシート名）
     legacyHandler: 'mtgNotifyScheduled' // 前の版の自動通知（2日前）のトリガーの関数。残っていれば setMeetingChat()・notifyMeetingSummaries() で外す
   },
   firstDays: 14,                     // 初回（前回の会議の記録が無い）は、何日前からの変化を出すか
@@ -301,6 +302,7 @@ function mtgConfirmFinal_(ui, names, meeting) {
     const held = list.filter(m => !m.baseline && m.date < meeting).pop();
     const base = list.filter(m => m.baseline && m.date <= meeting).pop();
     const same = list.find(m => !m.baseline && m.date === meeting);
+    const sent = mtgReadJson_(props, MTG_OPTIONS.chat.pdfKeyPrefix + name);   // いちばん新しく作った PDF（送ったか）
     const legacy = Number(props.getProperty(MTG_OPTIONS.lastKeyPrefix + name)) || 0;   // 前の版の記録（mtgCreate_ と同じ順で選ぶ）
     const from = base && (!held || base.cutoff > held.cutoff) ? '基準（' + fmt(base.cutoff) + '）以降'
       : held ? '前回会議（' + mtgShortDate_(held.date) + '）の資料作成時（' + fmt(held.cutoff) + '）以降'
@@ -308,7 +310,8 @@ function mtgConfirmFinal_(ui, names, meeting) {
           : '直近' + MTG_OPTIONS.firstDays + '日間（前回の会議の記録なし）';
     return '・' + name + '：' + from +
       (same ? '\n　※ この会議日の資料は ' + fmt(same.cutoff) + ' に作成済み。作り直すと、次の会議の起点が今になります。' : '') +
-      (same && same.notified ? '\n　※ ' + fmt(same.notified) + ' に Google チャットに通知済み。作り直したら notifyMeetingSummaries() で送り直してください。' : '');
+      (sent && sent.final && sent.meeting === meeting && sent.notified
+        ? '\n　※ ' + fmt(sent.notified) + ' に Google チャットに通知済み。作り直したら notifyMeetingSummaries() で送り直してください。' : '');
   });
   const answer = ui.alert(CRED_OPTIONS.menuTitle,
     '本番の資料を作り、会議日を記録します。\n\n会議日：' + p[0] + '/' + p[1] + '/' + p[2] + '（' + week + '）\n対象期間\n' + lines.join('\n') +
@@ -333,7 +336,7 @@ function mtgRun_(final) {
     ? '会議日（' + meeting + '）を記録しました。次の会議の資料は、今以降の変化を出します。' +
       (mtgChatSettings_() ? '\nGoogle チャットに送るときは、中身を確かめてから notifyMeetingSummaries() を実行してください（自動では送りません）。'
         : '配るときは、PDF を参加者に共有してください（保存先のフォルダは共有しない）。')
-    : '試作のため、会議日は記録していません。');
+    : '試作のため、会議日は記録していません。' + (mtgChatSettings_() ? '\nnotifyMeetingSummaries() を実行すると、この試作の PDF を Google チャットに送ります。' : ''));
   console.log(lines.join('\n'));
   ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
 }
@@ -341,7 +344,7 @@ function mtgRun_(final) {
 /* ---------------- Google チャットへの通知（webhook） ---------------- */
 
 /**
- * Google チャットへの通知を設定する（エディタから実行する。管理者が1回）。webhook の URL と配布用フォルダの URL を聞き、スクリプトのプロパティに残す。
+ * Google チャットへの通知を設定する（エディタから実行する。管理者が1回）。webhook の URL と配布用フォルダの URL（任意）を聞き、スクリプトのプロパティに残す。
  * 送るのは notifyMeetingSummaries() を実行したとき（自動では送らない）。webhook の URL を空欄で OK にすると、設定を外す。
  * 前の版の自動通知のトリガーが残っていれば外す
  */
@@ -352,7 +355,7 @@ function setMeetingChat() {
   const current = mtgChatSettings_();
   const response = ui.prompt(CRED_OPTIONS.menuTitle,
     'Google チャットの webhook の URL を貼り付けてください（スペースの「アプリと統合」→「Webhook」で作ったもの）。\n' +
-    'notifyMeetingSummaries() を実行すると、本番の PDF のリンクをすぐに送ります。\n' +
+    'notifyMeetingSummaries() を実行すると、いちばん新しく作った PDF（試作も）のリンクをすぐに送ります。\n' +
     '空欄で OK を押すと、設定を外します。\n\n今の設定：' + (current ? mtgChatSpace_(current.webhook) + ' に送る' : '未設定'),
     ui.ButtonSet.OK_CANCEL);
   if (response.getSelectedButton() !== ui.Button.OK) return;
@@ -370,30 +373,36 @@ function setMeetingChat() {
     throw new Error('Google チャットの webhook の URL ではありません。https://chat.googleapis.com/v1/spaces/…/messages?key=…&token=… の形の URL を貼り付けてください。');
   }
   const answer = ui.prompt(CRED_OPTIONS.menuTitle,
-    '配布用フォルダの URL を貼り付けてください。\n' +
-    '送るときに、本番の PDF をこのフォルダにコピーして、そのリンクを送ります。チャットのスペースのメンバー（参加者）が閲覧できるように共有したフォルダにしてください\n' +
-    '（資料の保存先の「' + MTG_OPTIONS.folderName + '」フォルダは、試作や編集できる Google スライドが入っているので使わない）。',
+    '配布用フォルダの URL を貼り付けてください（任意）。\n' +
+    '入れると、送るときに PDF をこのフォルダにコピーして、そのリンクを送ります。チャットのスペースのメンバー（参加者）が閲覧できるように共有したフォルダにしてください\n' +
+    '（資料の保存先の「' + MTG_OPTIONS.folderName + '」フォルダは、試作や編集できる Google スライドが入っているので使わない）。\n' +
+    '空欄なら、保存先の PDF のリンクをそのまま送ります（開けるのは、その PDF を共有された人だけ）。',
     ui.ButtonSet.OK_CANCEL);
   if (answer.getSelectedButton() !== ui.Button.OK) return;
   const text = String(answer.getResponseText() || '').trim();
-  const match = /\/folders\/([\w-]{10,})/.exec(text) || /^([\w-]{10,})$/.exec(text);
-  if (!match) throw new Error('配布用フォルダの URL を読めません。ドライブでフォルダを開いたときの URL（…/folders/…）を貼り付けてください。');
-  const work = MTG_OPTIONS.folderId || PropertiesService.getDocumentProperties().getProperty(MTG_OPTIONS.folderKey);
-  if (work && work === match[1]) {
-    throw new Error('資料の保存先のフォルダ（「' + MTG_OPTIONS.folderName + '」）は、配布用フォルダにできません（試作や編集できる Google スライドが入っているため）。別のフォルダを作って共有してください。');
-  }
-  let folderName;
-  try {
-    folderName = DriveApp.getFolderById(match[1]).getName();
-  } catch (error) {
-    throw new Error('配布用フォルダ（ID：' + match[1] + '）を開けません。このアカウントで開けるフォルダか確かめてください。');
+  let folderId = null;
+  let folderName = 'なし（保存先の PDF のリンクをそのまま送る。参加者が開けるように PDF を共有してください）';
+  if (text) {
+    const match = /\/folders\/([\w-]{10,})/.exec(text) || /^([\w-]{10,})$/.exec(text);
+    if (!match) throw new Error('配布用フォルダの URL を読めません。ドライブでフォルダを開いたときの URL（…/folders/…）を貼り付けてください。');
+    const work = MTG_OPTIONS.folderId || PropertiesService.getDocumentProperties().getProperty(MTG_OPTIONS.folderKey);
+    if (work && work === match[1]) {
+      throw new Error('資料の保存先のフォルダ（「' + MTG_OPTIONS.folderName + '」）は、配布用フォルダにできません（試作や編集できる Google スライドが入っているため）。別のフォルダを作って共有してください。');
+    }
+    try {
+      folderName = DriveApp.getFolderById(match[1]).getName();
+    } catch (error) {
+      throw new Error('配布用フォルダ（ID：' + match[1] + '）を開けません。このアカウントで開けるフォルダか確かめてください。');
+    }
+    folderId = match[1];
   }
   props.setProperty(o.webhookKey, webhook);
-  props.setProperty(o.folderKey, match[1]);
+  if (folderId) props.setProperty(o.folderKey, folderId);
+  else props.deleteProperty(o.folderKey);
   const removed = mtgRemoveLegacyTrigger_();
   const lines = ['Google チャットへの通知を設定しました。',
     '・送り先：' + mtgChatSpace_(webhook), '・配布用フォルダ：' + folderName,
-    '・本番を作って中身を確かめたら、notifyMeetingSummaries() を実行すると、すぐに PDF のリンクを送ります。']
+    '・notifyMeetingSummaries() を実行すると、いちばん新しく作った PDF（試作も）のリンクをすぐに送ります。']
     .concat(removed ? ['・前の版の自動通知（2日前）のトリガーを外しました。'] : []);
   const test = ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n') + '\n\n確かめのメッセージを、いまチャットに送りますか？', ui.ButtonSet.YES_NO);
   if (test === ui.Button.YES) {
@@ -405,69 +414,76 @@ function setMeetingChat() {
 }
 
 /**
- * 会議サマリ（本番の PDF）を、すぐに Google チャットに送る（エディタから実行する。本番を作って中身を確かめたあとに）。
- * シートを聞き（空欄ならすべて）、シートごとに最新の会議日の本番の PDF を配布用フォルダにコピーして、リンクを送る（「はい」のときだけ）。
- * 会議日ごとに1つのメッセージ。送り直しも同じ（配布用フォルダの古いコピーはゴミ箱へ）
+ * 会議サマリの PDF を、すぐに Google チャットに送る（エディタから実行する）。シートを聞き（空欄ならすべて）、
+ * シートごとに、いちばん新しく作った PDF（試作は【試作】と書く）のリンクを送る（「はい」のときだけ）。
+ * 会議日・試作／本番ごとに1つのメッセージ。送り直しも同じ
  */
 function notifyMeetingSummaries() {
   const chat = mtgChatSettings_();
-  if (!chat) throw new Error('Google チャットへの通知が設定されていません。先に setMeetingChat() で webhook の URL と配布用フォルダを登録してください。');
+  if (!chat) throw new Error('Google チャットへの通知が設定されていません。先に setMeetingChat() で webhook の URL を登録してください。');
   mtgRemoveLegacyTrigger_();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = SpreadsheetApp.getUi();
-  const names = mtgAskSheets_(ss, ui, '会議サマリ（本番の PDF）を、すぐに Google チャットに送ります。');
+  const names = mtgAskSheets_(ss, ui, '会議サマリの PDF（シートごとに、いちばん新しく作ったもの）を、すぐに Google チャットに送ります。');
   if (!names) return;
   const props = PropertiesService.getDocumentProperties();
   const fmt = at => Utilities.formatDate(new Date(at), Session.getScriptTimeZone(), 'M/d HH:mm');
-  const entries = names.map(name => ({name, record: mtgMeetings_(props, name).filter(m => !m.baseline && m.pdf).pop()})).filter(e => e.record);
+  const entries = names.map(name => ({name, pdf: mtgReadJson_(props, MTG_OPTIONS.chat.pdfKeyPrefix + name)})).filter(e => e.pdf && e.pdf.pdf);
   const missing = names.filter(name => !entries.some(e => e.name === name));
   if (!entries.length) {
-    ui.alert(CRED_OPTIONS.menuTitle, '「' + names.join('」「') + '」に、本番の資料がありません。先に createMeetingSummaries() で作ってください。', ui.ButtonSet.OK);
+    ui.alert(CRED_OPTIONS.menuTitle, '「' + names.join('」「') + '」に、作った資料がありません。先に previewMeetingSummaries()（試作）か createMeetingSummaries()（本番）で作ってください。',
+      ui.ButtonSet.OK);
     return;
   }
-  const meetings = entries.map(e => e.record.date).filter((date, i, all) => all.indexOf(date) === i).sort();
   const answer = ui.alert(CRED_OPTIONS.menuTitle,
     'Google チャット（' + mtgChatSpace_(chat.webhook) + '）に、会議サマリをすぐに送ります。\n' +
-    entries.map(e => '・' + e.name + '：会議日 ' + mtgShortDate_(e.record.date) + '（' + mtgWeekday_(e.record.date) + '）の ' + e.record.file +
-      '（' + fmt(e.record.cutoff) + ' 作成' + (e.record.notified ? '。' + fmt(e.record.notified) + ' に通知済み。送り直す' : '') + '）').join('\n') +
-    (missing.length ? '\n本番の資料が無いシート（送らない）：' + missing.join('、') : '') +
-    '\n\nPDF を配布用フォルダにコピーし、そのリンクを送ります。中身を確かめましたか？送ってよろしいですか？', ui.ButtonSet.YES_NO);
+    entries.map(e => '・' + e.name + '：' + (e.pdf.final ? '' : '【試作】') + e.pdf.file + '（会議日 ' + mtgShortDate_(e.pdf.meeting) + '（' + mtgWeekday_(e.pdf.meeting) + '）・' +
+      fmt(e.pdf.at) + ' 作成' + (e.pdf.notified ? '。' + fmt(e.pdf.notified) + ' に通知済み。送り直す' : '') + '）').join('\n') +
+    (missing.length ? '\n作った資料が無いシート（送らない）：' + missing.join('、') : '') +
+    '\n\n' + (chat.folderId ? 'PDF を配布用フォルダにコピーし、そのリンクを送ります。' : '保存先の PDF のリンクを送ります（PDF を共有された人だけが開けます）。') +
+    '送ってよろしいですか？', ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return;
   const now = new Date();
-  meetings.forEach(meeting => mtgNotify_(chat, meeting, entries.filter(e => e.record.date === meeting).map(e => e.name), now));
-  const message = 'Google チャットに会議サマリを送りました（' + entries.map(e => e.name + '：' + mtgShortDate_(e.record.date) + ' 会議').join('、') + '）。';
+  const groups = new Map();
+  entries.slice().sort((a, b) => (a.pdf.meeting < b.pdf.meeting ? -1 : a.pdf.meeting > b.pdf.meeting ? 1 : 0)).forEach(e => {
+    const key = e.pdf.meeting + '|' + (e.pdf.final ? '本番' : '試作');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(e);
+  });
+  groups.forEach(group => mtgNotify_(chat, group, now));
+  const message = 'Google チャットに会議サマリを送りました（' + entries.map(e => e.name + '：' + (e.pdf.final ? '' : '【試作】') + e.pdf.file).join('、') + '）。';
   console.log(message);
   ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
 }
 
 /**
- * names のシートの、会議日 meeting の本番の PDF を配布用フォルダにコピーし（同じ名前の古いコピーはゴミ箱へ）、
- * 1つのメッセージで Google チャットに送って、記録に送った時刻を残す
+ * 同じ会議日・同じ試作／本番の PDF（entries = [{name, pdf: いちばん新しく作った PDF の記録}]）を、1つのメッセージで Google チャットに送り、
+ * 記録に送った時刻を残す。配布用フォルダがあれば、PDF をコピーして（同じ名前の古いコピーはゴミ箱へ）そのリンクを送る
  */
-function mtgNotify_(chat, meeting, names, now) {
+function mtgNotify_(chat, entries, now) {
   const props = PropertiesService.getDocumentProperties();
-  const folder = DriveApp.getFolderById(chat.folderId);
-  const entries = names.map(name => {
-    const record = mtgMeetings_(props, name).find(m => !m.baseline && m.date === meeting && m.pdf);
-    const pdf = DriveApp.getFileById(record.pdf);
-    if (pdf.isTrashed()) {
-      throw new Error('「' + name + '」の会議日 ' + meeting + ' の PDF（' + record.file + '）がゴミ箱にあります。ゴミ箱から戻すか、本番を作り直してから送ってください。');
+  const folder = chat.folderId ? DriveApp.getFolderById(chat.folderId) : null;
+  const items = entries.map(e => {
+    const file = DriveApp.getFileById(e.pdf.pdf);
+    if (file.isTrashed()) {
+      throw new Error('「' + e.name + '」の PDF（' + e.pdf.file + '）がゴミ箱にあります。ゴミ箱から戻すか、作り直してから送ってください。');
     }
-    const copy = pdf.makeCopy(record.file, folder);
-    mtgTrashOld_(folder, [record.file], [copy.getId()]);
-    return {name, file: record.file, counts: record.counts, url: copy.getUrl()};
+    let url = file.getUrl();
+    if (folder) {
+      const copy = file.makeCopy(e.pdf.file, folder);
+      mtgTrashOld_(folder, [e.pdf.file], [copy.getId()]);
+      url = copy.getUrl();
+    }
+    return {name: e.name, file: e.pdf.file, counts: e.pdf.counts, url};
   });
-  mtgPostChat_(chat.webhook, mtgChatText_(meeting, entries));
-  names.forEach(name => {
-    const list = mtgMeetings_(props, name).map(m => (!m.baseline && m.date === meeting && m.pdf ? Object.assign({}, m, {notified: now.getTime()}) : m));
-    props.setProperty(MTG_OPTIONS.meetingsKeyPrefix + name, JSON.stringify(list));
-  });
+  mtgPostChat_(chat.webhook, mtgChatText_(entries[0].pdf.meeting, items, entries[0].pdf.final));
+  entries.forEach(e => props.setProperty(MTG_OPTIONS.chat.pdfKeyPrefix + e.name, JSON.stringify(Object.assign({}, e.pdf, {notified: now.getTime()}))));
 }
 
-/** チャットに送る文（会議の名前・会議日、シートごとの件数と PDF のリンク） */
-function mtgChatText_(meeting, entries) {
-  return ['*' + MTG_OPTIONS.meetingName + '　事前資料（' + mtgShortDate_(meeting) + '（' + mtgWeekday_(meeting) + '）開催）*',
-    '会議の前に、資料を通読してください。']
+/** チャットに送る文（会議の名前・会議日、シートごとの件数と PDF のリンク）。試作なら見出しに【試作】と書く */
+function mtgChatText_(meeting, entries, final) {
+  return ['*' + (final ? '' : '【試作】') + MTG_OPTIONS.meetingName + '　事前資料（' + mtgShortDate_(meeting) + '（' + mtgWeekday_(meeting) + '）開催）*',
+    final ? '会議の前に、資料を通読してください。' : '試作の資料です（本番の資料ではありません）。']
     .concat(entries.map(e => '・' + e.name + (e.counts ? '（' + e.counts + '）' : '') + '\n　<' + e.url + '|' + e.file + '>'))
     .join('\n');
 }
@@ -487,12 +503,11 @@ function mtgPostChat_(webhook, text) {
   }
 }
 
-/** 通知の設定 {webhook, folderId}（スクリプトのプロパティ）。どちらかが無ければ null */
+/** 通知の設定 {webhook, folderId（配布用フォルダ。無ければ null）}（スクリプトのプロパティ）。webhook が無ければ null */
 function mtgChatSettings_() {
   const props = PropertiesService.getScriptProperties();
   const webhook = props.getProperty(MTG_OPTIONS.chat.webhookKey);
-  const folderId = props.getProperty(MTG_OPTIONS.chat.folderKey);
-  return webhook && folderId ? {webhook, folderId} : null;
+  return webhook ? {webhook, folderId: props.getProperty(MTG_OPTIONS.chat.folderKey) || null} : null;
 }
 
 /** 送り先の見せ方（「スペース AAAA…」。鍵・トークンは出さない） */
@@ -621,10 +636,7 @@ function mtgCreate_(ss, names, now, final, meeting) {
   });
   plans.forEach((p, i) => {
     if (final) {
-      // 本番の PDF（notifyMeetingSummaries() で Google チャットに送る）を覚える。作り直した PDF はまだ送っていないので、通知済みは引き継がない
-      const record = {date: meeting, cutoff: now.getTime(), pdf: results[i].file.getId(), file: results[i].file.getName(),
-        counts: mtgCountsText_(summaries[i])};
-      const list = p.meetings.filter(m => m.baseline || m.date !== meeting).concat([record])
+      const list = p.meetings.filter(m => m.baseline || m.date !== meeting).concat([{date: meeting, cutoff: now.getTime()}])
         .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).slice(-o.keepMeetings);
       props.setProperty(o.meetingsKeyPrefix + p.name, JSON.stringify(list));
     } else if (!p.draft) {
@@ -632,13 +644,15 @@ function mtgCreate_(ss, names, now, final, meeting) {
         meeting, at: now.getTime(), keys: summaries[i].alerts.map(a => mtgHash_(a.key))
       }));
     }
+    // いちばん新しく作った PDF（試作も。notifyMeetingSummaries() で Google チャットに送る）。作り直した PDF はまだ送っていない
+    props.setProperty(o.chat.pdfKeyPrefix + p.name, JSON.stringify({pdf: results[i].file.getId(), file: results[i].file.getName(),
+      counts: mtgCountsText_(summaries[i]), meeting, final: !!final, at: now.getTime()}));
   });
   return results;
 }
 
 /**
- * シートの会議の記録 [{date: 'yyyy/MM/dd', cutoff: 資料を作った時刻（ms）, pdf: PDF の ID, file: PDF の名前, counts: 件数の文,
- *   notified: Google チャットに送った時刻（ms。送っていなければ無い）}]（会議日の古い順）。
+ * シートの会議の記録 [{date: 'yyyy/MM/dd', cutoff: 資料を作った時刻（ms）}]（会議日の古い順）。
  * setMeetingBaseline() の基準も同じ形で {date: 記録した日, cutoff: 記録した時刻, baseline: true}（1つだけ）
  */
 function mtgMeetings_(props, name) {

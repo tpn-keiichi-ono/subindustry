@@ -967,7 +967,8 @@ function createGas(options) {
         getName: () => (gas.driveFiles.find(f => f.id === id) || {name: id}).name,
         getMimeType: () => (gas.files[id] || {}).mimeType ||
           (gas.slideTemplates[id] ? 'application/vnd.google-apps.presentation' : 'application/vnd.google-apps.spreadsheet'),
-        getUrl: () => 'https://docs.google.com/presentation/d/' + id + '/edit',
+        getUrl: () => (gas.driveFiles.some(f => f.id === id) ? 'https://drive.google.com/file/d/' + id + '/view'
+          : 'https://docs.google.com/presentation/d/' + id + '/edit'),
         moveTo(folder) {
           gas.moved.push({id, folder: folder.getId()});
           const deck = gas.decks.find(d => d.id === id);
