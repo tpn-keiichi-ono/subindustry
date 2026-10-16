@@ -1233,8 +1233,9 @@ test('インデックス：Sheets API（拡張サービス）があれば、PDF 
   assert.strictEqual(calls[0].id, gas.ss.getId());
   assert.deepStrictEqual(plain(calls[0].resource), {requests: [{updateCells: {
     start: {sheetId: sheet.getSheetId(), rowIndex: 1, columnIndex: 1},
-    rows: [{values: [{userEnteredValue: {stringValue: '@'}, chipRuns: [{startIndex: 0, chip: {richLinkProperties: {uri: 'https://drive.google.com/file/d/' + pdf.id + '/view'}}}]}]}],
-    fields: 'userEnteredValue,chipRuns,textFormatRuns'
+    rows: [{values: [{userEnteredValue: {stringValue: '@'}, chipRuns: [{startIndex: 0, chip: {richLinkProperties: {uri: 'https://drive.google.com/file/d/' + pdf.id + '/view'}}}],
+      userEnteredFormat: {textFormat: {underline: false, foregroundColorStyle: {rgbColor: {red: 0, green: 0, blue: 0}}}}}]}],
+    fields: 'userEnteredValue,chipRuns,textFormatRuns,userEnteredFormat.textFormat.underline,userEnteredFormat.textFormat.foregroundColorStyle'
   }}]});
   assert.doesNotMatch(gas.alerts[gas.alerts.length - 1].message, /スマートチップにできなかった/);
 
@@ -1242,6 +1243,7 @@ test('インデックス：Sheets API（拡張サービス）があれば、PDF 
   const r = g.mtgWriteIndex_('新FMT2', meeting, {folder: {getUrl: () => 'f', getName: () => 'f'}, file: {getUrl: () => 'https://drive.google.com/file/d/X/view', getName: () => 'X.pdf'}});
   assert.strictEqual(r.chip, false);
   assert.strictEqual(sheet.getRange(3, 2).getRichTextValues()[0][0].getLinkUrl(), 'https://drive.google.com/file/d/X/view', '書けなければファイル名のリンク');
+  assert.deepStrictEqual(plain(sheet.getRange(3, 2).getRichTextValues()[0][0].styleAt(0)), {color: '#000000', underline: false}, '黒・下線なし');
   assert.ok(gas.logs.some(l => l.level === 'warn' && /チップを書けなかった/.test(l.line)));
 });
 

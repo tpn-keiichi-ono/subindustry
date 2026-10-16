@@ -450,6 +450,7 @@ RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Goo
   行＝サブインダストリー（A列。`formerNames` の前の名前も今の名前とみなす）・列＝会議日（1行目。`yyyy/MM/dd` の文字。日付の値で入力した見出しも読む）のセルに、
   PDF（`link: 'folder'` なら会議のフォルダ）をスマートチップで書きます（`mtgWriteChip_`。SpreadsheetApp ではチップを書けないので、拡張サービス Sheets API の
   `batchUpdate` の `updateCells` で、`userEnteredValue` を `@`、`chipRuns` に `richLinkProperties.uri` を入れる。先に `SpreadsheetApp.flush()`）。
+  文字は黒・下線なしにします（`userEnteredFormat.textFormat`。リンクの青・下線の書式が残っていると、チップの名前も青の下線になるため。リンクで書くときも同じ）。
   拡張サービスが無い・書けないときは、ファイル名のリンク（リッチテキスト）で書きます。シートが無ければ末尾に作り（開いていたシートに戻す）、
   A1 に見出し・A列に `DIFF_RULES` の順でサブインダストリーを書きます（使わない行・列は持たない）。会議日の列が無ければ日付の順になる位置に差し込み、
   行が無ければ下に足します。書き込みはドキュメントロックの中です（資料作成はエディタから実行するので待ってよい）。書けなくても止めず、理由を知らせます

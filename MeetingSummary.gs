@@ -1016,7 +1016,11 @@ function mtgWriteIndex_(name, meeting, stored) {
       const target = o.link === 'folder' || !stored.file ? stored.folder : stored.file;
       const url = target.getUrl();
       const chip = !!o.chip && mtgWriteChip_(ss, sheet, row, col, url);
-      if (!chip) sheet.getRange(row, col).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText(target.getName()).setLinkUrl(url).build()]]);
+      if (!chip) {
+        const name = target.getName();
+        sheet.getRange(row, col).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText(name).setLinkUrl(url)
+          .setTextStyle(SpreadsheetApp.newTextStyle().setForegroundColor('#000000').setUnderline(false).build()).build()]]);   // 黒・下線なし
+      }
       return {url: ss.getUrl() + '#gid=' + sheet.getSheetId(), title: o.sheet, chip};
     } finally {
       lock.releaseLock();
@@ -1036,8 +1040,10 @@ function mtgWriteChip_(ss, sheet, row, col, url) {
     SpreadsheetApp.flush();   // 列の差し込みなどを先に反映する（Sheets API は別の経路で書くため）
     Sheets.Spreadsheets.batchUpdate({requests: [{updateCells: {
       start: {sheetId: sheet.getSheetId(), rowIndex: row - 1, columnIndex: col - 1},
-      rows: [{values: [{userEnteredValue: {stringValue: '@'}, chipRuns: [{startIndex: 0, chip: {richLinkProperties: {uri: url}}}]}]}],
-      fields: 'userEnteredValue,chipRuns,textFormatRuns'
+      // 文字は黒・下線なし（リンクの青・下線の書式が残っていると、チップの名前も青の下線になるため）
+      rows: [{values: [{userEnteredValue: {stringValue: '@'}, chipRuns: [{startIndex: 0, chip: {richLinkProperties: {uri: url}}}],
+        userEnteredFormat: {textFormat: {underline: false, foregroundColorStyle: {rgbColor: {red: 0, green: 0, blue: 0}}}}}]}],
+      fields: 'userEnteredValue,chipRuns,textFormatRuns,userEnteredFormat.textFormat.underline,userEnteredFormat.textFormat.foregroundColorStyle'
     }}]}, ss.getId());
     return true;
   } catch (error) {
