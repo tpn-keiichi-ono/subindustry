@@ -104,7 +104,7 @@ const MTG_OPTIONS = {
   draftKeyPrefix: 'MTG_DRAFT_',       // シートごとの、会議日ごとの最初の試作の入力内容のチェックの結果（解消した件数を出す用）
   lastKeyPrefix: 'MTG_LAST_',         // 前の版の「前回の作成日時」（会議日の記録が無いときだけ使う）
   keepMeetings: 24,                  // 会議日の記録をいくつ残すか
-  keepSlides: true,                  // Google スライドもフォルダに残す（推進リーダーが書き足せる。false なら PDF だけ）
+  keepSlides: false,                 // Google スライドもフォルダに残すか（true なら推進リーダーが書き足せる。false なら PDF だけ。2026/10 から PDF だけ）
   // Google チャットへの通知（webhook）。setMeetingChat() で webhook の URL と資料の格納先の URL を登録し、
   // notifyMeetingSummaries() を実行すると、その場で格納先の URL をチャットに送る（自動では送らない）
   chat: {
@@ -3878,7 +3878,7 @@ function mtgExportDeck_(name, slides, folder) {
     if (extra.length) Slides.Presentations.batchUpdate({requests: extra}, deck.presentationId);
     // ひな形が無ければ、表紙・扉の背景をいただいたひな形と同じ絵柄（緑のグラデーションと RX）の画像にする
     if (!templateId) mtgCoverBackground_(deck.presentationId, slides.map((slide, i) => (slide.cover || slide.divider ? 'mtg_p' + (i + 1) : '')).filter(Boolean));
-    if (!templateId) file.moveTo(folder);
+    if (!templateId && MTG_OPTIONS.keepSlides) file.moveTo(folder);   // 残さないときは動かさずにゴミ箱へ（呼び出しを減らす）
     const pdf = folder.createFile(file.getAs('application/pdf').setName(name + '.pdf'));
     mtgTrashOld_(folder, [name, name + '.pdf'], [file.getId(), pdf.getId()]);
     if (!MTG_OPTIONS.keepSlides) file.setTrashed(true);

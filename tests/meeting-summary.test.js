@@ -1379,6 +1379,7 @@ test('前回の会議時点のコピーを開けないときは、変更の記�
 
 test('createMeetingSummaries：シートと会議日を聞き、シートごとに Google スライド（16:9）と PDF を保存する。会議日を記録し、次の会議は今以降の変化を出す', () => {
   const {gas, g, sheet} = setup();
+  gas.get('MTG_OPTIONS').keepSlides = true;   // Google スライドも残す設定で確かめる
   gas.get('MTG_OPTIONS').folderId = '';   // 保存先を決めていないとき：スプレッドシートと同じフォルダの中に作る
   const meeting = g.mtgParseDate_('10/23', new Date());
   const file = meeting.replace(/\//g, '');   // ファイル名の会議日（yyyyMMdd）
@@ -1453,6 +1454,17 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   assert.ok(gas.trashed.indexOf(gas.decks[gas.decks.length - 1].id) < 0 && gas.trashed.indexOf(gas.driveFiles[gas.driveFiles.length - 1].id) < 0, '新しい版は残す');
   assert.deepStrictEqual(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT')).map(m => m.date), [meeting, next]);
   assert.deepStrictEqual(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT2')).map(m => m.date), [meeting], '選ばなかったシートの会議日は記録しない');
+});
+
+test('Google スライドを残さない（keepSlides: false。今の設定）：PDF だけをフォルダに置き、スライドはフォルダに動かさずにゴミ箱へ', () => {
+  const {gas, g} = setup();
+  assert.strictEqual(gas.get('MTG_OPTIONS').keepSlides, false);
+  gas.promptAnswers = ['1', '10/23'];
+  g.createMeetingSummaries();
+  assert.deepStrictEqual(gas.decks.map(d => gas.trashed.indexOf(d.id) >= 0), [true], 'スライドはゴミ箱へ');
+  assert.ok(!gas.moved.some(m => m.id === gas.decks[0].id), 'スライドはフォルダに動かさない');
+  assert.strictEqual(gas.driveFiles.filter(f => /\.pdf$/.test(f.name) && gas.trashed.indexOf(f.id) < 0).length, 1, 'PDF は残す');
+  assert.doesNotMatch(gas.alerts[gas.alerts.length - 1].message, /Google スライド（同じ名前）も保存しました/);
 });
 
 test('setMeetingTemplate・ひな形：登録した Google スライドをコピーして資料を作る（表紙は決まった文字の置き換え、扉は表紙の複製、ほかはページの大きさに合わせて拡大）', () => {
@@ -1558,6 +1570,7 @@ test('スプレッドシートの画面に出せないとき（エディタを�
 
 test('removeMeetingRecord：会議日の記録を取り消す（はいのときだけ）。基準の記録・資料のファイルは残す', () => {
   const {gas, g} = setup();
+  gas.get('MTG_OPTIONS').keepSlides = true;   // Google スライドも残す設定で確かめる
   const props = g.PropertiesService.getDocumentProperties();
   const lastAlert = () => gas.alerts[gas.alerts.length - 1];
   gas.promptAnswers = ['1'];
@@ -1791,6 +1804,7 @@ test('mtgNotifyScheduled（前の版の自動通知）：トリガーが残っ�
 
 test('保存先のフォルダ（MTG_OPTIONS.folderId）：決めてあればそのフォルダに保存する（フォルダは作らない）。開けなければ止める', () => {
   const {gas, g} = setup();
+  gas.get('MTG_OPTIONS').keepSlides = true;   // Google スライドも残す設定で確かめる
   const id = gas.get('MTG_OPTIONS').folderId;
   assert.strictEqual(id, '1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK', '本物の保存先');
   gas.promptAnswers = ['1', '10/23'];
