@@ -10,6 +10,11 @@
  *   変更の記録のイベントIDは「SMP-」で始まる。
  * - removeSampleHistory()（エディタから実行）：上の印が付いた行だけを削除する
  *   （記録は追記のみが原則だが、サンプルの行に限って削除する）。
+ * - addMeetingDummyHistory()（エディタから実行。シートを選ぶ）：会議サマリ（MeetingSummary.gs）の確認用に、追跡シートの案件へ
+ *   ダミーの変更の記録（変更履歴_差分・変更時点スナップショット）を足す。シートのセルの値は変えず、今の値になるまでの記録
+ *   （前回の資料・基準の時点の値と、そのあとの変更）を足すので、資料の「前回から変化のある案件」（前進・後退・延期・増額・減額・活動更新・新規・削除）
+ *   と停滞に出る。サンプル（SMP-）は会議サマリが数えないので、イベントIDは「DMY-」にする（会議サマリは数え、資料の出典の行に【ダミーデータを含む】と出す）。
+ * - removeMeetingDummyHistory()（エディタから実行）：イベントIDが「DMY-」の行だけを削除する（サンプルと同じく、ダミーの行に限って削除する）。
  */
 
 const SMP_OPTIONS = {
@@ -45,8 +50,25 @@ const SMP_OPTIONS = {
     {daysAgo: 3, time: '16:40', value: '見積提出'},
     {daysAgo: 1, time: '11:20', value: '受注見込み'}
   ],
-  maxChangeColumns: 3            // 変更の記録に使う列の数
+  maxChangeColumns: 3,           // 変更の記録に使う列の数
+  // 会議サマリの確認用のダミーの変更の記録（addMeetingDummyHistory()）
+  dummy: {
+    eventPrefix: 'DMY',          // イベントIDの接頭辞（会議サマリは数える。removeMeetingDummyHistory() で消す目印）
+    marker: 'ダミーデータ',       // 編集者メールアドレスの列に入れる印
+    kindSuffix: ' / ダミー',      // 種類に付ける（行の追加・削除の記録には付けない。会議サマリが種類で見分けるため）
+    activity: '（ダミー）前回までの活動状況',   // 前回の時点の活動状況
+    // 案件に付ける区分（上から、付けられる案件に1つずつ。案件が足りなければ下は付けない）。stall は停滞（ステータスを最後に変えた日を stallDays 日前にする）、
+    // stallActivity は停滞＋前回以降の活動更新。forward 前進・backward 後退・slipped 延期・up 増額・down 減額・activity 活動更新・new 新規
+    roles: ['forward', 'stall', 'slipped', 'activity', 'new', 'stallActivity', 'up', 'backward', 'down'],
+    stallDays: {stall: 100, stallActivity: 70},
+    // 削除した案件（シートに無い架空の案件）の、削除前の行の内容（ステータスは進行中のいちばん前のもの、期待値は想定売上 × その率、受注月は来月）
+    removed: {customer: 'ダミー商事', project: '（ダミー）削除した案件', amount: 20, owner: 'ダミー 担当'}
+  }
 };
+
+/* 区分の名前（確かめの画面に出す） */
+const SMP_DUMMY_LABELS = {forward: '前進', backward: '後退', slipped: '延期', up: '増額', down: '減額', activity: '活動更新', new: '新規',
+  stall: '停滞', stallActivity: '停滞＋活動更新'};
 
 /* ---------------- エディタから実行 ---------------- */
 
@@ -228,19 +250,45 @@ function smpRemoveAll_(ss) {
     result.credentials = rows.length;
   }
 
-  // 変更履歴_差分・変更時点スナップショット とも、B列がイベントID
-  const prefix = SMP_OPTIONS.eventPrefix + '-';
-  [[DIFF_OPTIONS.logSheet, 'changes'], [DIFF_OPTIONS.rowSnapshotSheet, 'snapshots']].forEach(([name, key]) => {
-    const sheet = ss.getSheetByName(name);
-    if (!sheet || sheet.getLastRow() < 2) return;
-    const rows = [];
-    sheet.getRange(2, 2, sheet.getLastRow() - 1, 1).getDisplayValues().forEach((v, i) => {
-      if (String(v[0]).indexOf(prefix) === 0) rows.push(i + 2);
-    });
+  const events = smpRemoveEvents_(ss, SMP_OPTIONS.eventPrefix + '-', '');
+  result.changes = events.changes;
+  result.snapshots = events.snapshots;
+  return result;
+}
+
+/**
+ * 変更履歴_差分・変更時点スナップショットから、イベントIDが prefix で始まる行を削除する（sheetName があれば、そのシートの記録だけ）。
+ * ロック取得中に呼ぶこと。戻り値 {changes, snapshots}
+ */
+function smpRemoveEvents_(ss, prefix, sheetName) {
+  const result = {changes: 0, snapshots: 0};
+  smpEventRows_(ss, prefix, sheetName).forEach(({sheet, key, rows}) => {
     smpDeleteRows_(sheet, rows);
     result[key] = rows.length;
   });
   return result;
+}
+
+/** イベントIDが prefix で始まる行の数 {changes, snapshots}（sheetName があれば、そのシートの記録だけ）。読むだけ */
+function smpCountEvents_(ss, prefix, sheetName) {
+  const result = {changes: 0, snapshots: 0};
+  smpEventRows_(ss, prefix, sheetName).forEach(({key, rows}) => { result[key] = rows.length; });
+  return result;
+}
+
+/** 変更履歴_差分・変更時点スナップショット とも、B列がイベントID・D列がシート。[{sheet, key, rows: 行番号}] */
+function smpEventRows_(ss, prefix, sheetName) {
+  const out = [];
+  [[DIFF_OPTIONS.logSheet, 'changes'], [DIFF_OPTIONS.rowSnapshotSheet, 'snapshots']].forEach(([name, key]) => {
+    const sheet = ss.getSheetByName(name);
+    if (!sheet || sheet.getLastRow() < 2) return;
+    const rows = [];
+    sheet.getRange(2, 2, sheet.getLastRow() - 1, 3).getDisplayValues().forEach((v, i) => {
+      if (String(v[0]).indexOf(prefix) === 0 && (!sheetName || String(v[2]).trim() === sheetName)) rows.push(i + 2);
+    });
+    out.push({sheet, key, rows});
+  });
+  return out;
 }
 
 /** 行を下から削除する（続いている行はまとめて）。固定行以外がすべて無くなる場合は、先に空の行を足す。 */
@@ -256,6 +304,307 @@ function smpDeleteRows_(sheet, rows) {
     sheet.deleteRows(sorted[j], j - i + 1);
     i = j + 1;
   }
+}
+
+/* ---------------- 会議サマリの確認用のダミーの変更の記録 ---------------- */
+
+/**
+ * 会議サマリの確認用に、追跡シートの案件へダミーの変更の記録を足す（エディタから実行。シートを選ぶ）。
+ * シートのセルの値は変えない。進行中の案件に区分（SMP_OPTIONS.dummy.roles）を1つずつ付け、今の値になるまでの記録を足す：
+ * - 前回の時点の値：前回の資料（または基準）を作った時刻の1秒前に、前回の値のスナップショットと活動状況の記録
+ * - 前回より後の変更：前回の値 → 今の値の記録（今の行のスナップショット）。新規は行の追加、削除は架空の案件の行の削除
+ * - 停滞：ステータスを stallDays 日前に変えた記録（それより新しいステータスの変更・案件ができた記録が無い案件だけ。あると停滞にならないため）
+ * 同じシートに前に足したダミーは、消してから入れ直す。消すときは removeMeetingDummyHistory()
+ */
+function addMeetingDummyHistory() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = mtgUi_();
+  const title = CRED_OPTIONS.menuTitle;
+  const D = SMP_OPTIONS.dummy;
+  const names = mtgAskSheets_(ss, ui, '会議サマリの確認用に、ダミーの変更の記録を足します。');
+  if (!names) return;
+  const now = new Date();
+  const tz = Session.getScriptTimeZone();
+  const plans = names.map(name => smpDummyPlan_(ss, name, now));
+  const lines = plans.map(p => {
+    const roles = p.deals.map(d => d.customer + '：' + SMP_DUMMY_LABELS[d.role]).join('、');
+    return '・' + p.name + '（' + p.since.label + ' ' + Utilities.formatDate(new Date(p.since.at), tz, 'M/d HH:mm') + ' 以降の変化として）\n　' +
+      (roles ? roles + '、' : '') + '削除（架空の案件「' + D.removed.customer + '」）' +
+      (p.skippedStall ? '\n　停滞は付けません（' + p.skippedStall + '）' : '') +
+      (p.existing ? '\n　前に足したダミーの記録 ' + p.existing + '件は消して入れ直します' : '');
+  });
+  const answer = ui.alert(title, '会議サマリの確認用に、次のダミーの変更の記録を足します。\n\n' + lines.join('\n') + '\n\n' +
+    'シートのセルの値は変わりません。記録のイベントIDは「' + D.eventPrefix + '-」で始まり、資料の出典の行に【ダミーデータを含む】と出ます。\n' +
+    '消すときは、エディタで removeMeetingDummyHistory() を実行してください。足しますか？', ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+  const results = smpWithLock_(() => plans.map(plan => smpAddDummy_(ss, plan, now)));
+  const message = 'ダミーの変更の記録を足しました。\n' +
+    results.map(r => '・' + r.name + '：変更の記録 ' + r.changes + '件・スナップショット ' + r.snapshots + '件').join('\n') +
+    '\n\npreviewMeetingSummaries() で資料を作って確かめてください（会議日は、記録の時刻より後の日にする）。';
+  console.log(message);
+  ui.alert(title, message, ui.ButtonSet.OK);
+}
+
+/** ダミーの変更の記録（イベントIDが DMY-）を、すべてのシートの分、記録のシートから削除する（エディタから実行）。 */
+function removeMeetingDummyHistory() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = mtgUi_();
+  const title = CRED_OPTIONS.menuTitle;
+  const prefix = SMP_OPTIONS.dummy.eventPrefix + '-';
+  const count = smpCountEvents_(ss, prefix, '');
+  if (!count.changes && !count.snapshots) {
+    ui.alert(title, 'ダミーの変更の記録（イベントIDが「' + prefix + '」で始まるもの）はありません。', ui.ButtonSet.OK);
+    return;
+  }
+  const answer = ui.alert(title, 'ダミーの変更の記録を削除します（イベントIDが「' + prefix + '」で始まる、変更の記録 ' + count.changes +
+    '件・スナップショット ' + count.snapshots + '件）。\nほかの記録は消えません。削除しますか？', ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+  const result = smpWithLock_(() => smpRemoveEvents_(ss, prefix, ''));
+  const message = 'ダミーの変更の記録を削除しました：変更の記録 ' + result.changes + '件・スナップショット ' + result.snapshots + '件。';
+  console.log(message);
+  ui.alert(title, message, ui.ButtonSet.OK);
+}
+
+/**
+ * 1つのシートに足すダミーの記録の計画（読むだけ）。
+ * {name, sheet, rule, table, since: {at, label}, deals: [案件 + role], prev: 区分ごとの前回の値を作る関数, skippedStall: 停滞を付けない理由, existing}
+ */
+function smpDummyPlan_(ss, name, now) {
+  const o = MTG_OPTIONS;
+  const D = SMP_OPTIONS.dummy;
+  const sheet = ss.getSheetByName(name);
+  const rule = DIFF_RULES[name];
+  const table = mtgReadDeals_(sheet, rule);
+  const statusTable = mtgReadStatusTable_(ss);
+  const rank = mtgStatusRank_(table.statusOrder, statusTable);
+  // 進行中のステータス（進み具合の順）。前進・後退の前回のステータスは、1つ前・1つあとのもの
+  const choices = (table.statusOrder.length ? table.statusOrder : (statusTable || []).map(st => st.status))
+    .filter(st => mtgStatusKind_(st) === 'active' && rank(st) >= 0).sort((a, b) => rank(a) - rank(b));
+  const step = (status, dir) => {
+    const i = choices.findIndex(st => credNormalize_(st) === credNormalize_(status));
+    return i >= 0 && i + dir >= 0 && i + dir < choices.length ? choices[i + dir] : null;
+  };
+  const since = smpDummySince_(name, now);
+  // 停滞を付けられるか：ステータスの変更・案件ができた記録（ダミーを除く）があれば、それより前の日付にしても停滞にならない
+  const windowStart = new Date(now.getTime() - o.lookbackDays * 86400000);
+  const notDummy = id => id.indexOf(D.eventPrefix + '-') !== 0;
+  const snapshots = new Map();
+  mtgReadSnapshots_(ss, windowStart).forEach((snap, key) => { if (notDummy(snap.eventId)) snapshots.set(key, snap); });
+  const history = mtgHistory_(name, {since: new Date(since.at), log: mtgReadLog_(ss, windowStart).filter(e => notDummy(e.eventId)), snapshots});
+  const labels = mtgLabels_();
+  const moved = d => (history.events.get(d.key) || []).some(e => e.label === labels.status || e.born);
+  // 前回より後の本物の変更。前回の時点の値は、その変更前の値（ダミーの前回の時点のスナップショットに使い、本物の変化を隠さない）
+  const recentReal = d => (history.events.get(d.key) || []).filter(e => e.at > since.at).sort((a, b) => a.at - b.at);
+  const baseOf = d => {
+    const out = {};
+    ['status', 'amount', 'weighted', 'orderMonth', 'activity'].forEach(key => {
+      const e = recentReal(d).find(x => x.label === labels[key]);
+      if (e) out[key] = e.before;
+    });
+    return out;
+  };
+  const ok = {
+    forward: d => !!step(d.status, -1),
+    backward: d => !!step(d.status, 1),
+    slipped: d => table.has.orderMonth && !!d.orderMonth,
+    up: d => table.has.amount && d.amount > 0,
+    down: d => table.has.amount && d.amount > 0,
+    activity: d => table.has.activity && !!d.activity,
+    new: () => true,
+    stall: d => !moved(d),
+    stallActivity: d => table.has.activity && !moved(d)
+  };
+  // 前回より後に本物の変更が無い案件から選ぶ（本物の変化と重ねない）。その中は期待値の大きい順
+  const active = table.deals.filter(d => d.kind === 'active')
+    .sort((a, b) => (recentReal(a).length ? 1 : 0) - (recentReal(b).length ? 1 : 0) ||
+      ((b.weighted || 0) - (a.weighted || 0)) || ((b.amount || 0) - (a.amount || 0)) || (a.row - b.row));
+  const used = new Set();
+  const deals = [];
+  D.roles.forEach(role => {
+    const deal = active.find(d => !used.has(d.row) && ok[role](d));
+    if (!deal) return;
+    used.add(deal.row);
+    deals.push(Object.assign({}, deal, {role}));
+  });
+  const stallRoles = D.roles.filter(role => /^stall/.test(role));
+  const skippedStall = deals.some(d => /^stall/.test(d.role)) || !stallRoles.length ? ''
+    : 'どの案件にも、ステータスの変更か案件ができた記録があり、それより前の日付にしても停滞にならないため';
+  const existing = smpCountEvents_(ss, D.eventPrefix + '-', name).changes;
+  return {name, sheet, rule, table, statusTable, step, lowest: choices[0] || '', since, deals, skippedStall, existing, baseOf};
+}
+
+/**
+ * ダミーの変化の起点：会議サマリの前回（いちばん新しい会議の資料・基準の時刻）。無ければ前の版の作成日時、それも無ければ firstDays 日前。{at, label}
+ */
+function smpDummySince_(name, now) {
+  const o = MTG_OPTIONS;
+  const props = PropertiesService.getDocumentProperties();
+  const list = mtgMeetings_(props, name).filter(m => m.cutoff <= now.getTime());
+  if (list.length) {
+    const last = list.reduce((a, b) => (b.cutoff > a.cutoff ? b : a));
+    return {at: last.cutoff, label: last.baseline ? '基準' : '前回の資料'};
+  }
+  const legacy = Number(props.getProperty(o.lastKeyPrefix + name)) || 0;
+  if (legacy) return {at: legacy, label: '前回の作成'};
+  return {at: now.getTime() - o.firstDays * 86400000, label: '直近' + o.firstDays + '日間の始まり'};
+}
+
+/** 計画（smpDummyPlan_）どおりにダミーの記録を足す。ロック取得中に呼ぶこと。戻り値 {name, changes, snapshots} */
+function smpAddDummy_(ss, plan, now) {
+  const o = MTG_OPTIONS;
+  const D = SMP_OPTIONS.dummy;
+  const {sheet, rule, table} = plan;
+  smpRemoveEvents_(ss, D.eventPrefix + '-', plan.name);
+  const tz = ss.getSpreadsheetTimeZone();
+  const columnOf = key => table.headers.findIndex(h => credNormalize_(h) === credNormalize_(o.columns[key])) + 1;   // 無ければ 0
+  const names = diffColumnNames_(sheet, rule, 1, table.headers.length);
+  const schema = diffSnapshotSchema_(sheet, rule);
+  const number = n => (n == null ? '' : String(Math.round(n * 10) / 10));
+  const ratio = status => mtgStatusRatio_(plan.statusTable, status);
+  const shiftMonth = (text, delta) => {
+    const m = mtgMonth_(text);
+    if (!m) return '';
+    const index = mtgMonthIndex_(m) + delta;
+    const y = Math.floor((index - 1) / 12);
+    const month = index - y * 12;
+    return /年/.test(text) ? y + '年' + month + '月' : y + '/' + String(month).padStart(2, '0');
+  };
+  const shown = (row, key) => (columnOf(key) ? String(sheet.getRange(row, columnOf(key)).getDisplayValue()) : '');
+
+  // 区分ごとの前回の値 {見出しのキー: 表示の値}（今の値と違う項目だけ）
+  const prevOf = d => {
+    const prev = {};
+    const status = d.role === 'forward' ? plan.step(d.status, -1) : d.role === 'backward' ? plan.step(d.status, 1) : null;
+    if (status) prev.status = status;
+    if (d.role === 'slipped') prev.orderMonth = shiftMonth(d.orderMonthText, -1);
+    let amount = d.amount;
+    if (d.role === 'up' || d.role === 'down') {
+      const diff = Math.max(1, Math.round(d.amount * 0.2));
+      amount = d.role === 'up' ? d.amount - diff : d.amount + diff;
+      prev.amount = number(amount);
+    }
+    // 期待値：想定売上 × 前回のステータスの率（率が分からなければ、想定売上の比で）
+    if (table.has.weighted && d.weighted != null && (prev.status || prev.amount)) {
+      const r = ratio(prev.status || d.status);
+      const w = r != null ? amount * r : d.weighted * (d.amount ? amount / d.amount : 1);
+      if (Math.abs(w - d.weighted) > 1e-9) prev.weighted = number(w);
+    }
+    if (table.has.activity && d.role !== 'new' && !/^stall$/.test(d.role)) prev.activity = D.activity;
+    return prev;
+  };
+  // 前回より前の日付のスナップショットの値：前回の時点の本物の値（前回より後の本物の変更の、変更前の値）に、ダミーの前回の値を重ねる。
+  // 期待値の列が数式なら、ステータス・想定売上から計算し直す
+  const pastOf = (d, prev) => {
+    const out = Object.assign({}, plan.baseOf(d), prev);
+    if (table.has.weighted && table.weightedFormula && prev.weighted == null && (out.status != null || out.amount != null)) {
+      const r = ratio(out.status != null ? out.status : d.status);
+      const a = out.amount != null ? mtgNumber_(out.amount) : d.amount;
+      if (r != null && a != null) out.weighted = number(a * r);
+    }
+    return out;
+  };
+
+  const changes = [];     // [{at, eventId, records}]
+  const snapshots = [];   // [{at, eventId, row, cells, overrides}]
+  const event = (at, records, row, overrides) => {
+    const eventId = diffCreateEventId_(new Date(at), tz, D.eventPrefix);
+    const list = records.map(r => Object.assign({eventId, editorEmail: D.marker, sheet: sheet.getName()}, r));
+    changes.push({at, records: list});
+    if (row) snapshots.push({at, eventId, row, cells: list.map(r => r.cell).join(', '), overrides: overrides || {}});
+  };
+  const edit = (row, key, before, after) => ({cell: diffA1_(row, columnOf(key)), columnName: names[columnOf(key) - 1],
+    kind: (before ? '文字列' : '空欄') + ' -> ' + (after ? '文字列' : '空欄') + D.kindSuffix, before, after});
+  const keys = ['status', 'amount', 'weighted', 'orderMonth', 'activity'];
+
+  // 前回より後の変更の時刻：前回の1分後から今の1分前まで、等しい間隔で
+  const recent = plan.deals.filter(d => !/^stall$/.test(d.role)).length + 1;
+  const lo = plan.since.at + Math.min(60000, (now.getTime() - plan.since.at) / 4);
+  const hi = now.getTime() - Math.min(60000, (now.getTime() - plan.since.at) / 4);
+  let k = 0;
+  const nextAt = () => lo + (hi - lo) * (++k) / (recent + 1);
+
+  plan.deals.forEach(d => {
+    const row = d.row;
+    if (d.role === 'new') {
+      event(nextAt(), [{cell: row + '行', columnName: '（行全体）', kind: DIFF_ROW_OPTIONS.kindInsert, before: '',
+        after: smpRowSummary_(sheet, rule, row, names)}], row);
+      return;
+    }
+    const prev = prevOf(d);
+    if (/^stall/.test(d.role)) {
+      // ステータスを stallDays 日前に変えた記録（停滞の日数の起点）
+      event(now.getTime() - D.stallDays[d.role] * 86400000, [edit(row, 'status', plan.step(d.status, -1) || '', d.status)], row, pastOf(d, prev));
+      if (d.role === 'stall') return;
+    }
+    // 前回の時点（前回の1秒前。前回より前でいちばん新しいスナップショットになる）：前回の値の行。
+    // 記録は、そのときの活動状況の書き込み（列が無ければ、最初に変わる項目。ステータスの記録にしないのは、停滞の日数を変えないため）
+    const first = prev.activity != null ? 'activity' : keys.find(key => prev[key] != null && columnOf(key));
+    event(plan.since.at - 1000, [edit(row, first, '', prev[first])], row, pastOf(d, prev));
+    // 前回より後：前回の値 → 今の値（期待値の列が数式なら、期待値の記録は無い。スナップショットに出る）
+    const records = keys.filter(key => prev[key] != null && columnOf(key) && !(key === 'weighted' && table.weightedFormula))
+      .map(key => edit(row, key, prev[key], shown(row, key)));
+    event(nextAt(), records, row);
+  });
+
+  // 削除：シートに無い架空の案件の行を消した記録
+  const R = D.removed;
+  const status = plan.lowest;
+  const r = ratio(status);
+  const sample = (table.deals.find(d => d.orderMonth) || {}).orderMonthText || Utilities.formatDate(now, tz, 'yyyy/MM');
+  const month = shiftMonth(sample, mtgMonthIndex_(mtgMonth_(Utilities.formatDate(now, tz, 'yyyy/MM'))) + 1 - mtgMonthIndex_(mtgMonth_(sample)));
+  const removedText = [['customer', R.customer], ['project', R.project], ['status', status], ['amount', number(R.amount)],
+    ['weighted', r != null ? number(R.amount * r) : ''], ['orderMonth', month], ['owner', R.owner]]
+    .filter(([key, value]) => value && columnOf(key)).map(([key, value]) => names[columnOf(key) - 1] + ': ' + value).join('\n');
+  event(nextAt(), [{cell: (sheet.getLastRow() + 1) + '行（削除前の行番号）', columnName: '（行全体）', kind: DIFF_ROW_OPTIONS.kindDelete,
+    before: removedText, after: ''}], 0);
+
+  changes.forEach(c => diffAppend_(ss, c.records, new Date(c.at)));
+  smpAppendSnapshots_(ss, sheet, rule, schema, snapshots, D.marker);
+  return {name: plan.name, changes: changes.reduce((sum, c) => sum + c.records.length, 0), snapshots: snapshots.length};
+}
+
+/** 行の追加・削除の記録の、行の内容（「見出し: 値」を改行でつなぐ。差分追跡の行の追加の記録と同じ形）。追跡範囲の見出しのある列だけ */
+function smpRowSummary_(sheet, rule, row, names) {
+  const values = sheet.getRange(row, 1, 1, names.length).getDisplayValues()[0];
+  const stamp = diffStampColumn_(sheet, rule);
+  return values.map((value, i) => (value !== '' && i + 1 !== stamp && !/列（見出しなし）$/.test(names[i]) ? names[i] + ': ' + value : ''))
+    .filter(Boolean).join('\n');
+}
+
+/**
+ * 変更時点スナップショットに行を足す（差分追跡と同じ形。行の内容は、今の行の値に overrides（見出しのキー → 値）を重ねたもの）。
+ * items = [{at, eventId, row, cells, overrides}]
+ */
+function smpAppendSnapshots_(ss, sheet, rule, schema, items, editor) {
+  if (!items.length) return;
+  const {sheet: snap, customerColumn, contentColumn} = diffRowSnapshotSheet_(ss);
+  const start = snap.getLastRow() + 1;
+  diffEnsureGrid_(snap, start + items.length - 1, Math.max(customerColumn, contentColumn));
+  snap.getRange(start, 1, items.length, ROW_SNAPSHOT_FIXED_HEADERS.length)
+    .setValues(items.map(it => [new Date(it.at), it.eventId, editor, sheet.getName(), it.row, it.cells]));
+  snap.getRange(start, 1, items.length, 1).setNumberFormat(DIFF_OPTIONS.dateFormat);
+  const customerKey = diffSnapshotCustomerHeader_();
+  const skipped = diffSnapshotSkippedHeaders_();
+  const labels = Object.keys(MTG_OPTIONS.columns).map(key => ({key, label: credNormalize_(MTG_OPTIONS.columns[key])}));
+  const tail = items.map(it => {
+    const values = sheet.getRange(it.row, schema.firstColumn, 1, schema.columnCount).getDisplayValues()[0];
+    const pairs = [];
+    let customer = '';
+    schema.items.forEach((item, i) => {
+      const hit = labels.find(l => l.label === credNormalize_(item.key));
+      const value = String(hit && it.overrides[hit.key] != null ? it.overrides[hit.key] : values[i] == null ? '' : values[i]);
+      if (item.key === customerKey) customer = value;
+      if (value !== '' && !skipped.has(item.key)) pairs.push([item.key, value]);
+    });
+    return [diffSnapshotText_(customer), diffSnapshotText_(diffSnapshotContent_(pairs))];
+  });
+  if (contentColumn === customerColumn + 1) {
+    snap.getRange(start, customerColumn, items.length, 2).setRichTextValues(tail);
+  } else {
+    snap.getRange(start, customerColumn, items.length, 1).setRichTextValues(tail.map(t => [t[0]]));
+    snap.getRange(start, contentColumn, items.length, 1).setRichTextValues(tail.map(t => [t[1]]));
+  }
+  snap.getRange(start, 1, items.length, ROW_SNAPSHOT_FIXED_HEADERS.length).setVerticalAlignment('top');
 }
 
 /* ---------------- 共通 ---------------- */

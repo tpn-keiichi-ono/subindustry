@@ -1505,6 +1505,67 @@ test('Slides API が無い・失敗したときは止め、作りかけのスラ
   assert.strictEqual(g.PropertiesService.getDocumentProperties().getProperty('MTG_MEETINGS_新FMT'), null);
 });
 
+test('addMeetingDummyHistory：シートの値は変えずに、ダミーの変更の記録（DMY-）を足す。資料の変化・停滞に出て【ダミーデータを含む】と出る。入れ直せて、removeMeetingDummyHistory で消せる', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  const values = JSON.stringify(sheet.getDataRange().getValues());
+  gas.promptAnswers = ['1'];
+  g.addMeetingDummyHistory();
+  assert.strictEqual(JSON.stringify(sheet.getDataRange().getValues()), values, 'シートのセルの値は変えない');
+  assert.match(gas.alerts[0].message, /・新FMT（直近14日間の始まり \d{1,2}\/\d{1,2} \d{2}:\d{2} 以降の変化として）\n　E社：前進、A社：停滞、C社：延期、F社：新規、D社：停滞＋活動更新、削除（架空の案件「ダミー商事」）/);
+  assert.match(gas.alerts[1].message, /・新FMT：変更の記録 12件・スナップショット 9件/);
+
+  const dummyRows = name => gas.ss.getSheetByName(name).getDataRange().getDisplayValues().slice(1).filter(r => /^DMY-/.test(r[1]));
+  assert.ok(dummyRows('変更履歴_差分').every(r => r[2] === 'ダミーデータ' && r[3] === '新FMT'), '編集者は「ダミーデータ」');
+  assert.strictEqual(dummyRows('変更時点スナップショット').length, 9);
+
+  // 会議サマリはダミーを数える（サンプル SMP- は数えない）：前回より後の変化・停滞
+  const s = plain(summarize(g, '新FMT'));
+  assert.deepStrictEqual(s.changes.map(c => [label(c), c.category]), [['ダミー商事／（ダミー）削除した案件', 'removed'], ['F社／ブランド刷新', 'new'],
+    ['E社／販促DX', 'forward'], ['D社／物流改善', 'activity'], ['C社／店舗什器', 'slipped']]);
+  assert.deepStrictEqual(s.changes.filter(c => c.category === 'slipped').map(c => [c.monthFrom, c.monthTo]), [[month(1).text, month(2).text]]);
+  assert.deepStrictEqual(s.stalled.map(d => [label(d), d.days, d.touched]), [['A社／アプリ刷新', 100, false], ['D社／物流改善', 70, true]],
+    'ステータスを最後に変えた日を 100日・70日前に（D社は前回以降に活動を更新した）');
+  assert.strictEqual(s.unmatched, 0, 'どの記録にもスナップショットがある（案件と照合できる）');
+  assert.strictEqual(s.dummy, 12);
+  const slides = plain(g.mtgSlides_(summarize(g, '新FMT')));
+  assert.strictEqual(roleOf(slides[1], 'footer')[0].text, '【ダミーデータを含む】新FMT（10/23 会議資料）　金額の単位：百万円');
+  assert.match(slides[0].elements[0].text, /^出典：「新FMT」シートおよび変更履歴（ダミーデータを含む。/);
+
+  // 入れ直し：前に足した分を消してから足す（増えない）
+  gas.promptAnswers = ['1'];
+  g.addMeetingDummyHistory();
+  assert.match(gas.alerts[2].message, /前に足したダミーの記録 12件は消して入れ直します/);
+  assert.strictEqual(dummyRows('変更履歴_差分').length, 12);
+
+  // 本番の確かめの画面で知らせる（配る資料に入れないように）
+  gas.confirmAnswer = 'NO';
+  gas.promptAnswers = ['1', '10/23'];
+  g.createMeetingSummaries();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /※ ダミーの変更の記録（12件）があります。資料に【ダミーデータを含む】と出ます。配る資料なら、先に removeMeetingDummyHistory\(\) で消してください。/);
+
+  // 消す：ダミーの行だけ（ほかの記録は残す）
+  gas.confirmAnswer = 'YES';
+  g.recordDiffEdit(gas.edit(sheet, 'J5', '10/14 見積を再提出'));   // 本物の変更
+  g.removeMeetingDummyHistory();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^ダミーの変更の記録を削除しました：変更の記録 12件・スナップショット 9件。$/);
+  assert.deepStrictEqual([dummyRows('変更履歴_差分').length, dummyRows('変更時点スナップショット').length], [0, 0]);
+  const after = plain(summarize(g, '新FMT'));
+  assert.deepStrictEqual([after.dummy, after.changes.map(c => [label(c), c.category])], [0, [['C社／店舗什器', 'activity']]]);
+  g.removeMeetingDummyHistory();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /ダミーの変更の記録（イベントIDが「DMY-」で始まるもの）はありません/);
+});
+
+test('addMeetingDummyHistory：前回より後の本物の変化は隠さない（ダミーの前回の時点の値は、本物の変更前の値）。日付の古いダミーの行があっても、本物の記録を読む', () => {
+  const {gas, g} = setup();   // A社 前進・C社 失注・D社 活動の更新・F社 削除（本物の記録）
+  gas.promptAnswers = ['1'];
+  g.addMeetingDummyHistory();
+  const s = plain(summarize(g, '新FMT'));
+  const of = name => s.changes.filter(c => label(c) === name).map(c => c.category);
+  assert.deepStrictEqual([of('A社／アプリ刷新'), of('C社／店舗什器'), of('D社／物流改善'), of('F社／ブランド刷新')], [['forward'], ['lost'], ['activity'], ['removed']]);
+  assert.deepStrictEqual(s.stalled.map(d => [label(d), d.days, d.touched]), [['D社／物流改善', 100, true]],
+    '本物の記録でステータスを変えた案件（A社）は停滞にしない（それより前の日付にしても停滞にならない）。D社は前回以降に活動を更新した');
+});
+
 test('setMeetingBaseline：今を基準として記録し（はいのときだけ）、次の資料は基準より後の変化だけを出す。基準より前の記録の停滞は「N日以上」', () => {
   const {gas, g, sheet} = setup();   // A社 前進・C社 失注・D社 活動の更新・F社 削除（どれも基準より前）
   g.recordDiffEdit(gas.edit(sheet, 'D8:I8', [['G社', 'POS連携', '提案中', '20', '6', month(2).text]]));   // 移行で貼り付けた案件

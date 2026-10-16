@@ -366,8 +366,10 @@ function mtgConfirmFinal_(ui, names, meeting) {
       : held ? '前回会議（' + mtgShortDate_(held.date) + '）の資料作成時（' + fmt(held.cutoff) + '）以降'
         : legacy ? '前回の資料作成時（' + fmt(legacy) + '）以降'
           : '直近' + MTG_OPTIONS.firstDays + '日間（前回の会議の記録なし）';
+    const dummy = smpCountEvents_(SpreadsheetApp.getActiveSpreadsheet(), SMP_OPTIONS.dummy.eventPrefix + '-', name).changes;
     return '・' + name + '：' + from +
-      (same ? '\n　※ この会議日の資料は ' + fmt(same.cutoff) + ' に作成済み。作り直すと、次の会議の起点が今になります。' : '');
+      (same ? '\n　※ この会議日の資料は ' + fmt(same.cutoff) + ' に作成済み。作り直すと、次の会議の起点が今になります。' : '') +
+      (dummy ? '\n　※ ダミーの変更の記録（' + dummy + '件）があります。資料に【ダミーデータを含む】と出ます。配る資料なら、先に removeMeetingDummyHistory() で消してください。' : '');
   });
   const answer = ui.alert(CRED_OPTIONS.menuTitle,
     '本番の資料を作り、会議日を記録します。\n\n会議日：' + p[0] + '/' + p[1] + '/' + p[2] + '（' + week + '）\n対象期間\n' + lines.join('\n') +
@@ -389,7 +391,8 @@ function mtgRun_(final) {
   const lines = results.map(r => {
     const gaps = mtgGapList_(r.summary);
     return '「' + r.summary.name + '」：' + r.file.getName() + '（' + mtgCountsText_(r.summary) + '）\n　' + r.file.getUrl() +
-      (gaps.length ? '\n　' + MTG_OPTIONS.gapText + '：' + gaps.join('\n　　') : '');
+      (gaps.length ? '\n　' + MTG_OPTIONS.gapText + '：' + gaps.join('\n　　') : '') +
+      (r.summary.dummy ? '\n　※ ダミーの変更の記録（' + r.summary.dummy + '件）を含みます（資料に【ダミーデータを含む】）。消すときは removeMeetingDummyHistory()。' : '');
   });
   lines.push('', '保存先：' + results[0].folder.getUrl());
   if (MTG_OPTIONS.keepSlides) lines.push('同じフォルダに、Google スライド（同じ名前）も保存しました。');
@@ -781,7 +784,8 @@ function mtgHash_(text) {
 
 /**
  * 記録のシート（変更履歴_差分・変更時点スナップショット）を下から読み、since 以降の行を返す（古い順）。
- * 記録は追記なので、サンプル（イベントID が SMP-。過去の日時で足される）以外で since より前の行に届いたら止める。
+ * 記録は追記なので、サンプル（イベントID が SMP-）・ダミー（DMY-。addMeetingDummyHistory()）以外で since より前の行に届いたら止める
+ * （どちらも過去の日時で足されるため。サンプルは読まず、ダミーは since 以降のものを読む）。
  * {index: 見出し → 列の位置（0 から）, rows}
  */
 function mtgReadRecent_(sheet, since) {
@@ -798,10 +802,13 @@ function mtgReadRecent_(sheet, since) {
     const start = Math.max(2, end - step + 1);
     const rows = sheet.getRange(start, 1, end - start + 1, width).getValues();
     for (let i = rows.length - 1; i >= 0; i--) {
-      const sample = idCol != null && /^SMP-/.test(String(rows[i][idCol]));
+      const id = idCol != null ? String(rows[i][idCol]) : '';
       const at = mtgTime_(rows[i][atCol]);
-      if (sample) continue;
-      if (at != null && at < limit) return Object.assign(out, {rows: out.rows.reverse()});
+      if (/^SMP-/.test(id)) continue;
+      if (at != null && at < limit) {
+        if (/^DMY-/.test(id)) continue;
+        return Object.assign(out, {rows: out.rows.reverse()});
+      }
       if (at != null) out.rows.push(rows[i]);
     }
   }
@@ -948,7 +955,7 @@ function mtgReadDeals_(sheet, rule) {
  *         stallPending: 停滞をまだ数えられないとき {at: 記録の始まりか基準の時刻, baseline},
  *         gaps: 作れなかった部分 → 理由（mtgGaps_）, alertGaps: チェックできなかった入力内容のチェックの種類 → 理由, bridge, stages, quarters,
  *         changes, stalled, focus: 期待値の大きい進行中の案件, overdue: 受注月を過ぎた進行中の案件, alerts: 入力内容のチェック,
- *         resolved, unmatched}
+ *         resolved, unmatched, dummy: 使ったダミーの変更の記録（DMY-）の数}
  */
 function mtgSummarize_(ss, name, context) {
   const o = MTG_OPTIONS;
@@ -1101,7 +1108,8 @@ function mtgSummarize_(ss, name, context) {
     overdue: items.filter(d => d.overdue).sort((a, b) => (b.amount || 0) - (a.amount || 0)),
     alerts,
     resolved,
-    unmatched: history.unmatched
+    unmatched: history.unmatched,
+    dummy: history.dummy || 0
   };
 }
 
@@ -1186,8 +1194,10 @@ function mtgHistory_(name, context) {
   const items = [];
   const removed = [];
   let unmatched = 0;
+  let dummy = 0;   // ダミーの記録（DMY-。addMeetingDummyHistory()）の数。あれば資料に【ダミーデータを含む】と出す
   context.log.forEach(e => {
     if (resolve(e.sheet) !== name || e.at == null || /^(SMP|CRD)-/.test(e.eventId)) return;
+    if (/^DMY-/.test(e.eventId)) dummy++;
     if (e.type === DIFF_ROW_OPTIONS.kindDelete) {
       removed.push({at: e.at, text: e.before});
       return;
@@ -1237,7 +1247,7 @@ function mtgHistory_(name, context) {
     states.get(key).push({at: snap.at, values: snap.values});
   });
   states.forEach(list => list.sort((a, b) => a.at - b.at));
-  return {events, removed, unmatched, states};
+  return {events, removed, unmatched, states, dummy};
 }
 
 /**
@@ -1707,7 +1717,8 @@ function mtgCoverSlide_(s) {
     template: {title: s.name, subtitle: o.meetingName + '　事前資料' + (s.final ? '' : '【試作】'),
       date: mtgDateLabel_(s.meeting), name: ''},
     elements: [
-      line(350, '出典：「' + s.name + '」シートおよび変更履歴（' + Utilities.formatDate(s.now, Session.getScriptTimeZone(), 'yyyy/M/d HH:mm') + ' 時点）'),
+      line(350, '出典：「' + s.name + '」シートおよび変更履歴（' + (s.dummy ? 'ダミーデータを含む。' : '') +
+        Utilities.formatDate(s.now, Session.getScriptTimeZone(), 'yyyy/M/d HH:mm') + ' 時点）'),
       line(365, '対象期間：' + mtgPeriodText_(s))
     ]
   };
@@ -1752,7 +1763,7 @@ function mtgNumberSlides_(frame, slides) {
 
 /** シートの資料のいちばん下の行（どのサブインダストリー・会議日の資料か。試作は先頭に【試作】）{source}。データの時点・期間は表紙に書く */
 function mtgSheetFrame_(s) {
-  return {source: (s.final ? '' : '【試作】') + s.name + '（' + mtgShortDate_(s.meeting) + ' 会議資料）　金額の単位：百万円'};
+  return {source: (s.final ? '' : '【試作】') + (s.dummy ? '【ダミーデータを含む】' : '') + s.name + '（' + mtgShortDate_(s.meeting) + ' 会議資料）　金額の単位：百万円'};
 }
 
 /**
@@ -2178,7 +2189,7 @@ function mtgMovesSlide_(s) {
   const k = s.kpi;
   const lack = s.gaps || {};
   const moves = s.changes.filter(ch => ch.category !== 'updated');
-  const columns = mtgColumns_([138, 66, 118, 66, 76, 132, 64], 5);
+  const columns = mtgColumns_([138, 66, 126, 66, 76, 124, 64], 5);   // ステータスの列は「C-稟議対応中(50%) ▶」「B-クロージング中(70%)」が1行ずつ入る幅
   const rows = [mtgHeadRow_(columns, ['得意先／案件名', '区分', 'ステータス\n前回▶今回', '期待値\n前回▶今回', '受注月\n前回▶今回', '活動状況（最新）', '責任者'])];
   // 上から mainRows.changes 件まで、ページに入る分だけ（行の高さは中身で変わる）
   const top = [];
@@ -2186,7 +2197,7 @@ function mtgMovesSlide_(s) {
     const row = mtgRow_(columns, [
       mtgDealCell_(ch, columns[0]),
       {text: '', fill: c.white},
-      {text: mtgStatusMove_(ch), lines: 2, fill: c.white},
+      {text: mtgStatusMove_(ch), lines: 3, fill: c.white},   // 長いステータスの名前（「C-稟議対応中(50%) ▶ B-クロージング中(70%)」）は3行まで
       mtgFieldCell_(s, 'weighted', mtgValueMove_(ch.weightedFrom, ch.weightedTo, ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'orderMonth', mtgMonthMove_(ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'activity', ch.activity, {lines: 2, fill: c.white}),
@@ -2326,7 +2337,7 @@ function mtgCategoryPillWidth_(cw) {
 function mtgAppendixChanges_(s) {
   const c = MTG_OPTIONS.colors;
   const lack = s.gaps || {};
-  const columns = mtgColumns_([120, 66, 112, 62, 72, 92, 74, 62], 5);
+  const columns = mtgColumns_([120, 66, 118, 62, 72, 86, 74, 62], 5);
   return mtgPagedTable_({
     title: MTG_TITLES.changes,
     lead: lack.changes ? mtgChangedLabel_(s) + 'は' + MTG_OPTIONS.gapText + '（' + lack.changes + '）。'
@@ -2337,7 +2348,7 @@ function mtgAppendixChanges_(s) {
     rows: s.changes.map(ch => [
       mtgDealCell_(ch, columns[0], MTG_SLIDE.appendixSize),
       {text: '', fill: c.white},
-      {text: mtgStatusMove_(ch), lines: 2, fill: c.white},
+      {text: mtgStatusMove_(ch), lines: 3, fill: c.white},
       mtgFieldCell_(s, 'weighted', mtgValueMove_(ch.weightedFrom, ch.weightedTo, ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'orderMonth', mtgMonthMove_(ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       ch.removed ? {text: '（削除）', lines: 2, fill: c.white} : mtgFieldCell_(s, 'activity', ch.activity, {lines: 2, fill: c.white}),
@@ -2779,7 +2790,7 @@ function mtgWrap_(text, widthPt, size, max) {
           keep = keep.slice(0, -open[0].length);
           rest = open[0] + rest;
         }
-        out.push(keep);
+        out.push(keep.replace(/\s+$/, ''));   // 行の終わりの空白は残さない
         line = rest;
         used = Array.from(line).reduce((sum, c) => sum + width(c), 0);
       }
