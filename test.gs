@@ -235,33 +235,42 @@ function setupDiffTracking() {
   lock.waitLock(30000);
   try {
     const previous = JSON.parse(props.getProperty(DIFF_OPTIONS.stateKey) || '{}');
+    // ここまでの確かめで止まったときは、今の追跡はそのまま（止めない）
     const plans = Object.entries(DIFF_RULES).map(([name, rule]) => {
       const sheet = ss.getSheetByName(name);
-      if (!sheet) throw new Error('Source sheet not found: ' + name);
+      if (!sheet) throw new Error('追跡するシート「' + name + '」がありません（test.gs の DIFF_RULES のシート名を確かめてください）。');
       if (name === DIFF_OPTIONS.logSheet ||
           name === DIFF_OPTIONS.rowSnapshotSheet ||
           name.startsWith(DIFF_OPTIONS.snapshotPrefix)) {
-        throw new Error('Reserved sheet name: ' + name);
+        throw new Error('「' + name + '」は記録用のシートの名前なので、追跡できません（DIFF_RULES を確かめてください）。');
       }
       const column = diffStampColumn_(sheet, rule);
       const blocks = diffBlocks_(sheet, rule, null, column, true);
       for (const block of blocks) {
         const range = sheet.getRange(...block);
         if (range.getMergedRanges().length) {
-          throw new Error('Merged cells are not supported: ' + name + '!' + range.getA1Notation());
+          throw new Error('「' + name + '」の追跡範囲（' + range.getA1Notation() + '）に結合したセルがあります。結合を解除してから実行してください。');
         }
       }
       const snapshotName = DIFF_OPTIONS.snapshotPrefix + sheet.getSheetId();
       const existing = ss.getSheetByName(snapshotName);
       const owned = previous[sheet.getSheetId()];
       if (existing && owned && owned.snapshotId !== existing.getSheetId()) {
-        throw new Error('Reserved snapshot name already exists: ' + snapshotName);
+        throw new Error('比較用シートの名前「' + snapshotName + '」のシートが、別にあります。そのシートの名前を変えるか削除してから実行してください。');
       }
       if (existing && !owned) {
         console.log('Adopting existing snapshot sheet (copied file?): ' + snapshotName);
       }
       return {sheet, rule, column, blocks, existing, snapshotName};
     });
+    // セル数の上限（1ファイル 1,000万セル）：比較用シートを作ると超えるなら、作る前に止める（新しいシートは 1000行 × 26列 で作られる）
+    const limit = 10000000;
+    const adding = plans.filter(plan => !plan.existing).length * 1000 * 26;
+    const cells = diffCountCells_(ss);
+    if (cells + adding > limit) {
+      throw new Error('比較用シートを作ると、スプレッドシートのセル数が上限（1,000万）を超えます（今 ' + cells.toLocaleString() + 'セル）。' +
+        'エディタで diagnoseCellUsage() を実行し、使っていないシート・行・列を削除してから、もう一度実行してください。');
+    }
     diffLogSheet_(ss);
     diffRowSnapshotSheet_(ss);
 
@@ -276,8 +285,11 @@ function setupDiffTracking() {
     // Mark tracking as paused until the complete baseline is saved.
     Object.keys(previous).forEach(id => previous[id].paused = true);
     props.setProperty(DIFF_OPTIONS.stateKey, JSON.stringify(previous));
+    let current = '';
+    try {
     for (const plan of plans) {
       const {sheet, rule, column, blocks, snapshotName} = plan;
+      current = sheet.getName();
       const snapshot = plan.existing || ss.insertSheet(snapshotName);
       // Record ownership immediately so a failed setup can be safely retried.
       previous[sheet.getSheetId()] = {snapshotId: snapshot.getSheetId(), paused: true};
@@ -307,9 +319,16 @@ function setupDiffTracking() {
         paused: false
       };
     }
+    } catch (error) {
+      // 途中で止まると、すべての追跡シートの記録が止まったまま（比較基準が全部そろうまで止めておくため）。どこで・なぜ止まったかを書く
+      console.error(error.stack || String(error));
+      throw new Error('差分追跡の設定が「' + current + '」の途中で止まりました：' + (error && error.message || error) + '\n' +
+        'すべての追跡シートの記録が止まっています。原因を直して（一時的なエラーなら、そのまま）、もう一度 setupDiffTracking() を実行してください。');
+    }
     SpreadsheetApp.flush();
     props.setProperty(DIFF_OPTIONS.stateKey, JSON.stringify(state));
     diffInstallTriggers_(ss);
+    console.log('差分追跡を設定しました（今の値を比較基準にしました）：' + plans.map(plan => plan.sheet.getName() + '（比較用シート ' + plan.snapshotName + '）').join('、'));
     ss.toast('現在の値を比較基準にしました。', diffAdminTitle_(), 8);
   } finally {
     SpreadsheetApp.flush();
@@ -512,8 +531,9 @@ function recordDiffEdit(e) {
 
     try {
       e.source.toast(
-        '差分記録を停止しました。Apps Scriptの実行履歴を確認してください。',
-        'Diff error',
+        '「' + sheet.getName() + '」の変更を記録できず、差分追跡を止めました。管理者がエディタで setupDiffTracking() を実行すると再開します。' +
+        '（' + String(error && error.message || error).slice(0, 120) + '）',
+        diffAdminTitle_(),
         15
       );
     } catch (_) {}
@@ -570,7 +590,7 @@ function catchUpDiffTracking() {
       try {
         // 列の追加・削除など（変更トリガーがロックを取れずに処理できなかった場合）は停止する
         if (!diffSameLayout_(sheet, rule, saved)) {
-          throw new Error('Structure/configuration changed. Reinitialize the baseline before editing.');
+          throw new Error('「' + sheet.getName() + '」のシートの構成か DIFF_RULES が、比較基準を作ったときと変わっています。エディタで setupDiffTracking() を実行してください。');
         }
 
         // 行の追加・削除・ずれを変更トリガーが処理しきれていなければ、ここで処理する
@@ -847,7 +867,10 @@ function diffRowCountOnlyChanged_(sheet, rule) {
 /** 比較基準のシート（非表示の __CHAR_DIFF_*）。 */
 function diffBaseline_(ss, saved) {
   const baseline = ss.getSheets().find(s => s.getSheetId() === saved.snapshotId);
-  if (!baseline) throw new Error('Comparison snapshot is missing.');
+  if (!baseline) {
+    throw new Error('「' + saved.name + '」の比較用シート（非表示の「' + DIFF_OPTIONS.snapshotPrefix + '…」）がありません。削除された可能性があります' +
+      '（非表示の「' + DIFF_OPTIONS.snapshotPrefix + '」で始まるシートは消さないでください）。エディタで setupDiffTracking() を実行してください。');
+  }
   return baseline;
 }
 
@@ -935,7 +958,7 @@ function diffResyncRows_(ss, sheet, rule, who) {
   const state = JSON.parse(props.getProperty(DIFF_OPTIONS.stateKey) || '{}');
   const sheetId = sheet.getSheetId();
   const saved = state[sheetId];
-  if (!saved) throw new Error('Tracking is not initialized. Run setupDiffTracking().');
+  if (!saved) throw new Error('「' + sheet.getName() + '」の差分追跡はまだ設定されていません。エディタで setupDiffTracking() を実行してください。');
 
   const baseline = diffBaseline_(ss, saved);
   diffLogSheet_(ss);
@@ -1286,7 +1309,9 @@ function diffContext_(ss, sheet, rule) {
   const saved = state[sheet.getSheetId()];
 
   if (!saved || saved.paused) {
-    throw new Error('Tracking is not initialized or is paused. Run setupDiffTracking().');
+    throw new Error('「' + sheet.getName() + '」の差分追跡は' + (saved ? '止まっています' : 'まだ設定されていません') +
+      '（前のエラー・列の構成の変更・setupDiffTracking() が途中で止まったなど）。エディタで setupDiffTracking() を実行してください' +
+      '（止まった原因は、実行数のログか diagnoseDiffState() で確かめられます）。');
   }
 
   const stampColumn = diffStampColumn_(sheet, rule);
@@ -1296,11 +1321,10 @@ function diffContext_(ss, sheet, rule) {
       saved.stampColumn !== stampColumn ||
       saved.gridRows !== sheet.getMaxRows() ||
       saved.gridColumns !== sheet.getMaxColumns()) {
-    throw new Error('Structure/configuration changed. Reinitialize the baseline before editing.');
+    throw new Error('「' + sheet.getName() + '」のシートの構成か DIFF_RULES が、比較基準を作ったときと変わっています。エディタで setupDiffTracking() を実行してください。');
   }
 
-  const baseline = ss.getSheets().find(s => s.getSheetId() === saved.snapshotId);
-  if (!baseline) throw new Error('Comparison snapshot is missing.');
+  const baseline = diffBaseline_(ss, saved);
 
   // Validate both output sheets before changing the source timestamp.
   diffLogSheet_(ss);
@@ -2408,17 +2432,21 @@ function diagnoseDiffState() {
   console.log('実行ユーザー: ' + Session.getEffectiveUser().getEmail());
   console.log('保存状態: ' + JSON.stringify(state, null, 2));
   console.log('シート名一覧: ' + ss.getSheets().map(s => '[' + s.getName() + ']').join(', '));
+  const cells = diffCountCells_(ss);
+  console.log('セル数: ' + cells.toLocaleString() + ' / 上限 10,000,000' +
+    (cells > 9000000 ? ' ← 上限に近いです。diagnoseCellUsage() で多いシートを確かめてください' : ''));
 
+  let bad = 0;
   for (const [name, rule] of Object.entries(DIFF_RULES)) {
     const sheet = ss.getSheetByName(name);
-    if (!sheet) { console.log('✗ シートが見つかりません: [' + name + ']'); continue; }
+    if (!sheet) { bad++; console.log('✗ シートが見つかりません: [' + name + ']'); continue; }
 
     const saved = state[sheet.getSheetId()];
-    if (!saved) { console.log('✗ 未初期化: ' + name + ' → setupDiffTracking() を実行'); continue; }
+    if (!saved) { bad++; console.log('✗ 未初期化: ' + name + ' → setupDiffTracking() を実行'); continue; }
 
     let stamp;
     try { stamp = diffStampColumn_(sheet, rule); }
-    catch (err) { console.log('✗ ' + name + ': ' + err.message); continue; }
+    catch (err) { bad++; console.log('✗ ' + name + ': ' + err.message); continue; }
 
     const dirty = props.getProperty(DIFF_OPTIONS.dirtyPrefix + sheet.getSheetId());
     const rowCheck = props.getProperty(DIFF_ROW_OPTIONS.checkPrefix + sheet.getSheetId());
@@ -2437,7 +2465,13 @@ function diagnoseDiffState() {
     checks.forEach(([label, ok, detail]) =>
       console.log((ok ? '○ ' : '✗ ') + name + ' / ' + label +
         (ok ? '' : ' （' + detail + '）')));
+    // 行数・取りこぼし・行の確かめは自動で直る。ほかの ✗ は setupDiffTracking() が必要
+    if (checks.slice(0, 7).some(([label, ok]) => !ok && !/^行数/.test(label))) bad++;
   }
+  console.log(bad
+    ? '→ 次にすること：エディタで setupDiffTracking() を実行してください（止まったらそのログのエラーを確かめてください）。' +
+      '非表示の「' + DIFF_OPTIONS.snapshotPrefix + '」で始まるシートは比較基準なので、消さないでください。'
+    : '→ 差分追跡は動いています（✗ があっても、次の編集・回収で自動で直るものだけです）。');
 }
 
 /** Optional test handler: attach an installed onEdit trigger to it manually. */

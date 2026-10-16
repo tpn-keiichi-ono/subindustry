@@ -378,6 +378,71 @@ test('列の追加：追跡を停止して知らせる', () => {
   assert.ok(gas.toasts.some(t => /列構成が変わったため差分追跡を停止しました/.test(t.message)));
 });
 
+/* ---------------- 止まったときの知らせと立て直し ---------------- */
+
+test('比較用シートが消されると、編集のエラーで止まり、日本語で原因と直し方を知らせる', () => {
+  const {gas, g, sheet} = setupProject({launchers: false});
+  gas.ss.deleteSheet(gas.ss.getSheetByName('__CHAR_DIFF_' + sheet.getSheetId()));
+  assert.throws(() => g.recordDiffEdit(gas.edit(sheet, 'F3', '受注')), /比較用シート.*setupDiffTracking\(\)/);
+  const state = JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'));
+  assert.strictEqual(state[sheet.getSheetId()].paused, true);
+  assert.ok(gas.toasts.some(t => /差分追跡を止めました/.test(t.message) && /setupDiffTracking/.test(t.message)));
+  // 次の編集も、止まっていること・直し方を日本語で知らせる（英語の「Run setupDiffTracking()」ではない）
+  assert.throws(() => g.recordDiffEdit(gas.edit(sheet, 'F3', '提案中')),
+    err => /「.+」の差分追跡は止まっています/.test(err.message) && /diagnoseDiffState/.test(err.message));
+});
+
+test('比較用シートが消されても、setupDiffTracking() をやり直せば記録が再開する', () => {
+  const {gas, g, sheet} = setupProject({launchers: false});
+  gas.ss.getSheets().filter(s => s.getName().startsWith('__CHAR_DIFF_')).forEach(s => gas.ss.deleteSheet(s));
+  assert.throws(() => g.recordDiffEdit(gas.edit(sheet, 'F3', '受注')));
+  g.setupDiffTracking();
+  const state = JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'));
+  Object.values(state).forEach(s => assert.strictEqual(s.paused, false));
+  g.recordDiffEdit(gas.edit(sheet, 'F3', '提案中'));
+  assert.strictEqual(gas.records(LOG).length, 1);
+});
+
+test('setupDiffTracking：途中で止まったら、どのシートで止まったか・すべて止まっていることを知らせる', () => {
+  const {gas, g, sheet} = setupProject({launchers: false});
+  gas.ss.getSheets().filter(s => s.getName().startsWith('__CHAR_DIFF_')).forEach(s => gas.ss.deleteSheet(s));
+  gas.insertSheetError = 'Service Spreadsheets timed out';
+  assert.throws(() => g.setupDiffTracking(),
+    err => /差分追跡の設定が「.+」の途中で止まりました/.test(err.message) &&
+      /Service Spreadsheets timed out/.test(err.message) && /すべての追跡シートの記録が止まっています/.test(err.message));
+  const state = JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'));
+  Object.values(state).forEach(s => assert.strictEqual(s.paused, true));
+  // 原因が直れば、やり直しで再開する
+  gas.insertSheetError = null;
+  g.setupDiffTracking();
+  g.recordDiffEdit(gas.edit(sheet, 'F3', '受注'));
+  assert.strictEqual(gas.records(LOG).length, 1);
+});
+
+test('setupDiffTracking：セル数の上限を超えるなら、何も止めずに先に知らせる', () => {
+  const {gas, g, sheet} = setupProject({launchers: false});
+  gas.ss.deleteSheet(gas.ss.getSheetByName('__CHAR_DIFF_' + sheet.getSheetId()));
+  gas.ss.insertSheet('大きなシート', {rows: 10000000 / 26, columns: 26});
+  const before = gas.props.document.get('CHAR_DIFF_STATE_V1');
+  assert.throws(() => g.setupDiffTracking(), err => /上限（1,000万）/.test(err.message) && /diagnoseCellUsage/.test(err.message));
+  assert.strictEqual(gas.props.document.get('CHAR_DIFF_STATE_V1'), before);
+  assert.strictEqual(gas.ss.getSheetByName('__CHAR_DIFF_' + sheet.getSheetId()), null);
+});
+
+test('diagnoseDiffState：止まっている・比較用シートが無いと ✗ を出し、次にすることを書く', () => {
+  const {gas, g, sheet} = setupProject({launchers: false});
+  g.diagnoseDiffState();
+  assert.ok(gas.logs.some(l => /^セル数: /.test(l.line)));
+  assert.ok(gas.logs.some(l => /差分追跡は動いています/.test(l.line)));
+  gas.logs.length = 0;
+  gas.ss.deleteSheet(gas.ss.getSheetByName('__CHAR_DIFF_' + sheet.getSheetId()));
+  assert.throws(() => g.recordDiffEdit(gas.edit(sheet, 'F3', '受注')));
+  g.diagnoseDiffState();
+  assert.ok(gas.logs.some(l => /^✗ .+ \/ 停止していない/.test(l.line)));
+  assert.ok(gas.logs.some(l => /^✗ .+ \/ 比較用シート/.test(l.line)));
+  assert.ok(gas.logs.some(l => /次にすること：エディタで setupDiffTracking\(\)/.test(l.line)));
+});
+
 test('サービス管理がロック（スクリプトロック）を使っていても、差分追跡は待たずに記録する（別のロック）', () => {
   const {gas, g, sheet} = setupProject();
   gas.lockBusy = 'script';

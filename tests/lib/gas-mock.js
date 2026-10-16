@@ -584,6 +584,8 @@ class Spreadsheet {
     if (this.getSheetByName(name)) {
       throw new Error('A sheet with the name "' + name + '" already exists. Please enter another name.');
     }
+    // テストで「シートを作れない」（一時的なエラー・上限など）を再現する
+    if (this.gas.insertSheetError) throw new Error(this.gas.insertSheetError);
     const o = options || {};
     const sheet = new Sheet(this.gas, this, name, this.nextSheetId++, o.rows || 1000, o.columns || 26);
     this.sheets.push(sheet);
