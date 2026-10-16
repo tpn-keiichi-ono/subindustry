@@ -362,14 +362,17 @@ function diffAdminTitle_() {
  * ボタン列は、見出しのあるシートにだけ付ける（どのシートにも無ければ 2・3 は省く）。
  * 途中で止まって設定が半分だけにならないよう、先にすべてのシートの見出しを確かめ、足りなければ何も変えずに知らせる。
  * トリガーを設置するので、管理者アカウント（トリガーの所有者）で実行すること。
+ * スプレッドシートの画面に出せないとき（エディタをスプレッドシートから開いていないなど）も止めずに実行し、結果は実行ログに書く
+ * （直す点があればエラーで止める。サービスリクエストの使わなくなった列は、聞けないので残す）。
  */
 function setupAfterSheetChange() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
+  const ui = diffUiOrNull_();
   const {problems, buttons} = diffCheckSheets_(ss);
   if (problems.length) {
-    ui.alert(diffAdminTitle_(), '次の点を直してから、もう一度実行してください（まだ何も変えていません）。\n\n・' + problems.join('\n・'),
-      ui.ButtonSet.OK);
+    const message = '次の点を直してから、もう一度実行してください（まだ何も変えていません）。\n\n・' + problems.join('\n・');
+    if (!ui) throw new Error(message);
+    ui.alert(diffAdminTitle_(), message, ui.ButtonSet.OK);
     return;
   }
 
@@ -397,10 +400,19 @@ function setupAfterSheetChange() {
     done.push(step.label);
   });
 
-  ui.alert(diffAdminTitle_(),
-    '対象のシート：「' + Object.keys(DIFF_RULES).join('」「') + '」\n' +
-    '「' + done.join('」「') + '」を設定しました。\n\n' + notes.join('\n'),
-    ui.ButtonSet.OK);
+  const message = '対象のシート：「' + Object.keys(DIFF_RULES).join('」「') + '」\n' +
+    '「' + done.join('」「') + '」を設定しました。\n\n' + notes.join('\n');
+  console.log(message);
+  if (ui) ui.alert(diffAdminTitle_(), message, ui.ButtonSet.OK);
+}
+
+/** スプレッドシートの画面（SpreadsheetApp.getUi()）。出せないとき（エディタをスプレッドシートから開いていない・トリガーなど）は null */
+function diffUiOrNull_() {
+  try {
+    return SpreadsheetApp.getUi();
+  } catch (_) {
+    return null;
+  }
 }
 
 /**

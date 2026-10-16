@@ -489,8 +489,9 @@ function svcSetupRequestSheet_(ss) {
   const existing = ss.getSheetByName(SVC_OPTIONS.requestSheet);
   const oldColumns = existing ? taskFoundLabels_(existing, SVC_OPTIONS.removedColumns, SVC_OPTIONS.headerRow) : [];
   let removeOld = false;
-  if (oldColumns.length) {
-    const ui = SpreadsheetApp.getUi();
+  // 画面に出せないとき（setupAfterSheetChange() をエディタだけで実行したなど）は聞けないので、列は残す
+  const ui = oldColumns.length ? diffUiOrNull_() : null;
+  if (ui) {
     removeOld = ui.alert(SVC_OPTIONS.menuTitle,
       '「' + SVC_OPTIONS.requestSheet + '」シートの「' + oldColumns.join('」「') + '」の列は使わなくなりました。\n' +
       'これらの列を削除します。ほかの列の値はそのまま残ります。削除する列に入っている値は消えます。\n\n削除しますか？',

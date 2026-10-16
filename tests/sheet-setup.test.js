@@ -63,6 +63,24 @@ test('setupAfterSheetChange：差分追跡・2つのボタン列・サービス�
   assert.deepStrictEqual(gas.triggers.map(t => t.getHandlerFunction()).sort(), triggers, '何度実行してもよい');
 });
 
+test('setupAfterSheetChange：スプレッドシートの画面に出せないとき（エディタだけで実行）も止めずに設定し、結果は実行ログに書く', () => {
+  const {gas, g} = setupProject();
+  const sheet = addDepartmentStore(gas);
+  gas.noUi = true;
+  g.setupAfterSheetChange();
+  assert.strictEqual(gas.alerts.length, 0);
+  assert.ok(gas.logs.some(l => /対象のシート：「新FMT」「新FMT2」「百貨店」/.test(l.line) &&
+    /「差分追跡」「クレデンシャルのボタン列」「変更履歴のボタン列」「サービスリクエスト」を設定しました/.test(l.line)));
+  g.recordDiffEdit(gas.edit(sheet, 'F3', '受注'));
+  const log = gas.ss.getSheetByName('変更履歴_差分');
+  assert.ok(gas.dump(log, 'D2:D' + log.getLastRow()).some(r => r[0] === '百貨店'), '足したシートの変更を記録する');
+  // 直す点があれば、何も変えずにエラーで知らせる
+  gas.get('DIFF_RULES')['専門店'] = {headerRow: 2, ranges: ['D3:AF']};   // シートが無い
+  const before = gas.props.document.get('CHAR_DIFF_STATE_V1');
+  assert.throws(() => g.setupAfterSheetChange(), /次の点を直してから、もう一度実行してください（まだ何も変えていません）。[\s\S]*「専門店」シートがありません/);
+  assert.strictEqual(gas.props.document.get('CHAR_DIFF_STATE_V1'), before);
+});
+
 test('setupAfterSheetChange：見出しが足りないシートがあれば、何も変えずに直す点をまとめて知らせる', () => {
   const {gas, g} = setupProject();
   const header = new Array(WIDTH).fill('');
