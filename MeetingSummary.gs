@@ -265,17 +265,20 @@ function previewMeetingSummaries() {
  */
 function setMeetingBaseline() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
-  const names = mtgAskSheets_(ss, ui, '会議サマリの基準を記録します（会議日は記録しません）。');
+  // スプレッドシートの画面に出せないとき（エディタをスプレッドシートから開いていないなど）は、聞かずにすべての追跡シートに記録し、実行ログに書く
+  const ui = mtgUiOrNull_();
+  const names = ui ? mtgAskSheets_(ss, ui, '会議サマリの基準を記録します（会議日は記録しません）。')
+    : Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
   if (!names) return;
+  if (!names.length) throw new Error('追跡しているシート（test.gs の DIFF_RULES）が見つかりません。');
   const now = new Date();
   const tz = Session.getScriptTimeZone();
   const at = Utilities.formatDate(now, tz, 'MM/dd HH:mm');
-  const answer = ui.alert(CRED_OPTIONS.menuTitle,
+  const answer = !ui ? null : ui.alert(CRED_OPTIONS.menuTitle,
     '「' + names.join('」「') + '」に、今（' + at + '）を基準として記録します。\n' +
     '次に作る会議サマリは、基準より後の変化だけを出します（今までに貼り付けた案件を「新規」に数えません）。\n' +
     '移行の貼り付けがすべて終わってから実行してください。記録してよろしいですか？', ui.ButtonSet.YES_NO);
-  if (answer !== ui.Button.YES) return;
+  if (ui && answer !== ui.Button.YES) return;
   const props = PropertiesService.getDocumentProperties();
   const date = Utilities.formatDate(now, tz, 'yyyy/MM/dd');
   names.forEach(name => {
@@ -283,9 +286,10 @@ function setMeetingBaseline() {
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).slice(-MTG_OPTIONS.keepMeetings);
     props.setProperty(MTG_OPTIONS.meetingsKeyPrefix + name, JSON.stringify(list));
   });
-  const message = '「' + names.join('」「') + '」に、基準（' + at + '）を記録しました。次に作る会議サマリは、基準より後の変化を出します。';
+  const message = '「' + names.join('」「') + '」に、基準（' + at + '）を記録しました。次に作る会議サマリは、基準より後の変化を出します。' +
+    (ui ? '' : '（スプレッドシートの画面に出せないため、確かめずにすべての追跡シートに記録しました）');
   console.log(message);
-  ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+  if (ui) ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
 }
 
 /**
@@ -294,7 +298,7 @@ function setMeetingBaseline() {
  */
 function removeMeetingRecord() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
+  const ui = mtgUi_();
   const names = mtgAskSheets_(ss, ui, '会議サマリの会議日の記録を取り消します（資料のファイルは消しません）。');
   if (!names) return;
   const props = PropertiesService.getDocumentProperties();
@@ -352,7 +356,7 @@ function mtgConfirmFinal_(ui, names, meeting) {
 
 function mtgRun_(final) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
+  const ui = mtgUi_();
   const names = mtgAskSheets_(ss, ui, final ? '会議サマリを作ります。' : '会議サマリを試しに作ります（会議日は記録しません）。');
   if (!names) return;
   const now = new Date();
@@ -377,7 +381,7 @@ function mtgRun_(final) {
  * webhook の URL を空欄で OK にすると、設定を外す。前の版の自動通知のトリガーが残っていれば外す
  */
 function setMeetingChat() {
-  const ui = SpreadsheetApp.getUi();
+  const ui = mtgUi_();
   const o = MTG_OPTIONS.chat;
   const props = PropertiesService.getScriptProperties();
   const current = mtgChatSettings_();
@@ -430,7 +434,7 @@ function notifyMeetingSummaries() {
   const chat = mtgChatSettings_();
   if (!chat || !chat.url) throw new Error('Google チャットへの通知が設定されていません。先に setMeetingChat() で webhook の URL と資料の格納先の URL を登録してください。');
   mtgRemoveLegacyTrigger_();
-  const ui = SpreadsheetApp.getUi();
+  const ui = mtgUi_();
   const file = mtgChatFile_(chat.url);   // 先に確かめる（資料が無ければ、会議日程を聞かずに知らせる）
   const time = MTG_OPTIONS.chat.meetingTime;
   const response = ui.prompt(CRED_OPTIONS.menuTitle,
@@ -565,6 +569,28 @@ function mtgRemoveLegacyTrigger_() {
   const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === MTG_OPTIONS.chat.legacyHandler);
   triggers.forEach(t => ScriptApp.deleteTrigger(t));
   return triggers.length;
+}
+
+/**
+ * 入力・確かめの画面を出す先（スプレッドシートの画面）。出せなければ、どうすればよいかを書いて止める
+ * （エディタをスプレッドシートの「拡張機能」→「Apps Script」から開いていない、スプレッドシートを閉じているなど）
+ */
+function mtgUi_() {
+  const ui = mtgUiOrNull_();
+  if (!ui) {
+    throw new Error('スプレッドシートの画面に、入力・確かめの画面を出せません。スプレッドシートを開いたまま、そのスプレッドシートの' +
+      '「拡張機能」→「Apps Script」から開いたエディタで実行してください（入力・確かめの画面は、スプレッドシートのタブに出ます）。');
+  }
+  return ui;
+}
+
+/** スプレッドシートの画面。出せなければ null */
+function mtgUiOrNull_() {
+  try {
+    return SpreadsheetApp.getUi();
+  } catch (error) {
+    return null;
+  }
 }
 
 /** シートを聞く（空欄ならすべて。「1,3」のように複数も）。heading は最初の行。やめたら null。 */
@@ -2749,7 +2775,7 @@ function mtgFileIdOf_(text) {
  * いただいた .pptx は、ドライブにアップロードして Google スライドで開き、「ファイル」→「Google スライドとして保存」したものを登録する
  */
 function setMeetingTemplate() {
-  const ui = SpreadsheetApp.getUi();
+  const ui = mtgUi_();
   const props = PropertiesService.getDocumentProperties();
   const current = props.getProperty(MTG_OPTIONS.templateKey);
   const response = ui.prompt(CRED_OPTIONS.menuTitle,

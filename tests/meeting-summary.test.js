@@ -1026,6 +1026,23 @@ test('previewMeetingSummaries：試作は会議日を記録しない（ファイ
   assert.match(inserted(gas.decks[2]), /入力内容の確認事項は 2項目（2案件・責任者 2名）。\n?試作時（\d{1,2}\/\d{1,2}）から 1項目解消、\n?0項目追加。/);
 });
 
+test('スプレッドシートの画面に出せないとき（エディタをスプレッドシートから開いていない）：基準はすべての追跡シートに記録してログに書く。ほかは、どうすればよいかを書いて止める', () => {
+  const {gas, g} = setup({edits: false});
+  gas.noUi = true;
+  g.setMeetingBaseline();
+  const props = g.PropertiesService.getDocumentProperties();
+  assert.deepStrictEqual(['新FMT', '新FMT2'].map(name => JSON.parse(props.getProperty('MTG_MEETINGS_' + name)).map(m => !!m.baseline)), [[true], [true]]);
+  assert.ok(gas.logs.some(l => /「新FMT」「新FMT2」に、基準（.*）を記録しました。.*確かめずにすべての追跡シートに記録しました/.test(l.line)), '実行ログに書く');
+  assert.deepStrictEqual([gas.prompts.length, gas.alerts.length], [0, 0]);
+  ['createMeetingSummaries', 'previewMeetingSummaries', 'removeMeetingRecord', 'setMeetingChat', 'notifyMeetingSummaries', 'setMeetingTemplate'].forEach(fn => {
+    if (fn === 'notifyMeetingSummaries') {
+      g.PropertiesService.getScriptProperties().setProperty('MTG_CHAT_WEBHOOK', 'https://chat.googleapis.com/v1/spaces/A/messages?key=k&token=t');
+      g.PropertiesService.getScriptProperties().setProperty('MTG_CHAT_URL', 'https://drive.google.com/file/d/abcdefghijk/view');
+    }
+    assert.throws(() => g[fn](), /スプレッドシートの画面に、入力・確かめの画面を出せません。スプレッドシートを開いたまま、そのスプレッドシートの「拡張機能」→「Apps Script」から開いたエディタで実行してください/, fn);
+  });
+});
+
 test('removeMeetingRecord：会議日の記録を取り消す（はいのときだけ）。基準の記録・資料のファイルは残す', () => {
   const {gas, g} = setup();
   const props = g.PropertiesService.getDocumentProperties();

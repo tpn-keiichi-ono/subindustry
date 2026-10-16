@@ -755,7 +755,11 @@ function createGas(options) {
     getActiveSpreadsheet: () => ss,
     getActive: () => ss,
     getActiveSheet: () => ss.getActiveSheet(),
-    getUi: () => ui,
+    // 本物は、スプレッドシートの画面に出せないとき（エディタをスプレッドシートから開いていない・トリガーなど）に止まる。gas.noUi で再現する
+    getUi() {
+      if (gas.noUi) throw new Error('Cannot call SpreadsheetApp.getUi() from this context.');
+      return ui;
+    },
     flush() {},
     newRichTextValue,
     newTextStyle

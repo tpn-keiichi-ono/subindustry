@@ -410,6 +410,9 @@ RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Goo
   残ったトリガー `mtgNotifyScheduled` は、その関数が動いたとき・`setMeetingChat()`・`notifyMeetingSummaries()` を実行したときに外す（`mtgRemoveLegacyTrigger_`））。
   - 送るのは `UrlFetchApp`（`application/json` の `{text}`）。429・5xx は2秒待って1回だけやり直し、だめならエラーにします。
     webhook の URL は鍵を含むので、コード・画面・ログに出しません（`mtgChatSpace_` はスペースの ID だけを出す）。
+- **画面**：入力・確かめの画面は `mtgUi_()`（`SpreadsheetApp.getUi()`）でスプレッドシートに出します。エディタがスプレッドシートにつながっていないと
+  `getUi()` が止まるので、どうすればよいか（スプレッドシートの「拡張機能」→「Apps Script」から開いたエディタで実行する）を書いて止めます。
+  `setMeetingBaseline()` だけは、画面に出せなければ確かめずにすべての追跡シートに記録し、実行ログに書きます（`mtgUiOrNull_()`。聞くことがシートの選択と確かめだけのため）。
 - **保存先**：`MTG_OPTIONS.folderId`（2026/10 から指定のフォルダ `1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK`）。開けなければ、フォルダの ID を書いて止めます。
   空にすると、スプレッドシートと同じフォルダの中に「会議サマリ」フォルダを作って使います（前の動き）。
 - **基準**：旧フォーマットからの移行など、案件をまとめて貼り付けたあとに `setMeetingBaseline()` で今を基準として記録します（同じ `MTG_MEETINGS_<シート名>` に
