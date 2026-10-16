@@ -1157,6 +1157,66 @@ test('mtgMeetingFolder_：設定が無い・開けない・2つある・コピ�
     'AbCdEf123456', ''].map(g.mtgFolderIdOf_), ['AbCdEf123456', 'AbCdEf123456', 'AbCdEf123456', '']);
 });
 
+test('インデックス：会議のフォルダに格納したら、「INDEX_会議資料」シートの行＝サブインダストリー・列＝会議日のセルに格納先の URL を書く', () => {
+  const {gas, g, sheet: source} = setup();
+  gas.select(source, 'D3');
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
+  gas.promptAnswers = ['1', '10/23'];
+  g.createMeetingSummaries();
+
+  const sheet = gas.ss.getSheetByName('INDEX_会議資料');
+  assert.ok(sheet, 'シートが無ければ作る');
+  assert.strictEqual(gas.ss.getActiveSheet().getName(), '新FMT', '開いていたシートに戻す');
+  assert.deepStrictEqual(plain(sheet.getRange(1, 1, 3, 2).getDisplayValues()), [
+    ['サブインダストリー', meeting],
+    ['新FMT', 'https://drive.google.com/drive/folders/meeting-folder-0'],
+    ['新FMT2', '']
+  ]);
+  assert.deepStrictEqual([sheet.getMaxRows(), sheet.getMaxColumns()], [3, 2], '使わない行・列は持たない');
+  assert.strictEqual(sheet.getRange(2, 2).getRichTextValues()[0][0].getLinkUrl(), 'https://drive.google.com/drive/folders/meeting-folder-0', 'リンクで書く');
+  assert.deepStrictEqual([sheet.getFrozenRows(), typeof sheet.getRange(1, 2).getValue()], [1, 'string'], '会議日は文字で書く');
+  assert.ok(gas.writes.filter(w => w.sheet === 'INDEX_会議資料').every(w => w.locked), '書き込みはロックの中');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「INDEX_会議資料」シートに、格納先の URL を書きました：https:\/\/docs\.google\.com\/spreadsheets\/d\/spreadsheet-id\/edit#gid=\d+/);
+
+  // 会議日は日付の順（前の会議日はその前に差し込む）。同じセルは上書き。ほかのサブインダストリーは下に足す。日付の値で入力した見出しも読む
+  const at = url => ({folder: {getUrl: () => url}});
+  const year = meeting.slice(0, 4);
+  assert.ok(g.mtgWriteIndex_('新FMT', year + '/10/30', at('u-1030')).url);
+  assert.ok(g.mtgWriteIndex_('新FMT2', year + '/10/16', at('u-1016')).url);
+  assert.ok(g.mtgWriteIndex_('新FMT', meeting, at('u-1023b')).url);
+  assert.ok(g.mtgWriteIndex_('専門店', year + '/10/30', at('u-x')).url);
+  assert.deepStrictEqual(plain(sheet.getRange(1, 1, 4, 4).getDisplayValues()), [
+    ['サブインダストリー', year + '/10/16', meeting, year + '/10/30'],
+    ['新FMT', '', 'u-1023b', 'u-1030'],
+    ['新FMT2', 'u-1016', '', ''],
+    ['専門店', '', '', 'u-x']
+  ]);
+  gas.asUser(() => sheet.getRange(1, 4).setValue(new gas.Date(Number(year), 9, 30)));
+  g.mtgWriteIndex_('新FMT2', year + '/10/30', at('u-1030b'));
+  assert.strictEqual(sheet.getRange(3, 4).getDisplayValue(), 'u-1030b');
+  assert.strictEqual(sheet.getLastColumn(), 4, '列は増やさない');
+});
+
+test('インデックス：書けないとき（ほかの処理が実行中など）は格納は済ませて知らせ、storeMeetingSummaries() で書き直す', () => {
+  const {gas, g} = setup();
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
+  gas.lockBusy = 'document';   // 差分追跡などがドキュメントロックを持っている
+  gas.promptAnswers = ['1', '10/23'];
+  g.createMeetingSummaries();
+  gas.lockBusy = false;
+  const done = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(done, /会議のフォルダ「\d{6}_第5回会議」に格納しました/);
+  assert.match(done, /※ 「INDEX_会議資料」シートに書き込めませんでした（ほかの処理が実行中）。storeMeetingSummaries\(\) を実行すると書き直します。/);
+  assert.strictEqual(gas.ss.getSheetByName('INDEX_会議資料'), null);
+
+  gas.promptAnswers = ['1', '10/23'];
+  g.storeMeetingSummaries();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「INDEX_会議資料」シートに書きました：https:\/\/docs\.google\.com\/spreadsheets\//);
+  assert.strictEqual(gas.ss.getSheetByName('INDEX_会議資料').getRange(2, 2).getDisplayValue(), 'https://drive.google.com/drive/folders/meeting-folder-0');
+});
+
 test('会議時点のコピー：copyFolderId を設定すれば、そのフォルダに保存する（開けなければ止める）', () => {
   const {gas, g} = setup({edits: false});
   gas.get('MTG_OPTIONS').copyFolderId = 'https://drive.google.com/drive/folders/CopyFolder000001';

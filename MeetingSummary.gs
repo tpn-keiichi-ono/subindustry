@@ -70,6 +70,15 @@ const MTG_OPTIONS = {
   // meetingFolderDate（yyMMdd）＋「_」で始まるフォルダ（例：261023_第5回会議）に、事前資料の PDF のコピーを置く。
   // 見つからない・格納できないときは保存先（folderId）にだけ残して知らせ、フォルダを用意してから storeMeetingSummaries() で格納する
   meetingFolderDate: 'yyMMdd',
+  // 会議資料のインデックス（このスプレッドシートのシート）。会議のフォルダに格納したら、行＝サブインダストリー（シート名）・列＝会議日
+  // （1行目に yyyy/MM/dd。無ければ日付の順に差し込む）のセルに、格納先の URL を書く。link は 'folder'（会議のフォルダ）か 'file'（PDF）。
+  // シートが無ければ作る。書けなかったときは storeMeetingSummaries() で書き直す
+  index: {
+    sheet: 'INDEX_会議資料',
+    corner: 'サブインダストリー',   // A1 の見出し
+    link: 'folder',
+    width: 280                      // 会議日の列の幅
+  },
   // 会議時点のコピー：本番の資料を作ったとき・基準を記録したときに、追跡シートの値を別のスプレッドシート（タイトルは実行日時）に保存する。
   // 次の資料の「前回からの変化」は、前回のコピーと今のシートを比べて出す（差分追跡が止まっていた間・2,000セルを超える貼り付けの変更も出る）。
   // 保存先は、会議サマリのフォルダの中の copyFolderName のフォルダ
@@ -78,6 +87,7 @@ const MTG_OPTIONS = {
   copyFolderName: '会議時点のコピー',
   copyFolderKey: 'MTG_COPY_FOLDER_ID', // 作ったフォルダの ID（ドキュメントのプロパティ）
   copyChunkRows: 500,                 // コピーするときの1回の行数
+  indexLockWaitMs: 30000,             // インデックスに書くときのロック（ドキュメントロック）の待ち時間
   // 表紙・扉のひな形（Google スライド。いただいた .pptx を Google スライドにしたもの）。資料はひな形のコピーに作る（ページの大きさもひな形のまま）。
   // ID は setMeetingTemplate() で登録する（ドキュメントのプロパティ templateKey）。templateId を書けば、そちらを使う。どちらも無ければ、ひな形なしで作る
   templateId: '',
@@ -415,6 +425,7 @@ function mtgRun_(final) {
     const samples = !r.summary.kpi.changed && !r.summary.dummy ? smpCountEvents_(ss, SMP_OPTIONS.eventPrefix + '-', r.summary.name).changes : 0;
     return '「' + r.summary.name + '」：' + r.file.getName() + '（' + mtgCountsText_(r.summary) + '）\n　' + r.file.getUrl() +
       (r.stored ? '\n　会議のフォルダ「' + r.stored.folder.getName() + '」に格納しました：' + r.stored.folder.getUrl() : '') +
+      (r.index && r.index.error ? '\n　※ ' + r.index.error : '') +
       (r.storeError ? '\n　※ 会議のフォルダに格納できませんでした（' + r.storeError + '）。資料は保存先にあります。' +
         'フォルダを用意してから、エディタで storeMeetingSummaries() を実行して格納してください。' : '') +
       (r.summary.copy ? '\n　前回からの変化は「' + r.summary.copy.title + '」と比べました。' : '') +
@@ -427,6 +438,8 @@ function mtgRun_(final) {
         '資料の形を確かめるときは、addMeetingDummyHistory() でダミーの変更の記録を足してください。' : '');
   });
   lines.push('', '保存先：' + results[0].folder.getUrl());
+  const index = results.map(r => r.index).find(x => x && x.url);
+  if (index) lines.push('「' + index.title + '」シートに、格納先の URL を書きました：' + index.url);
   if (results[0].copy) lines.push('今の値を「' + results[0].copy.title + '」に保存しました（次の会議の資料はこれと比べます）：' + results[0].copy.url);
   if (MTG_OPTIONS.keepSlides) lines.push('同じフォルダに、Google スライド（同じ名前）も保存しました。');
   lines.push(final
@@ -770,6 +783,7 @@ function mtgCreate_(ss, names, now, final, meeting) {
       const stored = mtgStoreToMeetingFolder_(r.summary.name, meeting, r.file);
       if (stored.error) r.storeError = stored.error;
       else r.stored = stored;
+      if (!stored.error) r.index = mtgWriteIndex_(r.summary.name, meeting, stored);
     });
   }
   return results;
@@ -833,7 +847,8 @@ function mtgHash_(text) {
 /**
  * 作成済みの本番の事前資料（PDF）を、会議のフォルダに格納する（エディタから実行）。作ったときに格納できなかった
  * （会議のフォルダがまだ無かった・権限が無かったなど）ときに、フォルダを用意してから実行する。シートと会議日を聞き、
- * 保存先（MTG_OPTIONS.folderId）にある本番の PDF（mtgFileName_。20261023_スーパー・GMS_RX Business Meeting用資料.pdf）を、会議のフォルダにコピーする（同じ名前の古い版はゴミ箱に移す）
+ * 保存先（MTG_OPTIONS.folderId）にある本番の PDF（mtgFileName_。20261023_スーパー・GMS_RX Business Meeting用資料.pdf）を、会議のフォルダにコピーする（同じ名前の古い版はゴミ箱に移す）。
+ * 会議資料のインデックス（MTG_OPTIONS.index）にも書き直す（インデックスに書けなかったときもこれで直す）
  */
 function storeMeetingSummaries() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -852,8 +867,10 @@ function storeMeetingSummaries() {
     const pdf = files.hasNext() ? files.next() : null;
     if (!pdf) return '「' + name + '」：本番の資料（' + fileName + '）が保存先にありません。createMeetingSummaries() で作ってください。';
     const stored = mtgStoreToMeetingFolder_(name, meeting, pdf);
-    return '「' + name + '」：' + (stored.error ? '格納できませんでした（' + stored.error + '）。'
-      : '会議のフォルダ「' + stored.folder.getName() + '」に格納しました：' + stored.folder.getUrl());
+    if (stored.error) return '「' + name + '」：格納できませんでした（' + stored.error + '）。';
+    const index = mtgWriteIndex_(name, meeting, stored);
+    return '「' + name + '」：会議のフォルダ「' + stored.folder.getName() + '」に格納しました：' + stored.folder.getUrl() +
+      (index.error ? '\n　※ ' + index.error : '\n　「' + index.title + '」シートに書きました：' + index.url);
   });
   console.log(lines.join('\n'));
   ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
@@ -905,6 +922,80 @@ function mtgMeetingFolder_(name, meeting) {
       found.map(f => f.getName()).join('」「') + '」。1つにしてください）'};
   }
   return {folder: found[0]};
+}
+
+/**
+ * 会議資料のインデックス（このスプレッドシートの MTG_OPTIONS.index.sheet）の、行＝サブインダストリー（name）・列＝会議日（meeting）のセルに、
+ * 格納先（stored.folder か stored.file）の URL をリンクで書く。シートが無ければ作り、A1 に見出しと、A列に追跡シートの名前（DIFF_RULES の順）を書く。
+ * 会議日の列（1行目。yyyy/MM/dd の文字）が無ければ日付の順になる位置に差し込み、行が無ければ下に足す。同じセルは上書き（作り直したとき）。
+ * 書き込みはドキュメントロックの中（差分追跡の対象外のシートだが、資料作成はエディタから実行するので待ってよい）。
+ * 戻り値 {url: シートの URL, title: シート名} か {error: 知らせる文}（止めない）
+ */
+function mtgWriteIndex_(name, meeting, stored) {
+  const o = MTG_OPTIONS.index;
+  const lock = LockService.getDocumentLock();
+  try {
+    if (!lock.tryLock(MTG_OPTIONS.indexLockWaitMs)) throw new Error('ほかの処理が実行中');
+    try {
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      const names = Object.keys(DIFF_RULES);
+      let sheet = ss.getSheetByName(o.sheet);
+      if (!sheet) {
+        const active = ss.getActiveSheet();
+        sheet = ss.insertSheet(o.sheet, ss.getSheets().length);
+        if (active) active.activate();   // insertSheet は作ったシートを開くので、開いていたシートに戻す
+      }
+      // 白紙：見出しとサブインダストリーの行を用意する（使わない行・列は持たない）
+      if (sheet.getLastRow() === 0) {
+        diffEnsureGrid_(sheet, names.length + 1, 1);
+        sheet.getRange(1, 1, names.length + 1, 1).setValues([[credText_(o.corner)]].concat(names.map(n => [credText_(n)])));
+        sheet.getRange(1, 1).setFontWeight('bold');
+        sheet.setColumnWidth(1, 180);
+        diffTrimGrid_(sheet, 1, names.length + 1);
+        sheet.setFrozenRows(1);
+      }
+      // 会議日の列
+      const lastCol = Math.max(sheet.getLastColumn(), 1);
+      const heads = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(mtgIndexDate_);
+      let col = heads.indexOf(meeting, 1) + 1;
+      if (!col) {
+        const after = heads.findIndex((d, i) => i >= 1 && d && d > meeting);   // この会議日より後の列があれば、その前に差し込む
+        if (after > 0) {
+          sheet.insertColumnBefore(after + 1);
+          col = after + 1;
+        } else {
+          col = lastCol + 1;
+          diffEnsureGrid_(sheet, 1, col);
+        }
+        sheet.getRange(1, col).setValue(credText_(meeting)).setFontWeight('bold');
+        sheet.setColumnWidth(col, o.width);
+      }
+      // サブインダストリーの行（前の名前で書いてあれば今の名前とみなす）
+      const resolve = diffSheetNameResolver_();
+      const lastRow = Math.max(sheet.getLastRow(), 1);
+      const labels = sheet.getRange(1, 1, lastRow, 1).getDisplayValues().map(r => resolve(String(r[0]).trim()));
+      let row = labels.indexOf(name, 1) + 1;
+      if (!row) {
+        row = lastRow + 1;
+        diffEnsureGrid_(sheet, row, col);
+        sheet.getRange(row, 1).setValue(credText_(name));
+      }
+      const url = o.link === 'file' && stored.file ? stored.file.getUrl() : stored.folder.getUrl();
+      sheet.getRange(row, col).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText(url).setLinkUrl(url).build()]]);
+      return {url: ss.getUrl() + '#gid=' + sheet.getSheetId(), title: o.sheet};
+    } finally {
+      lock.releaseLock();
+    }
+  } catch (error) {
+    return {error: '「' + o.sheet + '」シートに書き込めませんでした（' + (error && error.message || error) + '）。storeMeetingSummaries() を実行すると書き直します。'};
+  }
+}
+
+/** インデックスの1行目の値を会議日 'yyyy/MM/dd' に（日付の値・「2026/10/23」の文字。読めなければ空） */
+function mtgIndexDate_(value) {
+  if (value instanceof Date) return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy/MM/dd');
+  const text = String(value == null ? '' : value).trim();
+  return /^\d{4}\s*[\/\-.年]/.test(text) ? mtgParseDate_(text, new Date()) : '';
 }
 
 /** フォルダの URL（…/folders/ID、?id=ID）か ID から ID を取り出す（読めなければ空）。 */
