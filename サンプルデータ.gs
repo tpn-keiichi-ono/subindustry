@@ -345,6 +345,8 @@ function addMeetingDummyHistory() {
     return '・' + p.name + '（' + p.since.label + ' ' + Utilities.formatDate(new Date(p.since.at), tz, 'M/d HH:mm') + ' 以降の変化として）\n　' +
       (roles ? roles + '、' : '') + '削除（架空の案件「' + D.removed.customer + '」）' +
       (p.skippedStall ? '\n　停滞は付けません（' + p.skippedStall + '）' : '') +
+      (p.since.copy ? '\n　※ ' + p.since.label + 'の「' + MTG_OPTIONS.copyName + '」があるため、前回からの変化はコピーと比べます。' +
+        'ダミーの記録は前回からの変化には出ません（停滞の日数などにだけ使われます）' : '') +
       (p.existing ? '\n　前に足したダミーの記録 ' + p.existing + '件は消して入れ直します' : '');
   });
   const answer = ui.alert(title, '会議サマリの確認用に、次のダミーの変更の記録を足します。\n\n' + lines.join('\n') + '\n\n' +
@@ -456,7 +458,8 @@ function smpDummySince_(name, now) {
   const list = mtgMeetings_(props, name).filter(m => m.cutoff <= now.getTime());
   if (list.length) {
     const last = list.reduce((a, b) => (b.cutoff > a.cutoff ? b : a));
-    return {at: last.cutoff, label: last.baseline ? '基準' : '前回の資料'};
+    // copy：その時点の会議時点のコピーがある（会議サマリの前回からの変化はコピーと比べるので、ダミーの記録は出ない）
+    return {at: last.cutoff, label: last.baseline ? '基準' : '前回の資料', copy: !!last.copy};
   }
   const legacy = Number(props.getProperty(o.lastKeyPrefix + name)) || 0;
   if (legacy) return {at: legacy, label: '前回の作成'};

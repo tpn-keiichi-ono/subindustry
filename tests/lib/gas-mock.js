@@ -300,6 +300,12 @@ class Range {
   }
 
   setNumberFormat(format) { this.each(cell => { cell.nf = format; }); return this; }
+  getNumberFormats() { return this.map(cell => (cell && cell.nf) || 'General'); }
+  setNumberFormats(matrix) {
+    this.checkShape(matrix);
+    this.each((cell, r, c) => { cell.nf = matrix[r][c] === 'General' ? undefined : matrix[r][c]; });
+    return this;
+  }
   setNote(note) { this.each(cell => { cell.note = String(note); }); return this; }
   getNotes() { return this.map(cell => (cell && cell.note) || ''); }
   setNotes(matrix) {
@@ -575,6 +581,7 @@ class Spreadsheet {
   }
   getId() { return this.id; }
   getName() { return this.name; }
+  getUrl() { return 'https://docs.google.com/spreadsheets/d/' + this.id + '/edit'; }
   getSpreadsheetTimeZone() { return this.timeZone; }
   getSheets() { return this.sheets.slice(); }
   getSheetByName(name) { return this.sheets.find(s => s.name === name) || null; }
@@ -752,6 +759,14 @@ function createGas(options) {
       created.insertSheet('シート1');
       gas.created.push(created);
       return created;
+    },
+    /** 作ったスプレッドシート（gas.created）を開く。ゴミ箱に移したもの・gas.unopenable の ID は開けない */
+    openById(id) {
+      const book = gas.created.find(b => b.getId() === id);
+      if (!book || gas.trashed.indexOf(id) >= 0 || (gas.unopenable || []).indexOf(id) >= 0) {
+        throw new Error('Unexpected error while getting the method or property openById on object SpreadsheetApp.');
+      }
+      return book;
     },
     DataValidationCriteria,
     newDataValidation,

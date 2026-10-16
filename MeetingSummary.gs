@@ -64,6 +64,13 @@ const MTG_OPTIONS = {
   folderId: '1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK',   // 保存先のフォルダの ID（空なら、このスプレッドシートと同じフォルダの中に folderName を作る）
   folderName: '会議サマリ',
   folderKey: 'MTG_FOLDER_ID',         // 作ったフォルダの ID（ドキュメントのプロパティ）
+  // 会議時点のコピー：本番の資料を作ったとき・基準を記録したときに、追跡シートの値を別のスプレッドシート（タイトルは実行日時）に保存する。
+  // 次の資料の「前回からの変化」は、前回のコピーと今のシートを比べて出す（差分追跡が止まっていた間・2,000セルを超える貼り付けの変更も出る）。
+  // 保存先は、会議サマリのフォルダの中の copyFolderName のフォルダ
+  copyName: '会議時点のコピー',       // タイトル（会議時点のコピー_2026-10-16 18:30（会議日 2026-10-23））
+  copyFolderName: '会議時点のコピー',
+  copyFolderKey: 'MTG_COPY_FOLDER_ID', // 作ったフォルダの ID（ドキュメントのプロパティ）
+  copyChunkRows: 500,                 // コピーするときの1回の行数
   // 表紙・扉のひな形（Google スライド。いただいた .pptx を Google スライドにしたもの）。資料はひな形のコピーに作る（ページの大きさもひな形のまま）。
   // ID は setMeetingTemplate() で登録する（ドキュメントのプロパティ templateKey）。templateId を書けば、そちらを使う。どちらも無ければ、ひな形なしで作る
   templateId: '',
@@ -298,16 +305,20 @@ function setMeetingBaseline() {
   const answer = !ui ? null : ui.alert(CRED_OPTIONS.menuTitle,
     '「' + names.join('」「') + '」に、今（' + at + '）を基準として記録します。\n' +
     '次に作る会議サマリは、基準より後の変化だけを出します（今までに貼り付けた案件を「新規」に数えません）。\n' +
+    '今の値は「' + MTG_OPTIONS.copyName + '」（別のスプレッドシート）に保存し、次の資料はそれと比べます。\n' +
     '移行の貼り付けがすべて終わってから実行してください。記録してよろしいですか？', ui.ButtonSet.YES_NO);
   if (ui && answer !== ui.Button.YES) return;
   const props = PropertiesService.getDocumentProperties();
   const date = Utilities.formatDate(now, tz, 'yyyy/MM/dd');
+  const copy = mtgSaveCopy_(ss, names, now, '（基準）');
   names.forEach(name => {
-    const list = mtgMeetings_(props, name).filter(m => !m.baseline).concat([{date, cutoff: now.getTime(), baseline: true}])
+    const list = mtgMeetings_(props, name).filter(m => !m.baseline)
+      .concat([{date, cutoff: now.getTime(), baseline: true, copy: {id: copy.id, sheet: name}}])
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).slice(-MTG_OPTIONS.keepMeetings);
     props.setProperty(MTG_OPTIONS.meetingsKeyPrefix + name, JSON.stringify(list));
   });
-  const message = '「' + names.join('」「') + '」に、基準（' + at + '）を記録しました。次に作る会議サマリは、基準より後の変化を出します。' +
+  const message = '「' + names.join('」「') + '」に、基準（' + at + '）を記録しました。次に作る会議サマリは、基準より後の変化を出します。\n' +
+    '今の値を「' + copy.title + '」に保存しました：' + copy.url +
     (ui ? '' : '（スプレッドシートの画面に出せないため、確かめずにすべての追跡シートに記録しました）');
   console.log(message);
   if (ui) ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
@@ -320,7 +331,7 @@ function setMeetingBaseline() {
 function removeMeetingRecord() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = mtgUi_();
-  const names = mtgAskSheets_(ss, ui, '会議サマリの会議日の記録を取り消します（資料のファイルは消しません）。');
+  const names = mtgAskSheets_(ss, ui, '会議サマリの会議日の記録を取り消します（資料のファイル・会議時点のコピーは消しません）。');
   if (!names) return;
   const props = PropertiesService.getDocumentProperties();
   const recorded = names.map(name => '・' + name + '：' +
@@ -367,13 +378,15 @@ function mtgConfirmFinal_(ui, names, meeting) {
         : legacy ? '前回の資料作成時（' + fmt(legacy) + '）以降'
           : '直近' + MTG_OPTIONS.firstDays + '日間（前回の会議の記録なし）';
     const dummy = smpCountEvents_(SpreadsheetApp.getActiveSpreadsheet(), SMP_OPTIONS.dummy.eventPrefix + '-', name).changes;
-    return '・' + name + '：' + from +
+    const previous = base && (!held || base.cutoff > held.cutoff) ? base : held;
+    return '・' + name + '：' + from + (previous && previous.copy ? '（その時点のコピーと比べる）' : '') +
       (same ? '\n　※ この会議日の資料は ' + fmt(same.cutoff) + ' に作成済み。作り直すと、次の会議の起点が今になります。' : '') +
       (dummy ? '\n　※ ダミーの変更の記録（' + dummy + '件）があります。資料に【ダミーデータを含む】と出ます。配る資料なら、先に removeMeetingDummyHistory() で消してください。' : '');
   });
   const answer = ui.alert(CRED_OPTIONS.menuTitle,
     '本番の資料を作り、会議日を記録します。\n\n会議日：' + p[0] + '/' + p[1] + '/' + p[2] + '（' + week + '）\n対象期間\n' + lines.join('\n') +
-    '\n\n記録した会議日は、次の会議の資料の起点になります。配布したあとは作り直さないでください。\n作成してよろしいですか？', ui.ButtonSet.YES_NO);
+    '\n\n今の値は「' + MTG_OPTIONS.copyName + '」（別のスプレッドシート。タイトルは今の日時）に保存し、次の会議の資料はそれと比べます。' +
+    '\n記録した会議日は、次の会議の資料の起点になります。配布したあとは作り直さないでください。\n作成してよろしいですか？', ui.ButtonSet.YES_NO);
   return answer === ui.Button.YES;
 }
 
@@ -393,12 +406,17 @@ function mtgRun_(final) {
     // 変化が無く、サンプル（addSampleHistory()。会議サマリは数えない）の記録だけがあるときは、資料の確認用の関数を案内する
     const samples = !r.summary.kpi.changed && !r.summary.dummy ? smpCountEvents_(ss, SMP_OPTIONS.eventPrefix + '-', r.summary.name).changes : 0;
     return '「' + r.summary.name + '」：' + r.file.getName() + '（' + mtgCountsText_(r.summary) + '）\n　' + r.file.getUrl() +
+      (r.summary.copy ? '\n　前回からの変化は「' + r.summary.copy.title + '」と比べました。' : '') +
+      (r.summary.copyError ? '\n　※ ' + r.summary.copyError : '') +
+      (r.summary.unlogged ? '\n　※ 変更の記録が無い変更 ' + r.summary.unlogged + '件（差分追跡が止まっていた間などの変更。資料には出しています）。' +
+        'diagnoseDiffState() で差分追跡が動いているか確かめてください。' : '') +
       (gaps.length ? '\n　' + MTG_OPTIONS.gapText + '：' + gaps.join('\n　　') : '') +
       (r.summary.dummy ? '\n　※ ダミーの変更の記録（' + r.summary.dummy + '件）を含みます（資料に【ダミーデータを含む】）。消すときは removeMeetingDummyHistory()。' : '') +
       (samples ? '\n　※ サンプル（addSampleHistory()）の変更の記録 ' + samples + '件は、会議サマリには出ません（基準を変えても出ません）。' +
         '資料の形を確かめるときは、addMeetingDummyHistory() でダミーの変更の記録を足してください。' : '');
   });
   lines.push('', '保存先：' + results[0].folder.getUrl());
+  if (results[0].copy) lines.push('今の値を「' + results[0].copy.title + '」に保存しました（次の会議の資料はこれと比べます）：' + results[0].copy.url);
   if (MTG_OPTIONS.keepSlides) lines.push('同じフォルダに、Google スライド（同じ名前）も保存しました。');
   lines.push(final
     ? '会議日（' + meeting + '）を記録しました。次の会議の資料は、今以降の変化を出します。配るときは、PDF を参加者に共有してください（保存先のフォルダは共有しない）。'
@@ -708,8 +726,11 @@ function mtgCreate_(ss, names, now, final, meeting) {
     statusTable: mtgReadStatusTable_(ss),
     credentials: hsCredentialIndex_(ss)
   };
-  const summaries = plans.map(p => mtgSummarize_(ss, p.name, Object.assign({
-    since: p.since, previous: p.previous, legacy: p.legacy, baseline: p.baseline, draft: p.draft, final
+  // 前回の会議時点のコピーがあれば、前回からの変化はそれと比べる（開けなければ、変更の記録から出して知らせる）
+  const copies = plans.map(p => (p.previous && p.previous.copy ? mtgOpenCopy_(p.previous.copy, p.name) : null));
+  const summaries = plans.map((p, i) => mtgSummarize_(ss, p.name, Object.assign({
+    since: p.since, previous: p.previous, legacy: p.legacy, baseline: p.baseline, draft: p.draft, final,
+    copy: copies[i] && copies[i].table ? copies[i] : null, copyError: copies[i] && copies[i].error || ''
   }, context)));
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
@@ -717,9 +738,13 @@ function mtgCreate_(ss, names, now, final, meeting) {
     const out = mtgExportDeck_(mtgFileName_(summary.name, meeting, final), mtgSlides_(summary), folder);
     return {summary, file: out.pdf, deck: out.deck, folder};
   });
+  // 本番：今の値を会議時点のコピーに保存する（次の会議の資料はこれと比べる）。資料を作れてから保存し、会議日の記録に結び付ける
+  const copy = final ? mtgSaveCopy_(ss, names, now, '（会議日 ' + meeting.replace(/\//g, '-') + '）') : null;
+  results.forEach(r => { r.copy = copy; });
   plans.forEach((p, i) => {
     if (final) {
-      const list = p.meetings.filter(m => m.baseline || m.date !== meeting).concat([{date: meeting, cutoff: now.getTime()}])
+      const list = p.meetings.filter(m => m.baseline || m.date !== meeting)
+        .concat([{date: meeting, cutoff: now.getTime(), copy: {id: copy.id, sheet: p.name}}])
         .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).slice(-o.keepMeetings);
       props.setProperty(o.meetingsKeyPrefix + p.name, JSON.stringify(list));
     } else if (!p.draft) {
@@ -782,6 +807,97 @@ function mtgHash_(text) {
     h = Math.imul(h, 16777619) >>> 0;
   });
   return h.toString(36);
+}
+
+/* ---------------- 会議時点のコピー ---------------- */
+
+/**
+ * 追跡シート（names）の今の値を、新しいスプレッドシート（タイトルは「会議時点のコピー_実行日時」＋ note）に保存する。シートごとに同じ名前のシートにし、
+ * 同じ位置に値だけを写す（数式は計算した値に。文字は先頭に ' を付けて数式にならないように。日付・数値の書式も写す）。
+ * 保存先は mtgCopyFolder_。途中で止まったら作りかけのファイルはゴミ箱に移す。戻り値 {id, title, url}
+ */
+function mtgSaveCopy_(ss, names, now, note) {
+  const o = MTG_OPTIONS;
+  const title = o.copyName + '_' + Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm') + (note || '');
+  const folder = mtgCopyFolder_(ss);
+  const book = SpreadsheetApp.create(title);
+  try {
+    const blank = book.getSheets()[0];
+    names.forEach((name, i) => {
+      const source = ss.getSheetByName(name);
+      if (!source) throw new Error('「' + name + '」シートが見つかりません。');
+      const target = i === 0 ? blank.setName(name) : book.insertSheet(name);
+      const rows = Math.max(source.getLastRow(), 1);
+      const cols = Math.max(source.getLastColumn(), 1);
+      diffEnsureGrid_(target, rows, cols);
+      for (let start = 1; start <= rows; start += o.copyChunkRows) {
+        const count = Math.min(o.copyChunkRows, rows - start + 1);
+        const from = source.getRange(start, 1, count, cols);
+        target.getRange(start, 1, count, cols)
+          .setValues(from.getValues().map(line => line.map(v => (typeof v === 'string' ? credText_(v) : v))))
+          .setNumberFormats(from.getNumberFormats());
+      }
+      diffTrimGrid_(target, cols, rows);
+      const header = DIFF_RULES[name] ? DIFF_RULES[name].headerRow : 1;
+      if (target.getMaxRows() > header) target.setFrozenRows(header);
+    });
+    DriveApp.getFileById(book.getId()).moveTo(folder);
+  } catch (error) {
+    try { DriveApp.getFileById(book.getId()).setTrashed(true); } catch (_) {}
+    throw new Error('会議時点のコピーを保存できませんでした（' + (error && error.message || error) + '）。もう一度お試しください。');
+  }
+  return {id: book.getId(), title, url: book.getUrl()};
+}
+
+/** 会議時点のコピーの保存先（会議サマリのフォルダの中の copyFolderName。作ったフォルダの ID をドキュメントのプロパティに残す） */
+function mtgCopyFolder_(ss) {
+  const props = PropertiesService.getDocumentProperties();
+  const saved = props.getProperty(MTG_OPTIONS.copyFolderKey);
+  if (saved) {
+    try {
+      const folder = DriveApp.getFolderById(saved);
+      if (!folder.isTrashed()) return folder;
+    } catch (_) {}
+  }
+  const folder = mtgFolder_(ss).createFolder(MTG_OPTIONS.copyFolderName);
+  props.setProperty(MTG_OPTIONS.copyFolderKey, folder.getId());
+  return folder;
+}
+
+/**
+ * 前回の会議時点のコピー（copy = {id, sheet}）の、そのシートの案件を読む。{table: mtgReadDeals_ の形, title, url}。
+ * 開けない（消した・権限が無い）・シートや見出しが無いときは {error: 理由}（資料は変更の記録から作る）
+ */
+function mtgOpenCopy_(copy, name) {
+  let book;
+  try {
+    book = SpreadsheetApp.openById(copy.id);
+  } catch (_) {
+    return {error: '前回の「' + MTG_OPTIONS.copyName + '」を開けないため、前回からの変化は変更の記録から出しました（ファイルを消した・権限が無いなど）。'};
+  }
+  const sheet = book.getSheetByName(copy.sheet || name);
+  if (!sheet) return {error: '前回の「' + book.getName() + '」に「' + (copy.sheet || name) + '」シートが無いため、前回からの変化は変更の記録から出しました。'};
+  try {
+    return {table: mtgReadDeals_(sheet, DIFF_RULES[name]), title: book.getName(), url: book.getUrl()};
+  } catch (error) {
+    return {error: '前回の「' + book.getName() + '」を読めないため、前回からの変化は変更の記録から出しました（' + error.message + '）。'};
+  }
+}
+
+/** 追跡範囲（DIFF_RULES の ranges）の列の見出し [{key: 正規化した見出し, header}]（最終更新日時は除く）。コピーと今の行を比べる列 */
+function mtgTrackedLabels_(sheet, rule, headers) {
+  const stamp = diffNormalizeStampHeader_(DIFF_OPTIONS.stampHeader);
+  const out = [];
+  rule.ranges.forEach(a1 => {
+    const range = sheet.getRange(a1);
+    for (let c = range.getColumn(); c <= range.getLastColumn(); c++) {
+      const header = String(headers[c - 1] || '');
+      const key = credNormalize_(header);
+      if (!key || diffNormalizeStampHeader_(header) === stamp || out.some(x => x.key === key)) continue;
+      out.push({key, header});
+    }
+  });
+  return out;
 }
 
 /* ---------------- 読む ---------------- */
@@ -944,7 +1060,13 @@ function mtgReadDeals_(sheet, rule) {
       delivery: text('delivery'),
       record: text('record'),
       updatedAt: stampCol >= 0 ? mtgTime_(values[n][stampCol]) : null,
-      missing: required.filter(r => !String(line[r.col]).trim()).map(r => r.label)
+      missing: required.filter(r => !String(line[r.col]).trim()).map(r => r.label),
+      // 見出し（正規化）→ 表示の値（会議時点のコピーと今の行を比べる用）
+      cells: headers.reduce((map, h, c) => {
+        const key = credNormalize_(h);
+        if (key && !(key in map)) map[key] = String(line[c]).trim();
+        return map;
+      }, {})
     });
   });
   return out;
@@ -975,22 +1097,49 @@ function mtgSummarize_(ss, name, context) {
   const labels = mtgLabels_();
   const statusTable = 'statusTable' in context ? context.statusTable : mtgReadStatusTable_(ss);
   const rank = mtgStatusRank_(table.statusOrder, statusTable);
-  const rules = {rank, statusTable, weightedFormula: table.weightedFormula};
+  const copy = context.copy || null;
+  const rules = {rank, statusTable, weightedFormula: table.weightedFormula, copy: !!copy,
+    tracked: copy ? mtgTrackedLabels_(sheet, DIFF_RULES[name], table.headers) : []};
 
   // 前回からの変化（案件ごとに1つの区分）。行を削除した案件は「削除」
   const changes = [];
   const changed = new Map();
-  byKey.forEach((deal, key) => {
-    const item = mtgChange_(key, deal, null, history.events.get(key) || [], history.states.get(key) || [], since, labels, rules);
-    if (item) { changes.push(item); changed.set(key, item); }
-  });
-  history.removed.forEach(line => {
+  // 削除した行の記録（前回より後）。会議時点のコピーと比べるときは、削除した時刻に使う
+  const removedLines = history.removed.filter(line => line.at > since).map(line => {
     const r = Object.assign(mtgParseRemoved_(line.text, table.headers), {at: line.at});
     r.key = mtgDealKey_(r.customer, r.project);
-    if (r.at <= since || !(r.customer || r.project) || byKey.has(r.key) || changed.has(r.key)) return;
-    const item = mtgChange_(r.key, null, r, history.events.get(r.key) || [], history.states.get(r.key) || [], since, labels, rules);
-    if (item) { changes.push(item); changed.set(r.key, item); }
+    return r;
   });
+  if (copy) {
+    // 前回の会議時点のコピーの行と今の行を、得意先＋案件名で突き合わせる（名前を書き換えた案件は、変更の記録で前の名前とつなげる）。
+    // コピーに無い案件は新規、今のシートに無い案件は削除
+    const before = new Map();
+    copy.table.deals.forEach(d => {
+      const key = history.root(d.key);
+      if (!before.has(key)) before.set(key, d);
+    });
+    byKey.forEach((deal, key) => {
+      const item = mtgChange_(key, deal, null, history.events.get(key) || [], [], since, labels, rules, before.get(key) || null);
+      if (item) { changes.push(item); changed.set(key, item); }
+    });
+    before.forEach((prev, key) => {
+      if (byKey.has(key)) return;
+      const line = removedLines.filter(r => history.root(r.key) === key).pop();
+      const r = Object.assign({}, prev, {key, at: line ? line.at : 0, logged: !!line});
+      const item = mtgChange_(key, null, r, history.events.get(key) || [], [], since, labels, rules, prev);
+      if (item) { changes.push(item); changed.set(key, item); }
+    });
+  } else {
+    byKey.forEach((deal, key) => {
+      const item = mtgChange_(key, deal, null, history.events.get(key) || [], history.states.get(key) || [], since, labels, rules);
+      if (item) { changes.push(item); changed.set(key, item); }
+    });
+    removedLines.forEach(r => {
+      if (!(r.customer || r.project) || byKey.has(r.key) || changed.has(r.key)) return;
+      const item = mtgChange_(r.key, null, r, history.events.get(r.key) || [], history.states.get(r.key) || [], since, labels, rules);
+      if (item) { changes.push(item); changed.set(r.key, item); }
+    });
+  }
   const priority = MTG_MOVE_ORDER.concat(['updated']);
   changes.sort((a, b) => (priority.indexOf(a.category) - priority.indexOf(b.category)) ||
     ((b.amount || 0) - (a.amount || 0)) || (b.at - a.at));
@@ -1044,6 +1193,8 @@ function mtgSummarize_(ss, name, context) {
   const alerts = mtgAlerts_(table, context, {slipsOf, changes, tracked});
   // 作れなかったところ（シートに列が無い・記録が無いなど。資料の型は変えずに、その場所に理由を書く）
   const gaps = mtgGaps_(ss, table, context, stallPending);
+  // 会議時点のコピーでは変わっているのに、変更の記録が無い案件（差分追跡が止まっていた間・2,000セルを超える貼り付けなど）
+  const unlogged = copy && context.trackedSince != null ? changes.filter(c => !c.logged).length : 0;
   let resolved = null;
   if (context.draft) {
     const hashes = alerts.map(a => mtgHash_(a.key));
@@ -1112,7 +1263,10 @@ function mtgSummarize_(ss, name, context) {
     overdue: items.filter(d => d.overdue).sort((a, b) => (b.amount || 0) - (a.amount || 0)),
     alerts,
     resolved,
-    unmatched: history.unmatched,
+    unmatched: copy ? 0 : history.unmatched,   // コピーと比べるときは、変化は記録に頼らない
+    copy: copy ? {title: copy.title, url: copy.url} : null,
+    copyError: context.copyError || '',
+    unlogged,
     dummy: history.dummy || 0
   };
 }
@@ -1127,7 +1281,9 @@ function mtgGaps_(ss, table, context, stallPending) {
   const tz = Session.getScriptTimeZone();
   const column = key => 'シートに「' + String(o.columns[key]).replace(/\s+/g, '') + '」の列が無い';
   const parts = {};
-  if (context.trackedSince == null) parts.changes = '「' + DIFF_OPTIONS.logSheet + '」シートに変更の記録が無い';
+  const noLog = context.trackedSince == null;
+  // 前回の会議時点のコピーと比べるときは、変更の記録が無くても前回からの変化を出せる
+  if (noLog && !context.copy) parts.changes = '「' + DIFF_OPTIONS.logSheet + '」シートに変更の記録が無い';
   ['amount', 'weighted', 'orderMonth', 'activity', 'issue', 'owner', 'record'].forEach(key => {
     if (!table.has[key]) parts[key] = column(key);
   });
@@ -1137,17 +1293,17 @@ function mtgGaps_(ss, table, context, stallPending) {
       day(stallPending.at + o.stallDays * 86400000) + ' から数える）';
   }
   // 変更の記録も最終更新日時の列も無ければ、ステータスが同じ日数が分からない（停滞を数えられない）
-  if (!parts.stalled && parts.changes && !table.hasStamp) parts.stalled = '変更の記録も「最終更新日時」の列も無く、ステータスが同じ日数が分からない';
+  if (!parts.stalled && noLog && !table.hasStamp) parts.stalled = '変更の記録も「最終更新日時」の列も無く、ステータスが同じ日数が分からない';
   const alerts = {};
   if (!ss.getSheetByName(CRED_OPTIONS.logSheet)) alerts['予定日超過'] = '「' + CRED_OPTIONS.logSheet + '」シートが無い';
   if (parts.orderMonth) alerts['受注月超過'] = parts.orderMonth;
   if (parts.record) alerts['資料なし'] = parts.record;
-  if (!table.hasStamp && parts.changes) alerts['更新なし'] = 'シートに「最終更新日時」の列が無く、変更の記録も無い';
+  if (!table.hasStamp && noLog) alerts['更新なし'] = 'シートに「最終更新日時」の列が無く、変更の記録も無い';
   if (parts.amount || parts.weighted) alerts['金額の不整合'] = parts.amount || parts.weighted;
   if (parts.orderMonth || !table.has.startMonth) alerts['月の不整合'] = parts.orderMonth || column('startMonth');
   if (!table.statusOrder.length) alerts['選択肢外のステータス'] = '「' + o.columns.status + '」の列にプルダウンが無い';
   if (!table.has.delivery) alerts['デリバリー担当なし'] = column('delivery');
-  else if (parts.changes) alerts['デリバリー担当なし'] = parts.changes;
+  else if (noLog) alerts['デリバリー担当なし'] = '「' + DIFF_OPTIONS.logSheet + '」シートに変更の記録が無い';
   return {parts, alerts};
 }
 
@@ -1251,7 +1407,7 @@ function mtgHistory_(name, context) {
     states.get(key).push({at: snap.at, values: snap.values});
   });
   states.forEach(list => list.sort((a, b) => a.at - b.at));
-  return {events, removed, unmatched, states, dummy};
+  return {events, removed, unmatched, states, dummy, root};
 }
 
 /**
@@ -1302,10 +1458,14 @@ function mtgStatusRank_(statusOrder, statusTable) {
  *   ステータス・想定売上が変わっていなければ今の値、変わっていれば、シートの数式と同じく前回の想定売上 × 前回のステータスの率（statusTable）
  * rules = {rank: ステータスの進み具合, statusTable, weightedFormula: 期待値の列が数式か}。states は案件のスナップショット（古い順）
  */
-function mtgChange_(key, deal, removed, events, states, since, labels, rules) {
+function mtgChange_(key, deal, removed, events, states, since, labels, rules, prev) {
   const recent = events.filter(e => e.at > since);   // 前回の資料を作った時刻ちょうどの記録は、前回の資料に入っている
-  if (!recent.length && !removed) return null;
-  const born = recent.some(e => e.born);
+  // 会議時点のコピーと比べるとき（rules.copy）：prev はコピーの行（無ければ null：前回は無かった案件）。値が同じなら変化なし
+  const byCopy = !!rules.copy;
+  const differ = byCopy && deal && prev
+    ? rules.tracked.filter(t => (prev.cells[t.key] || '') !== (deal.cells[t.key] || '')).map(t => t.header) : [];
+  if (byCopy ? deal && prev && !differ.length : !recent.length && !removed) return null;
+  const born = !byCopy && recent.some(e => e.born);
   if (born && removed) return null;   // 前回より後に足して、消した行
   const cur = deal || removed;
   const pick = (label, value, parse) => {
@@ -1314,7 +1474,10 @@ function mtgChange_(key, deal, removed, events, states, since, labels, rules) {
   };
   const prior = states.filter(st => st.at <= since).pop();
   let base = null;
-  if (born) {
+  if (byCopy) {
+    base = prev ? {source: 'copy', status: prev.status, amount: prev.amount, weighted: prev.weighted, monthText: prev.orderMonthText,
+      activity: prev.activity || ''} : null;
+  } else if (born) {
     base = null;
   } else if (prior) {
     base = Object.assign({source: 'snapshot'}, prior.values);
@@ -1357,10 +1520,12 @@ function mtgChange_(key, deal, removed, events, states, since, labels, rules) {
     if (!flags.length) flags.push('updated');
   }
   const category = MTG_CATEGORIES.find(c => flags.indexOf(c.key) >= 0).key;
-  const columns = [];
-  recent.forEach(e => {
-    if (e.column && e.column !== '（行全体）' && columns.indexOf(e.column) < 0) columns.push(e.column);
-  });
+  const columns = byCopy ? differ.slice() : [];
+  if (!byCopy) {
+    recent.forEach(e => {
+      if (e.column && e.column !== '（行全体）' && columns.indexOf(e.column) < 0) columns.push(e.column);
+    });
+  }
   return {
     key, category, flags, base,
     customer: cur.customer, project: cur.project,
@@ -1377,7 +1542,9 @@ function mtgChange_(key, deal, removed, events, states, since, labels, rules) {
     activity: deal ? deal.activity : '',
     issue: deal ? deal.issue : '',
     columns,
-    at: Math.max.apply(null, recent.map(e => e.at).concat([removed ? removed.at : 0]))
+    // 変更の記録があるか（コピーと比べたとき、記録の無い変化を知らせる）
+    logged: recent.length > 0 || !!(removed && removed.logged),
+    at: Math.max.apply(null, recent.map(e => e.at).concat([removed ? removed.at || 0 : 0, !recent.length && deal ? deal.updatedAt || 0 : 0]))
   };
 }
 
@@ -1721,7 +1888,7 @@ function mtgCoverSlide_(s) {
     template: {title: s.name, subtitle: o.meetingName + '　事前資料' + (s.final ? '' : '【試作】'),
       date: mtgDateLabel_(s.meeting), name: ''},
     elements: [
-      line(350, '出典：「' + s.name + '」シートおよび変更履歴（' + (s.dummy ? 'ダミーデータを含む。' : '') +
+      line(350, '出典：「' + s.name + '」シート' + (s.copy ? '・前回の会議時点のコピー' : '') + 'および変更履歴（' + (s.dummy ? 'ダミーデータを含む。' : '') +
         Utilities.formatDate(s.now, Session.getScriptTimeZone(), 'yyyy/M/d HH:mm') + ' 時点）'),
       line(365, '対象期間：' + mtgPeriodText_(s))
     ]
@@ -2346,7 +2513,9 @@ function mtgAppendixChanges_(s) {
     title: MTG_TITLES.changes,
     lead: lack.changes ? mtgChangedLabel_(s) + 'は' + MTG_OPTIONS.gapText + '（' + lack.changes + '）。'
       : mtgChangedLabel_(s) + 'は ' + s.kpi.changed + '件' + mtgUpdatedNote_(s) + '。' +
-        (s.unmatched ? '\n案件と照合できなかった変更記録 ' + s.unmatched + '件は集計対象外。' : ''),
+        (s.unmatched ? '\n案件と照合できなかった変更記録 ' + s.unmatched + '件は集計対象外。' : '') +
+        (s.unlogged ? '\nうち ' + s.unlogged + '件は変更の記録が無い（前回の会議時点のコピーとの比較で検出）。' : '') +
+        (s.copyError ? '\n前回の会議時点のコピーを開けないため、変更の記録から集計。' : ''),
     columns,
     head: ['得意先／案件名', '区分', 'ステータス\n前回▶今回', '期待値\n前回▶今回', '受注月\n前回▶今回', '活動状況（最新）', '更新項目', '責任者'],
     rows: s.changes.map(ch => [

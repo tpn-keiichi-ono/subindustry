@@ -104,6 +104,7 @@ function summarize(g, name, options) {
   const windowStart = new Date(Date.now() - 180 * 86400000);
   return g.mtgSummarize_(ss, name, {
     since, previous: null, legacy: null, baseline: o.baseline || null, draft: o.draft || null, final: true, now, meeting: '2026/10/23', windowStart,
+    copy: o.copy || null, copyError: '',
     trackedSince: 'trackedSince' in o ? o.trackedSince : g.mtgLogStart_(ss),
     log: g.mtgReadLog_(ss, windowStart),
     snapshots: g.mtgReadSnapshots_(ss, windowStart),
@@ -1053,6 +1054,105 @@ test('表紙・扉の背景の画像を付けられなくても、資料は作�
   assert.ok(gas.decks[0].requests.some(r => r.updatePageProperties), '背景は緑一色');
 });
 
+/* ---------------- 会議時点のコピー ---------------- */
+
+test('mtgSaveCopy_：追跡シートの値を、実行日時のタイトルの別のスプレッドシートに写す（文字は数式にならない。書式・見出しの固定も）', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  gas.asUser(() => sheet.getRange(3, COL.issue).setValue("'=SUM(1)"));   // 「=」で始まる文字
+  sheet.getRange(7, COL.stamp).setNumberFormat('yyyy/MM/dd HH:mm');
+  const now = new Date(Date.UTC(2026, 9, 16, 9, 30));   // 日本時間 2026/10/16 18:30
+  const copy = g.mtgSaveCopy_(gas.ss, ['新FMT', '新FMT2'], now, '（会議日 2026-10-23）');
+  assert.strictEqual(copy.title, '会議時点のコピー_2026-10-16 18:30（会議日 2026-10-23）');
+  const book = gas.created[0];
+  assert.deepStrictEqual([book.getId(), book.getName()], [copy.id, copy.title]);
+  assert.deepStrictEqual(book.getSheets().map(t => t.getName()), ['新FMT', '新FMT2'], '追跡シートごとに同じ名前のシート');
+  const target = book.getSheetByName('新FMT');
+  const rows = sheet.getLastRow();
+  const cols = sheet.getLastColumn();
+  assert.deepStrictEqual(plain(target.getRange(1, 1, rows, cols).getDisplayValues()), plain(sheet.getRange(1, 1, rows, cols).getDisplayValues()),
+    '同じ位置に、同じ表示の値');
+  assert.deepStrictEqual([target.getRange(3, COL.issue).getFormula(), target.getRange(3, COL.issue).getValue()], ['', '=SUM(1)'], '文字のまま（数式にしない）');
+  assert.ok(target.getRange(7, COL.stamp).getValue() instanceof gas.Date, '日付は日付のまま');
+  assert.strictEqual(target.getFrozenRows(), 2, '見出しの行まで固定');
+  assert.deepStrictEqual([target.getMaxRows(), target.getMaxColumns()], [rows, cols], '使わない行・列は持たない');
+  assert.deepStrictEqual(plain(gas.driveFolders), [{id: 'folder-1', name: '会議時点のコピー', parent: gas.get('MTG_OPTIONS').folderId}], '会議サマリのフォルダの中のフォルダ');
+  assert.deepStrictEqual(plain(gas.moved), [{id: copy.id, folder: 'folder-1'}]);
+  g.mtgSaveCopy_(gas.ss, ['新FMT'], now, '');
+  assert.strictEqual(gas.driveFolders.length, 1, '2回目からは同じフォルダ');
+  assert.deepStrictEqual(gas.writes.filter(w => w.ss === gas.ss.getId()), [], '元のスプレッドシートには書き込まない');
+});
+
+test('前回からの変化を会議時点のコピーと比べる：差分追跡を通らなかった変更（止まっていた間など）も出し、記録の無い変更として数える', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  const copy = g.mtgSaveCopy_(gas.ss, ['新FMT'], new Date(), '');
+  g.recordDiffEdit(gas.edit(sheet, 'J3', '10/10 提案書を提出'));   // A社：活動状況（記録あり）
+  // ここからは差分追跡を通らない変更（止まっていた間の変更の代わり）
+  gas.asUser(() => {
+    sheet.getRange(7, COL.status).setValue('受注見込み');        // E社：提案中 → 受注見込み（前進）
+    sheet.getRange(5, COL.status).setValue('失注');              // C社：失注
+    sheet.getRange(4, COL.issue).setValue('請求の確認');          // B社：ほかの項目だけ
+    sheet.deleteRow(8);                                        // F社：削除
+    sheet.getRange(8, COL.customer, 1, 3).setValues([['G社', '新規案件', '初回訪問']]);   // G社：新規
+  });
+  const opened = g.mtgOpenCopy_({id: copy.id, sheet: '新FMT'}, '新FMT');
+  assert.strictEqual(opened.title, copy.title);
+  const s = summarize(g, '新FMT', {copy: opened});
+  const byLabel = {};
+  s.changes.forEach(c => { byLabel[label(c)] = c; });
+  assert.deepStrictEqual(Object.keys(byLabel).sort().map(k => [k, byLabel[k].category]), [
+    ['A社／アプリ刷新', 'activity'], ['B社／EC立ち上げ', 'updated'], ['C社／店舗什器', 'lost'], ['E社／販促DX', 'forward'],
+    ['F社／ブランド刷新', 'removed'], ['G社／新規案件', 'new']]);
+  assert.deepStrictEqual(plain(byLabel['B社／EC立ち上げ'].columns), ['活動における課題'], '更新項目はコピーと違う列');
+  assert.deepStrictEqual([byLabel['F社／ブランド刷新'].statusFrom, byLabel['F社／ブランド刷新'].amount], ['提案中', 10], '削除した案件はコピーの値');
+  assert.strictEqual(s.unlogged, 5, 'A社のほかは変更の記録が無い');
+  assert.ok(byLabel['A社／アプリ刷新'].logged);
+  assert.strictEqual(s.gaps.changes, undefined);
+  assert.deepStrictEqual(plain(s.copy), {title: copy.title, url: opened.url});
+  assert.match(g.mtgAppendixChanges_(s)[0].lead, /うち 5件は変更の記録が無い（前回の会議時点のコピーとの比較で検出）。/);
+  assert.match(JSON.stringify(g.mtgCoverSlide_(s).elements), /出典：「新FMT」シート・前回の会議時点のコピーおよび変更履歴/);
+  // 期待値の増減もコピーの値から：C社（5）が失注、F社（3）が削除、G社は期待値なし
+  assert.strictEqual(s.bridge.start, 10 + 5 + 40 + 3);
+  assert.strictEqual(s.bridge.end, 10 + 40);
+});
+
+test('会議時点のコピーと比べるとき：得意先・案件名を書き換えた案件は、変更の記録で前の名前とつなげる（新規・削除にしない）。値が戻っていれば変化なし', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  const copy = g.mtgSaveCopy_(gas.ss, ['新FMT'], new Date(), '');
+  g.recordDiffEdit(gas.edit(sheet, 'E3', 'アプリ刷新（第2期）'));
+  g.recordDiffEdit(gas.edit(sheet, 'J5', '一時的な変更'));
+  g.recordDiffEdit(gas.edit(sheet, 'J5', '見積提出'));   // 元に戻した
+  const s = summarize(g, '新FMT', {copy: g.mtgOpenCopy_({id: copy.id, sheet: '新FMT'}, '新FMT')});
+  assert.deepStrictEqual(plain(s.changes.map(c => [label(c), c.category, c.columns.join('・')])),
+    [['A社／アプリ刷新（第2期）', 'updated', '案件名']]);
+});
+
+test('前回の会議時点のコピーを開けないときは、変更の記録から出して知らせる。試作はコピーを保存せず、基準は保存する', () => {
+  const {gas, g, sheet} = setup();
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewMeetingSummaries();
+  assert.strictEqual(gas.created.length, 0, '試作はコピーを保存しない');
+  gas.promptAnswers = ['1', '10/23'];
+  g.createMeetingSummaries();
+  assert.strictEqual(gas.created.length, 1);
+  const props = g.PropertiesService.getDocumentProperties();
+  assert.deepStrictEqual(plain(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT'))[0].copy), {id: gas.created[0].getId(), sheet: '新FMT'});
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /今の値を「会議時点のコピー_.*（会議日 \d{4}-10-23）」に保存しました（次の会議の資料はこれと比べます）：https:\/\/docs\.google\.com\/spreadsheets\/d\/created-1\/edit/);
+
+  g.recordDiffEdit(gas.edit(sheet, 'F7', '受注見込み'));
+  gas.unopenable = [gas.created[0].getId()];
+  gas.promptAnswers = ['1', '10/30'];
+  g.previewMeetingSummaries();
+  const done = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(done, /前回の「会議時点のコピー」を開けないため、前回からの変化は変更の記録から出しました/);
+  assert.match(done, /（変化のある案件 1・/, '変更の記録から出す');
+
+  gas.promptAnswers = ['1'];
+  g.setMeetingBaseline();
+  assert.match(gas.created[gas.created.length - 1].getName(), /^会議時点のコピー_\d{4}-\d{2}-\d{2} \d{2}:\d{2}（基準）$/);
+  const base = JSON.parse(props.getProperty('MTG_MEETINGS_新FMT')).find(m => m.baseline);
+  assert.deepStrictEqual(plain(base.copy), {id: gas.created[gas.created.length - 1].getId(), sheet: '新FMT'});
+});
+
 /* ---------------- 作る・保存する ---------------- */
 
 test('createMeetingSummaries：シートと会議日を聞き、シートごとに Google スライド（16:9）と PDF を保存する。会議日を記録し、次の会議は今以降の変化を出す', () => {
@@ -1078,13 +1178,14 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   const batches = gas.decks[0].batches;
   assert.ok(batches.length >= 2 && batches.length < 8, '何枚かずつまとめて送る（' + batches.length + '回）');
   assert.ok(requests.findIndex(r => r.deleteObject) < batches[0], '白紙のスライドは1回目で消す');
-  assert.deepStrictEqual(plain(gas.driveFolders), [{id: 'folder-1', name: '会議サマリ', parent: 'parent-of-spreadsheet-id'}],
-    'スプレッドシートと同じフォルダの中に作る');
+  assert.deepStrictEqual(plain(gas.driveFolders), [{id: 'folder-1', name: '会議サマリ', parent: 'parent-of-spreadsheet-id'},
+    {id: 'folder-2', name: '会議時点のコピー', parent: 'folder-1'}], 'スプレッドシートと同じフォルダの中に作る（会議時点のコピーはその中のフォルダ）');
   assert.deepStrictEqual(gas.driveFiles.map(f => [f.name, f.folder, f.blob.from, f.blob.getContentType()]), [
     ['会議サマリ_新FMT_' + file + '.pdf', 'folder-1', 'deck-1', 'application/pdf'],
     ['会議サマリ_新FMT2_' + file + '.pdf', 'folder-1', 'deck-2', 'application/pdf']
   ]);
-  assert.deepStrictEqual(plain(gas.moved), [{id: 'deck-1', folder: 'folder-1'}, {id: 'deck-2', folder: 'folder-1'}], 'スライドも同じフォルダに残す');
+  assert.deepStrictEqual(plain(gas.moved), [{id: 'deck-1', folder: 'folder-1'}, {id: 'deck-2', folder: 'folder-1'}, {id: 'created-1', folder: 'folder-2'}],
+    'スライドも同じフォルダに残す。会議時点のコピーは、その中のフォルダ');
   // ひな形が無いので、表紙（1枚目）と扉（6枚目）の背景を、緑のグラデーションと RX の画像にする（PDF にする前に保存する）
   assert.deepStrictEqual(gas.slideBackgrounds.map(b => [b.deck, b.page, b.blob.getContentType()]), [
     ['deck-1', 'mtg_p1', 'image/png'], ['deck-1', 'mtg_p6', 'image/png'], ['deck-2', 'mtg_p1', 'image/png'], ['deck-2', 'mtg_p6', 'image/png']]);
@@ -1115,7 +1216,8 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   gas.promptAnswers = ['1', '10/30'];
   g.createMeetingSummaries();
   assert.match(gas.prompts[3].message, new RegExp('・新FMT：' + meeting + '$'));
-  assert.strictEqual(gas.driveFolders.length, 1);
+  assert.strictEqual(gas.driveFolders.length, 2);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /前回からの変化は「会議時点のコピー_\d{4}-\d{2}-\d{2} \d{2}:\d{2}（会議日 \d{4}-10-23）」と比べました。/);
   assert.match(gas.alerts[gas.alerts.length - 1].message, /「新FMT」：.*（変化のある案件 1・停滞 0・確認事項 2）/);
   assert.deepStrictEqual(gas.driveFiles.slice(2).map(f => f.name.replace(/_\d{4}-\d{2}-\d{2}/, '')), ['会議サマリ_新FMT.pdf'], '選んだシートだけ作る');
   // 同じ会議日で作り直しても、前回（10/23）からの変化（作った日時だけ上書き）。作り直す前に、作成済みであることを知らせる
@@ -1123,7 +1225,7 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   gas.promptAnswers = ['1', '10/30'];
   g.createMeetingSummaries();
   assert.match(gas.alerts.filter(a => /本番の資料を作り/.test(a.message)).pop().message,
-    /・新FMT：前回会議（10\/23）の資料作成時（\d{1,2}\/\d{1,2} \d{2}:\d{2}）以降\n　※ この会議日の資料は \d{1,2}\/\d{1,2} \d{2}:\d{2} に作成済み。作り直すと、次の会議の起点が今になります。/);
+    /・新FMT：前回会議（10\/23）の資料作成時（\d{1,2}\/\d{1,2} \d{2}:\d{2}）以降（その時点のコピーと比べる）\n　※ この会議日の資料は \d{1,2}\/\d{1,2} \d{2}:\d{2} に作成済み。作り直すと、次の会議の起点が今になります。/);
   assert.match(gas.alerts[gas.alerts.length - 1].message, /（変化のある案件 1・/);
   assert.deepStrictEqual(gas.trashed.slice().sort(), [before.deck, before.pdf].sort(), '同じ名前の古い版（スライド・PDF）はゴミ箱に移す（古い版を配らないように）');
   assert.ok(gas.trashed.indexOf(gas.decks[gas.decks.length - 1].id) < 0 && gas.trashed.indexOf(gas.driveFiles[gas.driveFiles.length - 1].id) < 0, '新しい版は残す');
@@ -1221,7 +1323,7 @@ test('スプレッドシートの画面に出せないとき（エディタを�
   g.setMeetingBaseline();
   const props = g.PropertiesService.getDocumentProperties();
   assert.deepStrictEqual(['新FMT', '新FMT2'].map(name => JSON.parse(props.getProperty('MTG_MEETINGS_' + name)).map(m => !!m.baseline)), [[true], [true]]);
-  assert.ok(gas.logs.some(l => /「新FMT」「新FMT2」に、基準（.*）を記録しました。.*確かめずにすべての追跡シートに記録しました/.test(l.line)), '実行ログに書く');
+  assert.ok(gas.logs.some(l => /「新FMT」「新FMT2」に、基準（.*）を記録しました。[\s\S]*確かめずにすべての追跡シートに記録しました/.test(l.line)), '実行ログに書く');
   assert.deepStrictEqual([gas.prompts.length, gas.alerts.length], [0, 0]);
   ['createMeetingSummaries', 'previewMeetingSummaries', 'removeMeetingRecord', 'setMeetingChat', 'notifyMeetingSummaries', 'setMeetingTemplate'].forEach(fn => {
     if (fn === 'notifyMeetingSummaries') {
