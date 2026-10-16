@@ -125,3 +125,20 @@ test('removeSampleHistory：記録のシートにサンプルしか無くても�
   [CRED_LOG, DIFF_LOG, SNAP].forEach(name => assert.strictEqual(gas.records(name).length, 0, name));
   assert.match(gas.alerts[gas.alerts.length - 1].message, /削除しました/);
 });
+
+test('addSampleHistory：選んだ行に得意先の空の行（案件の無い行）があれば飛ばし、案件のある行だけに追加する。1行も無ければ、選ぶ行と会議サマリ用の関数を案内する', () => {
+  const {gas, g, sheet} = setupProject();
+  sheet.getRange('D5').setValue('');   // 5行目：得意先が空（案件の無い行）
+  gas.select(sheet, 'E3:E5');
+  g.addSampleHistory();
+  assert.match(gas.alerts[0].message, /次の得意先に、サンプルの履歴を追加します（2件）。/);
+  assert.match(gas.alerts[0].message, /サンプルは会議サマリには出ません（会議サマリの確認用のダミーデータは addMeetingDummyHistory\(\)）/);
+  assert.strictEqual(gas.records(DIFF_LOG).filter(r => r['イベントID'].startsWith('SMP-')).length, 10, '2件の得意先に5件ずつ');
+
+  gas.alerts.length = 0;
+  gas.select(sheet, 'E5');
+  g.addSampleHistory();
+  assert.strictEqual(gas.alerts.length, 1);
+  assert.match(gas.alerts[0].message, /^選んだ行（5行目）に、「得意先」が入力された行がありません。案件のある行を選んでから実行してください。\n/);
+  assert.match(gas.alerts[0].message, /addMeetingDummyHistory\(\) を実行してください（行を選ぶ必要はありません）/);
+});

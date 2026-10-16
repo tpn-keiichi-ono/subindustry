@@ -85,7 +85,8 @@ function addSampleHistory() {
       '・クレデンシャル ' + SMP_OPTIONS.credentials.length + '件\n' +
       '・オファリング ' + SMP_OPTIONS.offerings.length + '件\n' +
       '・変更の記録 ' + SMP_OPTIONS.changes.length + '件\n\n' +
-      'シートのセルの値は変わりません。サンプルは、エディタで removeSampleHistory を実行すると消せます。追加しますか？',
+      'シートのセルの値は変わりません。サンプルは、エディタで removeSampleHistory を実行すると消せます。\n' +
+      '※ サンプルは会議サマリには出ません（会議サマリの確認用のダミーデータは addMeetingDummyHistory()）。追加しますか？',
       ui.ButtonSet.YES_NO);
     if (answer !== ui.Button.YES) return;
 
@@ -133,13 +134,21 @@ function removeSampleHistory() {
 
 /* ---------------- 追加 ---------------- */
 
-/** 選んでいる行から、得意先ごとに1つずつ対象を返す。 */
+/**
+ * 選んでいる行から、得意先ごとに1つずつ対象を返す。得意先が空の行（案件の無い行）は飛ばし、1行も無ければ、選ぶ行と
+ * 会議サマリ用のダミーデータの関数を案内して止める。
+ */
 function smpSelectedTargets_(sheet) {
   const range = sheet.getActiveRange();
   if (!range) throw new Error('対象行のセルを選択してください。');
+  const rule = DIFF_RULES[sheet.getName()];
   const targets = [];
   const seen = new Set();
   for (let row = range.getRow(); row <= range.getLastRow(); row++) {
+    if (rule && row > rule.headerRow && row <= sheet.getMaxRows()) {
+      const customerColumn = credColumnByHeader_(sheet, rule, CRED_OPTIONS.customerHeader);
+      if (!sheet.getRange(row, customerColumn).getDisplayValue().trim()) continue;   // 得意先が空の行は飛ばす
+    }
     const target = credResolveTarget_(sheet, row);
     const key = credNormalize_(target.customer);
     if (seen.has(key)) continue;
@@ -148,6 +157,11 @@ function smpSelectedTargets_(sheet) {
     if (targets.length > SMP_OPTIONS.maxRows) {
       throw new Error('一度に追加できるのは ' + SMP_OPTIONS.maxRows + '件の得意先までです。選ぶ行を減らしてください。');
     }
+  }
+  if (!targets.length) {
+    throw new Error('選んだ行（' + range.getRow() + (range.getLastRow() > range.getRow() ? '〜' + range.getLastRow() : '') + '行目）に、' +
+      '「' + CRED_OPTIONS.customerHeader + '」が入力された行がありません。案件のある行を選んでから実行してください。\n' +
+      '会議サマリの確認用のダミーの変更の記録を足すときは、addMeetingDummyHistory() を実行してください（行を選ぶ必要はありません）。');
   }
   return targets;
 }
@@ -461,15 +475,40 @@ function smpAddDummy_(ss, plan, now) {
   const schema = diffSnapshotSchema_(sheet, rule);
   const number = n => (n == null ? '' : String(Math.round(n * 10) / 10));
   const ratio = status => mtgStatusRatio_(plan.statusTable, status);
+  // 月を delta か月ずらした表示（シートの表示の形のまま：「2026/9」→「2026/8」、「2026/09」→「2026/08」、「2026年9月」→「2026年8月」）
   const shiftMonth = (text, delta) => {
     const m = mtgMonth_(text);
     if (!m) return '';
     const index = mtgMonthIndex_(m) + delta;
     const y = Math.floor((index - 1) / 12);
     const month = index - y * 12;
-    return /年/.test(text) ? y + '年' + month + '月' : y + '/' + String(month).padStart(2, '0');
+    if (/年/.test(text)) return y + '年' + month + '月';
+    return y + '/' + (/^\s*\d{4}\s*[\/\-.]\s*0\d/.test(String(text).normalize('NFKC')) ? String(month).padStart(2, '0') : month);
   };
-  const shown = (row, key) => (columnOf(key) ? String(sheet.getRange(row, columnOf(key)).getDisplayValue()) : '');
+  // 変更の記録の値と種類（差分追跡と同じ形：日時は DIFF_OPTIONS.dateFormat の文字、数は数の文字、空欄は「空欄」（記録のシートには「（空欄）」と出る））
+  const token = value => {
+    if (value === '' || value == null) return {type: '空欄', text: ''};
+    if (typeof value.getTime === 'function') return {type: '日時', text: Utilities.formatDate(value, tz, DIFF_OPTIONS.dateFormat)};
+    if (typeof value === 'number') return {type: '数値', text: String(value)};
+    if (typeof value === 'boolean') return {type: '真偽値', text: String(value)};
+    return {type: '文字列', text: String(value)};
+  };
+  const valueOf = (row, key) => sheet.getRange(row, columnOf(key)).getValue();
+  // 日付を delta か月ずらす（スクリプトのタイムゾーンで。日は 28日まで）
+  const addMonths = (date, delta) => {
+    const p = Utilities.formatDate(date, tz, 'yyyy-M-d-HH-mm-ss').split('-').map(Number);
+    const index = p[0] * 12 + (p[1] - 1) + delta;
+    const pad = n => String(n).padStart(2, '0');
+    return Utilities.parseDate(Math.floor(index / 12) + '/' + pad(index % 12 + 1) + '/' + pad(Math.min(p[2], 28)) + ' ' +
+      pad(p[3]) + ':' + pad(p[4]) + ':' + pad(p[5]), tz, 'yyyy/MM/dd HH:mm:ss');
+  };
+  // 前回の値の、記録に書く値：受注月は今の値が日付なら1か月前の日付、想定売上・期待値は数（スナップショットには表示の形 prev[key] を書く）
+  const typedPrev = (row, key, display) => {
+    const cur = valueOf(row, key);
+    if (key === 'orderMonth' && cur && typeof cur.getTime === 'function') return addMonths(cur, -1);
+    if ((key === 'amount' || key === 'weighted') && display !== '' && !isNaN(Number(display))) return Number(display);
+    return display;
+  };
 
   // 区分ごとの前回の値 {見出しのキー: 表示の値}（今の値と違う項目だけ）
   const prevOf = d => {
@@ -512,8 +551,12 @@ function smpAddDummy_(ss, plan, now) {
     changes.push({at, records: list});
     if (row) snapshots.push({at, eventId, row, cells: list.map(r => r.cell).join(', '), overrides: overrides || {}});
   };
-  const edit = (row, key, before, after) => ({cell: diffA1_(row, columnOf(key)), columnName: names[columnOf(key) - 1],
-    kind: (before ? '文字列' : '空欄') + ' -> ' + (after ? '文字列' : '空欄') + D.kindSuffix, before, after});
+  const edit = (row, key, before, after) => {
+    const b = token(before);
+    const a = token(after);
+    return {cell: diffA1_(row, columnOf(key)), columnName: names[columnOf(key) - 1], kind: b.type + ' -> ' + a.type + D.kindSuffix,
+      before: b.text, after: a.text};
+  };
   const keys = ['status', 'amount', 'weighted', 'orderMonth', 'activity'];
 
   // 前回より後の変更の時刻：前回の1分後から今の1分前まで、等しい間隔で
@@ -527,34 +570,35 @@ function smpAddDummy_(ss, plan, now) {
     const row = d.row;
     if (d.role === 'new') {
       event(nextAt(), [{cell: row + '行', columnName: '（行全体）', kind: DIFF_ROW_OPTIONS.kindInsert, before: '',
-        after: smpRowSummary_(sheet, rule, row, names)}], row);
+        after: smpRowSummary_(sheet, rule, row, token)}], row);
       return;
     }
     const prev = prevOf(d);
     if (/^stall/.test(d.role)) {
       // ステータスを stallDays 日前に変えた記録（停滞の日数の起点）
-      event(now.getTime() - D.stallDays[d.role] * 86400000, [edit(row, 'status', plan.step(d.status, -1) || '', d.status)], row, pastOf(d, prev));
+      event(now.getTime() - D.stallDays[d.role] * 86400000, [edit(row, 'status', plan.step(d.status, -1) || '', valueOf(row, 'status'))], row,
+        pastOf(d, prev));
       if (d.role === 'stall') return;
     }
     // 前回の時点（前回の1秒前。前回より前でいちばん新しいスナップショットになる）：前回の値の行。
     // 記録は、そのときの活動状況の書き込み（列が無ければ、最初に変わる項目。ステータスの記録にしないのは、停滞の日数を変えないため）
     const first = prev.activity != null ? 'activity' : keys.find(key => prev[key] != null && columnOf(key));
-    event(plan.since.at - 1000, [edit(row, first, '', prev[first])], row, pastOf(d, prev));
+    event(plan.since.at - 1000, [edit(row, first, '', typedPrev(row, first, prev[first]))], row, pastOf(d, prev));
     // 前回より後：前回の値 → 今の値（期待値の列が数式なら、期待値の記録は無い。スナップショットに出る）
     const records = keys.filter(key => prev[key] != null && columnOf(key) && !(key === 'weighted' && table.weightedFormula))
-      .map(key => edit(row, key, prev[key], shown(row, key)));
+      .map(key => edit(row, key, typedPrev(row, key, prev[key]), valueOf(row, key)));
     event(nextAt(), records, row);
   });
 
-  // 削除：シートに無い架空の案件の行を消した記録
+  // 削除：シートに無い架空の案件の行を消した記録（差分追跡の行の削除の記録と同じ形。列の順に「見出し: 値」）
   const R = D.removed;
   const status = plan.lowest;
   const r = ratio(status);
-  const sample = (table.deals.find(d => d.orderMonth) || {}).orderMonthText || Utilities.formatDate(now, tz, 'yyyy/MM');
-  const month = shiftMonth(sample, mtgMonthIndex_(mtgMonth_(Utilities.formatDate(now, tz, 'yyyy/MM'))) + 1 - mtgMonthIndex_(mtgMonth_(sample)));
-  const removedText = [['customer', R.customer], ['project', R.project], ['status', status], ['amount', number(R.amount)],
-    ['weighted', r != null ? number(R.amount * r) : ''], ['orderMonth', month], ['owner', R.owner]]
-    .filter(([key, value]) => value && columnOf(key)).map(([key, value]) => names[columnOf(key) - 1] + ': ' + value).join('\n');
+  const next = addMonths(Utilities.parseDate(Utilities.formatDate(now, tz, 'yyyy/MM') + '/01 00:00:00', tz, 'yyyy/MM/dd HH:mm:ss'), 1);   // 受注月は来月の1日
+  const removedText = [['customer', R.customer], ['project', R.project], ['status', status], ['amount', R.amount],
+    ['weighted', r != null ? Math.round(R.amount * r * 10) / 10 : ''], ['orderMonth', next], ['owner', R.owner]]
+    .filter(([key, value]) => value !== '' && columnOf(key)).sort((a, b) => columnOf(a[0]) - columnOf(b[0]))
+    .map(([key, value]) => names[columnOf(key) - 1] + ': ' + token(value).text).join('\n');
   event(nextAt(), [{cell: (sheet.getLastRow() + 1) + '行（削除前の行番号）', columnName: '（行全体）', kind: DIFF_ROW_OPTIONS.kindDelete,
     before: removedText, after: ''}], 0);
 
@@ -563,12 +607,21 @@ function smpAddDummy_(ss, plan, now) {
   return {name: plan.name, changes: changes.reduce((sum, c) => sum + c.records.length, 0), snapshots: snapshots.length};
 }
 
-/** 行の追加・削除の記録の、行の内容（「見出し: 値」を改行でつなぐ。差分追跡の行の追加の記録と同じ形）。追跡範囲の見出しのある列だけ */
-function smpRowSummary_(sheet, rule, row, names) {
-  const values = sheet.getRange(row, 1, 1, names.length).getDisplayValues()[0];
+/**
+ * 行の追加の記録の、行の内容（差分追跡の行の追加の記録と同じ形：追跡範囲の列（最終更新日時の列を除く）の「見出し: 値」を改行でつなぐ。
+ * 値は token（日時は DIFF_OPTIONS.dateFormat の文字、数は数の文字）。空欄の列は書かない）
+ */
+function smpRowSummary_(sheet, rule, row, token) {
   const stamp = diffStampColumn_(sheet, rule);
-  return values.map((value, i) => (value !== '' && i + 1 !== stamp && !/列（見出しなし）$/.test(names[i]) ? names[i] + ': ' + value : ''))
-    .filter(Boolean).join('\n');
+  const lines = [];
+  diffBlocks_(sheet, rule, sheet.getRange(row, 1, 1, sheet.getMaxColumns()), stamp, false).forEach(([, col, , count]) => {
+    const values = sheet.getRange(row, col, 1, count).getValues()[0];
+    diffColumnNames_(sheet, rule, col, count).forEach((name, i) => {
+      const value = token(values[i]);
+      if (value.text !== '') lines.push(name + ': ' + value.text);
+    });
+  });
+  return lines.join('\n');
 }
 
 /**

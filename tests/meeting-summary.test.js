@@ -1555,6 +1555,40 @@ test('addMeetingDummyHistory：シートの値は変えずに、ダミーの変�
   assert.match(gas.alerts[gas.alerts.length - 1].message, /ダミーの変更の記録（イベントIDが「DMY-」で始まるもの）はありません/);
 });
 
+test('addMeetingDummyHistory：記録は差分追跡と同じ形（受注月が日付なら「日時」で dateFormat の文字、想定売上は「数値」、空欄は（空欄）。行の追加・削除は「見出し: 値」）', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  // 受注月を日付（表示は 2026/9 の形）にする（本物のスーパー・GMS と同じ）
+  for (let r = 3; r <= 8; r++) {
+    const text = sheet.getRange(r, COL.orderMonth).getDisplayValue();
+    if (!text) continue;
+    const [y, m] = text.split('/').map(Number);
+    sheet.getRange(r, COL.orderMonth).setValue(new gas.Date(Date.UTC(y, m - 1, 1) - 9 * 3600000)).setNumberFormat('yyyy/M');
+  }
+  gas.promptAnswers = ['1'];
+  g.addMeetingDummyHistory();
+  const log = gas.ss.getSheetByName('変更履歴_差分').getDataRange().getDisplayValues().slice(1).filter(r => /^DMY-/.test(r[1]));
+  const slip = log.find(r => r[5] === '受注月');
+  const c = month(2);
+  const p = month(1);
+  assert.deepStrictEqual(slip.slice(3, 9), ['新FMT', 'I5', '受注月', '日時 -> 日時 / ダミー',
+    p.y + '/' + String(p.m).padStart(2, '0') + '/01 00:00', c.y + '/' + String(c.m).padStart(2, '0') + '/01 00:00'], '差分追跡と同じ dateFormat の文字');
+  assert.ok(log.some(r => r[5] === '活動状況' && r[6] === '空欄 -> 文字列 / ダミー' && r[7] === '（空欄）'), '空欄は（空欄）');
+  const born = log.find(r => r[6] === '行追加');
+  assert.deepStrictEqual([born[4], born[5], born[7]], ['8行', '（行全体）', '（空欄）']);
+  assert.match(born[8], /^得意先: F社\n案件名: ブランド刷新\n案件ステータス: 提案中\n想定売上規模（百万）: 10\n/, '追跡範囲の列だけを「見出し: 値」で');
+  assert.ok(!/最終更新日時/.test(born[8]), '最終更新日時の列は書かない');
+  const removed = log.find(r => r[6] === '行削除');
+  assert.match(removed[7], /^得意先: ダミー商事\n案件名: （ダミー）削除した案件\n案件ステータス: 初回訪問\n想定売上規模（百万）: 20\n受注月: \d{4}\/\d{2}\/01 00:00\nアカウント責任者: ダミー 担当$/);
+  // スナップショットの受注月は、シートの表示の形（2026/9 → 前回は 2026/8。0 を付けない）
+  const snaps = gas.ss.getSheetByName('変更時点スナップショット').getDataRange().getDisplayValues().slice(1)
+    .filter(r => /^DMY-/.test(r[1]) && r[4] === '5');
+  const months = snaps.map(r => JSON.parse(r[7]).find(([k]) => k === '受注月')[1]);
+  assert.deepStrictEqual(months, [p.y + '/' + p.m, c.y + '/' + c.m], '前回の時点（1か月前）→ 今');
+  const s = plain(summarize(g, '新FMT'));
+  assert.deepStrictEqual(s.changes.filter(ch => label(ch) === 'C社／店舗什器').map(ch => [ch.category, ch.monthFrom, ch.monthTo]),
+    [['slipped', p.y + '/' + p.m, c.y + '/' + c.m]]);
+});
+
 test('addMeetingDummyHistory：前回より後の本物の変化は隠さない（ダミーの前回の時点の値は、本物の変更前の値）。日付の古いダミーの行があっても、本物の記録を読む', () => {
   const {gas, g} = setup();   // A社 前進・C社 失注・D社 活動の更新・F社 削除（本物の記録）
   gas.promptAnswers = ['1'];
