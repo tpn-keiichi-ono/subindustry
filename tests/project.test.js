@@ -140,3 +140,29 @@ test('本物のシートの見出し（2026/10/16 のスーパー・GMS の2行�
   ['customer', 'project', 'status', 'amount', 'weighted', 'orderMonth', 'activity'].forEach(key => assert.ok(at(mtg.columns[key]) + 1 >= 4, key));
   assert.ok(headers.length <= 32, 'AF 列まで');
 });
+
+test('本物の設定：11のサブインダストリーのシートを、同じ見出しの行・追跡範囲で追跡し、リクエストも読む', () => {
+  const gas = createGas({realSheetNames: true});
+  const rules = gas.get('DIFF_RULES');
+  const subs = ['スーパー・GMS', 'コンビニ', '百貨店', '化粧品・トイレタリー', '飲料・食品', '自動車販売', '住設', '地方銀行', '電鉄・不動産', 'エネルギー', '生協'];
+  assert.deepStrictEqual(Object.keys(rules), subs);
+  subs.forEach(name => assert.deepStrictEqual(JSON.parse(JSON.stringify([rules[name].headerRow, rules[name].ranges, rules[name].requests])),
+    [2, ['D3:AF'], true], name));
+});
+
+test('本物のシートの見出し（2026/10/16 のコンビニなど7シートの2行目。商談記録の列が無い形）でも、会議サマリ・リクエストが読む列がそろっている', () => {
+  const gas = createGas({realSheetNames: true});
+  const mtg = gas.get('MTG_OPTIONS');
+  const g = gas.global;
+  const headers = ['最終更新日時\n（自動入力）', 'No.', 'サブインダストリー', '得意先', '先方部門', '先方担当役職', '先方担当氏名',
+    'クライアントとのリレーション\nクライアント内のガバナンス', '案件名', '案件のスコープ', 'スコープに対する競合他社', 'プロジェクト開始-終了', '案件ステータス',
+    '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '売上開始月', '提案開始日', '活動状況', '活動における課題', '次回アクション',
+    'アカウント責任者部署', 'アカウント責任者', 'BX部署', 'BX担当', '想定される価値創出のケース／期待される導入効果',
+    '提案を勝ち取るための戦略・差異化要素', 'サービスのリクエスト'];
+  const at = label => headers.findIndex(h => g.credNormalize_(h) === g.credNormalize_(label));
+  ['customer', 'project', 'status', 'amount', 'weighted', 'orderMonth', 'startMonth', 'activity', 'issue', 'owner']
+    .forEach(key => assert.ok(at(mtg.columns[key]) >= 3, '見出し：' + mtg.columns[key]));
+  assert.strictEqual(at(mtg.columns.record), -1, '商談記録の列は無い（会議サマリは「データなし」の灰色で出す）');
+  gas.get('SVC_OPTIONS').sourceHeaders.forEach(label => assert.ok(at(label) >= 0, 'リクエスト：' + label));
+  assert.ok(headers.length <= 32, 'AF 列まで');
+});

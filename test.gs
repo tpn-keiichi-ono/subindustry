@@ -88,7 +88,16 @@ const DIFF_RULES = {
     // , snapshotColumns: 'A:Z'
   },
   'コンビニ': {headerRow: 2, ranges: ['D3:AF'], requests: true, formerNames: ['新FMT2']},
-  '百貨店': {headerRow: 2, ranges: ['D3:AF'], requests: true}
+  '百貨店': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  // 2026/10/16 に足したサブインダストリー（11シートでそろう。見出しの行・追跡範囲はほかと同じ）
+  '化粧品・トイレタリー': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  '飲料・食品': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  '自動車販売': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  '住設': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  '地方銀行': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  '電鉄・不動産': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  'エネルギー': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  '生協': {headerRow: 2, ranges: ['D3:AF'], requests: true}
 };
 
 /**
