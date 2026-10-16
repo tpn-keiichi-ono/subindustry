@@ -24,6 +24,9 @@
  */
 
 const CRED_OPTIONS = {
+  // クレデンシャル・オファリング履歴の管理・登録を使うか（2026/10 から一旦使わない）。false の間は、履歴サイドバーのクレデンシャルのタブ・
+  // 登録のモーダル・ボタン列・会議サマリの「予定日超過」のチェック・サンプルのクレデンシャルを出さない。記録のシートとコードは残すので、true に戻せば元どおり
+  enabled: false,
   // ボタン列の見出し。セル内の改行・空白は照合時に無視する
   // （「クレデンシャル」改行「オファリング登録」と入力したセルに一致する）
   launcherHeader: 'クレデンシャル\nオファリング登録',
@@ -144,6 +147,18 @@ function openCredentialDialog() {
   }
 }
 
+/** クレデンシャル・オファリング履歴の管理・登録を使っているか（CRED_OPTIONS.enabled）。 */
+function credEnabled_() {
+  return CRED_OPTIONS.enabled !== false;
+}
+
+/** 使っていなければ、開く・登録する前に止める（画面・トーストにそのまま出る文）。 */
+function credRequireEnabled_() {
+  if (!credEnabled_()) {
+    throw new Error('クレデンシャル・オファリング履歴の管理・登録は、今は使っていません（CredentialHistory.gs の CRED_OPTIONS.enabled）。');
+  }
+}
+
 /* ---------------- 起動ボタン（インストール型 onEdit） ---------------- */
 
 function onCredentialLauncherEdit(e) {
@@ -189,6 +204,7 @@ function credLauncherKind_(sheet, rule, column) {
 
 /** ボタンから開くときの最短の処理（読み込みはモーダル側）。 */
 function credOpenLauncherDialog_(kind, sheetName, row, email) {
+  if (kind !== 'change') credRequireEnabled_();
   const size = credDialogSize_(email);
   const template = HtmlService.createTemplateFromFile(
     kind === 'change' ? CHG_OPTIONS.dialogTemplate : 'CredentialDialog');
@@ -219,6 +235,7 @@ function credIsLauncherEdit_(e, rule) {
 
 /** options.focusId を渡すと、その履歴を選んだ状態（編集パネルを開いた状態）で開く。 */
 function credShowDialog_(sheet, row, email, options) {
+  credRequireEnabled_();
   const target = credResolveTarget_(sheet, row);
 
   // 前回その人のブラウザで測った大きさ（幅の95%）で開く。初回は既定の大きさ
@@ -245,6 +262,7 @@ function credShowDialog_(sheet, row, email, options) {
 /* ---------------- 管理者用セットアップ ---------------- */
 
 function setupCredentialLauncher() {
+  credRequireEnabled_();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const lock = LockService.getDocumentLock();
   lock.waitLock(CRED_OPTIONS.lockWaitMs);
@@ -425,6 +443,7 @@ function credColumnWidths_() {
 
 /** 新規登録。req = {sheetName, row, customer, customerColumn, values} → {entry, message} */
 function saveCredentialEntry(req) {
+  credRequireEnabled_();
   return credWithLock_(() => {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const target = credTarget_(ss, req);
@@ -459,6 +478,7 @@ function saveCredentialEntry(req) {
 
 /** 編集。req = {sheetName, row, customer, customerColumn, id, original, values} → {entry, message} */
 function updateCredentialEntry(req) {
+  credRequireEnabled_();
   return credWithLock_(() => {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const timezone = ss.getSpreadsheetTimeZone();
@@ -518,6 +538,7 @@ function updateCredentialEntry(req) {
 
 /** 削除。req = {sheetName, row, customer, customerColumn, id, original} → {id, message} */
 function deleteCredentialEntry(req) {
+  credRequireEnabled_();
   return credWithLock_(() => {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const {target, log, cols, rowNumber, current} = credExisting_(ss, req);

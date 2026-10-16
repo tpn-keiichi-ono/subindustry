@@ -149,3 +149,9 @@ test('本物の設定：11のサブインダストリーのシート（2026/10/1
   subs.forEach(name => assert.deepStrictEqual(JSON.parse(JSON.stringify([rules[name].headerRow, rules[name].ranges, rules[name].requests])),
     [2, ['D3:AF'], true], name));
 });
+
+test('本物の設定：クレデンシャル・オファリング履歴の管理・登録は一旦使わない（CRED_OPTIONS.enabled: false）', () => {
+  const gas = createGas({realSheetNames: true});
+  assert.strictEqual(gas.get('CRED_OPTIONS').enabled, false);
+  assert.strictEqual(gas.global.credEnabled_(), false);
+});

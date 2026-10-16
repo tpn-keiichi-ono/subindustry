@@ -237,7 +237,7 @@ test('画面：サイドバーは承認用の URL を data-authorize-url で受�
   const fs = require('fs');
   const path = require('path');
   const sidebar = fs.readFileSync(path.join(__dirname, '..', 'HistorySidebarView.html'), 'utf8');
-  assert.ok(sidebar.includes('<body data-authorize-url="<?= authorizeUrl ?>" data-menu-title="<?= menuTitle ?>">'));
+  assert.ok(sidebar.includes('<body data-authorize-url="<?= authorizeUrl ?>" data-menu-title="<?= menuTitle ?>" data-credentials="<?= credentials ?>">'));
   ['auth', 'authText', 'authBtn', 'authNote'].forEach(id => assert.ok(sidebar.includes('id="' + id + '"'), id + ' がありません'));
   assert.ok(sidebar.includes('.getAuthorizationLink()'), '承認の案内を出すときに、ボタンの行き先を問い合わせる');
   const page = fs.readFileSync(path.join(__dirname, '..', 'AuthorizeView.html'), 'utf8');

@@ -165,6 +165,12 @@ Apps Script はプロジェクトの全ファイル（リポジトリ直下の `
 
 ### クレデンシャル・オファリング履歴
 
+**2026/10 から一旦使っていません**（`CRED_OPTIONS.enabled: false`。`credEnabled_()`）。止めている間は、開く・登録する入口（`credShowDialog_`・`credOpenLauncherDialog_`
+のクレデンシャル・`saveCredentialEntry` などの登録・編集・削除・`setupCredentialLauncher`）を `credRequireEnabled_()` で止め、
+サイドバーの束（`getSidebarBundle`）はクレデンシャルを読まずに `credentialsEnabled: false` を返します（画面はクレデンシャルのタブを隠して変更履歴だけにする。
+開いた直後も出さないよう、テンプレートの `data-credentials` でも渡す）。会議サマリは入力内容のチェックの種類から「予定日超過」を除きます（`mtgAlertTypes_`。表の列も減る）。
+記録のシート・コードは残すので、`true` に戻せば元どおりです。テストは機能を確かめるため `true` にして動かします（`tests/lib/gas-mock.js`。止めた状態のテストは個別に `false`）。
+
 1. ボタン列をチェックすると `onCredentialLauncherEdit`（インストール型 onEdit。2つのボタン列で共通）が動き、
    見出し行を1回読んでどちらのボタンかを判断し、すぐにモーダルを開いてチェックを戻します。
 2. モーダルは開いてから `getCredentialDialogData()` で履歴を読み込みます（ボタンを押してから開くまでを速くするため）。

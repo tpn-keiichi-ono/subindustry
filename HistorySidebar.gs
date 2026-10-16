@@ -77,6 +77,7 @@ function hsShowSidebar_() {
   const template = HtmlService.createTemplateFromFile(HS_OPTIONS.template);
   template.authorizeUrl = hsAuthorizeUrl_();
   template.menuTitle = CRED_OPTIONS.menuTitle;   // 承認の案内に出すメニューの名前
+  template.credentials = credEnabled_() ? 'on' : 'off';   // off ならクレデンシャルのタブを出さず、変更履歴だけ
   const html = template.evaluate().setTitle(HS_OPTIONS.title);
   SpreadsheetApp.getUi().showSidebar(html);
 }
@@ -219,6 +220,7 @@ function getSidebarBundle() {
   const changeIndex = hsChangeIndex_(ss);
   return {
     sheets: Object.keys(DIFF_RULES),
+    credentialsEnabled: credEnabled_(),   // false ならクレデンシャルのタブを出さない
     credentials: hsCredentialIndex_(ss),
     accountPlans: hsAccountPlanIndex_(ss),   // {得意先キー: URL}
     accountPlanSheet: HS_OPTIONS.accountPlan.sheet,
@@ -274,6 +276,7 @@ function hsIsUrl_(text) {
 
 function hsCredentialIndex_(ss) {
   const out = {};
+  if (!credEnabled_()) return out;   // 使っていない間は読まない（サイドバー・会議サマリに出さない）
   const log = ss.getSheetByName(CRED_OPTIONS.logSheet);
   if (!log || log.getLastRow() < 2) return out;
 

@@ -216,6 +216,7 @@ const MTG_BRIDGE = [
 ];
 
 /* 入力内容のチェックの種類（この順に出す。意味は docs/DESIGN.md の「入力内容のチェック」） */
+// 予定日超過はクレデンシャル・オファリング履歴を使っているときだけ（mtgAlertTypes_）
 const MTG_ALERT_TYPES = ['予定日超過', '受注月超過', '未入力', '資料なし', '更新なし', '金額の不整合', '月の不整合', '選択肢外のステータス', 'デリバリー担当なし'];
 /* 資料に出す種類の名前（資料では「入力内容の確認事項」。種類の名前は試作の結果の記録にも使うので、出す名前だけを変える） */
 /* 資料に出す種類の名前を2行に分けるときの区切り（言葉の途中で切らない。責任者別の表の見出し・一覧で1行に入らないとき） */
@@ -1295,7 +1296,7 @@ function mtgGaps_(ss, table, context, stallPending) {
   // 変更の記録も最終更新日時の列も無ければ、ステータスが同じ日数が分からない（停滞を数えられない）
   if (!parts.stalled && noLog && !table.hasStamp) parts.stalled = '変更の記録も「最終更新日時」の列も無く、ステータスが同じ日数が分からない';
   const alerts = {};
-  if (!ss.getSheetByName(CRED_OPTIONS.logSheet)) alerts['予定日超過'] = '「' + CRED_OPTIONS.logSheet + '」シートが無い';
+  if (credEnabled_() && !ss.getSheetByName(CRED_OPTIONS.logSheet)) alerts['予定日超過'] = '「' + CRED_OPTIONS.logSheet + '」シートが無い';
   if (parts.orderMonth) alerts['受注月超過'] = parts.orderMonth;
   if (parts.record) alerts['資料なし'] = parts.record;
   if (!table.hasStamp && noLog) alerts['更新なし'] = 'シートに「最終更新日時」の列が無く、変更の記録も無い';
@@ -1320,7 +1321,7 @@ function mtgGapList_(s) {
     byReason.get(reason).push(label);
   };
   Object.keys(s.gaps || {}).forEach(key => add(names[key] || key, s.gaps[key]));
-  MTG_ALERT_TYPES.filter(type => (s.alertGaps || {})[type]).forEach(type => add('チェック「' + (MTG_ALERT_LABELS[type] || type) + '」', s.alertGaps[type]));
+  mtgAlertTypes_().filter(type => (s.alertGaps || {})[type]).forEach(type => add('チェック「' + (MTG_ALERT_LABELS[type] || type) + '」', s.alertGaps[type]));
   return Array.from(byReason.keys()).map(reason => byReason.get(reason).join('・') + '：' + reason);
 }
 
@@ -1580,6 +1581,11 @@ function mtgBridge_(deals, byKey, changed, changes) {
   });
   out.steps = MTG_BRIDGE.map(b => steps[b.key]);
   return out;
+}
+
+/** 入力内容のチェックの種類（MTG_ALERT_TYPES の順）。クレデンシャル・オファリング履歴を使っていない間は「予定日超過」を除く */
+function mtgAlertTypes_() {
+  return MTG_ALERT_TYPES.filter(type => type !== '予定日超過' || credEnabled_());
 }
 
 /**
@@ -2579,7 +2585,7 @@ function mtgAppendixOwners_(s) {
   const S = MTG_SLIDE;
   const k = s.kpi;
   const lack = s.alertGaps || {};
-  const types = MTG_ALERT_TYPES.slice();
+  const types = mtgAlertTypes_();
   const groups = new Map();
   s.alerts.forEach(a => {
     const owner = a.owner || MTG_OPTIONS.blankText;

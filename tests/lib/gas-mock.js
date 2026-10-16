@@ -1144,6 +1144,9 @@ function createGas(options) {
       }
       if (typeof SVC_OPTIONS !== 'undefined') SVC_OPTIONS.requestSheet = 'リクエスト';
       if (typeof TASK_OPTIONS !== 'undefined') TASK_OPTIONS.sheet = 'タスク管理';
+      // クレデンシャル・オファリング履歴は、本物では一旦止めている（enabled: false）。機能のテストのため、テストでは使う状態にする
+      // （止めた状態は gas.get('CRED_OPTIONS').enabled = false で確かめる）
+      if (typeof CRED_OPTIONS !== 'undefined') CRED_OPTIONS.enabled = true;
     } + ')(' + JSON.stringify(TEST_DIFF_RULES) + ')', context);
   }
 

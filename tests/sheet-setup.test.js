@@ -81,6 +81,18 @@ test('setupAfterSheetChange：スプレッドシートの画面に出せない�
   assert.strictEqual(gas.props.document.get('CHAR_DIFF_STATE_V1'), before);
 });
 
+test('setupAfterSheetChange：クレデンシャル・オファリング履歴を使っていない間は、クレデンシャルのボタン列を付けない（変更履歴のボタン列は付ける）', () => {
+  const {gas, g} = setupProject();
+  const sheet = addDepartmentStore(gas);
+  gas.get('CRED_OPTIONS').enabled = false;
+  g.setupAfterSheetChange();
+  const message = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(message, /「差分追跡」「変更履歴のボタン列」「サービスリクエスト」を設定しました/);
+  assert.match(message, /クレデンシャル・オファリング履歴は今は使っていないので、クレデンシャルのボタン列の設定は省きました/);
+  assert.strictEqual(sheet.getRange(3, COL.credButton).getValue(), '', 'クレデンシャルのボタンは付けない');
+  assert.strictEqual(sheet.getRange(3, COL.changeButton).getValue(), false);
+});
+
 test('setupAfterSheetChange：見出しが足りないシートがあれば、何も変えずに直す点をまとめて知らせる', () => {
   const {gas, g} = setupProject();
   const header = new Array(WIDTH).fill('');

@@ -98,6 +98,7 @@
     }
     .tab .badge { font-family: var(--mono); font-size: 10.5px; font-weight: 500; padding: 1px 6px; border-radius: 9px; background: #DCE2DE; }
     .tab.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(20, 30, 25, .10); }
+    .tabs.single { grid-template-columns: 1fr; }
     .tab.on .badge { background: var(--teal-soft); }
 
     .pane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -260,7 +261,8 @@
 </head>
 <!-- data-authorize-url：承認用のウェブアプリの URL（HistorySidebar.gs の openHistorySidebar が入れる。未設定なら空） -->
 <!-- data-menu-title：メニューの名前（CRED_OPTIONS.menuTitle。承認の案内に出す） -->
-<body data-authorize-url="<?= authorizeUrl ?>" data-menu-title="<?= menuTitle ?>">
+<!-- data-credentials：クレデンシャル・オファリング履歴を使うか（off ならクレデンシャルのタブを出さず、変更履歴だけ。CRED_OPTIONS.enabled） -->
+<body data-authorize-url="<?= authorizeUrl ?>" data-menu-title="<?= menuTitle ?>" data-credentials="<?= credentials ?>">
   <div class="side">
     <!-- 表示中の行（タブもこのカードの中に置く） -->
     <section class="card row-card" aria-live="polite">
@@ -380,8 +382,10 @@
     let refreshUntil = 0;             // モーダルを開いたあと、しばらく自動で読み直す
 
     // 画面の状態（タブ・期間・項目の絞り込み）
+    // クレデンシャル・オファリング履歴を使っていない間は、変更履歴のタブだけ（CRED_OPTIONS.enabled）
+    let credOn = document.body.dataset.credentials !== 'off';
     const ui = {
-      tab: 'cred',
+      tab: credOn ? 'cred' : 'log',
       span: 7,            // 7 / 14 / 30 / 'all'
       weekOffset: 0,      // 期間いくつ分さかのぼるか
       custom: null,       // {from, to}（yyyy-MM-dd）
@@ -594,6 +598,10 @@
       if (!current) return;
       $('auth').hidden = true;
       const target = !current.reason && !!current.customer;
+      if (bundle && bundle.credentialsEnabled === false) credOn = false;
+      if (!credOn) ui.tab = 'log';
+      $('tabCred').hidden = !credOn;
+      $('tabs').classList.toggle('single', !credOn);
       $('tabs').hidden = !target;
       $('credPane').hidden = !target || ui.tab !== 'cred';
       $('logPane').hidden = !target || ui.tab !== 'log';

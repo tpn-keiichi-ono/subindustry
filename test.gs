@@ -382,7 +382,10 @@ function setupAfterSheetChange() {
     {label: 'クレデンシャルのボタン列', header: CRED_OPTIONS.launcherHeader, sheets: buttons.credential, run: () => setupCredentialLauncher()},
     {label: '変更履歴のボタン列', header: CHG_OPTIONS.launcherHeader, sheets: buttons.change, run: () => setupChangeHistoryLauncher()}
   ].forEach(step => {
-    if (step.sheets.length) steps.push(step);
+    // クレデンシャル・オファリング履歴を使っていない間は、そのボタン列は付けない（CRED_OPTIONS.enabled）
+    if (step.header === CRED_OPTIONS.launcherHeader && !credEnabled_()) {
+      notes.push('クレデンシャル・オファリング履歴は今は使っていないので、' + step.label + 'の設定は省きました。');
+    } else if (step.sheets.length) steps.push(step);
     else notes.push('「' + credHeaderText_(step.header) + '」の列のあるシートが無いので、' + step.label + 'の設定は省きました。');
   });
   steps.push({label: 'サービスリクエスト', run: () => svcSetupRequestSheet_(ss)});

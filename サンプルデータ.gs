@@ -82,8 +82,8 @@ function addSampleHistory() {
     const names = targets.map(t => t.customer);
     const answer = ui.alert(title,
       '次の得意先に、サンプルの履歴を追加します（' + names.length + '件）。\n' + names.join('、') + '\n\n' +
-      '・クレデンシャル ' + SMP_OPTIONS.credentials.length + '件\n' +
-      '・オファリング ' + SMP_OPTIONS.offerings.length + '件\n' +
+      (credEnabled_() ? '・クレデンシャル ' + SMP_OPTIONS.credentials.length + '件\n' +
+        '・オファリング ' + SMP_OPTIONS.offerings.length + '件\n' : '') +
       '・変更の記録 ' + SMP_OPTIONS.changes.length + '件\n\n' +
       'シートのセルの値は変わりません。サンプルは、エディタで removeSampleHistory を実行すると消せます。\n' +
       '※ サンプルは会議サマリには出ません（会議サマリの確認用のダミーデータは addMeetingDummyHistory()）。追加しますか？',
@@ -100,8 +100,8 @@ function addSampleHistory() {
       return sum;
     });
     ui.alert(title,
-      'サンプルを追加しました：クレデンシャル ' + total.credentials + '件・オファリング ' + total.offerings +
-      '件・変更の記録 ' + total.changes + '件。\n履歴サイドバーは「再読み込み」で反映されます。',
+      'サンプルを追加しました：' + (credEnabled_() ? 'クレデンシャル ' + total.credentials + '件・オファリング ' + total.offerings + '件・' : '') +
+      '変更の記録 ' + total.changes + '件。\n履歴サイドバーは「再読み込み」で反映されます。',
       ui.ButtonSet.OK);
   } catch (error) {
     console.error(error.stack || String(error));
@@ -168,7 +168,8 @@ function smpSelectedTargets_(sheet) {
 
 /** ロック取得中に呼ぶこと。戻り値 {credentials, offerings, changes} */
 function smpAddForTarget_(ss, target, now) {
-  const creds = smpAddCredentials_(ss, target, now);
+  // クレデンシャル・オファリング履歴を使っていない間は、サンプルのクレデンシャルは足さない（CRED_OPTIONS.enabled）
+  const creds = credEnabled_() ? smpAddCredentials_(ss, target, now) : {credentials: 0, offerings: 0};
   return {credentials: creds.credentials, offerings: creds.offerings, changes: smpAddChanges_(ss, target, now)};
 }
 

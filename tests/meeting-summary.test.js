@@ -1054,6 +1054,28 @@ test('表紙・扉の背景の画像を付けられなくても、資料は作�
   assert.ok(gas.decks[0].requests.some(r => r.updatePageProperties), '背景は緑一色');
 });
 
+test('クレデンシャル・オファリング履歴を使っていない間（CRED_OPTIONS.enabled: false）は、入力内容のチェックに「予定日超過」を出さない（列も作らない）', () => {
+  const {gas, g} = setup({edits: false});
+  const cred = gas.get('CRED_OPTIONS');
+  const {log, cols} = g.credLogSheet_(gas.ss, false);
+  const fields = {kind: cred.linking.childKind, name: '販促DXの試験導入のご提案', person: '佐藤 花子', title: '販促企画部 課長', owner: '鈴木'};
+  fields[cred.schedule.planKey] = day(-3);
+  fields[cred.schedule.doneKey] = '';
+  g.credAppendLog_(log, cols, [{id: 'cred-real-0001', at: new gas.Date(), customer: 'A社', fields: g.credValidate_(fields, null), link: '',
+    editor: 'suzuki@example.com', source: 'テスト'}]);
+  assert.ok(summarize(g, '新FMT').alerts.some(a => a.type === '予定日超過'), '使っているときは出る');
+  cred.enabled = false;
+  gas.ss.deleteSheet(gas.ss.getSheetByName(cred.logSheet));
+  const s = summarize(g, '新FMT');
+  assert.ok(!s.alerts.some(a => a.type === '予定日超過'));
+  assert.ok(!('予定日超過' in s.alertGaps), 'クレデンシャルのシートが無くても「データなし」にしない');
+  assert.deepStrictEqual(plain(g.mtgAlertTypes_()), plain(gas.get('MTG_ALERT_TYPES').filter(t => t !== '予定日超過')));
+  const owners = g.mtgAppendixOwners_(s)[0];
+  const table = owners.elements.find(el => el.type === 'table');
+  assert.strictEqual(table.columns.length, gas.get('MTG_ALERT_TYPES').length - 1 + 2);
+  assert.ok(!table.rows[0].cells.some(cell => /予定日/.test(cell.text)));
+});
+
 /* ---------------- 会議時点のコピー ---------------- */
 
 test('mtgSaveCopy_：追跡シートの値を、実行日時のタイトルの別のスプレッドシートに写す（文字は数式にならない。書式・見出しの固定も）', () => {

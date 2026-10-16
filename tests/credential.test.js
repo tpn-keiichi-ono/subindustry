@@ -205,3 +205,43 @@ test('onCredentialLauncherEdit：ボタン列以外の編集・チェックを�
   g.onCredentialLauncherEdit(gas.edit(sheet, 'AH3', false));
   assert.strictEqual(gas.dialogs.length, 0);
 });
+
+/* ---------------- 一旦使わない（CRED_OPTIONS.enabled: false） ---------------- */
+
+test('CRED_OPTIONS.enabled が false の間は、モーダル・登録・ボタン列・サイドバーのクレデンシャルを出さない（変更履歴は使える。記録は消さない）', () => {
+  const {gas, g, sheet} = setupProject();
+  const data = open(g);
+  g.saveCredentialEntry(request(data, {values: values(), linkId: ''}));   // 使っていたときの記録
+  const rows = gas.ss.getSheetByName(LOG).getLastRow();
+  gas.get('CRED_OPTIONS').enabled = false;
+  const off = /クレデンシャル・オファリング履歴の管理・登録は、今は使っていません/;
+
+  assert.throws(() => g.saveCredentialEntry(request(data, {values: values(), linkId: ''})), off);
+  assert.throws(() => g.openCredentialFromSidebar('新FMT', 3, ''), off);
+  assert.throws(() => g.setupCredentialLauncher(), off);
+  assert.strictEqual(gas.ss.getSheetByName(LOG).getLastRow(), rows, '記録のシートはそのまま');
+
+  // ボタン列：クレデンシャルは開かずに知らせて戻す。変更履歴のボタンはそのまま使える
+  g.onCredentialLauncherEdit(gas.edit(sheet, 'AH4', true));
+  g.onCredentialLauncherEdit(gas.edit(sheet, 'AI5', true));
+  assert.deepStrictEqual(gas.dialogs.map(d => d.html.file), ['ChangeHistoryDialog']);
+  assert.ok(gas.toasts.some(t => off.test(t.message)));
+  assert.strictEqual(sheet.getRange('AH4').getValue(), false);
+
+  // サイドバー：クレデンシャルを読まず、タブを出さない印を付ける
+  const bundle = plain(g.getSidebarBundle());
+  assert.strictEqual(bundle.credentialsEnabled, false);
+  assert.deepStrictEqual(bundle.credentials, {});
+  g.hsShowSidebar_();
+  assert.strictEqual(gas.sidebars[gas.sidebars.length - 1].html.data.credentials, 'off');
+});
+
+test('画面：サイドバーは data-credentials="off" のとき、クレデンシャルのタブを出さずに変更履歴を開く', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const sidebar = fs.readFileSync(path.join(__dirname, '..', 'HistorySidebarView.html'), 'utf8');
+  assert.ok(sidebar.includes("let credOn = document.body.dataset.credentials !== 'off';"));
+  assert.ok(sidebar.includes("tab: credOn ? 'cred' : 'log',"));
+  assert.ok(sidebar.includes("$('tabCred').hidden = !credOn;"));
+  assert.ok(sidebar.includes("if (bundle && bundle.credentialsEnabled === false) credOn = false;"));
+});
