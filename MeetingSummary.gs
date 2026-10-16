@@ -390,9 +390,13 @@ function mtgRun_(final) {
   // 作れなかったところ（データなし）があれば、シートごとに理由を出す（資料にも、その場所に灰色の枠で書いてある）
   const lines = results.map(r => {
     const gaps = mtgGapList_(r.summary);
+    // 変化が無く、サンプル（addSampleHistory()。会議サマリは数えない）の記録だけがあるときは、資料の確認用の関数を案内する
+    const samples = !r.summary.kpi.changed && !r.summary.dummy ? smpCountEvents_(ss, SMP_OPTIONS.eventPrefix + '-', r.summary.name).changes : 0;
     return '「' + r.summary.name + '」：' + r.file.getName() + '（' + mtgCountsText_(r.summary) + '）\n　' + r.file.getUrl() +
       (gaps.length ? '\n　' + MTG_OPTIONS.gapText + '：' + gaps.join('\n　　') : '') +
-      (r.summary.dummy ? '\n　※ ダミーの変更の記録（' + r.summary.dummy + '件）を含みます（資料に【ダミーデータを含む】）。消すときは removeMeetingDummyHistory()。' : '');
+      (r.summary.dummy ? '\n　※ ダミーの変更の記録（' + r.summary.dummy + '件）を含みます（資料に【ダミーデータを含む】）。消すときは removeMeetingDummyHistory()。' : '') +
+      (samples ? '\n　※ サンプル（addSampleHistory()）の変更の記録 ' + samples + '件は、会議サマリには出ません（基準を変えても出ません）。' +
+        '資料の形を確かめるときは、addMeetingDummyHistory() でダミーの変更の記録を足してください。' : '');
   });
   lines.push('', '保存先：' + results[0].folder.getUrl());
   if (MTG_OPTIONS.keepSlides) lines.push('同じフォルダに、Google スライド（同じ名前）も保存しました。');

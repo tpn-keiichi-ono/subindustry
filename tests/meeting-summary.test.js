@@ -1555,6 +1555,25 @@ test('addMeetingDummyHistory：シートの値は変えずに、ダミーの変�
   assert.match(gas.alerts[gas.alerts.length - 1].message, /ダミーの変更の記録（イベントIDが「DMY-」で始まるもの）はありません/);
 });
 
+test('サンプル（addSampleHistory()）だけを入れて試作したときは、会議サマリには出ないことと addMeetingDummyHistory() を案内する（基準を変えても出ない）', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  gas.select(sheet, 'D3');
+  g.addSampleHistory();
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewMeetingSummaries();
+  const done = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(done, /（変化のある案件 0・/);
+  assert.match(done, /※ サンプル（addSampleHistory\(\)）の変更の記録 5件は、会議サマリには出ません（基準を変えても出ません）。資料の形を確かめるときは、addMeetingDummyHistory\(\) でダミーの変更の記録を足してください。/);
+  // ダミーを足せば、変化が出る（案内は出ない）
+  gas.promptAnswers = ['1'];
+  g.addMeetingDummyHistory();
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewMeetingSummaries();
+  const again = gas.alerts[gas.alerts.length - 1].message;
+  assert.doesNotMatch(again, /サンプル（addSampleHistory\(\)）の変更の記録/);
+  assert.match(again, /※ ダミーの変更の記録（\d+件）を含みます/);
+});
+
 test('addMeetingDummyHistory：記録は差分追跡と同じ形（受注月が日付なら「日時」で dateFormat の文字、想定売上は「数値」、空欄は（空欄）。行の追加・削除は「見出し: 値」）', () => {
   const {gas, g, sheet} = setup({edits: false});
   // 受注月を日付（表示は 2026/9 の形）にする（本物のスーパー・GMS と同じ）
