@@ -318,7 +318,15 @@ test('入力内容のチェック：予定日超過・受注月超過（延期�
   ].forEach(([a1, value]) => g.recordDiffEdit(gas.edit(sheet, a1, value)));
   gas.asUser(() => sheet.getRange(5, COL.stamp).setValue(new gas.Date(Date.now() - 35 * 86400000)));   // C社：35日前から更新なし
   gas.select(sheet, 'D3');
-  g.addSampleHistory();   // A社に、3日前が予定日で未実施のオファリングなどを足す（変更の記録は SMP-。数えない）
+  g.addSampleHistory();   // A社に、3日前が予定日で未実施のオファリングなどを足す（サンプル。予定日超過にも変化にも数えない）
+  // 当社の担当者が登録した、3日前が予定日で未実施のオファリング
+  const cred = gas.get('CRED_OPTIONS');
+  const {log, cols} = g.credLogSheet_(gas.ss, false);
+  const fields = {kind: cred.linking.childKind, name: '販促DXの試験導入のご提案', person: '佐藤 花子', title: '販促企画部 課長', owner: '鈴木'};
+  fields[cred.schedule.planKey] = day(-3);
+  fields[cred.schedule.doneKey] = '';
+  g.credAppendLog_(log, cols, [{id: 'cred-real-0001', at: new gas.Date(), customer: 'A社', fields: g.credValidate_(fields, null), link: '',
+    editor: 'suzuki@example.com', source: 'テスト'}]);
   const s = plain(summarize(g, '新FMT'));
   assert.deepStrictEqual(s.alerts.map(a => [a.type, label(a)]), [
     ['予定日超過', 'A社'],
@@ -332,8 +340,9 @@ test('入力内容のチェック：予定日超過・受注月超過（延期�
     ['デリバリー担当なし', 'E社／販促DX']
   ]);
   const text = (type, customer) => s.alerts.find(a => a.type === type && (!customer || a.customer === customer)).text;
-  assert.match(text('予定日超過'), /^オファリング「【サンプル】販促DXの試験導入のご提案」：予定日（\d{1,2}\/\d{1,2}）から 3日経過、実施日未入力$/);
-  assert.strictEqual(s.alerts[0].owner, 'サンプル 担当', '責任者の列には当社の担当者');
+  assert.match(text('予定日超過'), /^オファリング「販促DXの試験導入のご提案」：予定日（\d{1,2}\/\d{1,2}）から 3日経過、実施日未入力$/);
+  assert.strictEqual(s.alerts.filter(a => a.type === '予定日超過').length, 1, 'サンプル（【サンプル】）の予定は数えない');
+  assert.strictEqual(s.alerts[0].owner, '鈴木', '責任者の列には当社の担当者');
   assert.strictEqual(text('受注月超過'), '受注月（' + month(-1).y + '/' + month(-1).m + '）経過、ステータス「初回訪問」（延期 1回）');
   assert.strictEqual(text('未入力', 'D社'), '未入力：想定売上規模（百万）・期待値調整済想定売上規模（百万）・受注月・活動状況・アカウント責任者');
   assert.strictEqual(text('未入力', 'F社'), '未入力：活動状況', '想定の大きい順');
@@ -343,7 +352,7 @@ test('入力内容のチェック：予定日超過・受注月超過（延期�
   assert.strictEqual(text('選択肢外のステータス'), '「検討中」は選択肢外の値（進行中として集計）');
   assert.strictEqual(text('デリバリー担当なし'), '受注済み、「デリバリー担当」未入力');
   assert.ok(s.changes.every(c => !/^【サンプル】/.test(c.project)), 'サンプルの記録は変化に入れない');
-  assert.strictEqual(s.kpi.owners, 6, 'サンプル 担当・佐藤・高橋・空・田中・伊藤');
+  assert.strictEqual(s.kpi.owners, 6, '鈴木・佐藤・高橋・空・田中・伊藤');
 });
 
 test('入力内容のチェック「資料なし」：商談記録（ＵＲＬ）の見出しがあるシートだけ、進行中の案件で空のもの（見出しの全角・半角は問わない）', () => {
@@ -373,7 +382,8 @@ test('入力内容のチェック「資料なし」：商談記録（ＵＲＬ�
   const wide = plain(g.mtgSlides_(Object.assign({}, summarize(g, '新FMT'), {alerts: all})))
     .filter(sl => /入力内容の確認事項（一覧）/.test(sl.title)).map(sl => sl.elements.find(el => el.type === 'table'));
   const labels = wide.map(t => t.rows.slice(1).map(r => r.cells[2].text).join('\n')).join('\n');
-  assert.ok(labels.indexOf('デリバリー\n担当未設定') >= 0 && labels.indexOf('未設\n定') < 0, '長い種類の名前は言葉の切れ目で2行に：' + labels);
+  assert.ok(/(^|\n)(デリバリー担当未設定|デリバリー\n担当未設定)(\n|$)/.test(labels) && labels.indexOf('未設\n定') < 0,
+    '長い種類の名前は1行に入れ、入らなければ言葉の切れ目で2行に：' + labels);
   assert.ok(list.rows.some(r => r.cells[0].text === '伊藤' && r.cells[2].text.split('\n').indexOf('商談記録未登録') >= 0 &&
     r.cells[3].text.split('\n')[r.cells[2].text.split('\n').indexOf('商談記録未登録')] === empty), '内容は案件ごとの一覧に書く（項目は資料に出す名前。項目と内容の行をそろえる）');
 });
@@ -500,7 +510,7 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
         el.rows.forEach(r => r.cells.forEach((cell, col) => {
           const lines = String(cell.text).split('\n');
           assert.strictEqual(g.mtgWrap_(cell.text, el.columns[col], cell.size, 99).length, lines.length, '折り返し済み：' + cell.text);
-          assert.ok(g.mtgLineHeight_(lines.length, cell.size) <= r.h + 0.01, '行の高さ：' + cell.text);
+          assert.ok(g.mtgTextHeight_(lines, cell.size, cell.spans) <= r.h + 0.01, '行の高さ：' + cell.text);
         }));
       }
     });
@@ -546,8 +556,12 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
     ['停滞（同一ステータス45日以上）', '2件', '80', 'うち直近14日間の更新なし 1件：E社／販促DX（100日以上）']
   ], '停滞は定義を添え、名前は対象期間に更新の無い案件だけ（D社は活動を更新した）。商談記録の見出しが無いシートでは商談記録未登録の行を出さない');
   const stall = statesTable.rows[1].cells[0];
-  assert.deepStrictEqual([stall.text, stall.size, stall.parts && stall.parts[0].bold], ['停滞\n（同一ステータス45日以上）', 7.5, true], '定義は小さな字で2行目に');
-  assert.ok(movesTable.rows.slice(1).concat(statesTable.rows).every(r => r.cells[1].size === 11 && r.cells[1].color === c.greenDark), '件数は大きな緑の字');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify([stall.text, stall.size, stall.color, stall.spans])),
+    ['停滞（同一ステータス45日以上）', 7.5, c.muted, [{start: 0, end: 2, size: S.bodySize, bold: true, color: c.ink}]],
+    '定義は区分の名前のあとに小さな字で（同じ行に入るので、行を高くしない）');
+  assert.strictEqual(statesTable.rows[1].h, statesTable.rows[0].h, '停滞の行も、ほかの行と同じ高さ');
+  const counts = movesTable.rows.slice(1).concat(statesTable.rows).map(r => r.cells[1]);
+  assert.ok(counts.every(cell => cell.size >= S.bodySize && cell.size === counts[0].size && cell.bold && cell.color === c.greenDark), '件数は緑の太字（どの行も同じ大きさ）');
   assert.deepStrictEqual(statesTable.columns, movesTable.columns, '2つの表の列はそろえる');
   // 表は緑の見出し・1列目は薄い緑（得意先は太字）・ほかは白
   const moves = slides[3].elements.find(el => el.type === 'table');
@@ -776,29 +790,42 @@ test('文字の折り返し：「前 ▶ 今」は矢印のあとで、開きか
     g.mtgWrap_('港町GMS／PB商品のパッケージ刷新（100日以上）、さくらスーパー／店舗DXの全体構想（75日）', w, 9, 9)
       .forEach(line => assert.ok(!/[（「]$/.test(line), w + 'pt：' + line));
   }
-  assert.deepStrictEqual(plain(g.mtgWrap_('決裁者（社長）に会えていない', 142, 9, 3)).map(t => t.length), [13, 1]);
-  assert.deepStrictEqual(plain(g.mtgBalance_('決裁者（社長）に会えていない', 142, 9, 3)).map(t => t.length), [7, 7], '最後の行に1文字だけ残さない');
-  assert.deepStrictEqual(plain(g.mtgBalance_('期待値・受注月', 74, 8.5, 2)), ['期待値・', '受注月']);
+  assert.deepStrictEqual(plain(g.mtgWrap_('決裁者（社長）に会えていない', 134, 9, 3)).map(t => t.length), [13, 1]);
+  assert.deepStrictEqual(plain(g.mtgBalance_('決裁者（社長）に会えていない', 134, 9, 3)), ['決裁者（社長）', 'に会えていない'],
+    '最後の行に1文字だけ残さない（区切りは言葉の切れ目に）');
+  assert.deepStrictEqual(plain(g.mtgBalance_('期待値・受注月', 70, 8.5, 2)), ['期待値・', '受注月']);
+  assert.deepStrictEqual(plain(g.mtgBalance_('5/29離反シナリオ紹介。', 114, 9, 3)), ['5/29離反', 'シナリオ紹介。'], 'カタカナの語の途中で切らない');
+  assert.deepStrictEqual(plain(g.mtgBalance_('ユニーの販促全体サポート提案中', 114, 9, 3)), ['ユニーの販促全体', 'サポート提案中']);
+  assert.deepStrictEqual(plain(g.mtgBalance_('9/1初回訪問。9/15課題ヒアリング。9/29提案書の方向性確認', 114, 9, 3)),
+    ['9/1初回訪問。9/15', '課題ヒアリング。9/29', '提案書の方向性確認'], '3行でも、それぞれの区切りを言葉の切れ目に');
   assert.deepStrictEqual(plain(g.mtgBalance_('短い', 142, 9, 3)), ['短い'], '1行に入るものはそのまま');
   const dated = '10/13 価格の再提示';
   assert.strictEqual(g.mtgWrap_(dated, 98, 8.5, 2).length, 2);
   assert.deepStrictEqual(plain(g.mtgBalance_(dated, 98, 8.5, 2)), ['10/13', '価格の再提示'], '空白で分ければ1行ずつに入るなら、言葉の途中で切らずに空白で分ける');
   const para = '東西マート／物流センターの改善（失注）、富士ストア／店舗アプリ改修（提案中→課題ヒアリング）、海風マート／来店分析（削除）';
-  assert.deepStrictEqual(plain(g.mtgBalance_(para, 438, 9, 3)), plain(g.mtgWrap_(para, 438, 9, 3)), '最後の行が十分に長ければ、そのまま（行をいっぱいに使う）');
+  assert.deepStrictEqual(plain(g.mtgBalance_(para, 360, 9, 3)), plain(g.mtgWrap_(para, 360, 9, 3)), '最後の行が十分に長く、区切りが言葉の切れ目なら、そのまま（行をいっぱいに使う）');
+  assert.deepStrictEqual(plain(g.mtgBalance_(para, 400, 9, 3)).map(line => line.slice(-4)), ['中→課題', '（削除）'], '「ヒアリ／ング」ではなく「課題／ヒアリング」');
   const long = 'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめも';
   assert.deepStrictEqual(plain(g.mtgBalance_(long, 100, 9, 2)), plain(g.mtgWrap_(long, 100, 9, 2)), '「…」で切れるものはそのまま');
 });
 
 test('文字の折り返し：見積もりの幅で分け、最後の行は「…」。行の頭に来ない文字はぶら下げ、半角の語は途中で切らない', () => {
   const {g} = setup({edits: false});
-  assert.deepStrictEqual(plain(g.mtgWrap_('あいうえおかきくけこ', 100, 9, 3)), ['あいうえおかきく', 'けこ']);
-  assert.deepStrictEqual(plain(g.mtgWrap_('あいうえおかきくけこさしすせそたちつてと', 100, 9, 2)), ['あいうえおかきく', 'けこさしすせそ…'],
+  assert.deepStrictEqual(plain(g.mtgWrap_('あいうえおかきくけこ', 92, 9, 3)), ['あいうえおかきく', 'けこ']);
+  assert.deepStrictEqual(plain(g.mtgWrap_('あいうえおかきくけこさしすせそたちつてと', 92, 9, 2)), ['あいうえおかきく', 'けこさしすせそ…'],
     '最後の行は「…」の分をあけて切る');
-  assert.deepStrictEqual(plain(g.mtgWrap_('あいうえおかきく。', 100, 9, 3)), ['あいうえおかきく。'], '本当の幅に収まる「。」はぶら下げる');
-  assert.deepStrictEqual(plain(g.mtgWrap_('期待値（前▶今）', 72, 7.5, 3)), ['期待値（前▶', '今）'], '収まらなければ前の文字と一緒に送る');
+  assert.deepStrictEqual(plain(g.mtgWrap_('あいうえおかきく。', 92, 9, 3)), ['あいうえおかきく。'], '本当の幅に収まる「。」はぶら下げる');
+  assert.deepStrictEqual(plain(g.mtgWrap_('期待値（前▶今）', 66, 7.5, 3)), ['期待値（前▶', '今）'], '収まらなければ前の文字と一緒に送る');
   assert.deepStrictEqual(plain(g.mtgWrap_('2026/11 ▶ 2026/12', 80, 7.5, 2)), ['2026/11 ▶', '2026/12']);
   assert.deepStrictEqual(plain(g.mtgWrap_('一行目\n二行目', 300, 9, 2)), ['一行目', '二行目']);
-  assert.strictEqual(g.mtgWrap_('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 150, 8, 3).length, 2, '英大文字は幅を広めに見積もる（BIZ UDPゴシックでは約 0.72）');
+  assert.strictEqual(g.mtgWrap_('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 150, 8, 3).length, 2, '英大文字は幅を広めに見積もる（BIZ UDPゴシックでは 0.44〜1）');
+  // Google スライドで書き出した PDF で測った幅（9pt）：「2026/9」38.7pt・「B-クロージング中」70.6pt・「シナリオ提案」50.3pt。見積もりはそれ以上
+  [['2026/9', 38.7], ['B-クロージング中', 70.6], ['シナリオ提案', 50.3]].forEach(([text, real]) => {
+    const est = g.mtgTextWidth_(text, 9);
+    assert.ok(est >= real - 0.1 && est <= real * 1.06, text + '：' + est);
+  });
+  assert.strictEqual(g.mtgWrap_('2026/12', 62, 9, 2).length, 1, '受注月の列（62pt）に「2026/12」が1行で入る');
+  assert.strictEqual(g.mtgWrap_('2026/12', 56, 9, 2).length, 2, '56pt では入らない（Google スライドでも「2026/1」「2」に折り返された）');
 });
 
 test('mtgSlideRequests_：スライド・箱・表を Slides API のリクエストにする（空のセルにも空白を入れる・赤枠）', () => {
@@ -863,11 +890,62 @@ test('mtgSlideRequests_：一部の文字の書式（spans）・塗りの濃さ�
   ], '「XXXXXX」は「XXXXX」より先に置き換える');
   const added = onTemplate.find(r => r.createShape).createShape;
   assert.deepStrictEqual([added.objectId, added.elementProperties.pageObjectId], ['mtg_p1_0', 'g1a2b3']);
-  // ひな形が無いとき：緑の背景に、ひな形と同じ位置で白い字（名前の欄は空なので描かない）
+  // ひな形が無いとき：ページの背景を緑一色にし（あとで画像にする）、ひな形と同じ位置で白い字（名前の欄は空なので描かない）
   const plainCover = plain(g.mtgSlideRequests_(cover, 'mtg_p1', 0));
   assert.ok(plainCover[0].createSlide && !plainCover.some(r => r.replaceAllText));
+  assert.deepStrictEqual(plainCover[1], {updatePageProperties: {objectId: 'mtg_p1', pageProperties: {pageBackgroundFill: {solidFill: {color: {rgbColor:
+    plain(g.mtgRgb_('#3A7D22'))}}}}, fields: 'pageBackgroundFill.solidFill.color'}});
+  assert.ok(!plainCover.some(r => r.createShape && r.createShape.elementProperties.size.width.magnitude >= 720), 'ページ全体を覆う四角は置かない（背景の画像が隠れる）');
   assert.deepStrictEqual(plainCover.filter(r => r.insertText).map(r => r.insertText.text),
     ['スーパー・GMS', 'RX Business MTG　事前資料', '2026年11月6日（金）', '今期（2026/4〜）　受注']);
+});
+
+test('表紙・扉の背景の画像：1280 × 720 の PNG（緑のグラデーションに濃い緑の RX）。正しく展開でき、小さい', () => {
+  const zlib = require('zlib');
+  const {g} = setup({edits: false});
+  const png = Buffer.from(g.mtgCoverPng_());
+  assert.ok(png.length < 120000, '大きさ：' + png.length);
+  assert.deepStrictEqual(Array.from(png.slice(0, 8)), [137, 80, 78, 71, 13, 10, 26, 10]);
+  // チャンクの CRC を確かめながら読む
+  const crc = buf => {
+    let c = 0xFFFFFFFF;
+    for (const b of buf) {
+      c ^= b;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    }
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  };
+  const chunks = {};
+  for (let at = 8; at < png.length;) {
+    const length = png.readUInt32BE(at);
+    const type = png.slice(at + 4, at + 8).toString('latin1');
+    const data = png.slice(at + 8, at + 8 + length);
+    assert.strictEqual(png.readUInt32BE(at + 8 + length), crc(png.slice(at + 4, at + 8 + length)), type + ' の CRC');
+    chunks[type] = data;
+    at += 12 + length;
+  }
+  assert.deepStrictEqual(Object.keys(chunks), ['IHDR', 'IDAT', 'IEND']);
+  assert.deepStrictEqual([chunks.IHDR.readUInt32BE(0), chunks.IHDR.readUInt32BE(4), chunks.IHDR[8], chunks.IHDR[9]], [1280, 720, 8, 2]);
+  const raw = zlib.inflateSync(chunks.IDAT);   // zlib の形式（Adler-32 も確かめる）
+  const stride = 1280 * 3 + 1;
+  assert.strictEqual(raw.length, stride * 720);
+  const pixel = (x, y) => '#' + Array.from(raw.slice(y * stride + 1 + x * 3, y * stride + 4 + x * 3)).map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
+  assert.strictEqual(pixel(60, 400), '#275316', 'R の縦棒は濃い緑');
+  assert.strictEqual(pixel(300, 200), '#3A7D22', 'R の穴は左上の緑（グラデーションの始まり）');
+  assert.strictEqual(pixel(1279, 719), '#275316', '右下の角は X の脚');
+  assert.ok(/^#[0-9A-F]{6}$/.test(pixel(1000, 400)) && pixel(1000, 400) !== '#3A7D22', '右のほうは明るくなる');
+  for (let y = 0; y < 720; y++) assert.strictEqual(raw[y * stride], 0, '行の頭はフィルタなし');
+});
+
+test('表紙・扉の背景の画像を付けられなくても、資料は作る（緑一色の背景のまま。ログに残す）', () => {
+  const {gas, g} = setup();
+  gas.slidesAppError = 'SlidesApp が使えません';
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewMeetingSummaries();
+  assert.strictEqual(gas.slideBackgrounds.length, 0);
+  assert.strictEqual(gas.driveFiles.filter(f => /\.pdf$/.test(f.name)).length, 1, 'PDF は作る');
+  assert.ok(gas.logs.some(l => l.level === 'warn' && /表紙・扉の背景の画像を付けられませんでした/.test(l.line)));
+  assert.ok(gas.decks[0].requests.some(r => r.updatePageProperties), '背景は緑一色');
 });
 
 /* ---------------- 作る・保存する ---------------- */
@@ -902,6 +980,11 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
     ['会議サマリ_新FMT2_' + file + '.pdf', 'folder-1', 'deck-2', 'application/pdf']
   ]);
   assert.deepStrictEqual(plain(gas.moved), [{id: 'deck-1', folder: 'folder-1'}, {id: 'deck-2', folder: 'folder-1'}], 'スライドも同じフォルダに残す');
+  // ひな形が無いので、表紙（1枚目）と扉（6枚目）の背景を、緑のグラデーションと RX の画像にする（PDF にする前に保存する）
+  assert.deepStrictEqual(gas.slideBackgrounds.map(b => [b.deck, b.page, b.blob.getContentType()]), [
+    ['deck-1', 'mtg_p1', 'image/png'], ['deck-1', 'mtg_p6', 'image/png'], ['deck-2', 'mtg_p1', 'image/png'], ['deck-2', 'mtg_p6', 'image/png']]);
+  assert.deepStrictEqual(gas.slideBackgrounds[0].blob.getBytes().slice(0, 4), [-119, 80, 78, 71], 'PNG（バイトは -128〜127 で渡す）');
+  assert.deepStrictEqual(gas.decks.map(d => d.savedAndClosed), [1, 1]);
   assert.deepStrictEqual(gas.trashed, []);
   assert.deepStrictEqual(gas.writes.filter(w => w.ss === gas.ss.getId()), [], 'スプレッドシートには書き込まない');
   // 本番は、作る前に会議日（曜日）・シートごとの対象期間を出して確かめる（配布したあとは作り直さない）
@@ -992,6 +1075,7 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   assert.ok(r.some(q => q.createShape && q.createShape.elementProperties.pageObjectId === 'g_cover'), '表紙にデータの時点・期間を足す');
   assert.ok(!gas.moved.some(m => m.id === deck.id), 'コピーは保存先のフォルダにできるので動かさない');
   assert.strictEqual(gas.driveFiles[0].blob.from, deck.id, 'ひな形のコピーを PDF にする');
+  assert.deepStrictEqual(gas.slideBackgrounds, [], 'ひな形があれば、表紙・扉はひな形のまま（背景の画像は付けない）');
 
   // 空欄で登録を外すと、ひな形なしで作る
   gas.promptAnswers = [''];
@@ -1358,7 +1442,7 @@ test('setMeetingBaseline：今を基準として記録し（はいのときだ�
     '本番の確認：基準からの変化を出すこと');
   assert.match(inserted, /期待値合計 \d+百万円（基準比 /, '前回比ではなく基準比');
   assert.doesNotMatch(inserted, /前回比|前回以降/, '前回の会議の記録が無いので「前回」とは書かない');
-  assert.match(inserted, /\n停滞\n（同一ステータス45日以上）\n0件\n—\n基準（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない\n/,
+  assert.match(inserted, /\n停滞（同一ステータス45日以上）\n0件\n—\n基準（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない\n/,
     '基準から45日たつまでは、停滞を数えられないことを書く（0件を「停滞なし」と読ませない）');
   assert.deepStrictEqual(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT')).map(m => [m.date, !!m.baseline]), [[day(0), true], [meeting, false]],
     '会議を記録しても基準は残す');

@@ -646,6 +646,7 @@ function createGas(options) {
     driveFolders: [],         // 作ったフォルダ
     trashed: [],              // ゴミ箱に移したファイルの ID
     decks: [],                // Slides（拡張サービス）で作ったスライド {id, title, pageSize, requests, batches: batchUpdate ごとのリクエストの数}
+    slideBackgrounds: [],     // SlidesApp で付けたページの背景の画像 {deck, page, blob}
     moved: [],                // moveTo で動かしたファイル {id, folder}
     selection: null,
     props: {document: new Map(), user: new Map(), script: new Map()},
@@ -850,7 +851,13 @@ function createGas(options) {
       const shownUtc = Date.UTC(shown[0], shown[1] - 1, shown[2], shown[3], shown[4], shown[5]);
       return new gas.Date(utc - (shownUtc - utc));
     },
-    sleep() {}
+    sleep() {},
+    /** バイト列の Blob（表紙の背景の画像など）。getBytes は渡したバイト列 */
+    newBlob(data, contentType, name) {
+      const bytes = Array.from(data);
+      return {getBytes: () => bytes.slice(), getContentType: () => contentType, getName: () => name,
+        setName(n) { name = String(n); return this; }};
+    }
   };
 
   const Session = {
@@ -1052,6 +1059,21 @@ function createGas(options) {
     }
   };
 
+  /** SlidesApp（表紙・扉の背景の画像を付ける）。付けた背景を gas.slideBackgrounds に残す。gas.slidesAppError があれば開くときに失敗する */
+  const SlidesApp = {
+    openById(id) {
+      if (gas.slidesAppError) throw new Error(gas.slidesAppError);
+      const deck = gas.decks.find(d => d.id === id);
+      if (!deck) throw new Error('Requested entity was not found.');
+      return {
+        getSlideById: pageId => (deck.slides.some(sl => sl.objectId === pageId) ? {
+          getBackground: () => ({setPictureFill(blob) { gas.slideBackgrounds.push({deck: id, page: pageId, blob}); }})
+        } : null),
+        saveAndClose() { deck.savedAndClosed = (deck.savedAndClosed || 0) + 1; }
+      };
+    }
+  };
+
   /** 外への送信（Google チャットの webhook など）。gas.fetchStatuses の先頭（無ければ gas.fetchStatus）と gas.fetchText を返す */
   const UrlFetchApp = {
     fetch(url, params) {
@@ -1081,7 +1103,10 @@ function createGas(options) {
     SpreadsheetApp, HtmlService, PropertiesService, LockService, Utilities, Session,
     ScriptApp, CacheService, DriveApp, MimeType, UrlFetchApp, Browser, console: logger
   };
-  if (!options.noSlides) globals.Slides = Slides;
+  if (!options.noSlides) {
+    globals.Slides = Slides;
+    globals.SlidesApp = SlidesApp;
+  }
   const context = vm.createContext(globals);
   gas.Date = vm.runInContext('Date', context);
   gas.global = context;

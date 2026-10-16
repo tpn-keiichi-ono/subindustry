@@ -12,7 +12,8 @@
  *   使う言葉は docs/DESIGN.md（会議サマリの数え方）で決め、資料の中で同じ意味で使う。
  *
  * 資料の構成（16:9。緑を基調にしたトンマナ：黒の見出し・リード文・緑の見出しの表・区分のラベル・区切り線と出典・ページ番号。
- *   表紙と扉は、いただいた表紙のひな形（Google スライド。setMeetingTemplate() で登録）をそのまま使う
+ *   表紙と扉は、いただいた表紙のひな形（Google スライド。setMeetingTemplate() で登録）をそのまま使う。登録が無ければ、ひな形と同じ絵柄
+ *   （緑のグラデーションに大きな「RX」）の画像をスクリプトで描いて背景にし、同じ位置に文字を描く（mtgCoverPng_）
  *   表紙：会議の名前と「事前資料」・サブインダストリー・会議日・データの時点・期間
  *   1 サマリー：期待値と進行中案件の数・前回以降の動き（案件ごとに1回だけ数える区分の件数と案件）・現在の状態（受注月超過・停滞）
  *   2 パイプラインの変化：前回からの期待値の増減（新規・増額・復帰・減額・受注・失注・保留・削除）・ステータス別・受注月（四半期）別の期待値
@@ -46,7 +47,8 @@
  * - スプレッドシートは読むだけで、書き込まない。変更の記録は、変更時点スナップショット（その時の行の内容）で得意先＋案件名に結び付ける
  *   （行の追加・削除で行番号がずれても合う。得意先・案件名を書き換えた案件・あとから入れた案件も、前の名前の記録をつなげる）。
  *   どちらの記録も追記なので、下（新しいほう）から、読む期間（前回と MTG_OPTIONS.lookbackDays 日前の古いほう）より前に届くまでだけ読む。
- * - スライドは Slides API（拡張サービス「Google Slides API」。appsscript.json に書いてある）で作り、PDF に書き出す。
+ * - スライドは Slides API（拡張サービス「Google Slides API」。appsscript.json に書いてある）で作り、PDF に書き出す
+ *   （ひな形が無いときの表紙・扉の背景の画像だけは SlidesApp で付ける）。
  *   表紙・扉のひな形を登録してあれば（setMeetingTemplate()）、ひな形をコピーした資料に作り、ひな形の表紙の決まった文字を置き換える。
  */
 
@@ -216,7 +218,8 @@ const MTG_ALERT_LABELS = {'予定日超過': '予定日超過', '受注月超過
 /*
  * スライドの形（pt。16:9 = 720 × 405）。上から 見出し（titleY）・リード文（leadY）・中身（top〜bottom）・出典の行とページ番号（footY）。
  * 表紙と扉は、見出し・リード文の代わりに大きな文字を置く（表紙には出典の行・ページ番号も置かない）。
- * 文字の幅と行の高さは見積もり（mtgWrap_・mtgLineHeight_）。本物より大きめに見積もって、はみ出さないようにする。
+ * 文字の幅と行の高さは見積もり（mtgWrap_・mtgTextHeight_）。Google スライドで書き出した PDF で測った値に合わせ、少し大きめに見積もって、はみ出さないようにする
+ * （表のセルの余白は上下左右とも 7.2pt で、API では変えられない。行の送りは文字の大きさ × 1.2。表の行は、中身が入りきらなければ伸びる）。
  */
 const MTG_SLIDE = {
   width: 720,
@@ -236,13 +239,27 @@ const MTG_SLIDE = {
   leadLine: 1.35,        // リード文の行の送り = 文字の大きさ × leadLine
   bodySize: 9,
   appendixSize: 8.5,
-  lineFactor: 1.5,       // 表の行の高さ = 文字の大きさ × lineFactor（Google スライドで行が伸びないよう、多めに見積もる）
-  padX: 14.4,            // 箱・表のセルの左右の余白（合わせて）
-  padY: 7.2,             // 上下の余白（合わせて）
-  headRow: 20,           // 表の見出しの行の高さ（1行）
+  lineFactor: 1.2,       // 行の送り = 文字の大きさ × lineFactor（行間は「1」。Google スライドで測った値）
+  padX: 14.4,            // 箱・表のセルの左右の余白（合わせて。7.2pt ずつ）
+  padY: 14.4,            // 上下の余白（合わせて。7.2pt ずつ）。表の行の高さ = 行の送りの合計 + padY
+  fit: 0.95,             // 文字の幅の見積もりの余裕（セルの幅の 95% までに収める）
+  headRow: 20,           // 表の見出しの行の高さの下限
   // ラベル（区分・当てはまる状況）：高さ・文字の大きさ・縦に並べるときの間・セルの上下の余白。幅は列ごとに同じ（mtgPillWidth_）
   pill: {h: 12, size: 8, gap: 2, margin: 4}
 };
+
+/*
+ * 半角の英数字・記号（' '〜'~'）の幅（文字の大きさに対する割合。BIZ UDPゴシックの標準と太字の大きいほうを切り上げたもの）。
+ * i 番目が文字コード 32 + i。数字は 0.76（1 だけ 0.63）で、全角の 3/4 ほどある（0.6 と見積もると「2026/12」が折り返される）
+ */
+const MTG_ASCII_WIDTHS = [
+  0.34, 0.38, 0.52, 0.94, 0.8, 1, 0.92, 0.32, 0.51, 0.51, 0.5, 0.84, 0.34, 0.48, 0.34, 0.5,                // ' ' 〜 '/'
+  0.76, 0.63, 0.76, 0.76, 0.76, 0.76, 0.76, 0.76, 0.76, 0.76, 0.34, 0.34, 0.84, 0.84, 0.84, 0.8,          // '0' 〜 '?'
+  0.98, 0.78, 0.77, 0.82, 0.86, 0.71, 0.67, 0.86, 0.84, 0.44, 0.57, 0.76, 0.61, 1, 0.84, 0.88,            // '@' 〜 'O'
+  0.76, 0.9, 0.76, 0.73, 0.71, 0.86, 0.76, 1, 0.82, 0.75, 0.75, 0.55, 0.5, 0.55, 0.5, 0.31,               // 'P' 〜 '_'
+  0.5, 0.67, 0.73, 0.65, 0.73, 0.69, 0.51, 0.67, 0.73, 0.32, 0.4, 0.67, 0.36, 0.96, 0.73, 0.71,           // '`' 〜 'o'
+  0.73, 0.73, 0.5, 0.59, 0.5, 0.73, 0.61, 0.9, 0.63, 0.65, 0.59, 0.54, 0.44, 0.54, 0.5                    // 'p' 〜 '~'
+];
 
 /* ---------------- エディタから実行する ---------------- */
 
@@ -1337,6 +1354,7 @@ function mtgAlerts_(table, context, info) {
   const label = m => m.y + '/' + m.m;
 
   // 予定日超過：このシートに進行中の案件がある得意先の、予定日を過ぎても実施日が空のクレデンシャル・オファリング
+  // （サンプル（名称の先頭が【サンプル】。addSampleHistory() で足したもの）は数えない）
   const customers = new Map();
   active.forEach(d => {
     const key = credNormalize_(d.customer);
@@ -1345,6 +1363,7 @@ function mtgAlerts_(table, context, info) {
   const overdue = [];
   customers.forEach((customer, key) => {
     (context.credentials[key] || []).forEach(c => {
+      if (String(c.values.name || '').indexOf(SMP_OPTIONS.namePrefix) === 0) return;
       const plan = mtgDateText_(c.values.plan);
       if (!plan || mtgDateText_(c.values.date) || plan >= today) return;
       const days = Math.round((mtgDay_(today) - mtgDay_(plan)) / 86400000);
@@ -1697,10 +1716,11 @@ function mtgLead_(text) {
   const size = S.leadSize;
   const step = lines => lines * size * S.leadLine;
   const first = mtgWrap_(parts[0], S.w, size, 2);
-  const el = [mtgBox_(S.x, S.leadY, S.w, step(first.length) + S.padY, first.join('\n'), {size, color: c.ink, valign: 'TOP', role: 'lead'})];
+  // 箱の高さは、上の余白（padY の半分）と文字の行の分（文字は箱の上にそろえるので、下の余白は数えない）
+  const el = [mtgBox_(S.x, S.leadY, S.w, step(first.length) + S.padY / 2, first.join('\n'), {size, color: c.ink, valign: 'TOP', role: 'lead'})];
   if (rest) {
     const second = mtgWrap_(rest, S.w, size, 3 - first.length);
-    el.push(mtgBox_(S.x, S.leadY + step(first.length), S.w, step(second.length) + S.padY, second.join('\n'),
+    el.push(mtgBox_(S.x, S.leadY + step(first.length), S.w, step(second.length) + S.padY / 2, second.join('\n'),
       {size, color: c.ink, valign: 'TOP', role: 'lead'}));
   }
   return el;
@@ -1753,41 +1773,55 @@ function mtgSummarySlide_(s) {
   const vs = mtgVersus_(s);
   const lead = '進行中案件 ' + k.active + '件（' + vs + mtgSigned_(k.active - b.startCount) + '件）、期待値合計 ' + mtgAmount_(b.end) + '百万円（' +
     vs + mtgSigned_(b.end - b.start) + '）。' + mtgBlankNote_(k);
-  // 中身はリード文の下から（リード文が2行になれば下げる）
+  // 中身はリード文の下から（リード文が2行になれば下げる。箱の高さには上の余白が入っている）
   const top = Math.max(S.summaryTop, Math.max.apply(null, mtgLead_(lead).map(e => e.y + e.h)) + 2);
   const el = [];
 
   // 表：案件の名前は1行から始め、ページに入る限り上の行から2行にする。入る分だけ並べ、残りは「他 N件」。件数は大きな緑の字。
-  // 区分の名前の下に小さな字の補足（停滞の定義）を付けられる
+  // 区分の名前のあとに小さな字の補足（停滞の定義）を付けられる（同じ行に入らなければ2行目に）
   const columns = [136, 60, 62, S.w - 258];
-  const rowOf = (line, lines) => mtgRow_(columns, [
-    line.sub
-      ? {text: line.label + '\n' + line.sub, size: 7.5, lines: 2, color: c.muted, fill: c.greenSoft, parts: [{bold: true, size: S.bodySize, color: c.ink}, {}]}
-      : {text: line.label, lines: 2, bold: true, color: c.ink, fill: c.greenSoft},
-    {text: line.items.length + '件', size: 11, bold: true, color: c.greenDark, fill: c.white, align: 'CENTER'},
-    {text: line.items.length ? mtgAmount_(mtgSum_(line.items, 'amount')) : '—', fill: c.white, align: 'END'},
-    {text: line.items.length || line.prefix ? mtgNames_(line.shown || line.items, line.note, columns[3], lines, line.prefix) : line.empty || MTG_OPTIONS.noneText, lines,
-      fill: c.white}
-  ], 0);
+  const subSize = 7.5;
+  const rowOf = (line, lines, lay) => {
+    const body = lay.body;
+    const inline = line.sub && mtgTextWidth_(line.label, body) + mtgTextWidth_(line.sub, subSize) <= (columns[0] - S.padX) * S.fit;
+    const label = !line.sub ? {text: line.label, size: body, lines: 2, bold: true, color: c.ink, fill: c.greenSoft}
+      : inline ? {text: line.label + line.sub, size: subSize, color: c.muted, fill: c.greenSoft,
+        spans: [{start: 0, end: line.label.length, size: body, bold: true, color: c.ink}]}
+        : {text: line.label + '\n' + line.sub, size: subSize, lines: 2, color: c.muted, fill: c.greenSoft, parts: [{bold: true, size: body, color: c.ink}, {}]};
+    return mtgRow_(columns, [
+      label,
+      {text: line.items.length + '件', size: lay.count, bold: true, color: c.greenDark, fill: c.white, align: 'CENTER'},
+      {text: line.items.length ? mtgAmount_(mtgSum_(line.items, 'amount')) : '—', size: body, fill: c.white, align: 'END'},
+      {text: line.items.length || line.prefix ? mtgNames_(line.shown || line.items, line.note, columns[3], lines, line.prefix, body)
+        : line.empty || MTG_OPTIONS.noneText, size: body, lines, fill: c.white}
+    ], 0);
+  };
   const groups = mtgBreakdown_(s);
   const all = groups.moves.concat(groups.states);
   const height = rows => rows.reduce((sum, r) => sum + r.h, 0);
-  const head = mtgHeadRow_(columns, ['区分', '件数', '想定売上', '主な案件（想定売上順）']);
-  let rows = all.map(line => rowOf(line, 1));
-  // 高さ：数字の箱 th・箱の下 after・表の見出し headH・2つの表の間 gap。リード文が長く（空欄の補足など）表が入りきらなければ、
-  // 箱の下 → 表の間 → 表の見出し → 数字の箱の順に、決めた下限まで詰める
-  const lay = {th: 36, after: 8, headH: 18, gap: 6};
-  const roomOf = l => S.bottom - (top + l.th + l.after) - 2 * l.headH - l.gap - head.h;
-  [['after', 4], ['gap', 3], ['headH', 15], ['th', 32]].forEach(([key, min]) => {
-    const short = height(rows) - roomOf(lay);
-    if (short > 0) lay[key] = Math.max(min, lay[key] - short);
+  // 高さ：数字の箱 th・箱の下 after・表の見出し headH・2つの表の間 gap、文字の大きさ：件数 count・表 body。
+  // 入りきらなければ（リード文が長いときなど）、件数の文字 → 箱の下 → 表の間 → 表の見出し → 数字の箱 → 表の文字 の順に、決めた下限まで小さくする
+  const lay = {th: 34, after: 6, headH: 16, gap: 5, count: 10, body: S.bodySize};
+  const build = () => {
+    const head = mtgHeadRow_(columns, ['区分', '件数', '想定売上', '主な案件（想定売上順）'], lay.body);
+    const rows = all.map(line => rowOf(line, 1, lay));
+    return {head, rows, fixed: top + lay.th + lay.after + 2 * lay.headH + lay.gap + head.h};
+  };
+  let plan = build();
+  [['count', 9], ['after', 4], ['gap', 3], ['headH', 14], ['th', 30], ['body', 8], ['count', 8]].forEach(([key, min]) => {
+    const short = plan.fixed + height(plan.rows) - S.bottom;
+    if (short <= 0) return;
+    lay[key] = key === 'count' || key === 'body' ? Math.min(lay[key], min) : Math.max(min, lay[key] - short);
+    plan = build();
   });
+  const head = plan.head;
+  let rows = plan.rows;
   const headH = lay.headH;
   const gap = lay.gap;
   const tablesTop = top + lay.th + lay.after;
-  const room = roomOf(lay);
+  const room = S.bottom - plan.fixed;
   all.forEach((line, i) => {
-    const two = rowOf(line, 2);
+    const two = rowOf(line, 2, lay);
     if (height(rows) - rows[i].h + two.h <= room) rows[i] = two;
   });
   // 下にあいた分は、表の行に分けて高くする（1行あたり 10pt まで。ページの下が空かないように）
@@ -1896,15 +1930,16 @@ function mtgClip_(text, max) {
 
 /**
  * 案件の名前を並べる（mainRows.deals 件まで。残りは「他 N件」）。note(案件) があれば名前の後ろに（）で付ける。
- * width・lines を渡すと、その幅・行数に切れずに入る件数まで減らす（「他 N件」が「…」で切れないように）。prefix は名前の前に書く文
+ * width・lines を渡すと、その幅・行数に切れずに入る件数まで減らす（「他 N件」が「…」で切れないように）。prefix は名前の前に書く文、
+ * size は文字の大きさ（既定は bodySize）
  */
-function mtgNames_(items, note, width, lines, prefix) {
+function mtgNames_(items, note, width, lines, prefix, size) {
   const head = prefix || '';
   if (!items.length) return head || MTG_OPTIONS.noneText;
   const text = n => head + items.slice(0, n).map(d => mtgDealLabel_(d) + (note ? '（' + note(d) + '）' : '')).join('、') +
     (items.length > n ? '　他 ' + (items.length - n) + '件' : '');
   let n = Math.min(MTG_OPTIONS.mainRows.deals, items.length);
-  while (width && n > 1 && mtgWrap_(text(n), width, MTG_SLIDE.bodySize, 99).length > lines) n--;
+  while (width && n > 1 && mtgWrap_(text(n), width, size || MTG_SLIDE.bodySize, 99).length > lines) n--;
   return text(n);
 }
 
@@ -2050,11 +2085,12 @@ function mtgMovesSlide_(s) {
   const S = MTG_SLIDE;
   const k = s.kpi;
   const moves = s.changes.filter(ch => ch.category !== 'updated');
-  const top = moves.slice(0, MTG_OPTIONS.mainRows.changes);
   const columns = mtgColumns_([138, 66, 118, 66, 76, 132, 64], 5);
   const rows = [mtgHeadRow_(columns, ['得意先／案件名', '区分', 'ステータス\n前回▶今回', '期待値\n前回▶今回', '受注月\n前回▶今回', '活動状況（最新）', '責任者'])];
-  top.forEach(ch => {
-    rows.push(mtgRow_(columns, [
+  // 上から mainRows.changes 件まで、ページに入る分だけ（行の高さは中身で変わる）
+  const top = [];
+  moves.slice(0, MTG_OPTIONS.mainRows.changes).some(ch => {
+    const row = mtgRow_(columns, [
       mtgDealCell_(ch, columns[0]),
       {text: '', fill: c.white},
       {text: mtgStatusMove_(ch), lines: 2, fill: c.white},
@@ -2062,7 +2098,11 @@ function mtgMovesSlide_(s) {
       {text: mtgMonthMove_(ch), lines: 2, fill: c.white, align: 'CENTER'},
       {text: ch.activity || MTG_OPTIONS.blankText, lines: 2, fill: c.white},
       {text: ch.owner || MTG_OPTIONS.blankText, lines: 2, fill: c.white, align: 'CENTER'}
-    ]));
+    ]);
+    if (S.top + rows.reduce((sum, r) => sum + r.h, 0) + row.h > S.bottom) return true;
+    rows.push(row);
+    top.push(ch);
+    return false;
   });
   const el = [];
   if (top.length) {
@@ -2070,8 +2110,8 @@ function mtgMovesSlide_(s) {
     el.push(table);
     top.forEach((ch, i) => el.push.apply(el, mtgPills_(table, i + 1, 1, [mtgCategoryPill_(ch.category)], mtgCategoryPillWidth_(columns[1]))));
   } else {
-    el.push(mtgBox_(S.x, S.top + 20, S.w, 30, mtgPeriodShort_(s) + '、ステータス・期待値・受注月・活動状況に変化のある案件なし',
-      {size: 10, color: c.muted, align: 'CENTER'}));
+    // 状態はリード文に書いてあるので、ここは「該当なし」だけ（同じ文を2回書かない）
+    el.push(mtgBox_(S.x, S.top + 20, S.w, 30, MTG_OPTIONS.noneText, {size: 10, color: c.muted, align: 'CENTER', role: 'empty'}));
   }
   return {
     title: MTG_TITLES.progress,
@@ -2088,7 +2128,7 @@ function mtgFocusSlide_(s) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
   const k = s.kpi;
-  const columns = mtgColumns_([140, 58, 104, 56, 98, 132, 72], 4);
+  const columns = mtgColumns_([140, 58, 104, 62, 98, 126, 72], 4);
   const rows = [mtgHeadRow_(columns, ['得意先／案件名', '期待値／\n想定売上', 'ステータス\n（滞留日数）', '受注月', '活動状況', '活動における課題',
     '該当事項'])];
   s.focus.forEach(d => rows.push(mtgRow_(columns, [
@@ -2112,7 +2152,7 @@ function mtgFocusSlide_(s) {
     s.focus.forEach((d, i) => el.push.apply(el, mtgPills_(table, i + 1, 6, mtgFlags_(d).map(flag => ({text: flag, tone: flag === '停滞' ? 'stall' : 'note'})),
       width)));
   } else {
-    el.push(mtgBox_(S.x, S.top + 20, S.w, 30, '進行中案件なし', {size: 10, color: c.muted, align: 'CENTER'}));
+    el.push(mtgBox_(S.x, S.top + 20, S.w, 30, MTG_OPTIONS.noneText, {size: 10, color: c.muted, align: 'CENTER', role: 'empty'}));
   }
   const share = k.weighted > 0 ? Math.round(mtgSum_(s.focus, 'weighted') / k.weighted * 100) : 0;
   return {
@@ -2210,7 +2250,7 @@ function mtgAppendixChanges_(s) {
 function mtgAppendixStalled_(s) {
   const c = MTG_OPTIONS.colors;
   const k = s.kpi;
-  const columns = mtgColumns_([120, 44, 44, 92, 60, 54, 34, 62, 90, 60], 9);
+  const columns = mtgColumns_([120, 44, 44, 88, 62, 60, 34, 60, 84, 64], 9);
   const blankAmount = s.stalled.filter(d => d.amount == null).length;   // 想定売上が空（合計に含めない）
   return mtgPagedTable_({
     title: MTG_TITLES.stalled,
@@ -2450,16 +2490,18 @@ function mtgDealCell_(item, width, size) {
 
 /**
  * 表の1行。cells: [{text, lines, size, bold, color, fill, align, parts}]（文字は列の幅で折り返し、lines 行（既定は1）を超えたら「…」）。
- * parts は改行で分けた部分ごとの書式 [{bold, color, size}]（スライドでは spans にする）。行の高さは、いちばん行数の多いセルに合わせる（min 以上）。
+ * parts は改行で分けた部分ごとの書式 [{bold, color, size}]（スライドでは spans にする）。parts の代わりに spans を直接渡してもよい（1行の中で大きさを変えるとき）。
+ * 行の高さは、いちばん高いセルに合わせる（min 以上。mtgTextHeight_）。Google スライドでは、中身がこの高さより高ければ行が伸びるので、少し大きめに見積もる
  */
 function mtgRow_(columns, cells, min) {
   let h = min || 0;
   const out = cells.map((cell, i) => {
     const size = cell.size || MTG_SLIDE.bodySize;
     const lines = mtgBalance_(cell.text, columns[i], size, cell.lines || 1);
-    h = Math.max(h, mtgLineHeight_(lines.length, size));
     const text = lines.join('\n');
-    return Object.assign({}, cell, {text, size}, cell.parts ? {spans: mtgPartSpans_(String(cell.text), cell.parts, columns[i], size, lines)} : {});
+    const spans = cell.parts ? mtgPartSpans_(String(cell.text), cell.parts, columns[i], size, lines) : cell.spans;
+    h = Math.max(h, mtgTextHeight_(lines, size, spans));
+    return Object.assign({}, cell, {text, size}, spans ? {spans} : {});
   });
   return {h: Math.ceil(h * 10) / 10, cells: out};
 }
@@ -2500,23 +2542,37 @@ function mtgTitleFit_(text) {
 }
 
 /**
- * 文字1つの幅の見積もり（文字の大きさに対する割合）。BIZ UDPゴシックで測った幅より少し大きめ：
- * 全角 1（かなは 1.02 のものもあるが、mtgWrap_ の余裕に収まる）、半角の英大文字 0.75（実際は 0.72 前後）、ほかの半角 0.6（数字は 0.5）
+ * 文字1つの幅の見積もり（文字の大きさに対する割合）。BIZ UDPゴシック（プロポーショナル）の幅を、標準と太字の大きいほうで：
+ * 半角の英数字・記号は1文字ずつ（MTG_ASCII_WIDTHS。全角の英数字も同じ幅）、句読点 0.6、かっこ・中黒・コロン・半角カナ 0.5、
+ * 全角の空白 0.67、小さいかな 0.94、カタカナ 0.96（長音を含む。0.78〜1、平均 0.93）、漢字・ひらがな・そのほか 1
  */
 function mtgCharWidth_(ch) {
-  if (/[A-Z]/.test(ch)) return 0.75;
-  return /[\u0000-\u00ff\uff61-\uff9f]/.test(ch) ? 0.6 : 1;
+  const code = ch.codePointAt(0);
+  if (code >= 32 && code < 127) return MTG_ASCII_WIDTHS[code - 32];
+  if (/[０-９Ａ-Ｚａ-ｚ]/.test(ch)) return MTG_ASCII_WIDTHS[code - 0xFEE0 - 32];
+  if (/[、。，．]/.test(ch)) return 0.6;
+  if (/[・：；（）「」『』【】〔〕〈〉《》［］｛｝\uff61-\uff9f]/.test(ch)) return 0.5;
+  if (ch === '　') return 0.67;
+  if (/[±×÷]/.test(ch)) return 0.84;
+  if (/[ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ]/.test(ch)) return 0.94;
+  if (/[\u30a0-\u30ff]/.test(ch)) return 0.96;
+  return 1;
+}
+
+/** 文の幅（pt）の見積もり：文字の大きさ size（改行は無いものとして数える） */
+function mtgTextWidth_(text, size) {
+  return Array.from(String(text == null ? '' : text)).reduce((sum, ch) => sum + mtgCharWidth_(ch), 0) * (size || MTG_SLIDE.bodySize);
 }
 
 /**
  * 文を、幅 widthPt の箱（セル）の中に収まる行に分ける（改行はそのまま行の区切り。pt で数える）。max 行を超えたら最後の行を「…」の分をあけて切る。
- * 文字の幅は見積もり（mtgCharWidth_。箱の左右の余白 MTG_SLIDE.padX を引き、さらに 8% の余裕をとる）なので、本物の折り返しより早めに分ける。
+ * 文字の幅は見積もり（mtgCharWidth_。箱の左右の余白 MTG_SLIDE.padX を引き、さらに MTG_SLIDE.fit の余裕をとる）なので、本物の折り返しより早めに分ける。
  * 行の頭に来てはいけない文字（、。）」など）は、本当の幅に収まるなら前の行の終わりにぶら下げ、収まらなければ前の文字と一緒に次の行へ送る。
  * 半角の語（「2026/12」など）の途中では切らず、語の前の空白で折り返す。「前 ▶ 今」は矢印のあとで折り返す。開きかっこは行の終わりに残さない。
  */
 function mtgWrap_(text, widthPt, size, max) {
   const room = (widthPt - MTG_SLIDE.padX) / (size || MTG_SLIDE.bodySize);
-  const limit = room * 0.92;
+  const limit = room * MTG_SLIDE.fit;
   const width = mtgCharWidth_;
   const hang = /[、。，．,.)）」』】〕〉》・ーぁぃぅぇぉっゃゅょァィゥェォッャュョ！？!?%％:：;；]/;
   const out = [];
@@ -2565,38 +2621,112 @@ function mtgWrap_(text, widthPt, size, max) {
 /**
  * 最後の行が短い（いちばん長い行の 1/3 未満。「い」だけが残るなど）ときは、行の長さをそろえて折り返す
  * （2行で、空白で分ければどちらも1行に入るなら空白で分ける。ほかは mtgWrap_ と同じ行数のまま、いちばん狭い幅で折り返す）。
- * 「…」で切れるときと、最後の行が十分に長いときは、そのまま
+ * 区切りは、近くの言葉の切れ目に動かす（mtgBreakAt_。「シ／ナリオ」「サポー／ト」のように語の途中で切らない）。
+ * 「…」で切れるときは、行の長さはそろえず、区切りだけを動かす
  */
 function mtgBalance_(text, widthPt, size, max) {
   const lines = mtgWrap_(text, widthPt, size, max);
-  if (lines.length < 2 || /…$/.test(lines[lines.length - 1])) return lines;
+  if (lines.length < 2) return lines;
+  if (/…$/.test(lines[lines.length - 1])) {
+    // 「…」で切れるとき：切る前の行の区切りを言葉の切れ目に動かしてから、最後の行を切る
+    if (String(text).indexOf('\n') >= 0) return lines;
+    const full = mtgWrap_(text, widthPt, size, 99);
+    const moved = mtgBreakAt_(text, full, widthPt, size);
+    if (moved === full) return lines;
+    return moved.slice(0, lines.length - 1).concat(mtgWrap_(moved.slice(lines.length - 1).join(''), widthPt, size, 1));
+  }
   const units = line => Array.from(line).reduce((sum, ch) => sum + mtgCharWidth_(ch), 0);
-  if (units(lines[lines.length - 1]) >= Math.max.apply(null, lines.map(units)) / 3) return lines;
-  // 2行で、空白で分ければどちらも1行に入るなら、空白で分ける（「10/13 価／格の再提示」ではなく「10/13／価格の再提示」）
-  if (lines.length === 2) {
-    let best = null;
-    Array.from(text).forEach((ch, i, chars) => {
-      if (ch !== ' ') return;
-      const pair = [chars.slice(0, i).join('').trim(), chars.slice(i + 1).join('').trim()];
-      if (!pair[0] || !pair[1] || pair.some(part => mtgWrap_(part, widthPt, size, 99).length > 1)) return;
-      const longest = Math.max(units(pair[0]), units(pair[1]));
-      if (!best || longest < best.longest) best = {longest, pair};
-    });
-    if (best) return best.pair;
-  }
-  let lo = MTG_SLIDE.padX + (size || MTG_SLIDE.bodySize);
-  let hi = widthPt;
-  for (let k = 0; k < 12; k++) {
-    const mid = (lo + hi) / 2;
-    if (mtgWrap_(text, mid, size, 99).length > lines.length) lo = mid;
-    else hi = mid;
-  }
-  return mtgWrap_(text, hi, size, lines.length);
+  const even = () => {
+    if (units(lines[lines.length - 1]) >= Math.max.apply(null, lines.map(units)) / 3) return lines;
+    // 2行で、空白で分ければどちらも1行に入るなら、空白で分ける（「10/13 価／格の再提示」ではなく「10/13／価格の再提示」）
+    if (lines.length === 2) {
+      let best = null;
+      Array.from(text).forEach((ch, i, chars) => {
+        if (ch !== ' ') return;
+        const pair = [chars.slice(0, i).join('').trim(), chars.slice(i + 1).join('').trim()];
+        if (!pair[0] || !pair[1] || pair.some(part => mtgWrap_(part, widthPt, size, 99).length > 1)) return;
+        const longest = Math.max(units(pair[0]), units(pair[1]));
+        if (!best || longest < best.longest) best = {longest, pair};
+      });
+      if (best) return best.pair;
+    }
+    let lo = MTG_SLIDE.padX + (size || MTG_SLIDE.bodySize);
+    let hi = widthPt;
+    for (let k = 0; k < 12; k++) {
+      const mid = (lo + hi) / 2;
+      if (mtgWrap_(text, mid, size, 99).length > lines.length) lo = mid;
+      else hi = mid;
+    }
+    return mtgWrap_(text, hi, size, lines.length);
+  };
+  const out = even();
+  return String(text).indexOf('\n') < 0 ? mtgBreakAt_(text, out, widthPt, size) : out;
 }
 
-/** 行の高さ（pt）の見積もり：lines 行・文字の大きさ size（上下の余白を含む） */
-function mtgLineHeight_(lines, size) {
-  return lines * (size || MTG_SLIDE.bodySize) * MTG_SLIDE.lineFactor + MTG_SLIDE.padY;
+/**
+ * 折り返した文（lines）の区切りを、それぞれ前後4文字の中の言葉の切れ目に動かす（上の区切りから順に。動かしても両側の行が1行に入るときだけ。
+ * 空白で分けた区切りがあれば、そのまま）。
+ * 切れ目の良さ：句読点・閉じかっこのあと ＞ カタカナ・英数字の語の前後、ひらがなから漢字に変わるところ ＞ 漢字・ひらがなの続き ＞ 語の途中・送りがなの前。
+ * 行の頭に来ない文字の前、開きかっこのあとでは切らない
+ */
+function mtgBreakAt_(text, lines, widthPt, size) {
+  const chars = Array.from(String(text).replace(/[ \t]+/g, ' ').trim());
+  const cuts = [];
+  let pos = 0;
+  for (let k = 0; k < lines.length; k++) {
+    const part = Array.from(lines[k]);
+    if (chars.slice(pos, pos + part.length).join('') !== lines[k]) return lines;
+    pos += part.length;
+    if (k < lines.length - 1) {
+      if (chars[pos] === ' ') return lines;
+      cuts.push(pos);
+    }
+  }
+  if (pos !== chars.length) return lines;
+  const kind = ch => (/[0-9A-Za-z.,:\/%+\-０-９Ａ-Ｚａ-ｚ]/.test(ch) ? 'alnum' : /[\u30a0-\u30ff]/.test(ch) ? 'kata'
+    : /[\u3040-\u309f]/.test(ch) ? 'hira' : /[\u4e00-\u9fff々]/.test(ch) ? 'kanji' : 'other');
+  const score = i => {   // chars[i - 1] と chars[i] の間
+    const a = chars[i - 1];
+    const b = chars[i];
+    if (/[、。，．,.)）」』】・ー！？!?%％:：;；ぁぃぅぇぉっゃゅょァィゥェォッャュョ]/.test(b) || /[（「『【(]/.test(a) || a === ' ' || b === ' ') return -1;
+    if (/[、。，．）」』】・]/.test(a)) return 3;
+    const ka = kind(a);
+    const kb = kind(b);
+    if (ka === kb) return ka === 'kanji' || ka === 'hira' ? 1 : 0;
+    return ka === 'kanji' && kb === 'hira' ? 0 : 2;
+  };
+  const fits = (from, to) => to > from && mtgWrap_(chars.slice(from, to).join(''), widthPt, size, 99).length === 1;
+  // 2回まわす（下の区切りを動かしてから、上の区切りを動かせることがある）
+  [0, 1].forEach(() => cuts.forEach((cut, k) => {
+    const from = k ? cuts[k - 1] : 0;
+    const to = k < cuts.length - 1 ? cuts[k + 1] : chars.length;
+    let best = {q: cut, score: score(cut)};
+    for (let q = Math.max(from + 1, cut - 4); q <= Math.min(to - 1, cut + 4); q++) {
+      const sc = score(q);
+      const better = sc > best.score || (sc === best.score && Math.abs(q - cut) < Math.abs(best.q - cut));
+      if (q !== cut && better && fits(from, q) && fits(q, to)) best = {q, score: sc};
+    }
+    cuts[k] = best.q;
+  }));
+  return cuts.concat([chars.length]).map((cut, k) => chars.slice(k ? cuts[k - 1] : 0, cut).join(''));
+}
+
+/**
+ * セル・箱の高さ（pt）の見積もり：折り返したあとの行 lines（または行の数）・文字の大きさ size（上下の余白を含む）。
+ * 行の送りは、その行のいちばん大きな文字に合わせる（spans [{start, end, size}] で大きさを変えた文字。位置は lines を改行でつないだ文字で数える）
+ */
+function mtgTextHeight_(lines, size, spans) {
+  const S = MTG_SLIDE;
+  const base = size || S.bodySize;
+  const list = typeof lines === 'number' ? Array.from({length: lines}, () => '') : lines;
+  let offset = 0;
+  const total = list.reduce((sum, line) => {
+    const end = offset + line.length;
+    const big = (spans || []).filter(sp => sp.size && sp.start <= end && sp.end > offset).reduce((m, sp) => Math.max(m, sp.size), base);
+    offset = end + 1;
+    return sum + big * S.lineFactor;
+  }, 0);
+  return total + S.padY;
 }
 
 /* ---------------- スライド（16:9）に書く ---------------- */
@@ -2661,7 +2791,12 @@ function mtgSlideRequests_(slide, pageId, index, options) {
       containsText: {text: from, matchCase: true}, replaceText: to, pageObjectIds: [pageId]}}));
   } else {
     requests.push({createSlide: {objectId: pageId, insertionIndex: index, slideLayoutReference: {predefinedLayout: 'BLANK'}}});
-    if (slide.template) elements = mtgTemplateFallback_(slide.template).concat(elements);
+    if (slide.template) {
+      // ひな形が無いときの表紙・扉：背景は緑一色にしておき、あとで画像にする（mtgCoverBackground_）
+      requests.push({updatePageProperties: {objectId: pageId, pageProperties: {pageBackgroundFill: {solidFill: {color: {rgbColor:
+        mtgRgb_(MTG_OPTIONS.colors.cover)}}}}, fields: 'pageBackgroundFill.solidFill.color'}});
+      elements = mtgTemplateFallback_(slide.template).concat(elements);
+    }
   }
   const styleText = (target, item, text) => {
     const font = mtgTextStyle_(item, k);
@@ -2743,19 +2878,227 @@ function mtgTemplateReplacements_(template) {
 }
 
 /**
- * ひな形が無いときの表紙・扉：緑の背景に、ひな形と同じ位置（ひな形の 960 × 540pt を 0.75 倍）で見出し・その下の文字・日付・名前を白で描く
+ * ひな形が無いときの表紙・扉の文字：ひな形と同じ位置（ひな形の 960 × 540pt を 0.75 倍）に、見出し・その下の文字・日付・名前を白で描く。
+ * 背景（緑のグラデーションと大きな「RX」）は、ページの背景に画像で付ける（mtgCoverBackground_。付けるまでは緑一色。mtgSlideRequests_）
  */
 function mtgTemplateFallback_(template) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
   const line = (y, h, text, size, bold) => mtgBox_(S.x, y, S.w, h, mtgWrap_(text, S.w, size, 1)[0], {size, bold: !!bold, color: c.white, align: 'CENTER'});
   return [
-    {type: 'box', x: 0, y: 0, w: S.width, h: S.height, fill: c.cover, shape: 'RECTANGLE'},
     line(170, 46, template.title, 30, true),
     line(226, 26, template.subtitle, 15, true),
     line(326, 20, template.date, 12),
     line(344, 20, template.name, 12)
-  ].filter(el => el.fill || el.text);
+  ].filter(el => el.text);
+}
+
+/* ---------------- 表紙・扉の背景（ひな形が無いとき） ---------------- */
+
+/*
+ * 表紙・扉の背景の画像：左上から右下へ明るくなる緑（いただいた表紙のひな形と同じ色）に、大きな「RX」を濃い緑で重ねる（はみ出した部分は切る）。
+ * 画像はスクリプトの中で描いて PNG にする（ファイルを別に置かない）。
+ */
+const MTG_COVER = {
+  width: 1280,                 // 画像の大きさ（px。16:9）
+  height: 720,
+  from: '#3A7D22',             // 左上の色（0〜stop は from のまま）
+  to: '#8CD872',               // 右下の色
+  stop: 0.26,
+  ink: '#275316',              // RX の色
+  // RX の字形（Liberation Sans Bold。SIL Open Font License）：文字の大きさ size（px）・左端 x・ベースライン baseline（画像の px）。
+  // 輪郭はフォントの単位（upm = 文字の大きさ）で、点は「x,y」、点の間は空白、輪郭の間は「|」。X は R の送り幅（1479）だけ右にずらしてある
+  glyph: {size: 1142.67, x: -109.4, baseline: 756.2, upm: 2048},
+  contours: '1105,0 778,535 432,535 432,0 137,0 137,1409 841,1409 902,1407 960,1402 1014,1394 1064,1382 1111,1367 1154,1348 1194,1326 1230,1300 1266,1268 1297,1231 1322,1190 1342,1146 1356,1097 1364,1045 1367,989 1365,941 1358,895 1346,851 1330,810 1309,770 1283,734 1253,700 1220,670 1184,644 1145,623 1102,605 1056,592 1437,0|1070,977 1065,1031 1049,1076 1022,1114 985,1143 937,1163 879,1176 810,1180 432,1180 432,764 818,764 865,766 908,773 945,784 978,800 1006,820 1034,851 1054,887 1066,929|2517,0 2163,561 1809,0 1497,0 1985,741 1538,1409 1850,1409 2163,911 2476,1409 2786,1409 2358,741 2827,0'
+};
+
+/**
+ * 表紙・扉（pageIds）のページの背景に、MTG_COVER の画像を付ける（SlidesApp。Slides API ではファイルの画像を背景にできないため）。
+ * 付けられなければ、緑一色の背景のまま続ける（資料は作る）
+ */
+function mtgCoverBackground_(presentationId, pageIds) {
+  if (!pageIds.length) return;
+  try {
+    const deck = SlidesApp.openById(presentationId);
+    const image = mtgCoverImage_();
+    pageIds.forEach(id => {
+      const page = deck.getSlideById(id);
+      if (page) page.getBackground().setPictureFill(image);
+    });
+    deck.saveAndClose();
+  } catch (error) {
+    console.warn('表紙・扉の背景の画像を付けられませんでした（緑一色のままにします）：' + (error && error.message || error));
+  }
+}
+
+/** 表紙・扉の背景の画像（PNG の Blob）。描くのは実行ごとに1回（いくつかのシートの資料を作るときも同じ画像を使う） */
+function mtgCoverImage_() {
+  if (!MTG_COVER_CACHE.bytes) MTG_COVER_CACHE.bytes = Array.from(mtgCoverPng_(), b => (b > 127 ? b - 256 : b));
+  return Utilities.newBlob(MTG_COVER_CACHE.bytes, 'image/png', 'meeting-cover.png');
+}
+
+/* 描いた背景の画像（実行の間だけ覚えておく） */
+const MTG_COVER_CACHE = {bytes: null};
+
+/**
+ * MTG_COVER の画像を描いて PNG のバイト列（Uint8Array）にする。RX は輪郭を横の線で塗る（1px を縦に4本・横は面積で数えて、縁をなめらかに）
+ */
+function mtgCoverPng_() {
+  const C = MTG_COVER;
+  const W = C.width;
+  const H = C.height;
+  const k = C.glyph.size / C.glyph.upm;
+  const rgb = hex => [1, 3, 5].map(i => parseInt(String(hex).slice(i, i + 2), 16));
+  // 輪郭の辺 [上の x, 上の y, 下の x, 下の y]（横の辺は塗りに関係しないので除く）
+  const edges = [];
+  C.contours.split('|').forEach(contour => {
+    const points = contour.trim().split(/\s+/).map(p => p.split(',').map(Number)).map(([x, y]) => [C.glyph.x + x * k, C.glyph.baseline - y * k]);
+    points.forEach((p, i) => {
+      const q = points[(i + 1) % points.length];
+      if (p[1] !== q[1]) edges.push(p[1] < q[1] ? [p[0], p[1], q[0], q[1]] : [q[0], q[1], p[0], p[1]]);
+    });
+  });
+  const from = rgb(C.from);
+  const to = rgb(C.to);
+  const ink = rgb(C.ink);
+  const SUB = 4;
+  const stride = W * 3 + 1;
+  const raw = new Uint8Array(stride * H);
+  const cover = new Float32Array(W + 1);
+  for (let y = 0; y < H; y++) {
+    cover.fill(0);
+    for (let s = 0; s < SUB; s++) {
+      const sy = y + (s + 0.5) / SUB;
+      const xs = [];
+      edges.forEach(e => { if (sy >= e[1] && sy < e[3]) xs.push(e[0] + (sy - e[1]) * (e[2] - e[0]) / (e[3] - e[1])); });
+      xs.sort((a, b) => a - b);
+      for (let i = 0; i + 1 < xs.length; i += 2) {   // 内と外を交互に（R の穴は外側の輪郭と逆）
+        const a = Math.max(0, Math.min(W, xs[i]));
+        const b = Math.max(0, Math.min(W, xs[i + 1]));
+        if (b <= a) continue;
+        const ia = Math.floor(a);
+        const ib = Math.floor(b);
+        if (ia === ib) {
+          cover[ia] += (b - a) / SUB;
+          continue;
+        }
+        cover[ia] += (ia + 1 - a) / SUB;
+        for (let x = ia + 1; x < ib; x++) cover[x] += 1 / SUB;
+        cover[ib] += (b - ib) / SUB;
+      }
+    }
+    let o = y * stride;
+    raw[o++] = 0;   // 行の頭（PNG のフィルタ：なし）
+    for (let x = 0; x < W; x++) {
+      const t = Math.max(0, ((x + y + 1) / (W + H) - C.stop) / (1 - C.stop));   // 左上 0 → 右下 1（CSS の 135deg と同じ向き）
+      const a = Math.min(1, cover[x]);
+      for (let ch = 0; ch < 3; ch++) {
+        const base = from[ch] + (to[ch] - from[ch]) * t;
+        raw[o++] = Math.round(base + (ink[ch] - base) * a);
+      }
+    }
+  }
+  return mtgPng_(W, H, raw);
+}
+
+/** PNG（24 ビットのカラー）のバイト列。raw は行ごとに先頭にフィルタの種類（0）を付けた画素（R・G・B） */
+function mtgPng_(width, height, raw) {
+  const crcTable = [];
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let j = 0; j < 8; j++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    crcTable.push(c >>> 0);
+  }
+  const u32 = v => [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255];
+  const chunk = (type, data) => {
+    const body = Array.from(type, ch => ch.charCodeAt(0)).concat(Array.from(data));
+    let crc = 0xFFFFFFFF;
+    body.forEach(b => { crc = crcTable[(crc ^ b) & 255] ^ (crc >>> 8); });
+    return u32(data.length).concat(body, u32((crc ^ 0xFFFFFFFF) >>> 0));
+  };
+  const header = u32(width).concat(u32(height), [8, 2, 0, 0, 0]);   // 8 ビット・RGB
+  const bytes = [137, 80, 78, 71, 13, 10, 26, 10].concat(chunk('IHDR', header), chunk('IDAT', mtgZlib_(raw, width * 3 + 1)), chunk('IEND', []));
+  return Uint8Array.from(bytes);
+}
+
+/**
+ * zlib の形式で圧縮する（deflate の固定ハフマン符号。同じ並びは、1画素前・1行上・斜め上だけを探す。表紙の画像のように、
+ * 同じ色や行をずらした並びが続く画像なら十分に小さくなる）。stride は1行のバイト数
+ */
+function mtgZlib_(data, stride) {
+  const out = [0x78, 0x01];
+  let bitBuf = 0;
+  let bitLen = 0;
+  const bits = (value, count) => {
+    bitBuf |= value << bitLen;
+    bitLen += count;
+    while (bitLen >= 8) {
+      out.push(bitBuf & 255);
+      bitBuf >>>= 8;
+      bitLen -= 8;
+    }
+  };
+  const reversed = (code, length) => {
+    let r = 0;
+    for (let i = 0; i < length; i++) r = (r << 1) | ((code >> i) & 1);
+    return r;
+  };
+  const symbol = n => {   // 固定ハフマン符号の文字・長さの記号
+    if (n < 144) bits(reversed(0x30 + n, 8), 8);
+    else if (n < 256) bits(reversed(0x190 + n - 144, 9), 9);
+    else if (n < 280) bits(reversed(n - 256, 7), 7);
+    else bits(reversed(0xC0 + n - 280, 8), 8);
+  };
+  const lenBase = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+  const lenExtra = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+  const distBase = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193,
+    12289, 16385, 24577];
+  const distExtra = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+  const code = (base, value) => {
+    let i = base.length - 1;
+    while (base[i] > value) i--;
+    return i;
+  };
+  const distances = [3, stride - 3, stride, stride + 3].filter(d => d > 0 && d <= 32768);
+  bits(1, 1);   // 最後のブロック
+  bits(1, 2);   // 固定ハフマン符号
+  const n = data.length;
+  let i = 0;
+  while (i < n) {
+    let best = 0;
+    let dist = 0;
+    distances.forEach(d => {
+      if (d > i) return;
+      const max = Math.min(258, n - i);
+      let len = 0;
+      while (len < max && data[i + len] === data[i + len - d]) len++;
+      if (len > best) {
+        best = len;
+        dist = d;
+      }
+    });
+    if (best >= 3) {
+      const lc = code(lenBase, best);
+      symbol(257 + lc);
+      if (lenExtra[lc]) bits(best - lenBase[lc], lenExtra[lc]);
+      const dc = code(distBase, dist);
+      bits(reversed(dc, 5), 5);
+      if (distExtra[dc]) bits(dist - distBase[dc], distExtra[dc]);
+      i += best;
+    } else {
+      symbol(data[i]);
+      i++;
+    }
+  }
+  symbol(256);   // ブロックの終わり
+  if (bitLen > 0) out.push(bitBuf & 255);
+  let a = 1;
+  let b = 0;
+  for (let j = 0; j < n; j++) {
+    a = (a + data[j]) % 65521;
+    b = (b + a) % 65521;
+  }
+  return out.concat([(b >>> 8) & 255, b & 255, (a >>> 8) & 255, a & 255]);
 }
 
 /** 表紙・扉のひな形の ID（MTG_OPTIONS.templateId か、setMeetingTemplate() で登録したもの。無ければ空） */
@@ -2881,6 +3224,8 @@ function mtgExportDeck_(name, slides, folder) {
     flush();
     const extra = mtgPlaceholderRequests_(Slides.Presentations.get(deck.presentationId), slides.map((slide, i) => 'mtg_p' + (i + 1)));
     if (extra.length) Slides.Presentations.batchUpdate({requests: extra}, deck.presentationId);
+    // ひな形が無ければ、表紙・扉の背景をいただいたひな形と同じ絵柄（緑のグラデーションと RX）の画像にする
+    if (!templateId) mtgCoverBackground_(deck.presentationId, slides.map((slide, i) => (slide.cover || slide.divider ? 'mtg_p' + (i + 1) : '')).filter(Boolean));
     if (!templateId) file.moveTo(folder);
     const pdf = folder.createFile(file.getAs('application/pdf').setName(name + '.pdf'));
     mtgTrashOld_(folder, [name, name + '.pdf'], [file.getId(), pdf.getId()]);
