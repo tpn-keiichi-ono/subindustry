@@ -60,14 +60,21 @@ const MTG_OPTIONS = {
   blankText: '未入力',
   noneText: '該当なし',
   gapText: 'データなし',
-  fileName: '会議サマリ',             // ファイル名の先頭（会議サマリ_スーパー・GMS_2026-10-23.pdf。日付は会議日）
+  // ファイル名（スライド・PDF）。{date} は会議日（yyyyMMdd）、{name} はサブインダストリー（シート名）。
+  // 例：20261023_スーパー・GMS_RX Business Meeting用資料.pdf（試作は末尾に「_試作」）
+  fileName: '{date}_{name}_RX Business Meeting用資料',
   folderId: '1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK',   // 保存先のフォルダの ID（空なら、このスプレッドシートと同じフォルダの中に folderName を作る）
   folderName: '会議サマリ',
   folderKey: 'MTG_FOLDER_ID',         // 作ったフォルダの ID（ドキュメントのプロパティ）
+  // 会議のフォルダへの格納（本番だけ）：サブインダストリーのフォルダ（test.gs の DIFF_RULES の meetingFolder）の中の、名前が会議日の
+  // meetingFolderDate（yyMMdd）＋「_」で始まるフォルダ（例：261023_第5回会議）に、事前資料の PDF のコピーを置く。
+  // 見つからない・格納できないときは保存先（folderId）にだけ残して知らせ、フォルダを用意してから storeMeetingSummaries() で格納する
+  meetingFolderDate: 'yyMMdd',
   // 会議時点のコピー：本番の資料を作ったとき・基準を記録したときに、追跡シートの値を別のスプレッドシート（タイトルは実行日時）に保存する。
   // 次の資料の「前回からの変化」は、前回のコピーと今のシートを比べて出す（差分追跡が止まっていた間・2,000セルを超える貼り付けの変更も出る）。
   // 保存先は、会議サマリのフォルダの中の copyFolderName のフォルダ
   copyName: '会議時点のコピー',       // タイトル（会議時点のコピー_2026-10-16 18:30（会議日 2026-10-23））
+  copyFolderId: '',                   // 会議時点のコピー（前回の記録）の保存先のフォルダ（URL か ID）。空なら、会議サマリのフォルダの中の copyFolderName
   copyFolderName: '会議時点のコピー',
   copyFolderKey: 'MTG_COPY_FOLDER_ID', // 作ったフォルダの ID（ドキュメントのプロパティ）
   copyChunkRows: 500,                 // コピーするときの1回の行数
@@ -407,6 +414,9 @@ function mtgRun_(final) {
     // 変化が無く、サンプル（addSampleHistory()。会議サマリは数えない）の記録だけがあるときは、資料の確認用の関数を案内する
     const samples = !r.summary.kpi.changed && !r.summary.dummy ? smpCountEvents_(ss, SMP_OPTIONS.eventPrefix + '-', r.summary.name).changes : 0;
     return '「' + r.summary.name + '」：' + r.file.getName() + '（' + mtgCountsText_(r.summary) + '）\n　' + r.file.getUrl() +
+      (r.stored ? '\n　会議のフォルダ「' + r.stored.folder.getName() + '」に格納しました：' + r.stored.folder.getUrl() : '') +
+      (r.storeError ? '\n　※ 会議のフォルダに格納できませんでした（' + r.storeError + '）。資料は保存先にあります。' +
+        'フォルダを用意してから、エディタで storeMeetingSummaries() を実行して格納してください。' : '') +
       (r.summary.copy ? '\n　前回からの変化は「' + r.summary.copy.title + '」と比べました。' : '') +
       (r.summary.copyError ? '\n　※ ' + r.summary.copyError : '') +
       (r.summary.unlogged ? '\n　※ 変更の記録が無い変更 ' + r.summary.unlogged + '件（差分追跡が止まっていた間などの変更。資料には出しています）。' +
@@ -754,6 +764,14 @@ function mtgCreate_(ss, names, now, final, meeting) {
       }));
     }
   });
+  // 本番：会議のフォルダに PDF を格納する（できなくても止めない。資料は保存先にあるので、あとで storeMeetingSummaries() で格納できる）
+  if (final) {
+    results.forEach(r => {
+      const stored = mtgStoreToMeetingFolder_(r.summary.name, meeting, r.file);
+      if (stored.error) r.storeError = stored.error;
+      else r.stored = stored;
+    });
+  }
   return results;
 }
 
@@ -810,6 +828,92 @@ function mtgHash_(text) {
   return h.toString(36);
 }
 
+/* ---------------- 会議のフォルダへの格納 ---------------- */
+
+/**
+ * 作成済みの本番の事前資料（PDF）を、会議のフォルダに格納する（エディタから実行）。作ったときに格納できなかった
+ * （会議のフォルダがまだ無かった・権限が無かったなど）ときに、フォルダを用意してから実行する。シートと会議日を聞き、
+ * 保存先（MTG_OPTIONS.folderId）にある本番の PDF（mtgFileName_。20261023_スーパー・GMS_RX Business Meeting用資料.pdf）を、会議のフォルダにコピーする（同じ名前の古い版はゴミ箱に移す）
+ */
+function storeMeetingSummaries() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = mtgUi_();
+  const names = mtgAskSheets_(ss, ui, '作成済みの事前資料（PDF）を、会議のフォルダに格納します。');
+  if (!names) return;
+  const response = ui.prompt(CRED_OPTIONS.menuTitle, '格納する資料の会議日を入力してください（例：10/23）。', ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+  const text = String(response.getResponseText() || '').trim();
+  const meeting = text && mtgParseDate_(text, new Date());
+  if (!meeting) throw new Error('「' + text + '」を会議日として読めません。10/23 か 2026/10/23 のように入力してください。');
+  const folder = mtgFolder_(ss);
+  const lines = names.map(name => {
+    const fileName = mtgFileName_(name, meeting, true) + '.pdf';
+    const files = folder.getFilesByName(fileName);
+    const pdf = files.hasNext() ? files.next() : null;
+    if (!pdf) return '「' + name + '」：本番の資料（' + fileName + '）が保存先にありません。createMeetingSummaries() で作ってください。';
+    const stored = mtgStoreToMeetingFolder_(name, meeting, pdf);
+    return '「' + name + '」：' + (stored.error ? '格納できませんでした（' + stored.error + '）。'
+      : '会議のフォルダ「' + stored.folder.getName() + '」に格納しました：' + stored.folder.getUrl());
+  });
+  console.log(lines.join('\n'));
+  ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
+}
+
+/**
+ * 事前資料の PDF（pdf）を、そのシートの会議日のフォルダにコピーする（同じ名前の古い版はゴミ箱に移す）。
+ * 戻り値 {folder, file} か {error: 理由}（止めない）
+ */
+function mtgStoreToMeetingFolder_(name, meeting, pdf) {
+  const target = mtgMeetingFolder_(name, meeting);
+  if (target.error) return target;
+  try {
+    const fileName = pdf.getName();
+    const file = DriveApp.getFileById(pdf.getId()).makeCopy(fileName, target.folder);
+    mtgTrashOld_(target.folder, [fileName], [file.getId()]);
+    return {folder: target.folder, file};
+  } catch (error) {
+    return {error: '「' + target.folder.getName() + '」にコピーできない：' + (error && error.message || error)};
+  }
+}
+
+/**
+ * シートの会議のフォルダ：サブインダストリーのフォルダ（DIFF_RULES の meetingFolder）の中の、名前が会議日の meetingFolderDate（yyMMdd）で始まり、
+ * そのすぐあとが数字でないフォルダ（261023_第5回会議）。{folder} か {error: 理由}（設定が無い・開けない・見つからない・2つ以上ある）
+ */
+function mtgMeetingFolder_(name, meeting) {
+  const rule = DIFF_RULES[name] || {};
+  const id = mtgFolderIdOf_(rule.meetingFolder);
+  if (!id) return {error: '「' + name + '」の会議のフォルダが設定されていない（test.gs の DIFF_RULES の meetingFolder）'};
+  let parent;
+  try {
+    parent = DriveApp.getFolderById(id);
+  } catch (_) {
+    return {error: '「' + name + '」のフォルダ（ID：' + id + '）を開けない（実行するアカウントに編集の権限があるか確かめてください）'};
+  }
+  const p = meeting.split('/');
+  const prefix = MTG_OPTIONS.meetingFolderDate.replace('yyyy', p[0]).replace('yy', p[0].slice(2)).replace('MM', p[1]).replace('dd', p[2]);
+  const found = [];
+  const folders = parent.getFolders();
+  while (folders.hasNext()) {
+    const folder = folders.next();
+    const folderName = String(folder.getName());
+    if (folderName.indexOf(prefix) === 0 && !/^\d/.test(folderName.slice(prefix.length)) && !folder.isTrashed()) found.push(folder);
+  }
+  if (!found.length) return {error: '「' + parent.getName() + '」の中に「' + prefix + '_」で始まる会議のフォルダが無い'};
+  if (found.length > 1) {
+    return {error: '「' + parent.getName() + '」の中に「' + prefix + '_」で始まるフォルダが ' + found.length + '個ある（「' +
+      found.map(f => f.getName()).join('」「') + '」。1つにしてください）'};
+  }
+  return {folder: found[0]};
+}
+
+/** フォルダの URL（…/folders/ID、?id=ID）か ID から ID を取り出す（読めなければ空）。 */
+function mtgFolderIdOf_(text) {
+  const t = String(text || '').trim();
+  const m = /\/folders\/([A-Za-z0-9_-]{10,})/.exec(t) || /[?&]id=([A-Za-z0-9_-]{10,})/.exec(t) || /^([A-Za-z0-9_-]{10,})$/.exec(t);
+  return m ? m[1] : '';
+}
+
 /* ---------------- 会議時点のコピー ---------------- */
 
 /**
@@ -850,8 +954,17 @@ function mtgSaveCopy_(ss, names, now, note) {
   return {id: book.getId(), title, url: book.getUrl()};
 }
 
-/** 会議時点のコピーの保存先（会議サマリのフォルダの中の copyFolderName。作ったフォルダの ID をドキュメントのプロパティに残す） */
+/** 会議時点のコピーの保存先（MTG_OPTIONS.copyFolderId。空なら会議サマリのフォルダの中の copyFolderName。作ったフォルダの ID をドキュメントのプロパティに残す） */
 function mtgCopyFolder_(ss) {
+  if (MTG_OPTIONS.copyFolderId) {
+    const id = mtgFolderIdOf_(MTG_OPTIONS.copyFolderId);
+    try {
+      return DriveApp.getFolderById(id);
+    } catch (error) {
+      throw new Error('会議時点のコピーの保存先のフォルダ（ID：' + id + '）を開けません。実行するアカウントが、そのフォルダに書き込めるか確かめてください' +
+        '（MeetingSummary.gs の MTG_OPTIONS.copyFolderId）。');
+    }
+  }
   const props = PropertiesService.getDocumentProperties();
   const saved = props.getProperty(MTG_OPTIONS.copyFolderKey);
   if (saved) {
@@ -3547,9 +3660,9 @@ function mtgRequireSlides_() {
   }
 }
 
-/** ファイル名（会議サマリ_スーパー・GMS_2026-10-23。試作は「_試作」つき） */
+/** ファイル名（20261023_スーパー・GMS_RX Business Meeting用資料。MTG_OPTIONS.fileName。試作は「_試作」つき） */
 function mtgFileName_(name, meeting, final) {
-  return MTG_OPTIONS.fileName + '_' + name + '_' + meeting.replace(/\//g, '-') + (final ? '' : '_試作');
+  return MTG_OPTIONS.fileName.replace('{date}', meeting.replace(/\//g, '')).replace('{name}', name) + (final ? '' : '_試作');
 }
 
 /**

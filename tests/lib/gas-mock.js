@@ -967,6 +967,11 @@ function createGas(options) {
       gas.driveFolders.push({id: child.getId(), name: childName, parent: id});
       return child;
     },
+    /** 中のフォルダ（gas.driveFolders の parent がこのフォルダのもの。テストでは gas.driveFolders に足して用意する） */
+    getFolders() {
+      const list = gas.driveFolders.filter(f => f.parent === id).map(f => folderOf(f.id, f.name));
+      return {hasNext: () => list.length > 0, next: () => list.shift()};
+    },
     createFile(blob) {
       const fileId = 'file-' + (gas.driveFiles.length + 1);
       gas.driveFiles.push({id: fileId, folder: id, name: blob.getName(), blob});
@@ -1019,6 +1024,13 @@ function createGas(options) {
         makeCopy(name, folder) {
           const copyId = 'copy-' + (++copySeq);
           gas.driveCopies.push({from: id, name, folder: folder ? folder.getId() : null, locked: gas.lockHolders > 0});
+          if ((gas.copyErrors || []).indexOf(folder ? folder.getId() : '') >= 0) throw new Error('Access denied: DriveApp.');
+          const source = gas.driveFiles.find(f => f.id === id);
+          if (source) {
+            // フォルダに作ったファイル（PDF など）のコピー：同じフォルダの一覧（getFilesByName）に出るようにする
+            gas.driveFiles.push({id: copyId, folder: folder ? folder.getId() : null, name, blob: source.blob});
+            return {getId: () => copyId, getName: () => name, getUrl: () => 'https://drive.google.com/file/d/' + copyId + '/view'};
+          }
           const template = gas.slideTemplates[id];
           if (template) {
             // Google スライドのコピー：Slides（拡張サービス）で開ける資料にする
@@ -1036,7 +1048,8 @@ function createGas(options) {
     },
     getFolderById(id) {
       if ((gas.missingFolders || []).indexOf(id) >= 0) throw new Error('No item with the given ID could be found, or you do not have permission to access it.');
-      return folderOf(id);
+      const known = gas.driveFolders.find(f => f.id === id);
+      return folderOf(id, known ? known.name : undefined);
     }
   };
 

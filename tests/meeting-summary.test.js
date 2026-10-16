@@ -1076,6 +1076,97 @@ test('クレデンシャル・オファリング履歴を使っていない間�
   assert.ok(!table.rows[0].cells.some(cell => /予定日/.test(cell.text)));
 });
 
+/* ---------------- 会議のフォルダへの格納 ---------------- */
+
+/** 新FMT のサブインダストリーのフォルダ（会議のフォルダ folders を中に置く）を用意し、DIFF_RULES の meetingFolder に設定する */
+function meetingFolders(gas, folders) {
+  const parent = 'SubIndustryFolder0001';
+  gas.driveFolders.push({id: parent, name: 'スーパー・GMS', parent: 'root'});
+  folders.forEach((name, i) => gas.driveFolders.push({id: 'meeting-folder-' + i, name, parent}));
+  gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'https://drive.google.com/drive/folders/' + parent + '?usp=sharing';
+  return parent;
+}
+
+/** 会議日 'yyyy/MM/dd' の yyMMdd */
+const yymmdd = date => date.slice(2, 4) + date.slice(5, 7) + date.slice(8, 10);
+
+test('本番：会議日のフォルダ（yyMMdd_第N回会議）に事前資料の PDF のコピーを格納する。作り直したら古い版はゴミ箱へ。試作は格納しない', () => {
+  const {gas, g} = setup();
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  const name = meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料.pdf';
+  meetingFolders(gas, [yymmdd(meeting) + '_第5回会議', '260819_第4回会議', yymmdd(meeting) + '0_別の会議']);
+
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewMeetingSummaries();
+  assert.ok(!gas.driveFiles.some(f => f.folder === 'meeting-folder-0'), '試作は格納しない');
+
+  gas.promptAnswers = ['1', '10/23'];
+  g.createMeetingSummaries();
+  const stored = gas.driveFiles.filter(f => f.folder === 'meeting-folder-0');
+  assert.deepStrictEqual(stored.map(f => f.name), [name]);
+  assert.ok(!gas.driveFiles.some(f => f.folder === 'meeting-folder-1' || f.folder === 'meeting-folder-2'), 'ほかの会議のフォルダには置かない');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, new RegExp('会議のフォルダ「' + yymmdd(meeting) + '_第5回会議」に格納しました：https://drive.google.com/drive/folders/meeting-folder-0'));
+  assert.ok(gas.driveFiles.some(f => f.name === name && f.folder !== 'meeting-folder-0'), '保存先にも残す');
+
+  gas.promptAnswers = ['1', '10/23'];
+  g.createMeetingSummaries();
+  const again = gas.driveFiles.filter(f => f.folder === 'meeting-folder-0');
+  assert.strictEqual(again.length, 2);
+  assert.ok(gas.trashed.indexOf(stored[0].id) >= 0, '会議のフォルダの古い版はゴミ箱へ');
+  assert.ok(gas.trashed.indexOf(again[1].id) < 0);
+});
+
+test('会議のフォルダが無いときは、保存先にだけ残して知らせ、フォルダを用意してから storeMeetingSummaries() で格納する', () => {
+  const {gas, g} = setup();
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  meetingFolders(gas, ['260819_第4回会議']);
+  gas.promptAnswers = ['1', '10/23'];
+  g.createMeetingSummaries();
+  const done = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(done, new RegExp('※ 会議のフォルダに格納できませんでした（「スーパー・GMS」の中に「' + yymmdd(meeting) +
+    '_」で始まる会議のフォルダが無い）。資料は保存先にあります。フォルダを用意してから、エディタで storeMeetingSummaries\\(\\) を実行して格納してください。'));
+  assert.ok(JSON.parse(g.PropertiesService.getDocumentProperties().getProperty('MTG_MEETINGS_新FMT')).some(m => m.date === meeting), '会議日は記録する');
+
+  gas.driveFolders.push({id: 'meeting-folder-new', name: yymmdd(meeting) + '_第5回会議', parent: 'SubIndustryFolder0001'});
+  gas.promptAnswers = ['1', '10/23'];
+  g.storeMeetingSummaries();
+  assert.deepStrictEqual(gas.driveFiles.filter(f => f.folder === 'meeting-folder-new').map(f => f.name), [meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料.pdf']);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「新FMT」：会議のフォルダ「\d{6}_第5回会議」に格納しました/);
+
+  gas.promptAnswers = ['1', '10/30'];
+  g.storeMeetingSummaries();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「新FMT」：本番の資料（\d{4}1030_新FMT_RX Business Meeting用資料\.pdf）が保存先にありません。createMeetingSummaries\(\) で作ってください。/);
+});
+
+test('mtgMeetingFolder_：設定が無い・開けない・2つある・コピーできないときは理由を返す（止めない）。URL・ID のどちらでも設定できる', () => {
+  const {gas, g} = setup({edits: false});
+  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /「新FMT」の会議のフォルダが設定されていない（test\.gs の DIFF_RULES の meetingFolder）/);
+  meetingFolders(gas, ['261023_第5回会議', '261023_第5回会議（予備）']);
+  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /「261023_」で始まるフォルダが 2個ある（「261023_第5回会議」「261023_第5回会議（予備）」。1つにしてください）/);
+  gas.driveFolders.pop();
+  assert.strictEqual(g.mtgMeetingFolder_('新FMT', '2026/10/23').folder.getId(), 'meeting-folder-0');
+  gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'SubIndustryFolder0001';
+  assert.strictEqual(g.mtgMeetingFolder_('新FMT', '2026/10/23').folder.getId(), 'meeting-folder-0', 'ID だけでもよい');
+  gas.missingFolders = ['SubIndustryFolder0001'];
+  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /フォルダ（ID：SubIndustryFolder0001）を開けない/);
+  gas.missingFolders = [];
+  gas.copyErrors = ['meeting-folder-0'];
+  const pdf = g.DriveApp.getFolderById('x').createFile({getName: () => '20261023_新FMT_RX Business Meeting用資料.pdf'});
+  assert.match(g.mtgStoreToMeetingFolder_('新FMT', '2026/10/23', pdf).error, /「261023_第5回会議」にコピーできない：Access denied/);
+  assert.deepStrictEqual(['https://drive.google.com/drive/folders/AbCdEf123456?usp=drive_link', 'https://drive.google.com/open?id=AbCdEf123456',
+    'AbCdEf123456', ''].map(g.mtgFolderIdOf_), ['AbCdEf123456', 'AbCdEf123456', 'AbCdEf123456', '']);
+});
+
+test('会議時点のコピー：copyFolderId を設定すれば、そのフォルダに保存する（開けなければ止める）', () => {
+  const {gas, g} = setup({edits: false});
+  gas.get('MTG_OPTIONS').copyFolderId = 'https://drive.google.com/drive/folders/CopyFolder000001';
+  g.mtgSaveCopy_(gas.ss, ['新FMT'], new Date(), '');
+  assert.deepStrictEqual(plain(gas.moved), [{id: gas.created[0].getId(), folder: 'CopyFolder000001'}]);
+  assert.strictEqual(gas.driveFolders.length, 0, 'フォルダは作らない');
+  gas.missingFolders = ['CopyFolder000001'];
+  assert.throws(() => g.mtgSaveCopy_(gas.ss, ['新FMT'], new Date(), ''), /会議時点のコピーの保存先のフォルダ（ID：CopyFolder000001）を開けません/);
+});
+
 /* ---------------- 会議時点のコピー ---------------- */
 
 test('mtgSaveCopy_：追跡シートの値を、実行日時のタイトルの別のスプレッドシートに写す（文字は数式にならない。書式・見出しの固定も）', () => {
@@ -1181,7 +1272,7 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   const {gas, g, sheet} = setup();
   gas.get('MTG_OPTIONS').folderId = '';   // 保存先を決めていないとき：スプレッドシートと同じフォルダの中に作る
   const meeting = g.mtgParseDate_('10/23', new Date());
-  const file = meeting.replace(/\//g, '-');
+  const file = meeting.replace(/\//g, '');   // ファイル名の会議日（yyyyMMdd）
   gas.get('MTG_OPTIONS').batchRequests = 500;   // まとめて送る数を小さくして、分けて送るところも確かめる
   gas.promptAnswers = ['', '10/23'];   // 空欄 → すべてのシート
   g.createMeetingSummaries();
@@ -1189,7 +1280,7 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   assert.match(gas.prompts[0].message, /1\. 新FMT\n2\. 新FMT2/);
   assert.match(gas.prompts[1].message, /今回の会議日を入力してください（例：10\/23）。[\s\S]*・新FMT：記録なし\n・新FMT2：記録なし$/);
   assert.deepStrictEqual(gas.decks.map(d => [d.title, d.pageSize.width.magnitude, d.pageSize.height.magnitude]),
-    [['会議サマリ_新FMT_' + file, 720, 405], ['会議サマリ_新FMT2_' + file, 720, 405]], 'サブインダストリー（シート）ごとに1つ。まとめた資料は作らない');
+    [[file + '_新FMT_RX Business Meeting用資料', 720, 405], [file + '_新FMT2_RX Business Meeting用資料', 720, 405]], 'サブインダストリー（シート）ごとに1つ。まとめた資料は作らない');
   const requests = gas.decks[0].requests;
   assert.strictEqual(requests.filter(r => r.createSlide).length, 10, '表紙・本編4枚・扉・Appendix ①・②・③（責任者別・一覧）（停滞が無くても ② を出す）');
   const inserted = deck => deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
@@ -1203,8 +1294,8 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   assert.deepStrictEqual(plain(gas.driveFolders), [{id: 'folder-1', name: '会議サマリ', parent: 'parent-of-spreadsheet-id'},
     {id: 'folder-2', name: '会議時点のコピー', parent: 'folder-1'}], 'スプレッドシートと同じフォルダの中に作る（会議時点のコピーはその中のフォルダ）');
   assert.deepStrictEqual(gas.driveFiles.map(f => [f.name, f.folder, f.blob.from, f.blob.getContentType()]), [
-    ['会議サマリ_新FMT_' + file + '.pdf', 'folder-1', 'deck-1', 'application/pdf'],
-    ['会議サマリ_新FMT2_' + file + '.pdf', 'folder-1', 'deck-2', 'application/pdf']
+    [file + '_新FMT_RX Business Meeting用資料.pdf', 'folder-1', 'deck-1', 'application/pdf'],
+    [file + '_新FMT2_RX Business Meeting用資料.pdf', 'folder-1', 'deck-2', 'application/pdf']
   ]);
   assert.deepStrictEqual(plain(gas.moved), [{id: 'deck-1', folder: 'folder-1'}, {id: 'deck-2', folder: 'folder-1'}, {id: 'created-1', folder: 'folder-2'}],
     'スライドも同じフォルダに残す。会議時点のコピーは、その中のフォルダ');
@@ -1222,7 +1313,7 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   assert.match(confirm, /配布したあとは作り直さないでください。/);
   assert.doesNotMatch(confirm, /作成済み/);
   const done = gas.alerts[gas.alerts.length - 1].message;
-  assert.match(done, /「新FMT」：会議サマリ_新FMT_.*\.pdf（変化のある案件 4・停滞 0・確認事項 3）\n　https:\/\/drive\.google\.com\/file\/d\/file-1\/view/,
+  assert.match(done, /「新FMT」：\d{4}1023_新FMT_RX Business Meeting用資料\.pdf（変化のある案件 4・停滞 0・確認事項 3）\n　https:\/\/drive\.google\.com\/file\/d\/file-1\/view/,
     '配る PDF の URL を出す');
   assert.doesNotMatch(done, /全体/);
   assert.match(done, /保存先：https:\/\/drive\.google\.com\/drive\/folders\/folder-1/);
@@ -1241,7 +1332,7 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   assert.strictEqual(gas.driveFolders.length, 2);
   assert.match(gas.alerts[gas.alerts.length - 1].message, /前回からの変化は「会議時点のコピー_\d{4}-\d{2}-\d{2} \d{2}:\d{2}（会議日 \d{4}-10-23）」と比べました。/);
   assert.match(gas.alerts[gas.alerts.length - 1].message, /「新FMT」：.*（変化のある案件 1・停滞 0・確認事項 2）/);
-  assert.deepStrictEqual(gas.driveFiles.slice(2).map(f => f.name.replace(/_\d{4}-\d{2}-\d{2}/, '')), ['会議サマリ_新FMT.pdf'], '選んだシートだけ作る');
+  assert.deepStrictEqual(gas.driveFiles.slice(2).map(f => f.name.replace(/^\d{8}_/, '')), ['新FMT_RX Business Meeting用資料.pdf'], '選んだシートだけ作る');
   // 同じ会議日で作り直しても、前回（10/23）からの変化（作った日時だけ上書き）。作り直す前に、作成済みであることを知らせる
   const before = {deck: gas.decks[gas.decks.length - 1].id, pdf: gas.driveFiles[gas.driveFiles.length - 1].id};
   gas.promptAnswers = ['1', '10/30'];
@@ -1327,7 +1418,7 @@ test('previewMeetingSummaries：試作は会議日を記録しない（ファイ
   assert.strictEqual(props.getProperty('MTG_MEETINGS_新FMT'), null);
   const draft = JSON.parse(props.getProperty('MTG_DRAFT_新FMT'));
   assert.deepStrictEqual([draft.meeting, draft.keys.length], [g.mtgParseDate_('10/23', new Date()), 3]);
-  assert.deepStrictEqual(gas.decks.map(d => d.title.replace(/_\d{4}-\d{2}-\d{2}/, '')), ['会議サマリ_新FMT_試作', '会議サマリ_新FMT_試作']);
+  assert.deepStrictEqual(gas.decks.map(d => d.title.replace(/^\d{8}_/, '')), ['新FMT_RX Business Meeting用資料_試作', '新FMT_RX Business Meeting用資料_試作']);
   const inserted = deck => deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
   assert.match(inserted(gas.decks[1]), /入力内容の確認事項は 3項目（3案件・責任者 3名）。\n?試作時（\d{1,2}\/\d{1,2}）から 0項目解消、\n?0項目追加。/,
     '2回目の試作：まだ解消していない');

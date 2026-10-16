@@ -83,21 +83,24 @@ const DIFF_RULES = {
     headerRow: 2,
     ranges: ['D3:AF'],
     requests: true,          // サービスリクエストの選択パネルに出す（「サービスのリクエスト」の列を読む）
+    // 会議サマリの事前資料を格納する、このサブインダストリーのフォルダ（URL か ID）。この中の、会議日の「yyMMdd_」で始まるフォルダ
+    // （例：261023_第5回会議）に PDF を置く（MeetingSummary.gs の mtgMeetingFolder_）。空なら格納しない
+    meetingFolder: '',
     formerNames: ['新FMT']
     // Optional: capture an explicit row span in the row snapshot.
     // , snapshotColumns: 'A:Z'
   },
-  'コンビニ': {headerRow: 2, ranges: ['D3:AF'], requests: true, formerNames: ['新FMT2']},
-  '百貨店': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  'コンビニ': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: '', formerNames: ['新FMT2']},
+  '百貨店': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
   // 2026/10/16 に足したサブインダストリー（11シートとも、スーパー・GMS と同じ見出し（A〜AC列）。見出しの行・追跡範囲も同じ）
-  '化粧品・トイレタリー': {headerRow: 2, ranges: ['D3:AF'], requests: true},
-  '飲料・食品': {headerRow: 2, ranges: ['D3:AF'], requests: true},
-  '自動車販売': {headerRow: 2, ranges: ['D3:AF'], requests: true},
-  '住設': {headerRow: 2, ranges: ['D3:AF'], requests: true},
-  '地方銀行': {headerRow: 2, ranges: ['D3:AF'], requests: true},
-  '電鉄・不動産': {headerRow: 2, ranges: ['D3:AF'], requests: true},
-  'エネルギー': {headerRow: 2, ranges: ['D3:AF'], requests: true},
-  '生協': {headerRow: 2, ranges: ['D3:AF'], requests: true}
+  '化粧品・トイレタリー': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
+  '飲料・食品': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
+  '自動車販売': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
+  '住設': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
+  '地方銀行': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
+  '電鉄・不動産': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
+  'エネルギー': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
+  '生協': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''}
 };
 
 /**

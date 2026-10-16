@@ -436,6 +436,15 @@ RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Goo
 - **画面**：入力・確かめの画面は `mtgUi_()`（`SpreadsheetApp.getUi()`）でスプレッドシートに出します。エディタがスプレッドシートにつながっていないと
   `getUi()` が止まるので、どうすればよいか（スプレッドシートの「拡張機能」→「Apps Script」から開いたエディタで実行する）を書いて止めます。
   `setMeetingBaseline()` だけは、画面に出せなければ確かめずにすべての追跡シートに記録し、実行ログに書きます（`mtgUiOrNull_()`。聞くことがシートの選択と確かめだけのため）。
+- **ファイル名**（`mtgFileName_`）：`MTG_OPTIONS.fileName` の `{date}`（会議日の yyyyMMdd）・`{name}`（シート名）を置き換える
+  （`20261023_スーパー・GMS_RX Business Meeting用資料`。試作は末尾に `_試作`）。
+- **会議のフォルダへの格納**（`mtgStoreToMeetingFolder_`・`mtgMeetingFolder_`）：本番だけ、資料を作って会議日を記録したあとに、
+  シートの `DIFF_RULES` の `meetingFolder`（サブインダストリーのフォルダ。URL か ID。シート名を1か所に書く決まりのため `DIFF_RULES` に置く）の中から、
+  名前が会議日の `meetingFolderDate`（yyMMdd）で始まり、すぐあとが数字でないフォルダを探し、PDF をコピーします（`makeCopy`。同じ名前の古い版はゴミ箱へ）。
+  見つからない・2つ以上ある・開けない・書き込めないときは止めずに、理由を終わりの画面に出します（資料は保存先にある）。
+  あとから `storeMeetingSummaries()`（エディタから実行。シートと会議日を聞く）で、保存先の本番の PDF を同じように格納します。
+  会議のフォルダは作りません（名前・回数は人が決めるため）。
+- **会議時点のコピーの保存先**：`MTG_OPTIONS.copyFolderId`（URL か ID。開けなければ止める）。空なら会議サマリのフォルダの中の「会議時点のコピー」フォルダ。
 - **保存先**：`MTG_OPTIONS.folderId`（2026/10 から指定のフォルダ `1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK`）。開けなければ、フォルダの ID を書いて止めます。
   空にすると、スプレッドシートと同じフォルダの中に「会議サマリ」フォルダを作って使います（前の動き）。
 - **基準**：旧フォーマットからの移行など、案件をまとめて貼り付けたあとに `setMeetingBaseline()` で今を基準として記録します（同じ `MTG_MEETINGS_<シート名>` に
