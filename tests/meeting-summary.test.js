@@ -553,14 +553,17 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
     '動きの行の件数を合わせると、見出しの「変化のある案件」の件数になる（案件ごとに1回だけ数える）');
   assert.deepStrictEqual(textsOf(statesTable), [
     ['受注月超過', '1件', '30', 'A社／アプリ刷新（受注月 ' + month(-1).y + '/' + month(-1).m + '）'],
-    ['停滞（同一ステータス45日以上）', '2件', '80', 'うち直近14日間の更新なし 1件：E社／販促DX（100日以上）']
-  ], '停滞は定義を添え、名前は対象期間に更新の無い案件だけ（D社は活動を更新した）。商談記録の見出しが無いシートでは商談記録未登録の行を出さない');
+    ['停滞（同一ステータス45日以上）', '2件', '80', 'うち直近14日間の更新なし 1件：E社／販促DX（100日以上）'],
+    ['商談記録未登録', '—', '—', 'データなし：シートに「商談記録（ＵＲＬ）」の列が無い']
+  ], '停滞は定義を添え、名前は対象期間に更新の無い案件だけ（D社は活動を更新した）。商談記録の見出しが無いシートでも行は出し（型を変えない）、' +
+    '数えられない理由を灰色のセルに書く');
+  assert.deepStrictEqual([statesTable.rows[2].cells[3].fill, statesTable.rows[2].cells[3].color], [c.gap, c.muted], 'データなしは灰色のセル');
   const stall = statesTable.rows[1].cells[0];
   assert.deepStrictEqual(JSON.parse(JSON.stringify([stall.text, stall.size, stall.color, stall.spans])),
     ['停滞（同一ステータス45日以上）', 7.5, c.muted, [{start: 0, end: 2, size: S.bodySize, bold: true, color: c.ink}]],
     '定義は区分の名前のあとに小さな字で（同じ行に入るので、行を高くしない）');
   assert.strictEqual(statesTable.rows[1].h, statesTable.rows[0].h, '停滞の行も、ほかの行と同じ高さ');
-  const counts = movesTable.rows.slice(1).concat(statesTable.rows).map(r => r.cells[1]);
+  const counts = movesTable.rows.slice(1).concat(statesTable.rows).map(r => r.cells[1]).filter(cell => cell.text !== '—');   // —：数えられない行
   assert.ok(counts.every(cell => cell.size >= S.bodySize && cell.size === counts[0].size && cell.bold && cell.color === c.greenDark), '件数は緑の太字（どの行も同じ大きさ）');
   assert.deepStrictEqual(statesTable.columns, movesTable.columns, '2つの表の列はそろえる');
   // 表は緑の見出し・1列目は薄い緑（得意先は太字）・ほかは白
@@ -609,7 +612,8 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
   assert.strictEqual(lead(slides[9]), '入力内容の確認事項は 3項目（3案件）。');
   assert.ok(all.indexOf('Appendix ④') < 0 && all.indexOf('Appendix ⑤') < 0, '無い Appendix を案内しない');
   // Appendix ③：責任者別は表だけ（種類の説明は置かない。内容は一覧に書く）。見出しの無いシートでは資料なしを見ない
-  assert.strictEqual(lead(slides[8]), '入力内容の確認事項は 3項目（3案件・責任者 3名）。');
+  assert.strictEqual(lead(slides[8]), '入力内容の確認事項は 3項目（3案件・責任者 3名）。チェックできなかった項目は 2種類（灰色の列）。',
+    'クレデンシャルの記録のシートと商談記録の列が無いので、予定日超過・商談記録未登録はチェックできない');
   assert.deepStrictEqual(slides[8].elements.filter(el => !el.role && el.type === 'table').length, 1);
   assert.ok(all.indexOf('チェックの種類') < 0 && all.indexOf('資料なし') < 0);
 });
@@ -658,12 +662,13 @@ test('空欄は推定で補わず「未入力」と書く（「—」や 0 に�
   // 停滞の数を数えられないときは書く。期待値上位の該当事項が無ければ「該当なし」
   const fresh = plain(g.mtgSlides_(summarize(g, '新FMT', {trackedSince: Date.now() - 3 * 86400000})));
   const states = fresh[1].elements.filter(el => el.type === 'table')[1];
-  assert.match(states.rows[1].cells[3].text, /^記録の開始（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない$/);
+  assert.match(states.rows[1].cells[3].text, /^データなし：記録の開始（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない（\d{1,2}\/\d{1,2} から数える）$/);
+  assert.deepStrictEqual(states.rows[1].cells.slice(1, 3).map(cell => cell.text), ['—', '—'], '数えられないので 0件と書かない');
   assert.ok(fresh[4].elements.find(el => el.type === 'table').rows.slice(1).some(r => r.cells[6].text === '該当なし'), '該当事項が無い案件');
 });
 
-test('スライド：Appendix は入りきらなければ続きのページに分け、見出しの行を繰り返す（全件を出す）。中身の無い Appendix は作らない', () => {
-  const {g} = setup();
+test('スライド：Appendix は入りきらなければ続きのページに分け、見出しの行を繰り返す（全件を出す）。中身が無くても ①〜③ を出し、表の見出しの行の下に理由を書く', () => {
+  const {gas, g} = setup();
   const s = summarize(g, '新FMT');
   const many = Object.assign({}, s, {changes: Array.from({length: 40}, (_, i) => Object.assign({}, s.changes[1], {project: '案件' + i}))});
   const pages = plain(g.mtgSlides_(many)).filter(sl => /^Appendix ①/.test(sl.title));
@@ -675,13 +680,101 @@ test('スライド：Appendix は入りきらなければ続きのページに�
 
   const empty = Object.assign({}, s, {changes: [], stalled: [], overdue: [], alerts: []});
   const slides = plain(g.mtgSlides_(empty));
-  assert.deepStrictEqual(slides.map(sl => sl.title), ['表紙', 'サマリー', 'パイプラインの変化', '前回から変化のある案件', '期待値上位案件の状況・課題'],
-    'Appendix が1つも無ければ扉も作らない');
+  assert.deepStrictEqual(slides.map(sl => sl.title), ['表紙', 'サマリー', 'パイプラインの変化', '前回から変化のある案件', '期待値上位案件の状況・課題',
+    'Appendix', 'Appendix ①　前回から変化のある案件（一覧）', 'Appendix ②　停滞案件（一覧）', 'Appendix ③　入力内容の確認事項（責任者別）',
+    'Appendix ③　入力内容の確認事項（一覧）'], '中身が無くても資料の型（Appendix ①〜③）は同じ');
+  // 中身の無い Appendix：表の見出しの行を置き、その下に「該当なし」、作れないときは「データなし」と理由（記録の開始から45日たっていないので、停滞はまだ数えられない）
+  const bodyOf = slide => [slide.elements.filter(el => el.type === 'table').map(t => t.rows.length), roleOf(slide, 'empty').concat(roleOf(slide, 'gap'))
+    .map(el => [el.role, el.text.split('\n')[0]])];
+  assert.deepStrictEqual(bodyOf(slides[6]), [[1], [['empty', '該当なし']]]);
+  assert.deepStrictEqual(bodyOf(slides[7]), [[1], [['gap', 'データなし']]]);
+  assert.match(roleOf(slides[7], 'gap')[0].text, /\n記録の開始（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない（\d{1,2}\/\d{1,2} から数える）$/);
+  assert.match(leadOf(slides[7]), /^停滞案件は、記録の開始（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない（\d{1,2}\/\d{1,2} から数える）。$/);
+  assert.deepStrictEqual(bodyOf(slides[9]), [[1], [['empty', '該当なし']]]);
+  const gapBox = roleOf(slides[7], 'gap')[0];
+  assert.deepStrictEqual([gapBox.fill, gapBox.line, gapBox.dash], [gas.get('MTG_OPTIONS').colors.gap, gas.get('MTG_OPTIONS').colors.gapLine, true], 'データなしは灰色の地に点線の枠');
+  assert.deepStrictEqual(slides[8].elements.find(el => el.type === 'table').rows.map(r => r.cells[0].text), ['責任者', '合計'], '確認事項が無ければ合計の行だけ');
+  assert.strictEqual(leadOf(slides[8]).indexOf('入力内容の確認事項は 0項目。'), 0);
+  // 扉の一覧：中身の無い Appendix には「（該当なし）」、作れないものには「（データなし）」
+  const toc = roleOf(slides[5], 'toc').map(el => el.text);
+  assert.deepStrictEqual(toc.filter((_, i) => i % 3 === 1), ['前回から変化のある案件（該当なし）', '停滞案件（データなし）', '入力内容の確認事項（該当なし）']);
   const onlyAlerts = plain(g.mtgSlides_(Object.assign({}, empty, {alerts: s.alerts})));
-  assert.deepStrictEqual(roleOf(onlyAlerts[5], 'toc').filter((_, i) => i % 3 === 0).map(el => el.text), ['Appendix ③'],
-    '扉には、作った Appendix だけを出す');
+  assert.deepStrictEqual(roleOf(onlyAlerts[5], 'toc').filter((_, i) => i % 3 === 1).map(el => el.text),
+    ['前回から変化のある案件（該当なし）', '停滞案件（データなし）', '入力内容の確認事項'], '中身のある Appendix には付けない');
   const breakdown = slides[1].elements.find(el => el.type === 'table').rows.slice(1).map(r => r.cells.map(cell => cell.text));
   assert.ok(breakdown.every(r => r[1] === '0件' && r[3] === '該当なし'), '区分は同じまま、0件・該当なしで出す');
+});
+
+test('作れないところ（列・記録が無い）は、資料の型を変えずに、その場所に灰色の「データなし」と理由を書く。作り終えた画面にも一覧を出す', () => {
+  const gas = createGas();
+  const g = gas.global;
+  // 得意先・案件名・案件ステータスだけのシート。差分追跡を設定していない（変更の記録が無い）・クレデンシャルの記録も無い
+  gas.addSheet('新FMT', [['新FMT', '', ''], ['得意先', '案件名', '案件ステータス'], ['A社', 'アプリ刷新', '提案中'], ['B社', '店舗什器', '初回訪問']],
+    {rows: 10, columns: 3});
+  const S = gas.get('MTG_SLIDE');
+  const c = gas.get('MTG_OPTIONS').colors;
+  const s = summarize(g, '新FMT');
+  assert.deepStrictEqual(Object.keys(plain(s.gaps)), ['changes', 'amount', 'weighted', 'orderMonth', 'activity', 'issue', 'owner', 'record', 'stalled']);
+  assert.strictEqual(s.gaps.changes, '「変更履歴_差分」シートに変更の記録が無い');
+  assert.strictEqual(s.gaps.amount, 'シートに「想定売上規模（百万）」の列が無い');
+  assert.strictEqual(s.gaps.stalled, '変更の記録も「最終更新日時」の列も無く、ステータスが同じ日数が分からない');
+  assert.strictEqual(s.kpi.missingAmount, 0, '列が無いのは空欄（未入力）ではない');
+  assert.deepStrictEqual(Object.keys(plain(s.alertGaps)), plain(gas.get('MTG_ALERT_TYPES').filter(t => t !== '未入力')), '必須項目未入力のほかは、どれもチェックできない');
+  const slides = plain(g.mtgSlides_(s));
+  assert.strictEqual(slides.length, 10, '資料の型（表紙・本編4枚・扉・Appendix ①〜③）は同じ');
+
+  // サマリー：前回比は「データなし」（±0 と書かない）、金額の箱は灰色、動きの行はどれも「データなし」（理由は見出し）、状態の行は理由つき
+  const summary = slides[1];
+  assert.match(leadOf(summary), /^進行中案件 2件、期待値合計はデータなし（シートに「期待値調整済想定売上規模（百万）」の列が無い）。直近14日間の増減はデータなし（「変更履歴_差分」シートに変更の記録が無い）。$/);
+  assert.ok(!/±0/.test(textOf(summary)), '分からない増減を ±0 と書かない');
+  assert.deepStrictEqual(roleOf(summary, 'tile-value').map(el => el.text), ['2件　直近14日間で データなし', 'データなし', 'データなし', '0項目']);
+  assert.strictEqual(roleOf(summary, 'gap').length, 2, '想定売上・期待値の箱は灰色の点線');
+  assert.deepStrictEqual(roleOf(summary, 'heading').map(el => el.text),
+    ['直近14日間の動き（データなし：「変更履歴_差分」シートに変更の記録が無い）', '現在の状態（進行中案件）']);
+  const [moves, states] = summary.elements.filter(el => el.type === 'table');
+  assert.ok(moves.rows.slice(1).every(r => r.cells[1].text === '—' && r.cells[3].text === 'データなし' && r.cells[3].fill === c.gap));
+  assert.deepStrictEqual(states.rows.map(r => r.cells[3].text), ['データなし：シートに「受注月」の列が無い',
+    'データなし：変更の記録も「最終更新日時」の列も無く、ステータスが同じ日数が分からない', 'データなし：シートに「商談記録（ＵＲＬ）」の列が無い']);
+
+  // パイプラインの変化：図・グラフの見出しは残し、その下に「データなし」と理由
+  const pipeline = slides[2];
+  assert.deepStrictEqual(roleOf(pipeline, 'gap').map(el => el.text.split('\n')), [
+    ['データなし', 'シートに「期待値調整済想定売上規模（百万）」の列が無い'],
+    ['データなし', 'シートに「期待値調整済想定売上規模（百万）」の列が無い'],
+    ['データなし', 'シートに「期待値調整済想定売上規模（百万）」の列が無い']]);
+  assert.ok(!pipeline.elements.some(el => /^bar/.test(el.role || '')), '棒は描かない');
+  assert.strictEqual(leadOf(pipeline), '進行中の期待値はデータなし（シートに「期待値調整済想定売上規模（百万）」の列が無い）。');
+
+  // 前回から変化のある案件：表の見出しの行と「データなし」と理由
+  assert.deepStrictEqual(slides[3].elements.filter(el => el.type === 'table').map(t => t.rows.length), [1]);
+  assert.deepStrictEqual(roleOf(slides[3], 'gap').map(el => el.text), ['データなし\n「変更履歴_差分」シートに変更の記録が無い']);
+  assert.strictEqual(leadOf(slides[3]), '直近14日間に変化のある案件はデータなし（「変更履歴_差分」シートに変更の記録が無い）。');
+
+  // 期待値上位：列の無い項目のセルは灰色の「データなし」（未入力と書かない）。並びは想定売上も無いので、シートの順
+  const focus = slides[4].elements.find(el => el.type === 'table');
+  assert.deepStrictEqual(focus.rows[1].cells.map(cell => [cell.text, cell.fill === c.gap]), [
+    ['A社\nアプリ刷新', false], ['データなし', true], ['提案中\n記録なし', false], ['データなし', true], ['データなし', true], ['データなし', true], ['該当なし', false]]);
+  assert.match(leadOf(slides[4]), /^期待値はデータなし（シートに「期待値調整済想定売上規模（百万）」の列が無い）のため、進行中案件のうち想定売上上位 2件。$/);
+
+  // 扉・Appendix：①・②は「データなし」、③は該当なし（チェックできなかった種類は灰色の列と理由）
+  assert.deepStrictEqual(roleOf(slides[5], 'toc').filter((_, i) => i % 3 === 1).map(el => el.text),
+    ['前回から変化のある案件（データなし）', '停滞案件（データなし）', '入力内容の確認事項（該当なし）']);
+  assert.ok(roleOf(slides[8], 'gap')[0].text.indexOf('灰色の列は、チェックできなかった項目\n予定日超過：「クレデンシャル履歴_記録」シートが無い') > 0);
+
+  // どの部品もページに入る
+  slides.forEach((slide, i) => slide.elements.forEach(el => {
+    const h = el.type === 'table' ? el.rows.reduce((a, r) => a + r.h, 0) : el.h;
+    if (!slide.cover && !slide.divider && ['footer', 'page'].indexOf(el.role) < 0 && h > 1) assert.ok(el.y + h <= S.bottom + 0.01, (i + 1) + '枚目：' + (el.role || el.type));
+  }));
+
+  // 作れなかったところの一覧（同じ理由はまとめる）。作り終えた画面にも出す
+  const list = plain(g.mtgGapList_(s));
+  assert.ok(list.indexOf('前回からの変化：「変更履歴_差分」シートに変更の記録が無い') >= 0);
+  assert.ok(list.indexOf('受注月・受注月超過・チェック「受注月超過」・チェック「売上開始月不整合」：シートに「受注月」の列が無い') >= 0);
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewMeetingSummaries();
+  const done = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(done, /\n　データなし：前回からの変化：「変更履歴_差分」シートに変更の記録が無い\n　　想定売上・チェック「金額不整合」：/);
 });
 
 test('スライド：入力内容のチェック（責任者別）は責任者 × 種類の件数の表だけ（種類の説明は置かない）。種類が多くてもページの幅に入る', () => {
@@ -693,13 +786,25 @@ test('スライド：入力内容のチェック（責任者別）は責任者 �
 
   const few = ownersOf(s);
   assert.ok(!few.elements.some(el => el.text === 'チェックの種類'));
-  assert.strictEqual(lead(few), '入力内容の確認事項は 3項目（3案件・責任者 3名）。');
+  assert.strictEqual(lead(few), '入力内容の確認事項は 3項目（3案件・責任者 3名）。チェックできなかった項目は 2種類（灰色の列）。');
   assert.deepStrictEqual(few.elements.find(el => el.type === 'table').rows.map(r => r.cells[0].text), ['責任者', '伊藤', '佐藤', '未入力', '合計'],
     '責任者は名前の順（日本語の順。件数の順ではない。責任者が空（未入力）は最後）');
-  const narrow = few.elements.find(el => el.type === 'table');
-  assert.deepStrictEqual(narrow.columns, [120, 80, 80, 80, 40], '種類が少なければ、種類の列は 80pt まで（左に寄せる）');
-
+  // 種類はいつもすべてを列に出す（資料の型を変えない）。チェックできなかった種類は灰色の列で、表の下に理由
+  const c = gas.get('MTG_OPTIONS').colors;
   const types = gas.get('MTG_ALERT_TYPES');
+  const fixed = few.elements.find(el => el.type === 'table');
+  assert.strictEqual(fixed.columns.length, types.length + 2);
+  assert.ok(Math.abs(fixed.columns.reduce((a, b) => a + b, 0) - S.w) < 0.01, '表は中身の幅いっぱい');
+  const grayed = fixed.rows[0].cells.map((cell, i) => (cell.fill === c.gapLine ? cell.text.replace(/\n/g, '') : null)).filter(Boolean);
+  assert.deepStrictEqual(grayed, ['予定日超過', '商談記録未登録']);
+  assert.ok(fixed.rows.slice(1).every(r => r.cells[1].text === '—' && r.cells[1].fill === c.gap), 'チェックできなかった列は「—」');
+  assert.deepStrictEqual(fixed.rows[fixed.rows.length - 1].cells.map(cell => cell.text),
+    ['合計', '—', '1', '1', '—', '1', '0', '0', '0', '0', '3'], '合計の行は、チェックした種類の 0 も書く');
+  const note = roleOf(few, 'gap')[0];
+  assert.strictEqual(note.text, 'データなし\n灰色の列は、チェックできなかった項目\n予定日超過：「クレデンシャル履歴_記録」シートが無い\n' +
+    '商談記録未登録：シートに「商談記録（ＵＲＬ）」の列が無い');
+  assert.ok(note.y + note.h <= S.bottom, '理由の枠もページに入る');
+
   const alerts = types.map((type, i) => ({type, key: type + '|' + i, customer: 'X社', project: '案件' + i, text: '内容', amount: 1, owner: '担当' + (i % 3)}));
   const many = ownersOf(Object.assign({}, s, {alerts}));
   assert.ok(!many.elements.some(el => el.text === 'チェックの種類'));
@@ -964,7 +1069,7 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   assert.deepStrictEqual(gas.decks.map(d => [d.title, d.pageSize.width.magnitude, d.pageSize.height.magnitude]),
     [['会議サマリ_新FMT_' + file, 720, 405], ['会議サマリ_新FMT2_' + file, 720, 405]], 'サブインダストリー（シート）ごとに1つ。まとめた資料は作らない');
   const requests = gas.decks[0].requests;
-  assert.strictEqual(requests.filter(r => r.createSlide).length, 9, '表紙・本編4枚・扉・Appendix ①・③（責任者別・一覧）（停滞が無いので ② は無い）');
+  assert.strictEqual(requests.filter(r => r.createSlide).length, 10, '表紙・本編4枚・扉・Appendix ①・②・③（責任者別・一覧）（停滞が無くても ② を出す）');
   const inserted = deck => deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
   assert.match(inserted(gas.decks[1]), /^新FMT2\nRX Business MTG　事前資料\n/);
   assert.match(inserted(gas.decks[1]), /\nサマリー\n/);
@@ -1053,10 +1158,10 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   const r = plain(deck.requests);
   assert.deepStrictEqual(r.filter(q => q.deleteObject && /_ph\d$/.test(q.deleteObject.objectId)).map(q => q.deleteObject.objectId),
     ['mtg_p2_ph0', 'mtg_p2_ph1', 'mtg_p3_ph0', 'mtg_p3_ph1', 'mtg_p4_ph0', 'mtg_p4_ph1', 'mtg_p5_ph0', 'mtg_p5_ph1',
-      'mtg_p7_ph0', 'mtg_p7_ph1', 'mtg_p8_ph0', 'mtg_p8_ph1', 'mtg_p9_ph0', 'mtg_p9_ph1'],
+      'mtg_p7_ph0', 'mtg_p7_ph1', 'mtg_p8_ph0', 'mtg_p8_ph1', 'mtg_p9_ph0', 'mtg_p9_ph1', 'mtg_p10_ph0', 'mtg_p10_ph1'],
     '足したスライドのレイアウトの枠（ページ番号など）は消す（ページ番号が2つ出ないように）');
   assert.ok(deck.slides.every(sl => !(sl.pageElements || []).length));
-  assert.strictEqual(deck.batches[deck.batches.length - 1], 14, '枠の削除は最後にまとめて送る');
+  assert.strictEqual(deck.batches[deck.batches.length - 1], 16, '枠の削除は最後にまとめて送る');
   assert.deepStrictEqual(r.slice(0, 2), [{deleteObject: {objectId: 'g_extra'}}, {duplicateObject: {objectId: 'g_cover', objectIds: {g_cover: 'mtg_divider'}}}],
     'ひな形の2枚目以降は消し、1枚目を複製して扉にする');
   const replaced = page => r.filter(q => q.replaceAllText && q.replaceAllText.pageObjectIds[0] === page)
@@ -1065,7 +1170,7 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   assert.match(replaced('g_cover')[0][1], /^\d{4}年10月23日（[日月火水木金土]）$/);
   assert.deepStrictEqual(replaced('mtg_divider'), [['2026年 4月 17日', ''], ['XXXXXX', 'Appendix'], ['XXXXX', ''], ['XXXX', '']]);
   assert.ok(!r.some(q => q.deleteObject && q.deleteObject.objectId === 'g_cover'), '表紙（ひな形の1枚目）は消さない');
-  assert.deepStrictEqual(r.filter(q => q.createSlide).map(q => q.createSlide.insertionIndex), [1, 2, 3, 4, 6, 7, 8],
+  assert.deepStrictEqual(r.filter(q => q.createSlide).map(q => q.createSlide.insertionIndex), [1, 2, 3, 4, 6, 7, 8, 9],
     '表紙の次から本編を入れると、複製した扉は本編のあとになり、Appendix はそのあと');
   // 本編はページの大きさ（960 × 540pt）に合わせて 4/3 倍
   const title = r.find(q => q.createShape && q.createShape.elementProperties.pageObjectId === 'mtg_p2').createShape;
@@ -1442,7 +1547,7 @@ test('setMeetingBaseline：今を基準として記録し（はいのときだ�
     '本番の確認：基準からの変化を出すこと');
   assert.match(inserted, /期待値合計 \d+百万円（基準比 /, '前回比ではなく基準比');
   assert.doesNotMatch(inserted, /前回比|前回以降/, '前回の会議の記録が無いので「前回」とは書かない');
-  assert.match(inserted, /\n停滞（同一ステータス45日以上）\n0件\n—\n基準（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない\n/,
+  assert.match(inserted, /\n停滞（同一ステータス45日以上）\n—\n—\nデータなし：基準（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない（\d{1,2}\/\d{1,2} から数える）\n/,
     '基準から45日たつまでは、停滞を数えられないことを書く（0件を「停滞なし」と読ませない）');
   assert.deepStrictEqual(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT')).map(m => [m.date, !!m.baseline]), [[day(0), true], [meeting, false]],
     '会議を記録しても基準は残す');
