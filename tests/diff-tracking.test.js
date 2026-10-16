@@ -369,38 +369,107 @@ test('11シート：行数が同じ行の追加・削除の通知では、操作
   assert.deepStrictEqual(gas.records(LOG).map(r => [r['シート'], r['セル'], r['種類']]), [['新FMT6', '3行（削除前の行番号）', '行削除']]);
 });
 
-test('列の追加：追跡を停止して知らせる', () => {
+test('列の追加：止めずに、その場で比較基準を取り直して記録を続ける', () => {
   const {gas, g, sheet} = setupProject({launchers: false});
   gas.asUser(() => sheet.insertColumnAfter(2));
   g.pauseDiffOnStructureChange(gas.change('INSERT_COLUMN'));
-  const state = JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'));
-  assert.strictEqual(state[sheet.getSheetId()].paused, true);
-  assert.ok(gas.toasts.some(t => /列構成が変わったため差分追跡を停止しました/.test(t.message)));
+  const state = JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'))[sheet.getSheetId()];
+  assert.strictEqual(state.paused, false);
+  assert.strictEqual(state.gridColumns, sheet.getMaxColumns());
+  assert.ok(state.rebuiltAt);
+  assert.ok(gas.toasts.some(t => /の列が変わったので、変更履歴の比較基準を取り直しました（記録は続けます）/.test(t.message)));
+  g.recordDiffEdit(gas.edit(sheet, 'G3', '受注'));   // 列を足したので、状況は G 列
+  assert.strictEqual(gas.records(LOG).length, 1);
 });
 
 /* ---------------- 止まったときの知らせと立て直し ---------------- */
 
-test('比較用シートが消されると、編集のエラーで止まり、日本語で原因と直し方を知らせる', () => {
+const STATE = gas => JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'));
+
+test('比較用シートが消されると、そのシートだけ理由を残して止め（エラーにしない）、5分ごとの取りこぼし回収で比較基準を取り直して再開する', () => {
   const {gas, g, sheet} = setupProject({launchers: false});
-  gas.ss.deleteSheet(gas.ss.getSheetByName('__CHAR_DIFF_' + sheet.getSheetId()));
-  assert.throws(() => g.recordDiffEdit(gas.edit(sheet, 'F3', '受注')), /比較用シート.*setupDiffTracking\(\)/);
-  const state = JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'));
-  assert.strictEqual(state[sheet.getSheetId()].paused, true);
-  assert.ok(gas.toasts.some(t => /差分追跡を止めました/.test(t.message) && /setupDiffTracking/.test(t.message)));
-  // 次の編集も、止まっていること・直し方を日本語で知らせる（英語の「Run setupDiffTracking()」ではない）
-  assert.throws(() => g.recordDiffEdit(gas.edit(sheet, 'F3', '提案中')),
-    err => /「.+」の差分追跡は止まっています/.test(err.message) && /diagnoseDiffState/.test(err.message));
+  const id = sheet.getSheetId();
+  gas.ss.deleteSheet(gas.ss.getSheetByName('__CHAR_DIFF_' + id));
+  g.recordDiffEdit(gas.edit(sheet, 'F3', '受注'));   // エラーにしない
+  assert.strictEqual(STATE(gas)[id].paused, true);
+  assert.match(STATE(gas)[id].pausedReason, /^編集の記録：「.+」の比較用シート（非表示の「__CHAR_DIFF_…」）がありません/);
+  assert.ok(gas.toasts.some(t => /変更履歴の記録を一時的に止めました。5分ほどで自動で再開します/.test(t.message)));
+  g.recordDiffEdit(gas.edit(sheet, 'F3', '提案中'));   // 止まっている間の編集もエラーにしない
+  assert.ok(gas.logs.some(l => l.level === 'warn' && /差分追跡は止まっています（理由：編集の記録：/.test(l.line)));
+
+  g.catchUpDiffTracking();
+  const after = STATE(gas)[id];
+  assert.strictEqual(after.paused, false, '自動で再開する');
+  assert.ok(after.rebuiltAt && /比較用シート/.test(after.rebuiltFrom), '比較用シートが無いので取り直した');
+  assert.ok(gas.ss.getSheetByName('__CHAR_DIFF_' + id).isSheetHidden());
+  g.recordDiffEdit(gas.edit(sheet, 'F5', '受注'));   // 再開したあとの編集は記録する
+  assert.deepStrictEqual(gas.records(LOG).map(r => r['セル']), ['F5']);
+  g.diagnoseDiffState();
+  assert.ok(gas.logs.some(l => /に比較基準を自動で取り直した（止めた理由：編集の記録：/.test(l.line)));
 });
 
-test('比較用シートが消されても、setupDiffTracking() をやり直せば記録が再開する', () => {
+test('止まっていても比較基準がそのまま使えるなら、取りこぼし回収で再開し、止まっていた間の変更も記録する（前の版で止まったシートも）', () => {
   const {gas, g, sheet} = setupProject({launchers: false});
-  gas.ss.getSheets().filter(s => s.getName().startsWith('__CHAR_DIFF_')).forEach(s => gas.ss.deleteSheet(s));
-  assert.throws(() => g.recordDiffEdit(gas.edit(sheet, 'F3', '受注')));
-  g.setupDiffTracking();
-  const state = JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'));
-  Object.values(state).forEach(s => assert.strictEqual(s.paused, false));
-  g.recordDiffEdit(gas.edit(sheet, 'F3', '提案中'));
-  assert.strictEqual(gas.records(LOG).length, 1);
+  const id = sheet.getSheetId();
+  const state = STATE(gas);
+  state[id].paused = true;   // 前の版で止まった（理由の記録なし）
+  gas.props.document.set('CHAR_DIFF_STATE_V1', JSON.stringify(state));
+  g.recordDiffEdit(gas.edit(sheet, 'F3', '受注'));
+  assert.deepStrictEqual(gas.records(LOG), []);
+  g.catchUpDiffTracking();
+  assert.strictEqual(STATE(gas)[id].paused, false);
+  assert.ok(STATE(gas)[id].resumedAt);
+  const log = gas.records(LOG);
+  assert.deepStrictEqual(log.map(r => [r['セル'], r['変更後']]), [['F3', '受注']], '止まっていた間の変更を記録する');
+  assert.match(log[0]['編集者メールアドレス'], /不明（取りこぼし回収）/);
+});
+
+test('記録の途中の一時的なエラーでは止めない（取りこぼし回収で記録し直す）。回収が3回続けて失敗したら止め、次の回で比較基準を取り直す', () => {
+  const {gas, g, sheet} = setupProject({launchers: false});
+  const id = sheet.getSheetId();
+  const original = g.diffProcessBlocks_;
+  g.diffProcessBlocks_ = () => { throw new Error('Service Spreadsheets timed out while accessing document'); };
+  g.recordDiffEdit(gas.edit(sheet, 'F3', '受注'));
+  assert.strictEqual(STATE(gas)[id].paused, false, '止めない');
+  assert.ok(gas.props.document.get('CHAR_DIFF_DIRTY_V1_' + id), '取りこぼしの印');
+  g.catchUpDiffTracking();
+  g.catchUpDiffTracking();
+  assert.strictEqual(STATE(gas)[id].paused, false, '2回までは止めない');
+  g.catchUpDiffTracking();
+  assert.strictEqual(STATE(gas)[id].paused, true);
+  assert.match(STATE(gas)[id].pausedReason, /^取りこぼし回収が 3回続けて失敗：Service Spreadsheets timed out/);
+  g.diffProcessBlocks_ = original;
+  g.catchUpDiffTracking();
+  assert.strictEqual(STATE(gas)[id].paused, false);
+  assert.ok(STATE(gas)[id].rebuiltAt, '同じ比較基準で再開すると繰り返すので、取り直す');
+});
+
+test('大きな貼り付け（maxCellsPerEdit を超える）は止めずに、取りこぼし回収で少しずつ比べて記録する', () => {
+  const {gas, g, sheet} = setupProject({launchers: false});
+  gas.get('DIFF_OPTIONS').maxCellsPerEdit = 2;
+  g.recordDiffEdit(gas.edit(sheet, 'F3:F5', [['受注'], ['失注'], ['保留']]));
+  assert.strictEqual(STATE(gas)[sheet.getSheetId()].paused, false);
+  assert.deepStrictEqual(gas.records(LOG), []);
+  g.catchUpDiffTracking();
+  assert.deepStrictEqual(gas.records(LOG).map(r => r['セル']), ['F3', 'F4', 'F5']);
+});
+
+test('自動の立て直しができない（見出しが無いなど）ときは止めたまま理由を残し、30分あけて試す', () => {
+  const {gas, g, sheet} = setupProject({launchers: false});
+  const id = sheet.getSheetId();
+  gas.ss.deleteSheet(gas.ss.getSheetByName('__CHAR_DIFF_' + id));
+  g.recordDiffEdit(gas.edit(sheet, 'F3', '受注'));
+  gas.asUser(() => sheet.getRange(2, 33).setValue(''));   // 最終更新日時の見出しを消す
+  g.catchUpDiffTracking();
+  const saved = STATE(gas)[id];
+  assert.strictEqual(saved.paused, true);
+  assert.match(saved.healError, /timestamp header/);
+  const tried = saved.healTriedAt;
+  g.catchUpDiffTracking();
+  assert.strictEqual(STATE(gas)[id].healTriedAt, tried, '30分たつまでは試さない');
+  g.diagnoseDiffState();
+  assert.ok(gas.logs.some(l => /自動の立て直しに失敗/.test(l.line)));
+  assert.ok(gas.logs.some(l => /止まっているシートは、5分ごとの取りこぼし回収（catchUpDiffTracking）が自動で再開します/.test(l.line)));
 });
 
 test('setupDiffTracking：途中で止まったら、どのシートで止まったか・すべて止まっていることを知らせる', () => {
@@ -412,9 +481,10 @@ test('setupDiffTracking：途中で止まったら、どのシートで止まっ
       /Service Spreadsheets timed out/.test(err.message) && /すべての追跡シートの記録が止まっています/.test(err.message));
   const state = JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'));
   Object.values(state).forEach(s => assert.strictEqual(s.paused, true));
-  // 原因が直れば、やり直しで再開する
+  // 原因が直れば、取りこぼし回収が自動で立て直す（setupDiffTracking() をやり直さなくてよい）
   gas.insertSheetError = null;
-  g.setupDiffTracking();
+  g.catchUpDiffTracking();
+  Object.values(JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'))).forEach(s => assert.strictEqual(s.paused, false));
   g.recordDiffEdit(gas.edit(sheet, 'F3', '受注'));
   assert.strictEqual(gas.records(LOG).length, 1);
 });
@@ -436,11 +506,11 @@ test('diagnoseDiffState：止まっている・比較用シートが無いと �
   assert.ok(gas.logs.some(l => /差分追跡は動いています/.test(l.line)));
   gas.logs.length = 0;
   gas.ss.deleteSheet(gas.ss.getSheetByName('__CHAR_DIFF_' + sheet.getSheetId()));
-  assert.throws(() => g.recordDiffEdit(gas.edit(sheet, 'F3', '受注')));
+  g.recordDiffEdit(gas.edit(sheet, 'F3', '受注'));
   g.diagnoseDiffState();
-  assert.ok(gas.logs.some(l => /^✗ .+ \/ 停止していない/.test(l.line)));
+  assert.ok(gas.logs.some(l => /^✗ .+ \/ 停止していない （止めた時刻 \d{2}\/\d{2} \d{2}:\d{2}・理由：編集の記録：「.+」の比較用シート/.test(l.line)));
   assert.ok(gas.logs.some(l => /^✗ .+ \/ 比較用シート/.test(l.line)));
-  assert.ok(gas.logs.some(l => /次にすること：エディタで setupDiffTracking\(\)/.test(l.line)));
+  assert.ok(gas.logs.some(l => /止まっているシートは、5分ごとの取りこぼし回収（catchUpDiffTracking）が自動で再開します/.test(l.line)));
 });
 
 test('サービス管理がロック（スクリプトロック）を使っていても、差分追跡は待たずに記録する（別のロック）', () => {
