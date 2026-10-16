@@ -124,7 +124,7 @@ test('migrateLegacyDeals：「いいえ」なら何も書かない。行が足�
   gas.promptAnswers = [URL];
   g.migrateLegacyDeals();
   assert.strictEqual(gas.alerts.length, 1);
-  assert.match(gas.alerts[0].message, /転記できるシートがありません。[\s\S]*・新FMT：行が足りません（3件に対して 2行）。シートの最後の行の上に行を足してから、もう一度実行してください/);
+  assert.match(gas.alerts[0].message, /転記できるシートがありません。[\s\S]*・新FMT：行が足りません（3件に対して 2行）。エディタで addDealRows\(\) を実行して行を足してから、もう一度実行してください/);
   assert.deepStrictEqual(gas.writes.filter(w => w.sheet === '新FMT'), []);
 });
 

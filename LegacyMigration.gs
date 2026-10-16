@@ -137,7 +137,7 @@ function migPlan_(ss, source, name) {
   const deals = values.filter(line => (customerFrom && filled(line[customerFrom - 1])) || (projectFrom && filled(line[projectFrom - 1])));
   const capacity = sheet.getMaxRows() - rule.headerRow;
   if (deals.length > capacity) {
-    return {name, error: '行が足りません（' + deals.length + '件に対して ' + capacity + '行）。シートの最後の行の上に行を足してから、もう一度実行してください'};
+    return {name, error: '行が足りません（' + deals.length + '件に対して ' + capacity + '行）。エディタで addDealRows() を実行して行を足してから、もう一度実行してください'};
   }
 
   // プルダウンの選択肢（選択肢に無い値は書けないので空欄にする）

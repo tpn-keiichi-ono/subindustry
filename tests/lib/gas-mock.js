@@ -370,6 +370,27 @@ class Range {
 
   getDataValidation() { return this.getDataValidations()[0][0]; }
   getDataValidations() { return this.map(cell => (cell && cell.validation) || null); }
+
+  /**
+   * ほかの範囲に写す（写し先の各セルに、元の範囲を繰り返して当てる）。type は SpreadsheetApp.CopyPasteType
+   * （PASTE_FORMAT：書式（nf・fmt）、PASTE_DATA_VALIDATION：入力規則、無ければ値・数式・書式・入力規則のすべて）
+   */
+  copyTo(target, type) {
+    target.each((cell, r, c) => {
+      const src = this.sheet.cell(this.row + (r % this.numRows), this.col + (c % this.numCols), false) || {v: '', f: ''};
+      if (!type || type === 'PASTE_FORMAT') {
+        cell.nf = src.nf;
+        cell.fmt = src.fmt ? Object.assign({}, src.fmt) : undefined;
+      }
+      if (!type || type === 'PASTE_DATA_VALIDATION') {
+        cell.validation = src.validation || null;
+        cell.checkbox = !!src.checkbox;
+      }
+      if (!type) { cell.v = src.v; cell.f = src.f; cell.rich = src.rich || null; }
+    });
+    target.write('copyTo');
+    return this;
+  }
   getMergedRanges() { return []; }
 
   protect() {
@@ -474,6 +495,18 @@ class Sheet {
   }
   insertRowAfter(after) { return this.insertRowsAfter(after, 1); }
   insertRowsBefore(before, count) { return this.insertRowsAfter(before - 1, count); }
+
+  /** 行を動かす（Apps Script と同じく、destinationIndex は動かす前の行番号で「この行の前へ」）。 */
+  moveRows(rowSpec, destinationIndex) {
+    const start = rowSpec.getRow();
+    const count = rowSpec.getNumRows();
+    while (this.data.length < Math.max(start + count - 1, destinationIndex - 1)) this.data.push(undefined);
+    const moving = this.data.splice(start - 1, count);
+    const at = destinationIndex > start ? destinationIndex - 1 - count : destinationIndex - 1;
+    this.data.splice(at, 0, ...moving);
+    this.gas.moves = (this.gas.moves || []).concat([{sheet: this.name, start, count, destinationIndex}]);
+    return this;
+  }
 
   insertColumnsAfter(after, count) {
     this.data.forEach(line => { if (line && line.length > after) line.splice(after, 0, ...new Array(count)); });
@@ -751,6 +784,7 @@ function createGas(options) {
   let createdSeq = 0;
   const SpreadsheetApp = {
     ProtectionType: {RANGE: 'RANGE', SHEET: 'SHEET'},
+    CopyPasteType: {PASTE_NORMAL: 'PASTE_NORMAL', PASTE_FORMAT: 'PASTE_FORMAT', PASTE_DATA_VALIDATION: 'PASTE_DATA_VALIDATION', PASTE_VALUES: 'PASTE_VALUES'},
     WrapStrategy: {WRAP: 'WRAP', OVERFLOW: 'OVERFLOW', CLIP: 'CLIP'},
     BorderStyle: {SOLID: 'SOLID', SOLID_MEDIUM: 'SOLID_MEDIUM', SOLID_THICK: 'SOLID_THICK', DOTTED: 'DOTTED', DASHED: 'DASHED'},
     /** 新しいスプレッドシート（gas.created に残す。最初のシートは「シート1」） */

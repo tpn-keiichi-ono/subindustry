@@ -139,6 +139,7 @@ const DIFF_OPTIONS = {
   failPrefix: 'CHAR_DIFF_FAIL_V1_',   // 取りこぼし回収が続けて失敗した回数（シートごと）
   maxCatchUpFailures: 3,       // 取りこぼし回収がこの回数続けて失敗したら、そのシートを止める（そのあと自動で立て直す）
   healRetryMinutes: 30,        // 止まったシートの自動の立て直しに失敗したとき、次に試すまでの分
+  maxAddRows: 500,             // addDealRows() で一度に足せる行の数
   maxSnapshotCellsPerEdit: 50000,
   maxTokenLength: 45000,
   maxLcsCells: 1000000,
@@ -481,6 +482,83 @@ function diffUiOrNull_() {
   } catch (_) {
     return null;
   }
+}
+
+/**
+ * 追跡シートに案件の行を足す（エディタから実行）。シートと行の数を聞き、ほかに影響しない位置に足す：
+ * - データの1行目の数式（No. の =ROW(B3:B76)-2、期待値の =IF(M3:M76=…) など。範囲で計算している）の範囲の最後の行の上に足す
+ *   （範囲の中に足すので、数式・プルダウン・条件付き書式の範囲が一緒に伸びる。範囲の外に足すと、足した行は計算されない）
+ * - 足した行の書式・プルダウンは、すぐ上の行と同じにする
+ * - 範囲の最後の行に案件が入っていれば、その行を足した行の上に動かす（空の行が案件の間に入らないように）
+ * - 差分追跡は行をそろえるだけで、何も記録しない（空の行・動かしただけの行は記録しない）
+ */
+function addDealRows() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = mtgUi_();
+  const names = mtgAskSheets_(ss, ui, '案件の行を足します（数式・プルダウン・書式・変更履歴に影響しない位置に足します）。');
+  if (!names) return;
+  const response = ui.prompt(diffAdminTitle_(), '足す行の数を入力してください（1〜' + DIFF_OPTIONS.maxAddRows + '）。', ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+  const count = Number(String(response.getResponseText() || '').normalize('NFKC').trim());
+  if (!Number.isInteger(count) || count < 1 || count > DIFF_OPTIONS.maxAddRows) {
+    throw new Error('足す行の数は 1〜' + DIFF_OPTIONS.maxAddRows + ' の数字で入力してください。');
+  }
+  const lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
+  let results;
+  try {
+    results = names.map(name => diffAddRows_(ss, name, count));
+  } finally {
+    SpreadsheetApp.flush();
+    lock.releaseLock();
+  }
+  const message = results.map(r => '「' + r.name + '」：' + r.count + '行足しました（' + r.at + '〜' + (r.at + r.count - 1) + '行目。案件の行は ' +
+    r.first + '〜' + r.end + '行目' + (r.moved ? '。最後の行の案件は、足した行の上に動かしました' : '') + '）').join('\n');
+  console.log(message);
+  ui.alert(diffAdminTitle_(), message, ui.ButtonSet.OK);
+}
+
+/**
+ * 1つの追跡シートに count 行を足す（ロックの中で呼ぶ）。戻り値 {name, count, at: 足した空の行の最初の行, first: 案件の最初の行, end: 範囲の最後の行, moved}
+ */
+function diffAddRows_(ss, name, count) {
+  const sheet = ss.getSheetByName(name);
+  const rule = DIFF_RULES[name];
+  if (!sheet || !rule) throw new Error('「' + name + '」シートが見つかりません。');
+  const first = rule.headerRow + 1;
+  const max = sheet.getMaxRows();
+  const width = sheet.getMaxColumns();
+  if (max < first + 1) throw new Error('「' + name + '」に案件の行がありません（' + first + '行目より下が必要です）。');
+  // データの1行目の数式が計算している範囲の最後の行（無ければシートの最後の行）
+  const formulas = sheet.getRange(first, 1, 1, width).getFormulas()[0];
+  let end = 0;
+  formulas.forEach(f => {
+    const pattern = /\$?[A-Z]{1,3}\$?(\d+):\$?[A-Z]{1,3}\$?(\d+)/g;
+    let m;
+    while ((m = pattern.exec(String(f)))) {
+      if (Number(m[1]) === first) end = Math.max(end, Number(m[2]));
+    }
+  });
+  if (!end || end > max) end = max;
+  const at = Math.max(end, first + 1);   // この行の上に足す（範囲の中に足すので範囲が伸びる）
+  const formulaCols = formulas.map((f, i) => (String(f).trim() ? i + 1 : 0)).filter(Boolean);
+  sheet.insertRowsBefore(at, count);
+  // 書式・プルダウンは、すぐ上の行と同じにする
+  const source = sheet.getRange(at - 1, 1, 1, width);
+  const target = sheet.getRange(at, 1, count, width);
+  source.copyTo(target, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  source.copyTo(target, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+  // 範囲の最後の行（下にずれた）に案件があれば、足した行の上に動かす（数式の列の計算した値は見ない）
+  const last = at + count;
+  const values = sheet.getRange(last, 1, 1, width).getValues()[0];
+  const moved = values.some((v, i) => formulaCols.indexOf(i + 1) < 0 && String(v == null ? '' : v).trim() !== '');
+  if (moved) sheet.moveRows(sheet.getRange(last + ':' + last), at);
+  // 差分追跡：比較基準の行をそろえる（空の行・動かしただけの行は記録しない）。止まっているシートは、自動の立て直しに任せる
+  const saved = diffSavedState_(sheet);
+  if (saved && !saved.paused) {
+    diffResyncRows_(ss, sheet, rule, {structure: DIFF_ROW_OPTIONS.unknownEditor, changes: DIFF_OPTIONS.catchUpEditor});
+  }
+  return {name, count, at: moved ? at + 1 : at, first, end: end + count, moved};
 }
 
 /**
