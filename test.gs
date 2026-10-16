@@ -89,7 +89,7 @@ const DIFF_RULES = {
   },
   'コンビニ': {headerRow: 2, ranges: ['D3:AF'], requests: true, formerNames: ['新FMT2']},
   '百貨店': {headerRow: 2, ranges: ['D3:AF'], requests: true},
-  // 2026/10/16 に足したサブインダストリー（11シートでそろう。見出しの行・追跡範囲はほかと同じ）
+  // 2026/10/16 に足したサブインダストリー（11シートとも、スーパー・GMS と同じ見出し（A〜AC列）。見出しの行・追跡範囲も同じ）
   '化粧品・トイレタリー': {headerRow: 2, ranges: ['D3:AF'], requests: true},
   '飲料・食品': {headerRow: 2, ranges: ['D3:AF'], requests: true},
   '自動車販売': {headerRow: 2, ranges: ['D3:AF'], requests: true},
