@@ -332,8 +332,21 @@ function setMeetingBaseline() {
     '今の値は「' + MTG_OPTIONS.copyName + '」（別のスプレッドシート）に保存し、次の資料はそれと比べます。\n' +
     '移行の貼り付けがすべて終わってから実行してください。記録してよろしいですか？', ui.ButtonSet.YES_NO);
   if (ui && answer !== ui.Button.YES) return;
+  const copy = mtgRecordBaseline_(ss, names, now);
+  const message = '「' + names.join('」「') + '」に、基準（' + at + '）を記録しました。次に作る会議サマリは、基準より後の変化を出します。\n' +
+    '今の値を「' + copy.title + '」に保存しました：' + copy.url +
+    (ui ? '' : '（スプレッドシートの画面に出せないため、確かめずにすべての追跡シートに記録しました）');
+  console.log(message);
+  if (ui) ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+}
+
+/**
+ * names のシートに、now を会議サマリの基準として記録する（会議時点のコピーに今の値を保存し、MTG_MEETINGS_<シート名> の基準を置き換える）。
+ * setMeetingBaseline()・旧フォーマットからの転記（migrateLegacyDeals）から呼ぶ。戻り値 会議時点のコピー {id, title, url}
+ */
+function mtgRecordBaseline_(ss, names, now) {
   const props = PropertiesService.getDocumentProperties();
-  const date = Utilities.formatDate(now, tz, 'yyyy/MM/dd');
+  const date = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/MM/dd');
   const copy = mtgSaveCopy_(ss, names, now, '（基準）');
   names.forEach(name => {
     const list = mtgMeetings_(props, name).filter(m => !m.baseline)
@@ -341,11 +354,23 @@ function setMeetingBaseline() {
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).slice(-MTG_OPTIONS.keepMeetings);
     props.setProperty(MTG_OPTIONS.meetingsKeyPrefix + name, JSON.stringify(list));
   });
-  const message = '「' + names.join('」「') + '」に、基準（' + at + '）を記録しました。次に作る会議サマリは、基準より後の変化を出します。\n' +
-    '今の値を「' + copy.title + '」に保存しました：' + copy.url +
-    (ui ? '' : '（スプレッドシートの画面に出せないため、確かめずにすべての追跡シートに記録しました）');
-  console.log(message);
-  if (ui) ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+  return copy;
+}
+
+/**
+ * プルダウン（入力規則）の選択肢。一覧（requireValueInList）はその値、範囲（requireValueInRange。'定義_ステータス'!H2:H9 など）は範囲の表示の値。
+ * プルダウンでなければ null
+ */
+function mtgListOptions_(rule) {
+  if (!rule) return null;
+  const types = SpreadsheetApp.DataValidationCriteria;
+  const type = rule.getCriteriaType();
+  if (type === types.VALUE_IN_LIST) return rule.getCriteriaValues()[0].map(v => String(v).trim()).filter(Boolean);
+  if (type === types.VALUE_IN_RANGE) {
+    const range = rule.getCriteriaValues()[0];
+    return [].concat.apply([], range.getDisplayValues()).map(v => String(v).trim()).filter(Boolean);
+  }
+  return null;
 }
 
 /**
@@ -1306,10 +1331,8 @@ function mtgReadDeals_(sheet, rule) {
   if (count < 1) return out;
   // 期待値の列が数式（想定売上 × ステータスの率など）なら、変更の記録に残らないので、前回の値はスナップショットから取る
   if (has.weighted) out.weightedFormula = !!String(sheet.getRange(headerRow + 1, cols.weighted + 1).getFormula() || '').trim();
-  const rule0 = sheet.getRange(headerRow + 1, cols.status + 1).getDataValidation();
-  if (rule0 && rule0.getCriteriaType() === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST) {
-    out.statusOrder = rule0.getCriteriaValues()[0].map(v => String(v).trim()).filter(Boolean);
-  }
+  // ステータスのプルダウンの選択肢（一覧でも、定義のシートの範囲でも）
+  out.statusOrder = mtgListOptions_(sheet.getRange(headerRow + 1, cols.status + 1).getDataValidation()) || [];
   const range = sheet.getRange(headerRow + 1, 1, count, width);
   const values = range.getValues();
   const shown = range.getDisplayValues();
