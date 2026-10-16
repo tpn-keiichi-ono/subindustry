@@ -75,12 +75,14 @@ const MTG_OPTIONS = {
   createMeetingFolder: true,
   meetingFolderName: '{date}_第{n}回会議',
   // 会議資料のインデックス（このスプレッドシートのシート）。会議のフォルダに格納したら、行＝サブインダストリー（シート名）・列＝会議日
-  // （1行目に yyyy/MM/dd。無ければ日付の順に差し込む）のセルに、格納先の URL を書く。link は 'folder'（会議のフォルダ）か 'file'（PDF）。
+  // （1行目に yyyy/MM/dd。無ければ日付の順に差し込む）のセルに、PDF のファイルをスマートチップ（chip。Sheets API の拡張サービスが要る）で書く。
+  // チップにできないときは、ファイル名のリンクで書く。link を 'folder' にすると会議のフォルダ。
   // シートが無ければ作る。書けなかったときは storeMeetingSummaries() で書き直す
   index: {
     sheet: 'INDEX_会議資料',
     corner: 'サブインダストリー',   // A1 の見出し
-    link: 'folder',
+    link: 'file',
+    chip: true,
     width: 280                      // 会議日の列の幅
   },
   // 会議時点のコピー：本番の資料を作ったとき・基準を記録したときに、追跡シートの値を別のスプレッドシート（タイトルは実行日時）に保存する。
@@ -443,7 +445,12 @@ function mtgRun_(final) {
   });
   lines.push('', '保存先：' + results[0].folder.getUrl());
   const index = results.map(r => r.index).find(x => x && x.url);
-  if (index) lines.push('「' + index.title + '」シートに、格納先の URL を書きました：' + index.url);
+  if (index) {
+    lines.push('「' + index.title + '」シートに、資料のファイルを書きました：' + index.url);
+    if (MTG_OPTIONS.index.chip && !index.chip) {
+      lines.push('（スマートチップにできなかったので、ファイル名のリンクで書きました。チップにするには、エディタの「サービス」に Google Sheets API を追加してください）');
+    }
+  }
   if (results[0].copy) lines.push('今の値を「' + results[0].copy.title + '」に保存しました（次の会議の資料はこれと比べます）：' + results[0].copy.url);
   if (MTG_OPTIONS.keepSlides) lines.push('同じフォルダに、Google スライド（同じ名前）も保存しました。');
   lines.push(final
@@ -851,7 +858,8 @@ function mtgHash_(text) {
 /**
  * 作成済みの本番の事前資料（PDF）を、会議のフォルダに格納する（エディタから実行）。作ったときに格納できなかった
  * （会議のフォルダがまだ無かった・権限が無かったなど）ときに、フォルダを用意してから実行する。シートと会議日を聞き、
- * 保存先（MTG_OPTIONS.folderId）にある本番の PDF（mtgFileName_。20261023_スーパー・GMS_RX Business Meeting用資料.pdf）を、会議のフォルダにコピーする（同じ名前の古い版はゴミ箱に移す）。
+ * 保存先（MTG_OPTIONS.folderId）にある本番の PDF（mtgFileName_。20261023_スーパー・GMS_RX Business Meeting用資料.pdf）を、会議のフォルダに移す（同じ名前の古い版はゴミ箱に移す）。
+ * もう会議のフォルダにあれば移さずに、インデックスだけ書き直す。
  * 会議資料のインデックス（MTG_OPTIONS.index）にも書き直す（インデックスに書けなかったときもこれで直す）
  */
 function storeMeetingSummaries() {
@@ -869,11 +877,22 @@ function storeMeetingSummaries() {
     const fileName = mtgFileName_(name, meeting, true) + '.pdf';
     const files = folder.getFilesByName(fileName);
     const pdf = files.hasNext() ? files.next() : null;
-    if (!pdf) return '「' + name + '」：本番の資料（' + fileName + '）が保存先にありません。createMeetingSummaries() で作ってください。';
-    const stored = mtgStoreToMeetingFolder_(name, meeting, pdf);
+    let stored;
+    if (pdf) {
+      stored = mtgStoreToMeetingFolder_(name, meeting, pdf);
+    } else {
+      // 保存先に無ければ、もう会議のフォルダにある（格納済み）か見る。あればインデックスだけ書き直す
+      const target = mtgMeetingFolder_(name, meeting, true);
+      const inside = target.folder ? target.folder.getFilesByName(fileName) : null;
+      if (!inside || !inside.hasNext()) {
+        return '「' + name + '」：本番の資料（' + fileName + '）が保存先・会議のフォルダにありません。createMeetingSummaries() で作ってください。';
+      }
+      stored = {folder: target.folder, file: DriveApp.getFileById(inside.next().getId()), already: true};
+    }
     if (stored.error) return '「' + name + '」：格納できませんでした（' + stored.error + '）。';
     const index = mtgWriteIndex_(name, meeting, stored);
-    return '「' + name + '」：会議のフォルダ「' + stored.folder.getName() + '」' + (stored.created ? 'を作って' : 'に') + '格納しました：' + stored.folder.getUrl() +
+    return '「' + name + '」：会議のフォルダ「' + stored.folder.getName() + '」' + (stored.already ? 'に格納済みです' : (stored.created ? 'を作って' : 'に') + '格納しました') +
+      '：' + stored.folder.getUrl() +
       (index.error ? '\n　※ ' + index.error : '\n　「' + index.title + '」シートに書きました：' + index.url);
   });
   console.log(lines.join('\n'));
@@ -881,27 +900,29 @@ function storeMeetingSummaries() {
 }
 
 /**
- * 事前資料の PDF（pdf）を、そのシートの会議日のフォルダにコピーする（同じ名前の古い版はゴミ箱に移す）。
- * 戻り値 {folder, file} か {error: 理由}（止めない）
+ * 事前資料の PDF（pdf）を、そのシートの会議日のフォルダに移す（保存先と会議のフォルダに同じ PDF が2つできないように。同じ名前の古い版はゴミ箱に移す）。
+ * 戻り値 {folder, file, created: 会議のフォルダを作ったか} か {error: 理由}（止めない。移せなければ PDF は保存先に残る）
  */
 function mtgStoreToMeetingFolder_(name, meeting, pdf) {
   const target = mtgMeetingFolder_(name, meeting);
   if (target.error) return target;
   try {
     const fileName = pdf.getName();
-    const file = DriveApp.getFileById(pdf.getId()).makeCopy(fileName, target.folder);
-    mtgTrashOld_(target.folder, [fileName], [file.getId()]);
+    const file = DriveApp.getFileById(pdf.getId());
+    file.moveTo(target.folder);
+    mtgTrashOld_(target.folder, [fileName], [pdf.getId()]);
     return {folder: target.folder, file, created: !!target.created};
   } catch (error) {
-    return {error: '「' + target.folder.getName() + '」にコピーできない：' + (error && error.message || error)};
+    return {error: '「' + target.folder.getName() + '」に移せない：' + (error && error.message || error)};
   }
 }
 
 /**
  * シートの会議のフォルダ：サブインダストリーのフォルダ（DIFF_RULES の meetingFolder）の中の、名前が会議日の meetingFolderDate（yyMMdd）で始まり、
- * そのすぐあとが数字でないフォルダ（261023_第5回会議）。{folder} か {error: 理由}（設定が無い・開けない・見つからない・2つ以上ある）
+ * そのすぐあとが数字でないフォルダ（261023_第5回会議）。{folder} か {error: 理由}（設定が無い・開けない・見つからない・2つ以上ある）。
+ * 見つからなければ作る（createMeetingFolder。noCreate なら作らない）
  */
-function mtgMeetingFolder_(name, meeting) {
+function mtgMeetingFolder_(name, meeting, noCreate) {
   const rule = DIFF_RULES[name] || {};
   const id = mtgFolderIdOf_(rule.meetingFolder);
   if (!id) return {error: '「' + name + '」の会議のフォルダが設定されていない（test.gs の DIFF_RULES の meetingFolder）'};
@@ -921,7 +942,7 @@ function mtgMeetingFolder_(name, meeting) {
     if (folderName.indexOf(prefix) === 0 && !/^\d/.test(folderName.slice(prefix.length)) && !folder.isTrashed()) found.push(folder);
   }
   if (!found.length) {
-    if (!MTG_OPTIONS.createMeetingFolder) return {error: '「' + parent.getName() + '」の中に「' + prefix + '_」で始まる会議のフォルダが無い'};
+    if (!MTG_OPTIONS.createMeetingFolder || noCreate) return {error: '「' + parent.getName() + '」の中に「' + prefix + '_」で始まる会議のフォルダが無い'};
     const folderName = MTG_OPTIONS.meetingFolderName.replace('{date}', prefix).replace('{n}', String(mtgNextMeetingNumber_(parent, prefix)));
     try {
       return {folder: parent.createFolder(folderName), created: true};
@@ -938,7 +959,7 @@ function mtgMeetingFolder_(name, meeting) {
 
 /**
  * 会議資料のインデックス（このスプレッドシートの MTG_OPTIONS.index.sheet）の、行＝サブインダストリー（name）・列＝会議日（meeting）のセルに、
- * 格納先（stored.folder か stored.file）の URL をリンクで書く。シートが無ければ作り、A1 に見出しと、A列に追跡シートの名前（DIFF_RULES の順）を書く。
+ * PDF（stored.file。index.link が 'folder' なら会議のフォルダ）をスマートチップで書く（できなければファイル名のリンク）。シートが無ければ作り、A1 に見出しと、A列に追跡シートの名前（DIFF_RULES の順）を書く。
  * 会議日の列（1行目。yyyy/MM/dd の文字）が無ければ日付の順になる位置に差し込み、行が無ければ下に足す。同じセルは上書き（作り直したとき）。
  * 書き込みはドキュメントロックの中（差分追跡の対象外のシートだが、資料作成はエディタから実行するので待ってよい）。
  * 戻り値 {url: シートの URL, title: シート名} か {error: 知らせる文}（止めない）
@@ -992,14 +1013,36 @@ function mtgWriteIndex_(name, meeting, stored) {
         diffEnsureGrid_(sheet, row, col);
         sheet.getRange(row, 1).setValue(credText_(name));
       }
-      const url = o.link === 'file' && stored.file ? stored.file.getUrl() : stored.folder.getUrl();
-      sheet.getRange(row, col).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText(url).setLinkUrl(url).build()]]);
-      return {url: ss.getUrl() + '#gid=' + sheet.getSheetId(), title: o.sheet};
+      const target = o.link === 'folder' || !stored.file ? stored.folder : stored.file;
+      const url = target.getUrl();
+      const chip = !!o.chip && mtgWriteChip_(ss, sheet, row, col, url);
+      if (!chip) sheet.getRange(row, col).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText(target.getName()).setLinkUrl(url).build()]]);
+      return {url: ss.getUrl() + '#gid=' + sheet.getSheetId(), title: o.sheet, chip};
     } finally {
       lock.releaseLock();
     }
   } catch (error) {
     return {error: '「' + o.sheet + '」シートに書き込めませんでした（' + (error && error.message || error) + '）。storeMeetingSummaries() を実行すると書き直します。'};
+  }
+}
+
+/**
+ * セル（row, col）に、Drive のファイル（url）のスマートチップ（リッチリンクのチップ）を書く。Sheets API（拡張サービス「Google Sheets API」）で書く
+ * （SpreadsheetApp ではチップを書けないため）。拡張サービスが無い・書けないときは false（呼び出し元がリンクで書く）
+ */
+function mtgWriteChip_(ss, sheet, row, col, url) {
+  if (typeof Sheets === 'undefined' || !Sheets.Spreadsheets) return false;
+  try {
+    SpreadsheetApp.flush();   // 列の差し込みなどを先に反映する（Sheets API は別の経路で書くため）
+    Sheets.Spreadsheets.batchUpdate({requests: [{updateCells: {
+      start: {sheetId: sheet.getSheetId(), rowIndex: row - 1, columnIndex: col - 1},
+      rows: [{values: [{userEnteredValue: {stringValue: '@'}, chipRuns: [{startIndex: 0, chip: {richLinkProperties: {uri: url}}}]}]}],
+      fields: 'userEnteredValue,chipRuns,textFormatRuns'
+    }}]}, ss.getId());
+    return true;
+  } catch (error) {
+    console.warn('インデックスにチップを書けなかったので、リンクで書きます：' + (error && error.message || error));
+    return false;
   }
 }
 

@@ -440,7 +440,7 @@ RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Goo
   （`20261023_スーパー・GMS_RX Business Meeting用資料`。試作は末尾に `_試作`）。
 - **会議のフォルダへの格納**（`mtgStoreToMeetingFolder_`・`mtgMeetingFolder_`）：本番だけ、資料を作って会議日を記録したあとに、
   シートの `DIFF_RULES` の `meetingFolder`（サブインダストリーのフォルダ。URL か ID。シート名を1か所に書く決まりのため `DIFF_RULES` に置く）の中から、
-  名前が会議日の `meetingFolderDate`（yyMMdd）で始まり、すぐあとが数字でないフォルダを探し、PDF をコピーします（`makeCopy`。同じ名前の古い版はゴミ箱へ）。
+  名前が会議日の `meetingFolderDate`（yyMMdd）で始まり、すぐあとが数字でないフォルダを探し、PDF を移します（`moveTo`。保存先と二重にしないため。同じ名前の古い版はゴミ箱へ）。
   見つからない・2つ以上ある・開けない・書き込めないときは止めずに、理由を終わりの画面に出します（資料は保存先にある）。
   あとから `storeMeetingSummaries()`（エディタから実行。シートと会議日を聞く）で、保存先の本番の PDF を同じように格納します。
   会議のフォルダが無ければ作ります（`createMeetingFolder`。名前は `meetingFolderName` の `{date}_第{n}回会議`。`{n}` は、そのフォルダの中の
@@ -448,7 +448,9 @@ RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Goo
   作り直したときは、作ったフォルダが見つかるので、もう1つは作りません。
 - **会議資料のインデックス**（`mtgWriteIndex_`）：格納できたら、このスプレッドシートの `MTG_OPTIONS.index.sheet`（`INDEX_会議資料`）の
   行＝サブインダストリー（A列。`formerNames` の前の名前も今の名前とみなす）・列＝会議日（1行目。`yyyy/MM/dd` の文字。日付の値で入力した見出しも読む）のセルに、
-  格納先（`link: 'folder'` は会議のフォルダ、`'file'` は PDF）の URL をリンク（リッチテキスト）で書きます。シートが無ければ末尾に作り（開いていたシートに戻す）、
+  PDF（`link: 'folder'` なら会議のフォルダ）をスマートチップで書きます（`mtgWriteChip_`。SpreadsheetApp ではチップを書けないので、拡張サービス Sheets API の
+  `batchUpdate` の `updateCells` で、`userEnteredValue` を `@`、`chipRuns` に `richLinkProperties.uri` を入れる。先に `SpreadsheetApp.flush()`）。
+  拡張サービスが無い・書けないときは、ファイル名のリンク（リッチテキスト）で書きます。シートが無ければ末尾に作り（開いていたシートに戻す）、
   A1 に見出し・A列に `DIFF_RULES` の順でサブインダストリーを書きます（使わない行・列は持たない）。会議日の列が無ければ日付の順になる位置に差し込み、
   行が無ければ下に足します。書き込みはドキュメントロックの中です（資料作成はエディタから実行するので待ってよい）。書けなくても止めず、理由を知らせます
   （`storeMeetingSummaries()` で書き直す）。差分追跡の対象外のシートなので、列の差し込みで追跡は止まりません。

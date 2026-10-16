@@ -1011,7 +1011,10 @@ function createGas(options) {
         getUrl: () => (gas.driveFiles.some(f => f.id === id) ? 'https://drive.google.com/file/d/' + id + '/view'
           : 'https://docs.google.com/presentation/d/' + id + '/edit'),
         moveTo(folder) {
+          if ((gas.copyErrors || []).indexOf(folder.getId()) >= 0) throw new Error('Access denied: DriveApp.');
           gas.moved.push({id, folder: folder.getId()});
+          const entry = gas.driveFiles.find(f => f.id === id);
+          if (entry) entry.folder = folder.getId();
           const deck = gas.decks.find(d => d.id === id);
           if (deck) deck.folder = folder.getId();
           return this;
