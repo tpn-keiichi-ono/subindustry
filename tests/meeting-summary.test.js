@@ -1116,8 +1116,9 @@ test('本番：会議日のフォルダ（yyMMdd_第N回会議）に事前資料
   assert.ok(gas.trashed.indexOf(again[1].id) < 0);
 });
 
-test('会議のフォルダが無いときは、保存先にだけ残して知らせ、フォルダを用意してから storeMeetingSummaries() で格納する', () => {
+test('会議のフォルダを作らない設定（createMeetingFolder: false）で無いときは、保存先にだけ残して知らせ、フォルダを用意してから storeMeetingSummaries() で格納する', () => {
   const {gas, g} = setup();
+  gas.get('MTG_OPTIONS').createMeetingFolder = false;
   const meeting = g.mtgParseDate_('10/23', new Date());
   meetingFolders(gas, ['260819_第4回会議']);
   gas.promptAnswers = ['1', '10/23'];
@@ -1136,6 +1137,25 @@ test('会議のフォルダが無いときは、保存先にだけ残して知�
   gas.promptAnswers = ['1', '10/30'];
   g.storeMeetingSummaries();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /「新FMT」：本番の資料（\d{4}1030_新FMT_RX Business Meeting用資料\.pdf）が保存先にありません。createMeetingSummaries\(\) で作ってください。/);
+});
+
+test('会議のフォルダが無ければ「yyMMdd_第N回会議」を作って格納する（N は前の会議のフォルダの回数＋1。後の会議のフォルダは数えない）', () => {
+  const {gas, g} = setup();
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  const later = String(Number(meeting.slice(2, 4)) + 1) + '0101_第9回会議';   // 来年の会議（数えない）
+  meetingFolders(gas, ['260420_第1回会議', '260819_第４回会議', later, '資料置き場']);
+  gas.promptAnswers = ['1', '10/23'];
+  g.createMeetingSummaries();
+  const created = gas.driveFolders.filter(f => f.parent === 'SubIndustryFolder0001' && f.name.indexOf(yymmdd(meeting)) === 0);
+  assert.deepStrictEqual(created.map(f => f.name), [yymmdd(meeting) + '_第5回会議'], '全角の数字も読む');
+  assert.ok(gas.driveFiles.some(f => f.folder === created[0].id && /_新FMT_RX Business Meeting用資料\.pdf$/.test(f.name)));
+  assert.match(gas.alerts[gas.alerts.length - 1].message, new RegExp('会議のフォルダ「' + yymmdd(meeting) + '_第5回会議」を作って格納しました'));
+  // 作り直しても、同じフォルダを使う（もう1つ作らない）
+  gas.promptAnswers = ['1', '10/23'];
+  g.createMeetingSummaries();
+  assert.strictEqual(gas.driveFolders.filter(f => f.name.indexOf(yymmdd(meeting)) === 0).length, 1);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /会議のフォルダ「\d{6}_第5回会議」に格納しました/);
+  assert.strictEqual(g.mtgNextMeetingNumber_(g.DriveApp.getFolderById('SubIndustryFolder0001'), '260101'), 1, '前の会議が無ければ第1回');
 });
 
 test('mtgMeetingFolder_：設定が無い・開けない・2つある・コピーできないときは理由を返す（止めない）。URL・ID のどちらでも設定できる', () => {

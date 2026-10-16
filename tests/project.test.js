@@ -156,3 +156,9 @@ test('本物の設定：クレデンシャル・オファリング履歴の管�
   assert.strictEqual(gas.get('CRED_OPTIONS').enabled, false);
   assert.strictEqual(gas.global.credEnabled_(), false);
 });
+
+test('本物の設定：11シートとも、会議サマリの格納先（meetingFolder）がフォルダの URL か ID になっている', () => {
+  const gas = createGas({realSheetNames: true});
+  const rules = gas.get('DIFF_RULES');
+  Object.keys(rules).forEach(name => assert.ok(gas.global.mtgFolderIdOf_(rules[name].meetingFolder), name + ' の meetingFolder'));
+});

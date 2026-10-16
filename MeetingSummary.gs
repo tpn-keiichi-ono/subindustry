@@ -70,6 +70,10 @@ const MTG_OPTIONS = {
   // meetingFolderDate（yyMMdd）＋「_」で始まるフォルダ（例：261023_第5回会議）に、事前資料の PDF のコピーを置く。
   // 見つからない・格納できないときは保存先（folderId）にだけ残して知らせ、フォルダを用意してから storeMeetingSummaries() で格納する
   meetingFolderDate: 'yyMMdd',
+  // 会議日のフォルダが無ければ作る（false なら作らずに知らせる）。名前は meetingFolderName の {date}（meetingFolderDate）・{n}（第何回）を置き換えたもの。
+  // {n} は、そのフォルダの中の、この会議日より前の「yyMMdd_第N回会議」のいちばん大きい N ＋ 1（無ければ 1）
+  createMeetingFolder: true,
+  meetingFolderName: '{date}_第{n}回会議',
   // 会議資料のインデックス（このスプレッドシートのシート）。会議のフォルダに格納したら、行＝サブインダストリー（シート名）・列＝会議日
   // （1行目に yyyy/MM/dd。無ければ日付の順に差し込む）のセルに、格納先の URL を書く。link は 'folder'（会議のフォルダ）か 'file'（PDF）。
   // シートが無ければ作る。書けなかったときは storeMeetingSummaries() で書き直す
@@ -424,7 +428,7 @@ function mtgRun_(final) {
     // 変化が無く、サンプル（addSampleHistory()。会議サマリは数えない）の記録だけがあるときは、資料の確認用の関数を案内する
     const samples = !r.summary.kpi.changed && !r.summary.dummy ? smpCountEvents_(ss, SMP_OPTIONS.eventPrefix + '-', r.summary.name).changes : 0;
     return '「' + r.summary.name + '」：' + r.file.getName() + '（' + mtgCountsText_(r.summary) + '）\n　' + r.file.getUrl() +
-      (r.stored ? '\n　会議のフォルダ「' + r.stored.folder.getName() + '」に格納しました：' + r.stored.folder.getUrl() : '') +
+      (r.stored ? '\n　会議のフォルダ「' + r.stored.folder.getName() + '」' + (r.stored.created ? 'を作って' : 'に') + '格納しました：' + r.stored.folder.getUrl() : '') +
       (r.index && r.index.error ? '\n　※ ' + r.index.error : '') +
       (r.storeError ? '\n　※ 会議のフォルダに格納できませんでした（' + r.storeError + '）。資料は保存先にあります。' +
         'フォルダを用意してから、エディタで storeMeetingSummaries() を実行して格納してください。' : '') +
@@ -869,7 +873,7 @@ function storeMeetingSummaries() {
     const stored = mtgStoreToMeetingFolder_(name, meeting, pdf);
     if (stored.error) return '「' + name + '」：格納できませんでした（' + stored.error + '）。';
     const index = mtgWriteIndex_(name, meeting, stored);
-    return '「' + name + '」：会議のフォルダ「' + stored.folder.getName() + '」に格納しました：' + stored.folder.getUrl() +
+    return '「' + name + '」：会議のフォルダ「' + stored.folder.getName() + '」' + (stored.created ? 'を作って' : 'に') + '格納しました：' + stored.folder.getUrl() +
       (index.error ? '\n　※ ' + index.error : '\n　「' + index.title + '」シートに書きました：' + index.url);
   });
   console.log(lines.join('\n'));
@@ -887,7 +891,7 @@ function mtgStoreToMeetingFolder_(name, meeting, pdf) {
     const fileName = pdf.getName();
     const file = DriveApp.getFileById(pdf.getId()).makeCopy(fileName, target.folder);
     mtgTrashOld_(target.folder, [fileName], [file.getId()]);
-    return {folder: target.folder, file};
+    return {folder: target.folder, file, created: !!target.created};
   } catch (error) {
     return {error: '「' + target.folder.getName() + '」にコピーできない：' + (error && error.message || error)};
   }
@@ -916,7 +920,15 @@ function mtgMeetingFolder_(name, meeting) {
     const folderName = String(folder.getName());
     if (folderName.indexOf(prefix) === 0 && !/^\d/.test(folderName.slice(prefix.length)) && !folder.isTrashed()) found.push(folder);
   }
-  if (!found.length) return {error: '「' + parent.getName() + '」の中に「' + prefix + '_」で始まる会議のフォルダが無い'};
+  if (!found.length) {
+    if (!MTG_OPTIONS.createMeetingFolder) return {error: '「' + parent.getName() + '」の中に「' + prefix + '_」で始まる会議のフォルダが無い'};
+    const folderName = MTG_OPTIONS.meetingFolderName.replace('{date}', prefix).replace('{n}', String(mtgNextMeetingNumber_(parent, prefix)));
+    try {
+      return {folder: parent.createFolder(folderName), created: true};
+    } catch (error) {
+      return {error: '「' + parent.getName() + '」の中に会議のフォルダ「' + folderName + '」を作れない：' + (error && error.message || error)};
+    }
+  }
   if (found.length > 1) {
     return {error: '「' + parent.getName() + '」の中に「' + prefix + '_」で始まるフォルダが ' + found.length + '個ある（「' +
       found.map(f => f.getName()).join('」「') + '」。1つにしてください）'};
@@ -996,6 +1008,17 @@ function mtgIndexDate_(value) {
   if (value instanceof Date) return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy/MM/dd');
   const text = String(value == null ? '' : value).trim();
   return /^\d{4}\s*[\/\-.年]/.test(text) ? mtgParseDate_(text, new Date()) : '';
+}
+
+/** 次の会議のフォルダの回数：parent の中の、会議日が prefix（yyMMdd）より前の「yyMMdd_第N回」のいちばん大きい N ＋ 1（無ければ 1） */
+function mtgNextMeetingNumber_(parent, prefix) {
+  let max = 0;
+  const folders = parent.getFolders();
+  while (folders.hasNext()) {
+    const m = /^(\d{6})_第\s*(\d+)\s*回/.exec(String(folders.next().getName()).normalize('NFKC'));
+    if (m && m[1] < prefix) max = Math.max(max, Number(m[2]));
+  }
+  return max + 1;
 }
 
 /** フォルダの URL（…/folders/ID、?id=ID）か ID から ID を取り出す（読めなければ空）。 */

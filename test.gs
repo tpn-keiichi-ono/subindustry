@@ -78,29 +78,32 @@
 // - formerNames は前のシート名。差分追跡の記録はシート名で残るので、名前を変えたら前の名前をここに足す
 //   （前の名前の記録も、このシートの記録としてサイドバー・変更履歴に出す。記録は書き換えない）
 // シートを足した・名前を変えたら、setupAfterSheetChange() を実行する（docs/OPERATIONS.md「シート名の一覧」）。
+// 会議サマリの事前資料の格納先（テスト中は、すべてのサブインダストリーでこのフォルダを使う。本番では各シートの meetingFolder にそれぞれのフォルダを書く）
+const TEST_MEETING_FOLDER = 'https://drive.google.com/drive/folders/1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK';
+
 const DIFF_RULES = {
   'スーパー・GMS': {
     headerRow: 2,
     ranges: ['D3:AF'],
     requests: true,          // サービスリクエストの選択パネルに出す（「サービスのリクエスト」の列を読む）
     // 会議サマリの事前資料を格納する、このサブインダストリーのフォルダ（URL か ID）。この中の、会議日の「yyMMdd_」で始まるフォルダ
-    // （例：261023_第5回会議）に PDF を置く（MeetingSummary.gs の mtgMeetingFolder_）。空なら格納しない
-    meetingFolder: '',
+    // （例：261023_第5回会議。無ければ作る）に PDF を置く（MeetingSummary.gs の mtgMeetingFolder_）。空なら格納しない
+    meetingFolder: TEST_MEETING_FOLDER,
     formerNames: ['新FMT']
     // Optional: capture an explicit row span in the row snapshot.
     // , snapshotColumns: 'A:Z'
   },
-  'コンビニ': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: '', formerNames: ['新FMT2']},
-  '百貨店': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
+  'コンビニ': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER, formerNames: ['新FMT2']},
+  '百貨店': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
   // 2026/10/16 に足したサブインダストリー（11シートとも、スーパー・GMS と同じ見出し（A〜AC列）。見出しの行・追跡範囲も同じ）
-  '化粧品・トイレタリー': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
-  '飲料・食品': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
-  '自動車販売': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
-  '住設': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
-  '地方銀行': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
-  '電鉄・不動産': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
-  'エネルギー': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''},
-  '生協': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: ''}
+  '化粧品・トイレタリー': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
+  '飲料・食品': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
+  '自動車販売': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
+  '住設': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
+  '地方銀行': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
+  '電鉄・不動産': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
+  'エネルギー': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
+  '生協': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER}
 };
 
 /**
