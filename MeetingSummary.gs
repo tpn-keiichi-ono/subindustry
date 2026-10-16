@@ -56,7 +56,7 @@ const MTG_OPTIONS = {
   blankText: '未入力',
   noneText: '該当なし',
   fileName: '会議サマリ',             // ファイル名の先頭（会議サマリ_スーパー・GMS_2026-10-23.pdf。日付は会議日）
-  folderId: '',                      // 保存先のフォルダの ID（空なら、このスプレッドシートと同じフォルダの中に folderName を作る）
+  folderId: '1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK',   // 保存先のフォルダの ID（空なら、このスプレッドシートと同じフォルダの中に folderName を作る）
   folderName: '会議サマリ',
   folderKey: 'MTG_FOLDER_ID',         // 作ったフォルダの ID（ドキュメントのプロパティ）
   // 表紙・扉のひな形（Google スライド。いただいた .pptx を Google スライドにしたもの）。資料はひな形のコピーに作る（ページの大きさもひな形のまま）。
@@ -124,6 +124,10 @@ const MTG_OPTIONS = {
   },
   // 必須項目：進行中の案件で空なら、入力内容のチェックの「未入力」に出す（シートに無い見出しは見ない）
   required: ['案件ステータス', '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '活動状況', 'アカウント責任者'],
+  // ステータスの定義のシート（期待値の率）。ステータスの進み具合（前進・後退）は率の大きい順、率が同じなら定義の下の行ほど進んでいる
+  // （C-提案中 → C-選定対応中 → C-稟議対応中）。期待値の列が数式（想定売上 × 率）のとき、前回の期待値を記録から取れない案件はこの率で計算する。
+  // シートが無ければ、進み具合はプルダウンの順（下ほど進んでいる）
+  statusTable: {sheet: '定義_ステータス', headerRow: 1, status: 'ステータス', ratio: '期待値'},
   // ステータスの分類。statusKinds に書いたステータスはそのとおりに（'active' 進行中・'won' 受注・'lost' 失注・'hold' 保留）。
   // ほかは、その語を含むかで決める（失注 → 保留 → 受注 の順に見る。受注は notWonWords を含むもの（受注見込み など）を除く）
   statusKinds: {},
@@ -642,6 +646,7 @@ function mtgCreate_(ss, names, now, final, meeting) {
     trackedSince: mtgLogStart_(ss),
     log: mtgReadLog_(ss, windowStart),
     snapshots: mtgReadSnapshots_(ss, windowStart),
+    statusTable: mtgReadStatusTable_(ss),
     credentials: hsCredentialIndex_(ss)
   };
   const summaries = plans.map(p => mtgSummarize_(ss, p.name, Object.assign({
@@ -799,9 +804,15 @@ function mtgReadSnapshots_(ss, since) {
     }
     const pick = label => String(content.get(credNormalize_(label)) || '').trim();
     map.set(mtgCellText_(r[i['イベントID']]) + '#' + Number(r[i['行番号']]), {
+      eventId: mtgCellText_(r[i['イベントID']]),
+      at: i['記録日時'] != null ? mtgTime_(r[i['記録日時']]) : null,
+      sheet: i['シート'] != null ? mtgCellText_(r[i['シート']]) : '',
       customer: pick(cols.customer) || (i['得意先'] != null ? mtgCellText_(r[i['得意先']]).trim() : ''),
       project: pick(cols.project),
-      status: pick(cols.status)
+      status: pick(cols.status),
+      // その時点の行の値（変更のあとの値。数式の列も計算した値）。前回の時点の値に使う
+      values: {status: pick(cols.status), amount: mtgNumber_(pick(cols.amount)), weighted: mtgNumber_(pick(cols.weighted)),
+        monthText: pick(cols.orderMonth), activity: pick(cols.activity)}
     });
   });
   return map;
@@ -809,7 +820,7 @@ function mtgReadSnapshots_(ss, since) {
 
 /**
  * 追跡シートの案件（得意先か案件名のある行）を読む。
- * {headers, has: {見出しのキー: シートにあるか}, statusOrder: ステータスのプルダウンの選択肢（無ければ空）,
+ * {headers, has: {見出しのキー: シートにあるか}, statusOrder: ステータスのプルダウンの選択肢（無ければ空）, weightedFormula: 期待値の列が数式か,
  *  deals: [{row, key, customer, project, status, kind, amount, weighted, orderMonth: {y, m}|null, orderMonthText,
  *  startMonth: {y, m}|null, startMonthText, activity, issue, owner, delivery, record, updatedAt: 時刻（ms）|null, missing: [見出し]}]}
  */
@@ -834,9 +845,11 @@ function mtgReadDeals_(sheet, rule) {
   const stampCol = headers.findIndex(h => diffNormalizeStampHeader_(h) === stamp);
   const required = MTG_OPTIONS.required.map(label => ({label, col: find(label)})).filter(r => r.col >= 0);
 
-  const out = {headers, has, statusOrder: [], deals: []};
+  const out = {headers, has, statusOrder: [], deals: [], weightedFormula: false};
   const count = sheet.getLastRow() - headerRow;
   if (count < 1) return out;
+  // 期待値の列が数式（想定売上 × ステータスの率など）なら、変更の記録に残らないので、前回の値はスナップショットから取る
+  if (has.weighted) out.weightedFormula = !!String(sheet.getRange(headerRow + 1, cols.weighted + 1).getFormula() || '').trim();
   const rule0 = sheet.getRange(headerRow + 1, cols.status + 1).getDataValidation();
   if (rule0 && rule0.getCriteriaType() === SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST) {
     out.statusOrder = rule0.getCriteriaValues()[0].map(v => String(v).trim()).filter(Boolean);
@@ -896,21 +909,22 @@ function mtgSummarize_(ss, name, context) {
   const since = context.since.getTime();
   const history = mtgHistory_(name, context);
   const labels = mtgLabels_();
-  const order = table.statusOrder.map(credNormalize_);
-  const rank = status => order.indexOf(credNormalize_(status));
+  const statusTable = 'statusTable' in context ? context.statusTable : mtgReadStatusTable_(ss);
+  const rank = mtgStatusRank_(table.statusOrder, statusTable);
+  const rules = {rank, statusTable, weightedFormula: table.weightedFormula};
 
   // 前回からの変化（案件ごとに1つの区分）。行を削除した案件は「削除」
   const changes = [];
   const changed = new Map();
   byKey.forEach((deal, key) => {
-    const item = mtgChange_(key, deal, null, history.events.get(key) || [], since, labels, rank);
+    const item = mtgChange_(key, deal, null, history.events.get(key) || [], history.states.get(key) || [], since, labels, rules);
     if (item) { changes.push(item); changed.set(key, item); }
   });
   history.removed.forEach(line => {
     const r = Object.assign(mtgParseRemoved_(line.text, table.headers), {at: line.at});
     r.key = mtgDealKey_(r.customer, r.project);
     if (r.at <= since || !(r.customer || r.project) || byKey.has(r.key) || changed.has(r.key)) return;
-    const item = mtgChange_(r.key, null, r, history.events.get(r.key) || [], since, labels, rank);
+    const item = mtgChange_(r.key, null, r, history.events.get(r.key) || [], history.states.get(r.key) || [], since, labels, rules);
     if (item) { changes.push(item); changed.set(r.key, item); }
   });
   const priority = MTG_MOVE_ORDER.concat(['updated']);
@@ -963,7 +977,7 @@ function mtgSummarize_(ss, name, context) {
     .slice(0, o.mainRows.focus);
 
   // 入力内容のチェックと、試作から解消した件数
-  const alerts = mtgAlerts_(table, context, {slipsOf, changes, tracked, rank});
+  const alerts = mtgAlerts_(table, context, {slipsOf, changes, tracked});
   let resolved = null;
   if (context.draft) {
     const hashes = alerts.map(a => mtgHash_(a.key));
@@ -1104,14 +1118,68 @@ function mtgHistory_(name, context) {
     if (!events.has(key)) events.set(key, []);
     events.get(key).push(item);
   });
-  return {events, removed, unmatched};
+  // 案件ごとの、変更の記録の時点の行の値（スナップショット。古い順）。前回の時点の値は、前回より前でいちばん新しいものから取る
+  const states = new Map();
+  context.snapshots.forEach(snap => {
+    // サンプル（SMP-）・クレデンシャル（CRD-）の記録は数えない（変更の記録と同じ。サンプルは過去の日時で足される）
+    if (resolve(snap.sheet) !== name || snap.at == null || !(snap.customer || snap.project) || /^(SMP|CRD)-/.test(snap.eventId)) return;
+    const key = root(mtgDealKey_(snap.customer, snap.project));
+    if (!states.has(key)) states.set(key, []);
+    states.get(key).push({at: snap.at, values: snap.values});
+  });
+  states.forEach(list => list.sort((a, b) => a.at - b.at));
+  return {events, removed, unmatched, states};
+}
+
+/**
+ * ステータスの定義のシート（MTG_OPTIONS.statusTable）を読む。[{status, ratio: 期待値の率（無ければ null）}]（定義の上から）。シートが無ければ null
+ */
+function mtgReadStatusTable_(ss) {
+  const o = MTG_OPTIONS.statusTable;
+  const sheet = o && ss.getSheetByName(o.sheet);
+  if (!sheet || sheet.getLastRow() <= o.headerRow) return null;
+  const width = Math.max(sheet.getLastColumn(), 1);
+  const headers = sheet.getRange(o.headerRow, 1, 1, width).getDisplayValues()[0].map(credNormalize_);
+  const sc = headers.indexOf(credNormalize_(o.status));
+  const rc = headers.indexOf(credNormalize_(o.ratio));
+  if (sc < 0) return null;
+  return sheet.getRange(o.headerRow + 1, 1, sheet.getLastRow() - o.headerRow, width).getValues()
+    .map(line => ({status: String(line[sc]).trim(), ratio: rc >= 0 ? mtgNumber_(line[rc]) : null}))
+    .filter(item => item.status);
+}
+
+/** ステータスの期待値の率（定義のシートにあるときだけ。無ければ null） */
+function mtgStatusRatio_(statusTable, status) {
+  const item = (statusTable || []).find(x => credNormalize_(x.status) === credNormalize_(status));
+  return item ? item.ratio : null;
+}
+
+/**
+ * ステータスの進み具合（大きいほど進んでいる。分からないステータスは -1）を返す関数。
+ * 定義のシートがあれば、期待値の率の大きい順、率が同じなら定義の下の行ほど進んでいる（A-受注済み(100%) > B > C-稟議対応中 > C-選定対応中 > C-提案中 > D …）。
+ * 無ければ、プルダウンの順（下ほど進んでいる）
+ */
+function mtgStatusRank_(statusOrder, statusTable) {
+  const table = (statusTable || []).filter(x => x.ratio != null);
+  if (table.length) {
+    return status => {
+      const i = table.findIndex(x => credNormalize_(x.status) === credNormalize_(status));
+      return i < 0 ? -1 : table[i].ratio * 1000 + i;
+    };
+  }
+  const order = (statusOrder || []).map(credNormalize_);
+  return status => order.indexOf(credNormalize_(status));
 }
 
 /**
  * 1つの案件の前回からの変化（変化が無ければ null）。deal は今の行、removed は削除した行（どちらか一方）。
- * 前回の時点の値は、前回以降で最初の変更の「変更前」（その項目の変更が無ければ今の値）。
+ * 前回の時点の値（推定で補わない）：
+ * - 前回（since）より前の変更の記録があれば、そのうちいちばん新しいスナップショット（変更のあとの行の値。数式の列も計算した値）
+ * - 無ければ、前回以降で最初の変更の「変更前」（その項目の変更が無ければ今の値）。期待値の列が数式なら変更前は記録に残らないので、
+ *   ステータス・想定売上が変わっていなければ今の値、変わっていれば、シートの数式と同じく前回の想定売上 × 前回のステータスの率（statusTable）
+ * rules = {rank: ステータスの進み具合, statusTable, weightedFormula: 期待値の列が数式か}。states は案件のスナップショット（古い順）
  */
-function mtgChange_(key, deal, removed, events, since, labels, rank) {
+function mtgChange_(key, deal, removed, events, states, since, labels, rules) {
   const recent = events.filter(e => e.at > since);   // 前回の資料を作った時刻ちょうどの記録は、前回の資料に入っている
   if (!recent.length && !removed) return null;
   const born = recent.some(e => e.born);
@@ -1121,13 +1189,27 @@ function mtgChange_(key, deal, removed, events, since, labels, rank) {
     const e = recent.find(x => x.label === label);
     return e ? parse(e.before) : value;
   };
-  const base = born ? null : {
-    status: pick(labels.status, cur.status, String),
-    amount: pick(labels.amount, cur.amount, mtgNumber_),
-    weighted: pick(labels.weighted, cur.weighted, mtgNumber_),
-    monthText: pick(labels.orderMonth, cur.orderMonthText, String),
-    activity: pick(labels.activity, cur.activity || '', String)
-  };
+  const prior = states.filter(st => st.at <= since).pop();
+  let base = null;
+  if (born) {
+    base = null;
+  } else if (prior) {
+    base = Object.assign({source: 'snapshot'}, prior.values);
+  } else {
+    base = {
+      source: 'log',
+      status: pick(labels.status, cur.status, String),
+      amount: pick(labels.amount, cur.amount, mtgNumber_),
+      weighted: pick(labels.weighted, cur.weighted, mtgNumber_),
+      monthText: pick(labels.orderMonth, cur.orderMonthText, String),
+      activity: pick(labels.activity, cur.activity || '', String)
+    };
+    if (rules.weightedFormula) {
+      const touched = recent.some(e => e.label === labels.status || e.label === labels.amount);
+      const ratio = touched ? mtgStatusRatio_(rules.statusTable, base.status) : null;
+      base.weighted = !touched ? cur.weighted : ratio != null && base.amount != null ? Math.round(base.amount * ratio * 1e6) / 1e6 : null;
+    }
+  }
   const flags = [];
   if (!base) {
     flags.push('new');
@@ -1138,8 +1220,8 @@ function mtgChange_(key, deal, removed, events, since, labels, rank) {
     if (credNormalize_(base.status) !== credNormalize_(deal.status)) {
       if (from !== deal.kind) {
         flags.push({won: 'won', lost: 'lost', hold: 'hold', active: 'revived'}[deal.kind]);
-      } else if (deal.kind === 'active' && rank(base.status) >= 0 && rank(deal.status) >= 0) {
-        flags.push(rank(deal.status) > rank(base.status) ? 'forward' : 'backward');
+      } else if (deal.kind === 'active' && rules.rank(base.status) >= 0 && rules.rank(deal.status) >= 0) {
+        flags.push(rules.rank(deal.status) > rules.rank(base.status) ? 'forward' : 'backward');
       } else {
         flags.push('status');
       }
@@ -1213,7 +1295,7 @@ function mtgBridge_(deals, byKey, changed, changes) {
 /**
  * 入力内容のチェック [{type, key, dealKey, customer, project, text, amount, owner}]（MTG_ALERT_TYPES の順。種類の中は想定売上の大きい順。
  * 予定日超過は過ぎた日数の多い順）。
- * info = {slipsOf: キー → 受注月の延期の回数, changes, tracked: 変更の記録がそろっている始まり（ms）, rank}
+ * info = {slipsOf: キー → 受注月の延期の回数, changes, tracked: 変更の記録がそろっている始まり（ms）}
  */
 function mtgAlerts_(table, context, info) {
   const o = MTG_OPTIONS;
@@ -1268,7 +1350,7 @@ function mtgAlerts_(table, context, info) {
         mtgMonthIndex_(d.startMonth) < mtgMonthIndex_(d.orderMonth)) {
       push('月の不整合', d, '売上開始月（' + label(d.startMonth) + '）が受注月（' + label(d.orderMonth) + '）より前');
     }
-    if (table.statusOrder.length && d.status && info.rank(d.status) < 0) {
+    if (table.statusOrder.length && d.status && table.statusOrder.map(credNormalize_).indexOf(credNormalize_(d.status)) < 0) {
       push('選択肢外のステータス', d, '「' + d.status + '」は選択肢外の値（' + {active: '進行中', won: '受注', lost: '失注', hold: '保留'}[d.kind] + 'として集計）');
     }
   });
@@ -1827,8 +1909,9 @@ function mtgBridgeSlide_(s) {
   const max = Math.max.apply(null, statusRows.concat(monthRows).map(r => r.value).concat([0]));
   const gap = 14;
   const rowH = Math.min(15, (S.bottom - S.top - 2 * 22 - gap) / Math.max(1, statusRows.length + monthRows.length));
-  const byStatus = mtgBarChart_('ステータス別期待値（進行中・百万円）', statusRows, right, S.top, width, max, rowH, '進行中案件なし');
-  const byMonth = mtgBarChart_('受注月別期待値（進行中・百万円）', monthRows, right, byStatus.bottom + gap, width, max, rowH, '進行中案件なし');
+  const labelW = mtgBarLabelWidth_(statusRows.concat(monthRows).map(r => r.label));
+  const byStatus = mtgBarChart_('ステータス別期待値（進行中・百万円）', statusRows, right, S.top, width, max, rowH, '進行中案件なし', labelW);
+  const byMonth = mtgBarChart_('受注月別期待値（進行中・百万円）', monthRows, right, byStatus.bottom + gap, width, max, rowH, '進行中案件なし', labelW);
   el.push.apply(el, byStatus.elements.concat(byMonth.elements));
   return {
     title: MTG_TITLES.pipeline,
@@ -1857,7 +1940,8 @@ function mtgWaterfall_(s, x, y, w, h) {
     el.push(mtgBox_(lx + 6, y - 1, item.bw, 18, item.label, {size: 8.5, color: c.sub, role: 'legend'}));
     lx += 6 + item.bw + 8 - 7.2 - 1.6;   // 名前の箱の右の余白（7.2）と、文字のあとの少し（1.6）の分を詰めて、文字の終わりから 8pt
   });
-  const bars = [{label: s.first ? MTG_OPTIONS.firstDays + '日前' : '前回', value: b.start, count: b.startCount, total: true}]
+  const startLabel = s.first ? MTG_OPTIONS.firstDays + '日前' : s.previous && s.previous.baseline ? '基準' : '前回';
+  const bars = [{label: startLabel, value: b.start, count: b.startCount, total: true}]
     .concat(b.steps.filter(st => st.count))
     .concat([{label: '今回', value: b.end, count: b.endCount, total: true}]);
   const top = y + 42;
@@ -1895,15 +1979,22 @@ function mtgWaterfall_(s, x, y, w, h) {
   return el;
 }
 
+/** 横棒のグラフの名前の箱の幅：いちばん長い名前が1行に入る幅（92〜150pt。ステータスの名前「B-クロージング中(70%)」などを「…」で切らない） */
+function mtgBarLabelWidth_(labels) {
+  let w = 92;
+  while (w < 150 && labels.some(label => mtgWrap_(label, w, 8.5, 99).length > 1)) w += 2;
+  return w;
+}
+
 /**
  * 横棒のグラフ（パイプラインの変化の右。ステータス別・受注月別の期待値）。見出しは滝の図と同じ形で、行ごとに 名前・件数・棒・値。
  * 棒は期待値の色（greenDark。滝の図の「期待値」と同じ）。値は棒の先に書くので、目盛りは置かない（0 の線だけ）。
  * rows = [{label, count, value}]（この順に上から）。max は棒の長さの基準（2つのグラフで同じにする）。左上 (x, y)・幅 w・行の高さ rowH。
  * 戻り値 {elements, bottom}
  */
-function mtgBarChart_(title, rows, x, y, w, max, rowH, empty) {
+function mtgBarChart_(title, rows, x, y, w, max, rowH, empty, labelW) {
   const c = MTG_OPTIONS.colors;
-  const labelW = 92;
+  labelW = labelW || 92;                     // 名前の箱（2つのグラフで同じ幅にして、棒の始まりをそろえる。mtgBarLabelWidth_）
   const countW = 40;                         // 件数の箱（右寄せ。「123件」が折り返さない幅。名前の箱に 10pt 重ねる）
   const valueW = 51;                         // 値の箱（「1,234.5」が折り返さない幅）
   const base = x + labelW + countW - 6;      // 棒の始まり（0 の線）
@@ -1934,7 +2025,7 @@ function mtgMovesSlide_(s) {
   const k = s.kpi;
   const moves = s.changes.filter(ch => ch.category !== 'updated');
   const top = moves.slice(0, MTG_OPTIONS.mainRows.changes);
-  const columns = mtgColumns_([138, 66, 118, 66, 76, 144, 52], 5);
+  const columns = mtgColumns_([138, 66, 118, 66, 76, 132, 64], 5);
   const rows = [mtgHeadRow_(columns, ['得意先／案件名', '区分', 'ステータス\n前回▶今回', '期待値\n前回▶今回', '受注月\n前回▶今回', '活動状況（最新）', '責任者'])];
   top.forEach(ch => {
     rows.push(mtgRow_(columns, [
@@ -1971,7 +2062,7 @@ function mtgFocusSlide_(s) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
   const k = s.kpi;
-  const columns = mtgColumns_([146, 62, 84, 56, 98, 142, 72], 4);
+  const columns = mtgColumns_([140, 58, 104, 56, 98, 132, 72], 4);
   const rows = [mtgHeadRow_(columns, ['得意先／案件名', '期待値／\n想定売上', 'ステータス\n（滞留日数）', '受注月', '活動状況', '活動における課題',
     '該当事項'])];
   s.focus.forEach(d => rows.push(mtgRow_(columns, [
@@ -1979,7 +2070,8 @@ function mtgFocusSlide_(s) {
     // 期待値は大きな緑の字。空なら「未入力」を本文の大きさ・グレーで（数のように見せない）
     {text: mtgAmount_(d.weighted) + '\n' + mtgAmount_(d.amount),
       parts: [d.weighted == null ? {color: c.muted} : {bold: true, color: c.greenDark, size: 11}, {}], lines: 2, fill: c.white, align: 'CENTER'},
-    {text: (d.status || MTG_OPTIONS.blankText) + '\n' + (d.days == null ? '記録なし' : d.days + '日' + (d.atLeast ? '以上' : '')), parts: [{}, {color: c.muted}],
+    {text: mtgStatusLines_(d.status || MTG_OPTIONS.blankText, columns[2]) + '\n' + (d.days == null ? '記録なし' : d.days + '日' + (d.atLeast ? '以上' : '')),
+      parts: mtgStatusLines_(d.status || MTG_OPTIONS.blankText, columns[2]).split('\n').map(() => ({})).concat([{color: c.muted}]),
       lines: 3, fill: c.white, align: 'CENTER'},
     {text: mtgMonthLabel_(d.orderMonthText), fill: c.white, align: 'CENTER'},
     {text: d.activity || MTG_OPTIONS.blankText, lines: 3, fill: c.white},
@@ -2066,7 +2158,7 @@ function mtgCategoryPillWidth_(cw) {
 /** Appendix ① 前回から変化のある案件（一覧。その他更新・削除も）。区分はラベルで出す */
 function mtgAppendixChanges_(s) {
   const c = MTG_OPTIONS.colors;
-  const columns = mtgColumns_([120, 66, 112, 62, 72, 104, 74, 50], 5);
+  const columns = mtgColumns_([120, 66, 112, 62, 72, 92, 74, 62], 5);
   return mtgPagedTable_({
     title: MTG_TITLES.changes,
     lead: mtgChangedLabel_(s) + 'は ' + s.kpi.changed + '件' + mtgUpdatedNote_(s) + '。' +
@@ -2082,7 +2174,7 @@ function mtgAppendixChanges_(s) {
       {text: ch.removed ? '（削除）' : ch.activity || MTG_OPTIONS.blankText, lines: 2, fill: c.white},
       {text: ch.category === 'new' ? '（新規追加）' : ch.columns.map(mtgShortHeader_).join('・') || (ch.removed ? '（削除）' : MTG_OPTIONS.noneText), lines: 2,
         fill: c.white},
-      {text: ch.owner || MTG_OPTIONS.blankText, fill: c.white, align: 'CENTER'}
+      {text: ch.owner || MTG_OPTIONS.blankText, lines: 2, fill: c.white, align: 'CENTER'}
     ]),
     pills: {col: 1, labels: i => [mtgCategoryPill_(s.changes[i].category)], width: mtgCategoryPillWidth_(columns[1])}
   });
@@ -2092,7 +2184,7 @@ function mtgAppendixChanges_(s) {
 function mtgAppendixStalled_(s) {
   const c = MTG_OPTIONS.colors;
   const k = s.kpi;
-  const columns = mtgColumns_([126, 44, 44, 80, 62, 54, 34, 44, 90, 82], 9);
+  const columns = mtgColumns_([120, 44, 44, 92, 60, 54, 34, 62, 90, 60], 9);
   const blankAmount = s.stalled.filter(d => d.amount == null).length;   // 想定売上が空（合計に含めない）
   return mtgPagedTable_({
     title: MTG_TITLES.stalled,
@@ -2105,11 +2197,11 @@ function mtgAppendixStalled_(s) {
       mtgDealCell_(d, columns[0], MTG_SLIDE.appendixSize),
       {text: mtgAmount_(d.amount), fill: c.white, align: 'END'},
       {text: mtgAmount_(d.weighted), fill: c.white, align: 'END'},
-      {text: d.status || MTG_OPTIONS.blankText, lines: 2, fill: c.white},
+      {text: mtgStatusLines_(d.status || MTG_OPTIONS.blankText, columns[3], MTG_SLIDE.appendixSize), lines: 2, fill: c.white},
       {text: d.days + '日' + (d.atLeast ? '以上' : ''), fill: c.white, align: 'CENTER'},
       {text: mtgMonthLabel_(d.orderMonthText), fill: c.white, align: 'CENTER'},
       {text: d.slips ? d.slips + '回' : '', fill: c.white, align: 'CENTER'},
-      {text: d.owner || MTG_OPTIONS.blankText, fill: c.white, align: 'CENTER'},
+      {text: d.owner || MTG_OPTIONS.blankText, lines: 2, fill: c.white, align: 'CENTER'},
       {text: d.issue || MTG_OPTIONS.blankText, lines: 2, fill: c.white},
       {text: d.activity || MTG_OPTIONS.blankText, lines: 2, fill: c.white}
     ])
@@ -2252,6 +2344,16 @@ function mtgPagedTable_(spec) {
   });
 }
 
+/**
+ * ステータスの名前を表のセルに入れる形に：1行に入らなければ、率の「(70%)」の前で改行する（「B-クロージン／グ中(70%)」のように言葉の途中で切らない）
+ */
+function mtgStatusLines_(status, width, size) {
+  const text = String(status || '');
+  if (mtgWrap_(text, width, size || MTG_SLIDE.bodySize, 99).length <= 1) return text;
+  const at = text.search(/[（(]/);
+  return at > 0 ? text.slice(0, at) + '\n' + text.slice(at) : text;
+}
+
 /** ステータスの動き（「提案中 ▶ 受注」。変わっていなければ今の値。空は「未入力」、前回に無かった案件は「（新規）」から） */
 function mtgStatusMove_(ch) {
   const blank = v => v || MTG_OPTIONS.blankText;
@@ -2268,10 +2370,10 @@ function mtgValueMove_(from, to, ch) {
   return mtgAmount_(from) + ' ▶ ' + mtgAmount_(to);
 }
 
-/** 受注月の動き（「2026/11 ▶ 2026/12」） */
+/** 受注月の動き（「2026/11 ▶ 2026/12」）。月として読めれば月で比べる（スナップショットとシートで書き方が違っても、同じ月なら動きにしない） */
 function mtgMonthMove_(ch) {
   if (ch.removed) return mtgMonthLabel_(ch.monthFrom);
-  if (!ch.base || credNormalize_(ch.monthFrom) === credNormalize_(ch.monthTo)) return mtgMonthLabel_(ch.monthTo);
+  if (!ch.base || mtgMonthLabel_(ch.monthFrom) === mtgMonthLabel_(ch.monthTo)) return mtgMonthLabel_(ch.monthTo);
   return mtgMonthLabel_(ch.monthFrom) + ' ▶ ' + mtgMonthLabel_(ch.monthTo);
 }
 
@@ -2800,7 +2902,14 @@ function mtgTrashOld_(folder, names, keep) {
 
 /** 保存先のフォルダ（MTG_OPTIONS.folderId。空なら、このスプレッドシートと同じフォルダの中に folderName を作り、次からも使う）。 */
 function mtgFolder_(ss) {
-  if (MTG_OPTIONS.folderId) return DriveApp.getFolderById(MTG_OPTIONS.folderId);
+  if (MTG_OPTIONS.folderId) {
+    try {
+      return DriveApp.getFolderById(MTG_OPTIONS.folderId);
+    } catch (error) {
+      throw new Error('保存先のフォルダ（ID：' + MTG_OPTIONS.folderId + '）を開けません。実行するアカウントが、そのフォルダに書き込めるか確かめてください' +
+        '（MeetingSummary.gs の MTG_OPTIONS.folderId）。');
+    }
+  }
   const props = PropertiesService.getDocumentProperties();
   const saved = props.getProperty(MTG_OPTIONS.folderKey);
   if (saved) {

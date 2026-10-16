@@ -1006,7 +1006,10 @@ function createGas(options) {
         }
       };
     },
-    getFolderById: id => folderOf(id)
+    getFolderById(id) {
+      if ((gas.missingFolders || []).indexOf(id) >= 0) throw new Error('No item with the given ID could be found, or you do not have permission to access it.');
+      return folderOf(id);
+    }
   };
 
   /** Google Slides API（拡張サービス）。作ったスライドと batchUpdate のリクエストを gas.decks に残す */

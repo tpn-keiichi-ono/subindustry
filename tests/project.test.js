@@ -110,10 +110,33 @@ test('本物のシート名の設定：DIFF_RULES・前の名前（formerNames�
 
   // 機能ごとのシート名は、追跡するシートやほかの機能のシートと重ならない
   const others = [diff.logSheet, diff.rowSnapshotSheet, gas.get('CRED_OPTIONS').logSheet,
-    svc.requestSheet, svc.legacyListSheet, svc.taskChoiceSheet, gas.get('TASK_OPTIONS').sheet];
+    svc.requestSheet, svc.legacyListSheet, svc.taskChoiceSheet, gas.get('TASK_OPTIONS').sheet, gas.get('MTG_OPTIONS').statusTable.sheet];
   assert.strictEqual(new Set(others).size, others.length, '機能ごとのシート名が重なっている');
   others.forEach(name => {
     assert.ok(!names.includes(name) && !former.includes(name), '「' + name + '」が追跡するシートと同じ名前');
     assert.ok(!name.startsWith(diff.snapshotPrefix) || name === diff.snapshotPrefix, name);
   });
+});
+
+test('本物のシートの見出し（2026/10/16 のスーパー・GMS の2行目）に、会議サマリが読む列がそろっている。差分追跡の範囲に入っている', () => {
+  const gas = createGas({realSheetNames: true});
+  const mtg = gas.get('MTG_OPTIONS');
+  const g = gas.global;
+  const headers = ['最終更新日時\n（自動入力）', 'No.', 'サブインダストリー', '得意先', '先方部門', '先方担当役職', '先方担当氏名',
+    'クライアントとのリレーション\nクライアント内のガバナンス', '案件名', '案件のスコープ', 'スコープに対する競合他社', 'プロジェクト開始-終了', '案件ステータス',
+    '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '売上開始月', '提案開始日', '活動状況', '活動における課題', '次回アクション',
+    '商談記録（ＵＲＬ）', 'アカウント責任者部署', 'アカウント責任者', 'BX部署', 'BX担当', '想定される価値創出のケース／期待される導入効果',
+    '提案を勝ち取るための戦略・差異化要素', 'サービスのリクエスト'];
+  const at = label => headers.findIndex(h => g.credNormalize_(h) === g.credNormalize_(label));
+  Object.keys(mtg.columns).filter(key => key !== 'delivery').forEach(key => assert.ok(at(mtg.columns[key]) >= 0, '見出し：' + mtg.columns[key]));
+  assert.strictEqual(at(mtg.columns.delivery), -1, 'デリバリー担当の列は無い（入力内容のチェック「デリバリー担当なし」は出さない）');
+  mtg.required.forEach(label => assert.ok(at(label) >= 0, '必須項目：' + label));
+  assert.strictEqual(at(mtg.columns.owner), headers.indexOf('アカウント責任者'), '「アカウント責任者部署」と取り違えない');
+  const stamp = g.diffNormalizeStampHeader_(gas.get('DIFF_OPTIONS').stampHeader);
+  assert.deepStrictEqual(headers.map((h, i) => (g.diffNormalizeStampHeader_(h) === stamp ? i : -1)).filter(i => i >= 0), [0], '最終更新日時はA列の1つだけ');
+  // 差分追跡の範囲（D3:AF）に、会議サマリが前回の値を見る列（得意先〜サービスのリクエスト）が入っている
+  const rule = gas.get('DIFF_RULES')['スーパー・GMS'];
+  assert.deepStrictEqual(JSON.parse(JSON.stringify([rule.headerRow, rule.ranges])), [2, ['D3:AF']]);
+  ['customer', 'project', 'status', 'amount', 'weighted', 'orderMonth', 'activity'].forEach(key => assert.ok(at(mtg.columns[key]) + 1 >= 4, key));
+  assert.ok(headers.length <= 32, 'AF 列まで');
 });
