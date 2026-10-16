@@ -29,7 +29,8 @@ test('setupTaskSheet：サービス案に対応付けるタスク管理シート
   g.setupRequestSheet();
   g.setupTaskSheet();
   const sheet = gas.ss.getSheetByName('タスク管理');
-  assert.deepStrictEqual(gas.dump(sheet, 'A1:G1')[0], ['サービス案', 'タスク', '本部', '担当者', '期限', '状況', 'メモ'], '本部は担当者の左');
+  assert.deepStrictEqual(gas.dump(sheet, 'A1:F1')[0], ['サービス案', 'タスク', '本部', '担当者', '状況', 'メモ'], '本部は担当者の左。期限の列は無い');
+  assert.strictEqual(sheet.getLastColumn(), 6);
   assert.strictEqual(sheet.getFrozenRows(), 1);
   assert.strictEqual(rangeOf(sheet.getRange('A2')), '__TASK_CHOICES!A1', '登録したリクエストの候補から選ぶ（まだ1件も無い）');
   assert.strictEqual(rangeOf(sheet.getRange('A' + sheet.getMaxRows())), '__TASK_CHOICES!A1', '最後の行まで付ける');
@@ -37,8 +38,7 @@ test('setupTaskSheet：サービス案に対応付けるタスク管理シート
   assert.ok(choices.isSheetHidden(), '候補のシートは非表示');
   assert.deepStrictEqual([choices.getMaxRows(), choices.getMaxColumns()], [1, 1], '使わない列・行を持たせない');
   ['B2', 'C2', 'D2'].forEach(a1 => assert.strictEqual(sheet.getRange(a1).getDataValidation(), null, a1 + '：タスク・本部・担当者は自由に入力できる'));
-  assert.strictEqual(sheet.getRange('E2').getDataValidation().getCriteriaType(), 'DATE_IS_VALID_DATE');
-  assert.deepStrictEqual(listOf(sheet.getRange('F2')), ['未着手', '対応中', '完了']);
+  assert.deepStrictEqual(listOf(sheet.getRange('E2')), ['未着手', '対応中', '完了']);
   assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
   assert.match(gas.toasts[gas.toasts.length - 1].message, /作りました/);
   assert.strictEqual(gas.alerts.length, 0, '前の版の列が無ければ確認しない');
@@ -67,24 +67,24 @@ test('setupTaskSheet：前の版のシートは、確認してから A〜C を�
   g.setupTaskSheet();
 
   assert.strictEqual(gas.alerts.length, 1);
-  assert.match(gas.alerts[0].message, /「サブインダストリー」「得意先」「案件名」の列を削除し/);
-  assert.deepStrictEqual(gas.dump(sheet, 'A1:G2'), [
-    ['サービス案', 'タスク', '本部', '担当者', '期限', '状況', 'メモ'],
-    ['会員分析基盤', '提案書を送る', '', '佐藤', '', '対応中', '先方に確認']
+  assert.match(gas.alerts[0].message, /「サブインダストリー」「得意先」「案件名」「期限」の列は使わなくなりました。これらの列を削除し、「サービス案」の列を左端に置きます/);
+  assert.deepStrictEqual(gas.dump(sheet, 'A1:F2'), [
+    ['サービス案', 'タスク', '本部', '担当者', '状況', 'メモ'],
+    ['会員分析基盤', '提案書を送る', '', '佐藤', '対応中', '先方に確認']
   ]);
-  assert.strictEqual(sheet.getLastColumn(), 7);
+  assert.strictEqual(sheet.getLastColumn(), 6);
   assert.strictEqual(rangeOf(sheet.getRange('A2')), '__TASK_CHOICES!A1');
   assert.match(gas.toasts[gas.toasts.length - 1].message, /リクエストを選び直してほしいタスクが 1件あります/, '前の版のサービス案は、合うリクエストが無ければ残して知らせる');
-  assert.match(gas.toasts[gas.toasts.length - 1].message, /列を削除し、「サービス案」を左端に置きました/);
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /「サブインダストリー」「得意先」「案件名」「期限」の列を削除し、「サービス案」を左端に置きました/);
 });
 
 test('setupTaskSheet：サービスの列が無い前の版でも、サービス案を左端に足す', () => {
   const {gas, g} = setup();
   const sheet = addOldTaskSheet(gas, false);
   g.setupTaskSheet();
-  assert.deepStrictEqual(gas.dump(sheet, 'A1:G2'), [
-    ['サービス案', 'タスク', '本部', '担当者', '期限', '状況', 'メモ'],
-    ['', '提案書を送る', '', '佐藤', '', '対応中', '先方に確認']
+  assert.deepStrictEqual(gas.dump(sheet, 'A1:F2'), [
+    ['サービス案', 'タスク', '本部', '担当者', '状況', 'メモ'],
+    ['', '提案書を送る', '', '佐藤', '対応中', '先方に確認']
   ]);
 });
 
@@ -99,14 +99,36 @@ test('setupTaskSheet：削除しないと答えたら A〜C は残し、サー�
   assert.match(gas.toasts[gas.toasts.length - 1].message, /列は残しました/);
 });
 
+test('setupTaskSheet：期限の列（使わなくなった）は、確認してから削除する（サービス案は動かさない）。画面に出せないときは残す', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  const sheet = gas.addSheet('タスク管理', [['サービス案', 'タスク', '本部', '担当者', '期限', '状況', 'メモ'],
+    ['', '要件を聞く', 'サービス本部', '佐藤', '2026/11/01', '対応中', '先方に確認']], {rows: 10, columns: 7});
+  gas.noUi = true;
+  g.setupTaskSheet();
+  assert.strictEqual(gas.dump(sheet, 'E1')[0][0], '期限', '聞けないので残す');
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /「期限」の列は残しました/);
+  gas.noUi = false;
+  gas.confirmAnswer = 'YES';
+  g.setupTaskSheet();
+  assert.match(gas.alerts[0].message, /^「期限」の列は使わなくなりました。これらの列を削除します。/);
+  assert.doesNotMatch(gas.alerts[0].message, /案件ではなく|左端/);
+  assert.deepStrictEqual(gas.dump(sheet, 'A1:F2'), [
+    ['サービス案', 'タスク', '本部', '担当者', '状況', 'メモ'],
+    ['', '要件を聞く', 'サービス本部', '佐藤', '対応中', '先方に確認']
+  ]);
+  assert.strictEqual(sheet.getLastColumn(), 6);
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /「期限」の列を削除しました。/);
+});
+
 test('setupTaskSheet：何度実行しても入力済みのタスクは消えない', () => {
   const {gas, g} = setup();
   g.setupRequestSheet();
   g.setupTaskSheet();
   const sheet = gas.ss.getSheetByName('タスク管理');
-  gas.asUser(() => sheet.getRange('A2:F2').setValues([['会員分析基盤', '要件を聞く', 'サービス本部', '佐藤', '2026/11/01', '未着手']]));
+  gas.asUser(() => sheet.getRange('A2:F2').setValues([['会員分析基盤', '要件を聞く', 'サービス本部', '佐藤', '未着手', '先方に確認']]));
   g.setupTaskSheet();
-  assert.deepStrictEqual(gas.dump(sheet, 'A2:F2')[0], ['会員分析基盤', '要件を聞く', 'サービス本部', '佐藤', '2026/11/01', '未着手']);
+  assert.deepStrictEqual(gas.dump(sheet, 'A2:F2')[0], ['会員分析基盤', '要件を聞く', 'サービス本部', '佐藤', '未着手', '先方に確認']);
   assert.strictEqual(gas.alerts.length, 0);
 });
 
@@ -163,11 +185,11 @@ test('入力済みのタスクは、今の候補に合わせる：同じ ID の�
   const request = gas.ss.getSheetByName('リクエスト');
   gas.asUser(() => request.getRange('L2:L3').setValues([['会員分析基盤'], ['共通基盤']]));
   gas.addSheet('タスク管理', [
-    ['サービス案', 'タスク', '本部', '担当者', '期限', '状況', 'メモ'],
-    ['会員分析基盤', '要件を聞く', '', '', '', '', ''],          // サービス案の名前（リクエストが1件だけ）→ SR-0001
-    ['SR-0002 前のリクエストの文', '見積もり', '', '', '', '', ''],   // ID が同じ → 今の文に
-    ['名前の無いサービス', '調べる', '', '', '', '', ''],            // 合うものが無い → 残す
-    ['', '', '', '', '', '', ''],
+    ['サービス案', 'タスク', '本部', '担当者', '状況', 'メモ'],
+    ['会員分析基盤', '要件を聞く', '', '', '', ''],          // サービス案の名前（リクエストが1件だけ）→ SR-0001
+    ['SR-0002 前のリクエストの文', '見積もり', '', '', '', ''],   // ID が同じ → 今の文に
+    ['名前の無いサービス', '調べる', '', '', '', ''],            // 合うものが無い → 残す
+    ['', '', '', '', '', ''],
     ['SR-0002 在庫を店舗と共有したい', 'そのまま', '', '', '', '', '']
   ], {rows: 10, columns: 7});
   gas.toasts.length = 0;
@@ -201,8 +223,8 @@ test('リクエスト シートに ID の列がまだ無い（setupRequestSheet(
     ['サブインダストリー', '得意先', '案件名', 'リクエスト', '判断', 'サービス案'],
     ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい', 'サービス化検討', '会員分析基盤']
   ], {rows: 20, columns: 6});
-  const sheet = gas.addSheet('タスク管理', [['サービス案', 'タスク', '本部', '担当者', '期限', '状況', 'メモ'],
-    ['会員分析基盤', '要件を聞く', '', '', '', '', '']], {rows: 10, columns: 7});
+  const sheet = gas.addSheet('タスク管理', [['サービス案', 'タスク', '本部', '担当者', '状況', 'メモ'],
+    ['会員分析基盤', '要件を聞く', '', '', '', '']], {rows: 10, columns: 6});
   g.setupTaskSheet();
   assert.strictEqual(gas.dump(sheet, 'A2')[0][0], '会員分析基盤');
   assert.strictEqual(sheet.getRange('A2').getDataValidation(), null);
@@ -228,7 +250,7 @@ test('パネルを開くたびには確かめない（候補・列・行数が�
   gas.reads.length = 0;
   g.getRequestPickerData();
   assert.deepStrictEqual(gas.writes.filter(w => w.sheet === 'タスク管理' || w.sheet === '__TASK_CHOICES'), []);
-  assert.deepStrictEqual(gas.reads.filter(w => (w.sheet === 'タスク管理' && w.a1 !== 'A1:G1') || w.sheet === '__TASK_CHOICES'), [],
+  assert.deepStrictEqual(gas.reads.filter(w => (w.sheet === 'タスク管理' && w.a1 !== 'A1:F1') || w.sheet === '__TASK_CHOICES'), [],
     '候補もタスクも読まない（タスク管理は見出しだけ）');
 
   // 貼り付けでプルダウンが消えた行・ほかを見ているプルダウンがあれば、確かめる間隔を過ぎてから開いたときに列ごと付け直す

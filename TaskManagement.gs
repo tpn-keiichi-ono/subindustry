@@ -4,7 +4,7 @@
  * 差分追跡スクリプト（test.gs）・CredentialHistory.gs と同じプロジェクトに置くファイル。
  *
  * 仕組み
- * - 今は手で行を追加する。1行が1件のタスクで、「サービス案」で対応するリクエストを選び、タスク・本部・担当者・期限・状況・メモを入れる
+ * - 今は手で行を追加する。1行が1件のタスクで、「サービス案」で対応するリクエストを選び、タスク・本部・担当者・状況・メモを入れる
  * - サービス案のプルダウンは、リクエスト シートに登録したリクエストを ID とリクエストで選ぶ（「SR-0001 会員の購買分析をしたい」）。
  *   候補は ServiceManagement.gs が非表示のシートに書き、リクエストを追加・削除したとき・パネルを開いたときに合わせる
  * - 管理者が setupTaskSheet() をエディタから実行して、シート・見出し・プルダウンを用意する。
@@ -24,12 +24,13 @@ const TASK_OPTIONS = {
     // 担当者とセットで入れる本部（前からあるシートに足すときは「タスク」のすぐ右＝担当者の左に差し込む）
     {key: 'department', label: '本部', width: 140, insertAfter: 'タスク'},
     {key: 'owner', label: '担当者', width: 120},
-    {key: 'due', label: '期限', width: 100, type: 'date'},
     {key: 'status', label: '状況', width: 90, options: ['未着手', '対応中', '完了']},
     {key: 'note', label: 'メモ', width: 280}
   ],
-  // 前の版の列（案件の連動プルダウン）。setupTaskSheet() で確認してから削除する
-  removedColumns: ['サブインダストリー', '得意先', '案件名'],
+  // 使わなくなった列。setupTaskSheet() で確認してから削除する（期限は 2026/10 にやめた）
+  removedColumns: ['サブインダストリー', '得意先', '案件名', '期限'],
+  // そのうち前の版の案件の連動プルダウンの列（削除したら、サービス案を左端に置く）
+  caseColumns: ['サブインダストリー', '得意先', '案件名'],
   headerBackground: '#E9F4F1',
   lockWaitMs: 10000,    // taskWithLock_ の既定の待ち時間（サービス管理は SVC_OPTIONS の待ち時間を渡す）
   lockHolderKey: 'TASK_LOCK_HOLDER'   // ロックを持っている処理の記録（スクリプトのキャッシュ）
@@ -40,8 +41,8 @@ const TASK_OPTIONS = {
 /**
  * タスク管理シートを用意する（無ければ作る）。見出しが空なら書き、足りない列は右端に足し、全行にプルダウンを付ける。
  * 入力済みのサービス案は、今の候補（ID とリクエスト）に合わせる（決まらないものは残して知らせる）。
- * 前の版の列（サブインダストリー・得意先・案件名）があれば、確認してから削除し、サービス案を左端に動かす。
- * 何度実行してもよい（入力済みのタスクは消さない）。
+ * 使わなくなった列（前の版のサブインダストリー・得意先・案件名、期限）があれば、確認してから削除する（案件の列を消したらサービス案を左端に動かす）。
+ * スプレッドシートの画面に出せないとき（エディタだけで実行）は聞けないので、列は残す。何度実行してもよい（入力済みのタスクは消さない）。
  */
 function setupTaskSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -49,12 +50,14 @@ function setupTaskSheet() {
   // 前の版の列を消すかは、ロックを取る前に聞く（答えるまでほかの処理を待たせないため）
   const existing = ss.getSheetByName(TASK_OPTIONS.sheet);
   const oldColumns = existing ? taskFoundLabels_(existing, TASK_OPTIONS.removedColumns, TASK_OPTIONS.headerRow) : [];
+  const caseColumns = oldColumns.filter(label => TASK_OPTIONS.caseColumns.indexOf(label) >= 0);
   let removeOld = false;
-  if (oldColumns.length) {
-    const ui = SpreadsheetApp.getUi();
+  const ui = oldColumns.length ? diffUiOrNull_() : null;
+  if (ui) {
     removeOld = ui.alert(SVC_OPTIONS.menuTitle,
-      'タスク管理は、案件ではなく、リクエストのサービス案に対応付けるようになりました。\n' +
-      '「' + oldColumns.join('」「') + '」の列を削除し、「サービス案」の列を左端に置きます。\n' +
+      (caseColumns.length ? 'タスク管理は、案件ではなく、リクエストのサービス案に対応付けるようになりました。\n' : '') +
+      '「' + oldColumns.join('」「') + '」の列は使わなくなりました。これらの列を削除' +
+      (caseColumns.length ? 'し、「サービス案」の列を左端に置きます。\n' : 'します。\n') +
       'ほかの列（タスク・担当者など）の値はそのまま残ります。削除する列に入っている値は消えます。\n\n削除しますか？',
       ui.ButtonSet.YES_NO) === ui.Button.YES;
   }
@@ -65,7 +68,7 @@ function setupTaskSheet() {
     if (removeOld) {
       removed = taskDeleteColumns_(sheet, TASK_OPTIONS.removedColumns, TASK_OPTIONS.headerRow);
       const col = taskColumnMap_(sheet, TASK_OPTIONS.columns, TASK_OPTIONS.headerRow).service;
-      if (col > 1) sheet.moveColumns(sheet.getRange(diffColumnLetter_(col) + ':' + diffColumnLetter_(col)), 1);
+      if (caseColumns.length && col > 1) sheet.moveColumns(sheet.getRange(diffColumnLetter_(col) + ':' + diffColumnLetter_(col)), 1);
     }
 
     const rows = sheet.getMaxRows() - TASK_OPTIONS.headerRow;
@@ -78,7 +81,9 @@ function setupTaskSheet() {
   }, TASK_OPTIONS.lockWaitMs, 'setupTaskSheet()');
 
   const lines = [result.created ? TASK_OPTIONS.sheet + ' シートを作りました。' : TASK_OPTIONS.sheet + ' シートのプルダウンを付け直しました。'];
-  if (result.removed.length) lines.push('「' + result.removed.join('」「') + '」の列を削除し、「サービス案」を左端に置きました。');
+  if (result.removed.length) {
+    lines.push('「' + result.removed.join('」「') + '」の列を削除' + (caseColumns.length ? 'し、「サービス案」を左端に置きました。' : 'しました。'));
+  }
   else if (oldColumns.length) lines.push('「' + oldColumns.join('」「') + '」の列は残しました（使いません。不要なら削除してください）。');
   if (result.added.length) lines.push('「' + result.added.join('」「') + '」の列を足しました。');
   const link = svcTaskLinkMessage_(result.link, true);
