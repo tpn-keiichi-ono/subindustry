@@ -299,6 +299,30 @@ class Range {
     });
   }
 
+  /** 行を並べ替える（spec は {column: 列の番号（シートの）, ascending} か列の番号）。空のセルはいつも下。行ごと（範囲の外の列も）動かす */
+  sort(spec) {
+    const column = typeof spec === 'number' ? spec : spec.column;
+    const ascending = typeof spec === 'number' || spec.ascending !== false;
+    this.write('sort');
+    const rows = [];
+    for (let r = 0; r < this.numRows; r++) rows.push(this.sheet.data[this.row - 1 + r]);
+    const key = line => {
+      const cell = line && line[column - 1];
+      const v = cell ? cell.v : '';
+      return v instanceof this.sheet.gas.Date || Object.prototype.toString.call(v) === '[object Date]' ? v.getTime() : v;
+    };
+    rows.sort((a, b) => {
+      const x = key(a);
+      const y = key(b);
+      const ex = x === '' || x == null;
+      const ey = y === '' || y == null;
+      if (ex || ey) return ex === ey ? 0 : ex ? 1 : -1;
+      return (x < y ? -1 : x > y ? 1 : 0) * (ascending ? 1 : -1);
+    });
+    rows.forEach((line, r) => { this.sheet.data[this.row - 1 + r] = line; });
+    return this;
+  }
+
   setNumberFormat(format) { this.each(cell => { cell.nf = format; }); return this; }
   getNumberFormats() { return this.map(cell => (cell && cell.nf) || 'General'); }
   setNumberFormats(matrix) {

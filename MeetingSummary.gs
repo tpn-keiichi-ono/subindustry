@@ -97,7 +97,8 @@ const MTG_OPTIONS = {
   // 前の形式（行＝サブインダストリー・列＝会議日）のシートや、書き漏れは rebuildMeetingIndex() で作り直す
   index: {
     sheet: 'INDEX_会議資料',
-    dateHeader: '日付',              // A列：会議日（日付の値。上から日付の順）
+    dateHeader: '日付',              // A列：会議日（日付の値。order の順）
+    order: 'desc',                   // 会議日の行の並び：'desc' 新しい会議日が上（2026/10/17 から）・'asc' 古い会議日が上
     kindHeader: '種別',              // B列：会議の種別
     kind: 'RX Business MTG',         // 種別の列に書く値（同じ日付でも種別が違う行には書かない）
     // C列は統合版（combined.name の見出し）、その後ろにサブインダストリーの列（DIFF_RULES の順）
@@ -1317,7 +1318,8 @@ function mtgMeetingFolderSetting_(name) {
  * 会議資料のインデックス（このスプレッドシートの MTG_OPTIONS.index.sheet）の、行＝会議日（meeting）・列＝サブインダストリー（name。統合版は combined.name）のセルに、
  * PDF（stored.file。index.link が 'folder' なら会議のフォルダ）をスマートチップで書く（できなければファイル名のリンク）。
  * シートが無ければ作り、1行目に見出し（日付・種別・統合版・追跡シートの名前（DIFF_RULES の順））を書く。
- * 会議日の行（日付が同じで、種別が kind か空の行）が無ければ日付の順になる位置に差し込み、サブインダストリーの列が無ければ右に足す。
+ * 会議日の行（日付が同じで、種別が kind か空の行）が無ければ、index.order の順（既定は新しい会議日が上）になる位置に差し込み（並びが違えば先に並べ直す）、
+ * サブインダストリーの列が無ければ右に足す。
  * 同じセルは上書き（作り直したとき）。書き込みはドキュメントロックの中（差分追跡の対象外のシートだが、資料作成はエディタから実行するので待ってよい）。
  * 戻り値 {url: シートの URL, title: シート名} か {error: 知らせる文}（止めない）
  */
@@ -1344,15 +1346,23 @@ function mtgWriteIndex_(name, meeting, stored) {
         mtgIndexFormat_(sheet.getRange(1, col, Math.max(sheet.getLastRow(), 1), 1));
         sheet.setColumnWidth(col, name === MTG_OPTIONS.combined.name ? o.widths.combined : o.widths.sheet);
       }
-      // 会議日の行（無ければ、この会議日より後の行の前に差し込む。無ければ下に足す）
+      // 会議日の行（無ければ、order の順になる位置に差し込む。無ければ下に足す）。並びが違えば（前の版で作った・手で足した）、先に並べ直す
+      const desc = o.order !== 'asc';
       const lastRow = sheet.getLastRow();
-      const lines = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, Math.max(layout.date, layout.kind || 1)).getValues() : [];
+      const read = () => (lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, Math.max(layout.date, layout.kind || 1)).getValues() : []);
       const kindOf = line => (layout.kind ? String(line[layout.kind - 1] == null ? '' : line[layout.kind - 1]).trim() : '');
       const dateOf = line => mtgIndexDate_(line[layout.date - 1]);
+      const before = (a, b) => (desc ? a > b : a < b);   // a の行が b の行より上
+      let lines = read();
+      const dates = lines.map(dateOf).filter(Boolean);
+      if (dates.some((d, i) => i && before(d, dates[i - 1]))) {
+        sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), col)).sort({column: layout.date, ascending: !desc});
+        lines = read();
+      }
       let at = lines.findIndex(line => dateOf(line) === meeting && (!kindOf(line) || kindOf(line) === o.kind));
       let row = at + 2;
       if (at < 0) {
-        at = lines.findIndex(line => dateOf(line) > meeting);
+        at = lines.findIndex(line => dateOf(line) && before(meeting, dateOf(line)));
         if (at >= 0) {
           row = at + 2;
           sheet.insertRowBefore(row);

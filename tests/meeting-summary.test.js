@@ -1262,7 +1262,7 @@ test('インデックス：会議のフォルダに格納したら、「INDEX_�
   assert.ok(gas.writes.filter(w => w.sheet === 'INDEX_会議資料').every(w => w.locked), '書き込みはロックの中');
   assert.match(gas.alerts[gas.alerts.length - 1].message, /「INDEX_会議資料」シートに、資料のファイルを書きました：https:\/\/docs\.google\.com\/spreadsheets\/d\/spreadsheet-id\/edit#gid=\d+\n（スマートチップにできなかったので、ファイル名のリンクで書きました。チップにするには、エディタの「サービス」に Google Sheets API を追加してください）/);
 
-  // 会議日は日付の順（前の会議日はその前に差し込む）。同じセルは上書き。ほかのサブインダストリーは右に足す。日付の値で入力した会議日も読む
+  // 会議日は新しい順（上が新しい。前の会議日はその下に差し込む）。同じセルは上書き。ほかのサブインダストリーは右に足す。日付の値で入力した会議日も読む
   const at = url => ({folder: {getUrl: () => 'folder', getName: () => 'folder'}, file: {getUrl: () => url, getName: () => url}});
   const year = meeting.slice(0, 4);
   assert.ok(g.mtgWriteIndex_('新FMT', year + '/10/30', at('u-1030')).url);
@@ -1271,21 +1271,32 @@ test('インデックス：会議のフォルダに格納したら、「INDEX_�
   assert.ok(g.mtgWriteIndex_('専門店', year + '/10/30', at('u-x')).url);
   assert.deepStrictEqual(plain(sheet.getRange(1, 1, 4, 6).getDisplayValues()), [
     ['日付', '種別', '全サブインダストリー', '新FMT', '新FMT2', '専門店'],
-    [year + '/10/16', 'RX Business MTG', '', '', 'u-1016', ''],
+    [year + '/10/30', 'RX Business MTG', '', 'u-1030', '', 'u-x'],
     [day(meeting), 'RX Business MTG', '', 'u-1023b', '', ''],
-    [year + '/10/30', 'RX Business MTG', '', 'u-1030', '', 'u-x']
+    [year + '/10/16', 'RX Business MTG', '', '', 'u-1016', '']
   ]);
-  assert.deepStrictEqual(plain(sheet.cell(2, 1).fmt), {fw: 'bold', fs: 9, fc: '#000000', va: 'middle'}, '差し込んだ行も同じ書式');
+  assert.deepStrictEqual(plain(sheet.cell(4, 1).fmt), {fw: 'bold', fs: 9, fc: '#000000', va: 'middle'}, '差し込んだ行も同じ書式');
   // 手で入れた行：日付の値・種別が空なら同じ行に書く。種別が違う行には書かない（新しい行にする）
-  gas.asUser(() => sheet.getRange(4, 1, 1, 3).setValues([[new gas.Date(Number(year), 9, 30), '', '全体の資料']]));
+  gas.asUser(() => sheet.getRange(2, 1, 1, 3).setValues([[new gas.Date(Number(year), 9, 30), '', '全体の資料']]));
   g.mtgWriteIndex_('新FMT2', year + '/10/30', at('u-1030b'));
-  assert.deepStrictEqual(plain(sheet.getRange(4, 3, 1, 3).getDisplayValues()[0]), ['全体の資料', 'u-1030', 'u-1030b'], '手で入れた値は残す');
-  gas.asUser(() => sheet.getRange(4, 2).setValue('別の会議'));
+  assert.deepStrictEqual(plain(sheet.getRange(2, 3, 1, 3).getDisplayValues()[0]), ['全体の資料', 'u-1030', 'u-1030b'], '手で入れた値は残す');
+  gas.asUser(() => sheet.getRange(2, 2).setValue('別の会議'));
   g.mtgWriteIndex_('新FMT2', year + '/10/30', at('u-1030c'));
-  assert.deepStrictEqual(plain(sheet.getRange(4, 1, 2, 5).getDisplayValues()), [
+  assert.deepStrictEqual(plain(sheet.getRange(2, 1, 2, 5).getDisplayValues()), [
     [year + '/10/30', '別の会議', '全体の資料', 'u-1030', 'u-1030b'],
     [year + '/10/30', 'RX Business MTG', '', '', 'u-1030c']
   ]);
+  // 前の版（古い会議日が上）で作ったシートは、次に書くときに新しい順に並べ直す（行ごと動かすので、手で入れた値もそのまま）
+  const rows = () => plain(sheet.getRange(2, 1, sheet.getLastRow() - 1, 4).getDisplayValues()).map(r => [r[0], r[3]]);
+  gas.asUser(() => sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).sort({column: 1, ascending: true}));
+  assert.deepStrictEqual(rows().map(r => r[0]), [year + '/10/16', day(meeting), year + '/10/30', year + '/10/30']);
+  g.mtgWriteIndex_('新FMT', year + '/11/06', at('u-1106'));
+  assert.deepStrictEqual(rows(), [[year + '/11/6', 'u-1106'], [year + '/10/30', 'u-1030'], [year + '/10/30', ''], [day(meeting), 'u-1023b'], [year + '/10/16', '']]);
+  // order を 'asc' にすれば古い順（上が古い）
+  gas.get('MTG_OPTIONS').index.order = 'asc';
+  g.mtgWriteIndex_('新FMT', year + '/10/09', at('u-1009'));
+  assert.deepStrictEqual(rows().map(r => r[0]), [year + '/10/9', year + '/10/16', day(meeting), year + '/10/30', year + '/10/30', year + '/11/6']);
+  gas.get('MTG_OPTIONS').index.order = 'desc';
   assert.strictEqual(sheet.getLastColumn(), 6, '列は増やさない');
 });
 
@@ -1319,8 +1330,8 @@ test('インデックス：前の形式（行＝サブインダストリー）�
   const sheet = gas.ss.getSheetByName('INDEX_会議資料');
   assert.deepStrictEqual(plain(sheet.getRange(1, 1, 3, 5).getDisplayValues()), [
     ['日付', '種別', '全サブインダストリー', '新FMT', '新FMT2'],
-    [year + '/10/16', 'RX Business MTG', '', year + '1016_新FMT_RX Business Meeting用資料.pdf', ''],
-    [year + '/10/23', 'RX Business MTG', '', year + '1023_新FMT_RX Business Meeting用資料.pdf', '']
+    [year + '/10/23', 'RX Business MTG', '', year + '1023_新FMT_RX Business Meeting用資料.pdf', ''],
+    [year + '/10/16', 'RX Business MTG', '', year + '1016_新FMT_RX Business Meeting用資料.pdf', '']
   ]);
   assert.strictEqual(sheet.getLastRow(), 3, '試作の資料・会議日でないフォルダは書かない');
   assert.ok(gas.writes.filter(w => w.sheet === 'INDEX_会議資料').every(w => w.locked), '書き込みはロックの中');
