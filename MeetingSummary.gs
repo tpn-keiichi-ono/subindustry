@@ -273,6 +273,8 @@ const MTG_SLIDE = {
   leadSize: 10.5,        // リード文（1つ目の文も補足も同じ大きさ・同じ色）
   leadLine: 1.35,        // リード文の行の送り = 文字の大きさ × leadLine
   bodySize: 9,
+  minFitSize: 7,         // 長い文（活動状況・課題）を全文入れるために小さくする下限（fit のセル）
+  maxGrowLines: 26,      // 行を伸ばしても入れる行の数の上限（grow のセル。1ページに入る分）
   appendixSize: 8.5,
   lineFactor: 1.2,       // 行の送り = 文字の大きさ × lineFactor（行間は「1」。Google スライドで測った値）
   padX: 14.4,            // 箱・表のセルの左右の余白（合わせて。7.2pt ずつ）
@@ -2171,7 +2173,7 @@ function mtgDealLabel_(item) {
  */
 function mtgSlides_(summary) {
   const cover = mtgCoverSlide_(summary);
-  const main = [mtgSummarySlide_(summary), mtgBridgeSlide_(summary), mtgMovesSlide_(summary), mtgFocusSlide_(summary)];
+  const main = [mtgSummarySlide_(summary), mtgBridgeSlide_(summary), mtgMovesSlide_(summary)].concat(mtgFocusSlide_(summary));
   // Appendix はいつも ①〜③ を出す（中身が無ければ、表の見出しの行の下に「データなし」と理由・「該当なし」）
   const appendix = [].concat(mtgAppendixChanges_(summary), mtgAppendixStalled_(summary), mtgAppendixOwners_(summary),
     mtgAppendixAlerts_(summary));
@@ -2665,7 +2667,7 @@ function mtgMovesSlide_(s) {
   const k = s.kpi;
   const lack = s.gaps || {};
   const moves = s.changes.filter(ch => ch.category !== 'updated');
-  const columns = mtgColumns_([138, 66, 126, 66, 76, 124, 64], 5);   // ステータスの列は「C-稟議対応中(50%) ▶」「B-クロージング中(70%)」が1行ずつ入る幅
+  const columns = mtgColumns_([126, 66, 126, 60, 76, 148, 58], 5);   // ステータスの列は「C-稟議対応中(50%) ▶」「B-クロージング中(70%)」が1行ずつ入る幅。活動状況は広く
   const rows = [mtgHeadRow_(columns, ['得意先／案件名', '区分', 'ステータス\n前回▶今回', '期待値\n前回▶今回', '受注月\n前回▶今回', '活動状況（最新）', '責任者'])];
   // 上から mainRows.changes 件まで、ページに入る分だけ（行の高さは中身で変わる）
   const top = [];
@@ -2676,7 +2678,8 @@ function mtgMovesSlide_(s) {
       {text: mtgStatusMove_(ch), lines: 3, fill: c.white},   // 長いステータスの名前（「C-稟議対応中(50%) ▶ B-クロージング中(70%)」）は3行まで
       mtgFieldCell_(s, 'weighted', mtgValueMove_(ch.weightedFrom, ch.weightedTo, ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'orderMonth', mtgMonthMove_(ch), {lines: 2, fill: c.white, align: 'CENTER'}),
-      mtgFieldCell_(s, 'activity', ch.activity, {lines: 2, fill: c.white}),
+      // 長い文は小さくして入れる（本編は件数を優先して行は伸ばさない。全文は Appendix ①）
+      mtgFieldCell_(s, 'activity', ch.activity, {lines: 3, fill: c.white, fit: true}),
       mtgFieldCell_(s, 'owner', ch.owner, {lines: 2, fill: c.white, align: 'CENTER'})
     ]);
     if (S.top + rows.reduce((sum, r) => sum + r.h, 0) + row.h > S.bottom) return true;
@@ -2709,9 +2712,11 @@ function mtgFocusSlide_(s) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
   const k = s.kpi;
-  const columns = mtgColumns_([140, 62, 104, 62, 98, 122, 72], 4);
-  const rows = [mtgHeadRow_(columns, ['得意先／案件名', '期待値／\n想定売上', 'ステータス\n（滞留日数）', '受注月', '活動状況', '活動における課題',
-    '該当事項'])];
+  // 活動状況の列を広く（長い文は小さくし、それでも入らなければ行を伸ばして次のページへ。全文を載せる）
+  const columns = mtgColumns_([120, 62, 96, 62, 146, 110, 64], 4);
+  const head = mtgHeadRow_(columns, ['得意先／案件名', '期待値／\n想定売上', 'ステータス\n（滞留日数）', '受注月', '活動状況', '活動における課題',
+    '該当事項']);
+  const rows = [head];
   const G = MTG_OPTIONS.gapText;
   const lack = s.gaps || {};
   s.focus.forEach(d => rows.push(mtgRow_(columns, [
@@ -2725,29 +2730,36 @@ function mtgFocusSlide_(s) {
       parts: mtgStatusLines_(d.status || MTG_OPTIONS.blankText, columns[2]).split('\n').map(() => ({})).concat([{color: c.muted}]),
       lines: 3, fill: c.white, align: 'CENTER'},
     mtgFieldCell_(s, 'orderMonth', mtgMonthLabel_(d.orderMonthText), {fill: c.white, align: 'CENTER'}),
-    mtgFieldCell_(s, 'activity', d.activity, {lines: 3, fill: c.white}),
-    mtgFieldCell_(s, 'issue', d.issue, {lines: 3, fill: c.white}),
+    mtgFieldCell_(s, 'activity', d.activity, {lines: 3, fill: c.white, fit: true, grow: true}),
+    mtgFieldCell_(s, 'issue', d.issue, {lines: 3, fill: c.white, fit: true, grow: true}),
     {text: mtgFlags_(d).length ? '' : MTG_OPTIONS.noneText, fill: c.white, align: 'CENTER'}
   ], Math.max(44, mtgPillsHeight_(mtgFlags_(d).length)))));
-  const el = [];
-  if (s.focus.length) {
-    const table = {type: 'table', x: S.x, y: S.top, columns, rows};
-    el.push(table);
-    const width = mtgPillWidth_(['停滞', '受注月超過', '延期9回'], columns[6]);
-    s.focus.forEach((d, i) => el.push.apply(el, mtgPills_(table, i + 1, 6, mtgFlags_(d).map(flag => ({text: flag, tone: flag === '停滞' ? 'stall' : 'note'})),
-      width)));
-  } else {
-    el.push.apply(el, mtgEmptyTable_(columns, rows[0], 'none', ''));
-  }
   const share = k.weighted > 0 ? Math.round(mtgSum_(s.focus, 'weighted') / k.weighted * 100) : 0;
-  return {
-    title: MTG_TITLES.focus,
-    // 期待値の列が無ければ、想定売上の大きい順（並べ方と、期待値はデータなしであることを書く）
-    lead: !s.focus.length ? '進行中案件なし。'
-      : lack.weighted ? '期待値は' + G + '（' + lack.weighted + '）のため、進行中案件のうち想定売上上位 ' + s.focus.length + '件。'
-        : '進行中案件のうち期待値上位 ' + s.focus.length + '件（進行中案件の期待値合計の ' + share + '%）。',
-    elements: el
-  };
+  // 期待値の列が無ければ、想定売上の大きい順（並べ方と、期待値はデータなしであることを書く）
+  const lead = !s.focus.length ? '進行中案件なし。'
+    : lack.weighted ? '期待値は' + G + '（' + lack.weighted + '）のため、進行中案件のうち想定売上上位 ' + s.focus.length + '件。'
+      : '進行中案件のうち期待値上位 ' + s.focus.length + '件（進行中案件の期待値合計の ' + share + '%）。';
+  if (!s.focus.length) return [{title: MTG_TITLES.focus, lead, elements: mtgEmptyTable_(columns, head, 'none', '')}];
+  // 行が伸びてページに入らなければ、次のページ（「（続き）」）に続ける
+  const pages = [];
+  rows.slice(1).forEach((row, i) => {
+    let page = pages[pages.length - 1];
+    if (!page || page.y + row.h > S.bottom) {
+      page = {rows: [head], y: S.top + head.h, index: []};
+      pages.push(page);
+    }
+    page.rows.push(row);
+    page.index.push(i);
+    page.y += row.h;
+  });
+  const width = mtgPillWidth_(['停滞', '受注月超過', '延期9回'], columns[6]);
+  return pages.map((p, n) => {
+    const table = {type: 'table', x: S.x, y: S.top, columns, rows: p.rows};
+    const el = [table];
+    p.index.forEach((i, r) => el.push.apply(el, mtgPills_(table, r + 1, 6,
+      mtgFlags_(s.focus[i]).map(flag => ({text: flag, tone: flag === '停滞' ? 'stall' : 'note'})), width)));
+    return {title: MTG_TITLES.focus + (n ? '（続き）' : ''), lead, elements: el};
+  });
 }
 
 /** 列の幅（合わせて 660pt で決めた幅）を中身の幅（MTG_SLIDE.w）に合わせる。差は flex 番目の列（文の列）で調整する */
@@ -2813,7 +2825,7 @@ function mtgCategoryPillWidth_(cw) {
 function mtgAppendixChanges_(s) {
   const c = MTG_OPTIONS.colors;
   const lack = s.gaps || {};
-  const columns = mtgColumns_([120, 66, 118, 62, 72, 86, 74, 62], 5);
+  const columns = mtgColumns_([108, 66, 116, 58, 72, 106, 74, 60], 5);   // 活動状況は広く（長い文は小さく、それでも入らなければ行を伸ばして全文）
   return mtgPagedTable_({
     title: MTG_TITLES.changes,
     lead: lack.changes ? mtgChangedLabel_(s) + 'は' + MTG_OPTIONS.gapText + '（' + lack.changes + '）。'
@@ -2829,7 +2841,7 @@ function mtgAppendixChanges_(s) {
       {text: mtgStatusMove_(ch), lines: 3, fill: c.white},
       mtgFieldCell_(s, 'weighted', mtgValueMove_(ch.weightedFrom, ch.weightedTo, ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'orderMonth', mtgMonthMove_(ch), {lines: 2, fill: c.white, align: 'CENTER'}),
-      ch.removed ? {text: '（削除）', lines: 2, fill: c.white} : mtgFieldCell_(s, 'activity', ch.activity, {lines: 2, fill: c.white}),
+      ch.removed ? {text: '（削除）', lines: 2, fill: c.white} : mtgFieldCell_(s, 'activity', ch.activity, {lines: 2, fill: c.white, fit: true, grow: true}),
       {text: ch.category === 'new' ? '（新規追加）' : ch.columns.map(mtgShortHeader_).join('・') || (ch.removed ? '（削除）' : MTG_OPTIONS.noneText), lines: 2,
         fill: c.white},
       mtgFieldCell_(s, 'owner', ch.owner, {lines: 2, fill: c.white, align: 'CENTER'})
@@ -2844,7 +2856,7 @@ function mtgAppendixChanges_(s) {
 function mtgAppendixStalled_(s) {
   const c = MTG_OPTIONS.colors;
   const k = s.kpi;
-  const columns = mtgColumns_([120, 44, 44, 88, 62, 60, 34, 60, 84, 64], 9);
+  const columns = mtgColumns_([100, 44, 44, 86, 60, 60, 34, 60, 76, 96], 9);   // 課題・活動状況は広く（長い文は小さく、それでも入らなければ行を伸ばして全文）
   const lack = s.gaps || {};
   const G = MTG_OPTIONS.gapText;
   const blankAmount = lack.amount ? 0 : s.stalled.filter(d => d.amount == null).length;   // 想定売上が空（合計に含めない）
@@ -2867,8 +2879,8 @@ function mtgAppendixStalled_(s) {
       mtgFieldCell_(s, 'orderMonth', mtgMonthLabel_(d.orderMonthText), {fill: c.white, align: 'CENTER'}),
       {text: d.slips ? d.slips + '回' : '', fill: c.white, align: 'CENTER'},
       mtgFieldCell_(s, 'owner', d.owner, {lines: 2, fill: c.white, align: 'CENTER'}),
-      mtgFieldCell_(s, 'issue', d.issue, {lines: 2, fill: c.white}),
-      mtgFieldCell_(s, 'activity', d.activity, {lines: 2, fill: c.white})
+      mtgFieldCell_(s, 'issue', d.issue, {lines: 2, fill: c.white, fit: true, grow: true}),
+      mtgFieldCell_(s, 'activity', d.activity, {lines: 2, fill: c.white, fit: true, grow: true})
     ]),
     empty: lack.stalled ? {kind: 'gap', text: lack.stalled} : {kind: 'none'}
   });
@@ -3163,21 +3175,37 @@ function mtgDealCell_(item, width, size) {
 }
 
 /**
- * 表の1行。cells: [{text, lines, size, bold, color, fill, align, parts}]（文字は列の幅で折り返し、lines 行（既定は1）を超えたら「…」）。
+ * 表の1行。cells: [{text, lines, size, bold, color, fill, align, parts, fit, grow}]（文字は列の幅で折り返し、lines 行（既定は1）を超えたら「…」）。
+ * fit：lines 行に入らなければ、入るまで文字を小さくする（minFitSize まで）。grow：それでも入らなければ、行を伸ばして全文を入れる（maxGrowLines まで）。
  * parts は改行で分けた部分ごとの書式 [{bold, color, size}]（スライドでは spans にする）。parts の代わりに spans を直接渡してもよい（1行の中で大きさを変えるとき）。
  * 行の高さは、いちばん高いセルに合わせる（min 以上。mtgTextHeight_）。Google スライドでは、中身がこの高さより高ければ行が伸びるので、少し大きめに見積もる
  */
 function mtgRow_(columns, cells, min) {
   let h = min || 0;
   const out = cells.map((cell, i) => {
-    const size = cell.size || MTG_SLIDE.bodySize;
-    const lines = mtgBalance_(cell.text, columns[i], size, cell.lines || 1);
+    const {size, lines} = mtgFitLines_(cell, columns[i]);
     const text = lines.join('\n');
     const spans = cell.parts ? mtgPartSpans_(String(cell.text), cell.parts, columns[i], size, lines) : cell.spans;
     h = Math.max(h, mtgTextHeight_(lines, size, spans));
     return Object.assign({}, cell, {text, size}, spans ? {spans} : {});
   });
   return {h: Math.ceil(h * 10) / 10, cells: out};
+}
+
+/**
+ * セルの文字の大きさと、折り返した行（mtgRow_）。fit なら、lines 行に全文が入るまで 0.5pt ずつ小さくし（MTG_SLIDE.minFitSize まで）、
+ * それでも入らなければ grow なら行を増やして全文（maxGrowLines まで）、grow でなければ最後を「…」で切る
+ */
+function mtgFitLines_(cell, width) {
+  const base = cell.size || MTG_SLIDE.bodySize;
+  const max = cell.lines || 1;
+  if (!cell.fit || !cell.text) return {size: base, lines: mtgBalance_(cell.text, width, base, max)};
+  const count = size => mtgWrap_(cell.text, width, size, 999).length;
+  let size = base;
+  while (count(size) > max && size - 0.5 >= MTG_SLIDE.minFitSize) size = Math.round((size - 0.5) * 10) / 10;
+  const need = count(size);
+  const limit = need > max && cell.grow ? Math.min(need, MTG_SLIDE.maxGrowLines) : max;
+  return {size, lines: mtgBalance_(cell.text, width, size, limit)};
 }
 
 /**

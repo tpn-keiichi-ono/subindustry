@@ -668,6 +668,51 @@ test('空欄は推定で補わず「未入力」と書く（「—」や 0 に�
   assert.ok(fresh[4].elements.find(el => el.type === 'table').rows.slice(1).some(r => r.cells[6].text === '該当なし'), '該当事項が無い案件');
 });
 
+test('長い文（活動状況・課題）：入らなければ文字を小さくし（7pt まで）、それでも入らなければ grow のセルは行を伸ばして全文（「…」で切らない）', () => {
+  const gas = createGas();
+  const g = gas.global;
+  const S = plain(gas.get('MTG_SLIDE'));
+  const mid = '【提案進行中】★\n・9/3に電通からSEJ岡崎役員へ提案完了。次回は10月中旬に再提案の予定';
+  const fit = plain(g.mtgFitLines_({text: mid, lines: 3, fit: true}, 160));
+  assert.ok(fit.size < S.bodySize && fit.size >= S.minFitSize, '小さくして入れる（' + fit.size + 'pt）');
+  assert.ok(fit.lines.length <= 3 && fit.lines.join('').indexOf('…') < 0, '全文');
+  const short = plain(g.mtgFitLines_({text: '見積提出', lines: 3, fit: true}, 160));
+  assert.deepStrictEqual([short.size, short.lines], [S.bodySize, ['見積提出']], '入る文はそのまま');
+  const long = '・' + 'あいうえおかきくけこ'.repeat(30);
+  const grown = plain(g.mtgFitLines_({text: long, lines: 3, fit: true, grow: true}, 160));
+  assert.strictEqual(grown.size, S.minFitSize);
+  assert.ok(grown.lines.length > 3 && grown.lines.join('').indexOf('…') < 0, '行を伸ばして全文（' + grown.lines.length + '行）');
+  assert.strictEqual(grown.lines.join('').replace(/\s/g, ''), long, '文を落とさない');
+  const clipped = plain(g.mtgFitLines_({text: long, lines: 3, fit: true}, 160));
+  assert.ok(clipped.lines.length === 3 && /…$/.test(clipped.lines[2]), 'grow でなければ最後を「…」');
+  const row = plain(g.mtgRow_([160], [{text: long, lines: 3, fit: true, grow: true}]));
+  assert.strictEqual(row.cells[0].size, S.minFitSize, '表のセルの文字の大きさも小さくする');
+  assert.ok(row.h > g.mtgTextHeight_(3, S.bodySize), '行が伸びる');
+});
+
+test('期待値上位案件：活動状況が長くて行が伸び、ページに入らなければ「（続き）」のページに続ける（全文・全件を出す）。Appendix の始まりのページもずれる', () => {
+  const {gas, g} = setup();
+  const s = summarize(g, '新FMT');
+  const long = '【提案進行中】★\n' + Array.from({length: 6}, (_, i) => '・' + (i + 1) + '回目の打ち合わせで要件を確認し、見積と体制案を提示。先方の稟議の進み具合を確認する').join('\n');
+  const focus = Array.from({length: 5}, (_, i) => Object.assign({}, s.focus[0], {customer: '得意先' + i, activity: long}));
+  const slides = plain(g.mtgSlides_(Object.assign({}, s, {focus})));
+  const pages = slides.filter(sl => /^期待値上位案件の状況・課題/.test(sl.title));
+  assert.ok(pages.length >= 2, pages.length + 'ページ');
+  assert.strictEqual(pages[1].title, '期待値上位案件の状況・課題（続き）');
+  const tables = pages.map(p => p.elements.find(el => el.type === 'table'));
+  tables.forEach(t => assert.strictEqual(t.rows[0].cells[0].text, '得意先／案件名', '見出しの行を繰り返す'));
+  const rows = [].concat.apply([], tables.map(t => t.rows.slice(1)));
+  assert.deepStrictEqual(rows.map(r => r.cells[0].text.split('\n')[0]), ['得意先0', '得意先1', '得意先2', '得意先3', '得意先4'], '全件・順のまま');
+  rows.forEach(r => assert.strictEqual(r.cells[4].text.replace(/\s/g, ''), long.replace(/\s/g, ''), '活動状況は全文'));
+  const S = gas.get('MTG_SLIDE');
+  tables.forEach(t => assert.ok(S.top + t.rows.reduce((sum, r) => sum + r.h, 0) <= S.bottom + 0.1, 'ページに入る'));
+  // 扉の目次の Appendix ① のページ番号も、ページが増えた分だけずれる
+  const divider = slides.find(sl => sl.divider);
+  const first = slides.findIndex(sl => /^Appendix ①/.test(sl.title)) + 1;
+  const toc = divider.elements.filter(el => el.role === 'toc' && /^\d+$/.test(el.text)).map(el => Number(el.text));
+  assert.strictEqual(toc[0], first, '目次の Appendix ① のページ番号（' + first + '）');
+});
+
 test('スライド：Appendix は入りきらなければ続きのページに分け、見出しの行を繰り返す（全件を出す）。中身が無くても ①〜③ を出し、表の見出しの行の下に理由を書く', () => {
   const {gas, g} = setup();
   const s = summarize(g, '新FMT');
