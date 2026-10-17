@@ -4468,7 +4468,7 @@ function setMeetingTemplate() {
 
 /** 登録したひな形の知らせ（何枚目を何に使うか。.pptx なら変換した Google スライドの URL も） */
 function mtgTemplateMessage_(slides, sourceId) {
-  const count = (Slides.Presentations.get(slides.getId()).slides || []).length;
+  const count = (Slides.Presentations.get(slides.getId(), {fields: MTG_SLIDES_FIELDS.count}).slides || []).length;
   const P = MTG_OPTIONS.templatePages;
   const use = [[P.cover, '表紙'], [P.divider, '扉（Appendix）'], [P.combined, '統合版（全サブインダストリー）の表紙']]
     .filter(([n]) => n && n <= count).map(([n, label]) => n + '枚目を' + label);
@@ -4553,12 +4553,13 @@ function mtgFileName_(name, meeting, final) {
  * 戻り値 {pdf, deck}（deck は残さないときは null）
  */
 function mtgExportDeck_(name, slides, folder) {
+  const F = MTG_SLIDES_FIELDS;
   const templateId = mtgTemplateId_();
   let file;
   let deck;
   if (templateId) {
     file = DriveApp.getFileById(templateId).makeCopy(name, folder);
-    deck = Slides.Presentations.get(file.getId());
+    deck = Slides.Presentations.get(file.getId(), {fields: F.deck});
   } else {
     deck = Slides.Presentations.create({title: name, pageSize: {width: mtgPt_(MTG_SLIDE.width), height: mtgPt_(MTG_SLIDE.height)}});
     file = DriveApp.getFileById(deck.presentationId);
@@ -4572,7 +4573,7 @@ function mtgExportDeck_(name, slides, folder) {
     const byId = {};
     if (templateId) {
       if (plan.requests.length) Slides.Presentations.batchUpdate({requests: plan.requests}, deck.presentationId);
-      (Slides.Presentations.get(deck.presentationId).slides || []).forEach(sl => { byId[sl.objectId] = sl; });
+      (Slides.Presentations.get(deck.presentationId, {fields: F.texts}).slides || []).forEach(sl => { byId[sl.objectId] = sl; });
     }
     let requests = [];
     let first = true;
@@ -4591,7 +4592,7 @@ function mtgExportDeck_(name, slides, folder) {
       requests = requests.concat(add);
     });
     flush();
-    const extra = mtgPlaceholderRequests_(Slides.Presentations.get(deck.presentationId), slides.map((slide, i) => 'mtg_p' + (i + 1)));
+    const extra = mtgPlaceholderRequests_(Slides.Presentations.get(deck.presentationId, {fields: F.placeholders}), slides.map((slide, i) => 'mtg_p' + (i + 1)));
     // ひな形のページ（複製は元のページのすぐ次に入る）と足したスライドを、1枚目から順に決まった位置に動かす（前のスライドの位置は決まっているので、順に動かせばそろう）
     if (templateId) slides.forEach((slide, i) => extra.push({updateSlidesPosition: {slideObjectIds: [plan.pageOf[i] || 'mtg_p' + (i + 1)], insertionIndex: i}}));
     if (extra.length) Slides.Presentations.batchUpdate({requests: extra}, deck.presentationId);
@@ -4608,6 +4609,18 @@ function mtgExportDeck_(name, slides, folder) {
     throw e;
   }
 }
+
+/*
+ * Slides API で資料を読むときの項目（fields）。読む項目を絞る：統合版（130ページほど）を丸ごと読むと、応答が大きすぎて失敗する
+ * （「レスポンス コード: 413。メッセージ: response too large」）。deck：ページの大きさとページの ID、texts：ひな形のページの文字の枠
+ * （mtgTemplateTextRequests_）、placeholders：レイアウトの枠（mtgPlaceholderRequests_）、count：ページの数
+ */
+const MTG_SLIDES_FIELDS = {
+  deck: 'presentationId,pageSize,slides/objectId',
+  texts: 'slides(objectId,pageElements(objectId,transform/translateY,shape/text/textElements/textRun(content,style/fontSize)))',
+  placeholders: 'slides(objectId,pageElements(objectId,shape/placeholder/type))',
+  count: 'slides/objectId'
+};
 
 /**
  * 足したスライド（pageIds）に付いたレイアウトのプレースホルダ（ページ番号・日付・フッターの枠）を消すリクエスト。

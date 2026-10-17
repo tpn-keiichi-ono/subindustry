@@ -2387,6 +2387,9 @@ test('統合版・ひな形：統合版の表紙はひな形の3枚目（紫）�
   assert.deepStrictEqual(['g_combined', 'g_cover', 'mtg_t' + (second + 1), 'g_divider', 'mtg_t' + (divider2 + 1)].map(title),
     ['全サブインダストリー', '新FMT', '新FMT2', 'Appendix', 'Appendix']);
   assert.deepStrictEqual(gas.slideBackgrounds, [], '表紙・扉はどれもひな形のページ');
+  // 統合版は 130ページほどになるので、資料を丸ごと読まない（応答が大きすぎて 413 で失敗した）。どの読み方も項目を絞る
+  assert.ok(gas.slidesGets.length >= 3 && gas.slidesGets.every(r => r.fields && /^(presentationId,pageSize,slides\/objectId|slides[(\/])/.test(r.fields)),
+    JSON.stringify(gas.slidesGets.map(r => r.fields)));
 });
 
 /* ---------------- 6分の上限：区切って続ける ---------------- */

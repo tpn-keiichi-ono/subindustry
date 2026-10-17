@@ -1117,7 +1117,9 @@ function createGas(options) {
         return {presentationId: id, pageSize: resource.pageSize, slides: [{objectId: 'p'}]};
       },
       /** 資料（作ったもの・ひな形のコピー）の大きさとスライドの ID */
-      get(id) {
+      /** 読んだ項目（options.fields）を gas.slidesGets に残す（読む項目を絞っているかをテストで確かめる） */
+      get(id, options) {
+        gas.slidesGets = (gas.slidesGets || []).concat([{id, fields: options && options.fields}]);
         const deck = gas.decks.find(d => d.id === id) || (gas.slideTemplates[id] && Object.assign({id}, gas.slideTemplates[id]));
         if (!deck) throw new Error('Requested entity was not found.');
         return {presentationId: id, pageSize: deck.pageSize, slides: deck.slides.map(sl => ({objectId: sl.objectId, pageElements: (sl.pageElements || []).slice()}))};
