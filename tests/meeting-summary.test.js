@@ -2315,8 +2315,13 @@ test('統合版：createMeetingSummaries() では作らず、すべてのシー�
   assert.strictEqual(combined.title, file + '_全サブインダストリー_RX Business Meeting用資料');
   assert.strictEqual(combined.requests.filter(r => r.createSlide).length, 3 + 10 + 10, '表紙・目次・状況と、2つの資料（10枚ずつ）');
   // 目次のリンク：すべてのスライドを作ったあとに、リンク先のスライドの ID で付ける
-  const links = combined.requests.filter(r => r.updateTextStyle && r.updateTextStyle.fields === 'link,underline,foregroundColor').map(r => [r.updateTextStyle.objectId, r.updateTextStyle.style.link.pageObjectId]);
-  assert.deepStrictEqual(plain(links).map(l => l[1]), ['mtg_p3', 'mtg_p3', 'mtg_p4', 'mtg_p4', 'mtg_p14', 'mtg_p14']);
+  // 目次のリンク：名前は各サブインダストリーの PDF（ドライブのプレビューでも開ける）、ページ番号はこの資料のページ（全サブインダストリーの状況は名前も）
+  const links = combined.requests.filter(r => r.updateTextStyle && r.updateTextStyle.fields === 'link,underline,foregroundColor')
+    .map(r => [r.updateTextStyle.objectId, r.updateTextStyle.style.link.pageObjectId || r.updateTextStyle.style.link.url]);
+  const pdfUrl = sheet => 'https://drive.google.com/file/d/' + gas.driveFiles.find(f => f.name === file + '_' + sheet + '_RX Business Meeting用資料.pdf').id + '/view';
+  assert.deepStrictEqual(plain(links).map(l => l[1]), ['mtg_p3', 'mtg_p3', pdfUrl('新FMT'), 'mtg_p4', pdfUrl('新FMT2'), 'mtg_p14']);
+  assert.match(plain(g.mtgContentsSlide_([{summary: {name: '新FMT'}, start: 4}], {'新FMT': 'u'})).lead,
+    /^名前を押すと各サブインダストリーの資料（PDF）が開き、ページ番号を押すとこの資料のそのページに移ります（ダウンロードして開いたとき）。$/);
   assert.ok(plain(links).every(l => /^mtg_p2_\d+$/.test(l[0])), '目次（2枚目）の部品');
   const linkStyle = combined.requests.find(r => r.updateTextStyle && r.updateTextStyle.style.link).updateTextStyle.style;
   assert.deepStrictEqual(plain([linkStyle.underline, linkStyle.foregroundColor]), [false, {opaqueColor: {rgbColor: plain(g.mtgRgb_('#1A1A1A'))}}],

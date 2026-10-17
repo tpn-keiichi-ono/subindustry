@@ -1043,9 +1043,9 @@ function mtgSummaries_(ss, names, now, final, meeting) {
  * 本番は会議のフォルダ（MTG_OPTIONS.combined.meetingFolder の中）に格納し、インデックスの統合版の列に書く（できなくても止めない）。
  * 戻り値 {name, file: PDF, pages, stored, storeError, index}
  */
-function mtgCreateCombined_(summaries, meeting, final, folder) {
+function mtgCreateCombined_(summaries, meeting, final, folder, urls) {
   const name = MTG_OPTIONS.combined.name;
-  const slides = mtgCombinedSlides_(summaries, meeting, final);
+  const slides = mtgCombinedSlides_(summaries, meeting, final, urls);
   const out = mtgExportDeck_(mtgFileName_(name, meeting, final), slides, folder);
   const result = {name, file: out.pdf, deck: out.deck, pages: slides.length};
   if (final) {
@@ -1086,7 +1086,12 @@ function createCombinedMeetingSummary() {
   if (!meeting) return;
   // 実行の条件：すべてのサブインダストリーの、この会議日の本番の資料（PDF）ができている（インデックスのその会議日の行に空のセルが無い）。満たさなければ作らずに終える
   const props = PropertiesService.getDocumentProperties();
-  const missing = names.filter(name => !mtgMeetings_(props, name).some(m => !m.baseline && m.date === meeting) || !mtgStoredPdf_(ss, name, meeting));
+  const urls = {};   // 各サブインダストリーの PDF（目次の名前のリンク先）
+  const missing = names.filter(name => {
+    const pdf = mtgMeetings_(props, name).some(m => !m.baseline && m.date === meeting) && mtgStoredPdf_(ss, name, meeting);
+    if (pdf) urls[name] = pdf.getUrl();
+    return !pdf;
+  });
   if (missing.length) {
     return stop('統合版を作れません。会議日 ' + meeting + ' の本番の資料が、まだできていないサブインダストリーがあります（' + missing.length + '件）：\n' +
       missing.map(name => '・' + name).join('\n') + '\n\n' +
@@ -1099,7 +1104,7 @@ function createCombinedMeetingSummary() {
   const {summaries} = mtgSummaries_(ss, names, now, true, meeting);
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
-  const message = mtgCombinedLines_(mtgCombinedPlain_(mtgCreateCombined_(summaries, meeting, true, folder))).concat(['', '保存先：' + folder.getUrl()]).join('\n');
+  const message = mtgCombinedLines_(mtgCombinedPlain_(mtgCreateCombined_(summaries, meeting, true, folder, urls))).concat(['', '保存先：' + folder.getUrl()]).join('\n');
   console.log(message);
   ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
 }
@@ -2645,7 +2650,7 @@ function mtgSlides_(summary, start) {
  * 統合版のスライドの並び：表紙（全サブインダストリー）・目次（mtgContentsSlide_）・全サブインダストリーの状況（mtgOverviewSlide_）のあとに、各サブインダストリーの資料
  * （mtgSlides_。表紙から Appendix まで。summaries の順）をそのまま続ける。ページ番号・扉の目次のページは資料全体の通し番号にする
  */
-function mtgCombinedSlides_(summaries, meeting, final) {
+function mtgCombinedSlides_(summaries, meeting, final, urls) {
   const o = MTG_OPTIONS;
   const c = o.colors;
   const S = MTG_SLIDE;
@@ -2672,15 +2677,17 @@ function mtgCombinedSlides_(summaries, meeting, final) {
     ]
   };
   const frame = {source: (final ? '' : '【試作】') + (dummy ? '【ダミーデータを含む】' : '') + name + '（' + mtgShortDate_(meeting) + ' 会議資料）　金額の単位：百万円'};
-  const first = mtgNumberSlides_(frame, [cover, mtgContentsSlide_(sections), mtgOverviewSlide_(sections)]);
+  const first = mtgNumberSlides_(frame, [cover, mtgContentsSlide_(sections, urls), mtgOverviewSlide_(sections)]);
   return first.concat.apply(first, sections.map(x => x.slides));
 }
 
 /**
- * 統合版の2枚目「目次」：全サブインダストリーの状況と、各サブインダストリーの資料（表紙）の、この資料の中のページ。名前とページは、そのページへのリンク
- * （部品の link にスライドの番号（0 から）を入れ、mtgExportDeck_ がすべてのスライドを作ったあとにリンクにする）。9件以上なら2列
+ * 統合版の2枚目「目次」：全サブインダストリーの状況と、各サブインダストリーの資料（表紙）の、この資料の中のページ。
+ * ページ番号は、そのページへのリンク（部品の link にスライドの番号（0 から）。mtgExportDeck_ がすべてのスライドを作ったあとにリンクにする）。
+ * 名前は、urls（シート名 → 個別の資料の PDF の URL）があれば、その PDF へのリンク（url）。Google ドライブのプレビュー画面は PDF の中のページへの
+ * リンクに移らないが、外の URL は開けるため。urls が無ければ、名前もページへのリンク。9件以上なら2列
  */
-function mtgContentsSlide_(sections) {
+function mtgContentsSlide_(sections, urls) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
   const entries = [{label: MTG_TITLES.overview, page: 3}].concat(sections.map(x => ({label: x.summary.name, page: x.start})));
@@ -2695,12 +2702,15 @@ function mtgContentsSlide_(sections) {
     const y = S.top + (i % per) * rowH;
     const h = rowH - 6;
     const link = entry.page - 1;
+    const url = i && urls && urls[entry.label];
     el.push(mtgBox_(x, y, colW - 56, h, mtgWrap_((i ? i + '.　' : '') + entry.label, colW - 56, 12, 1)[0],
-      {size: 12, bold: true, color: c.ink, fill: c.greenSoft, shape: 'RECTANGLE', link, role: 'toc'}));
+      Object.assign({size: 12, bold: true, color: c.ink, fill: c.greenSoft, shape: 'RECTANGLE', role: 'toc'}, url ? {url} : {link})));
     el.push(mtgBox_(x + colW - 56, y, 56, h, String(entry.page), {size: 12, bold: true, color: c.greenDark, fill: c.greenSoft, shape: 'RECTANGLE',
       align: 'END', link, role: 'toc'}));
   });
-  return {title: MTG_TITLES.contents, lead: '名前かページ番号を押すと、そのページに移ります。', elements: el};
+  const lead = urls ? '名前を押すと各サブインダストリーの資料（PDF）が開き、ページ番号を押すとこの資料のそのページに移ります（ダウンロードして開いたとき）。'
+    : '名前かページ番号を押すと、そのページに移ります。';
+  return {title: MTG_TITLES.contents, lead, elements: el};
 }
 
 /**
@@ -4646,9 +4656,9 @@ function mtgExportDeck_(name, slides, folder) {
     // ページへのリンク（目次）：リンク先のスライドができてから付ける（部品の ID は「mtg_p{ページ}_{部品の番号}」）
     const pageId = i => plan.pageOf[i] || 'mtg_p' + (i + 1);
     slides.forEach((slide, i) => slide.elements.forEach((el, n) => {
-      if (el.link == null || !slides[el.link] || el.text == null || el.text === '') return;
-      // リンクを付けると青の下線になるので、字の色を戻し、下線を付けない
-      extra.push({updateTextStyle: {objectId: 'mtg_p' + (i + 1) + '_' + n, textRange: {type: 'ALL'}, style: {link: {pageObjectId: pageId(el.link)},
+      if (!(el.url || (el.link != null && slides[el.link])) || el.text == null || el.text === '') return;
+      // ページへのリンク（link）か、外の URL へのリンク（url）。リンクを付けると青の下線になるので、字の色を戻し、下線を付けない
+      extra.push({updateTextStyle: {objectId: 'mtg_p' + (i + 1) + '_' + n, textRange: {type: 'ALL'}, style: {link: el.url ? {url: el.url} : {pageObjectId: pageId(el.link)},
         underline: false, foregroundColor: {opaqueColor: {rgbColor: mtgRgb_(el.color || MTG_OPTIONS.colors.body)}}}, fields: 'link,underline,foregroundColor'}});
     }));
     // ひな形のページ（複製は元のページのすぐ次に入る）と足したスライドを、1枚目から順に決まった位置に動かす（前のスライドの位置は決まっているので、順に動かせばそろう）

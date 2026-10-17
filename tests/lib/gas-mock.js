@@ -1040,7 +1040,8 @@ function createGas(options) {
       const files = gas.driveFiles.filter(f => f.folder === id && f.name === fileName).map(f => f.id)
         .concat(gas.decks.filter(d => d.folder === id && d.title === fileName).map(d => d.id))
         .filter(fileId => gas.trashed.indexOf(fileId) < 0)
-        .map(fileId => ({getId: () => fileId, getName: () => fileName, setTrashed(flag) { if (flag) gas.trashed.push(fileId); return this; }}));
+        .map(fileId => ({getId: () => fileId, getName: () => fileName, getUrl: () => 'https://drive.google.com/file/d/' + fileId + '/view',
+          setTrashed(flag) { if (flag) gas.trashed.push(fileId); return this; }}));
       return {hasNext: () => files.length > 0, next: () => files.shift()};
     }
   });
