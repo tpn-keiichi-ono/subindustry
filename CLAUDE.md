@@ -31,7 +31,7 @@ Google スプレッドシートにバインドされた Google Apps Script（V8�
 
 ## 命名
 
-- 接頭辞でファイル（機能）を表す：`diff*`（差分追跡）、`cred*`（クレデンシャル）、`chg*`（変更履歴）、`hs*`（サイドバー）、`ap*`（アカウントプラン作成。`コード.gs` の既存の関数は接頭辞なし）、`smp*`（サンプルデータ）、`oc*`（オポチュニティキャンバス）、`task*`（タスク管理。見出しの用意・ロックなどサービス管理と共通の処理も）、`svc*`（サービス管理・リクエスト シート）、`mtg*`（会議サマリのスライドと PDF。RX Business MTG。スライドの部品・ひな形・保存・インデックスは RX Service MTG と共通）、`smtg*`（RX Service MTG の事前資料。`ServiceMeeting.gs`）、`mig*`（旧フォーマットからの転記。`LegacyMigration.gs`）。
+- 接頭辞でファイル（機能）を表す：`diff*`（差分追跡）、`cred*`（クレデンシャル）、`chg*`（変更履歴）、`hs*`（サイドバー）、`ap*`（アカウントプラン作成。`コード.gs` の既存の関数は接頭辞なし）、`smp*`（サンプルデータ）、`oc*`（オポチュニティキャンバス）、`task*`（タスク管理。見出しの用意・ロックなどサービス管理と共通の処理も）、`svc*`（サービス管理・リクエスト シート）、`mtg*`（会議サマリのスライドと PDF。RX Business Meeting。スライドの部品・ひな形・保存・インデックスは RX Service Meeting と共通）、`smtg*`（RX Service Meeting の事前資料。`ServiceMeeting.gs`）、`mig*`（旧フォーマットからの転記。`LegacyMigration.gs`）。
 - 末尾 `_` の関数は内部用（メニューや `google.script.run` から直接呼ばない）。
 - 設定は各ファイル先頭の `DIFF_OPTIONS` / `CRED_OPTIONS` / `CHG_OPTIONS` / `HS_OPTIONS` / `TASK_OPTIONS` / `SVC_OPTIONS` / `MTG_OPTIONS` / `SMTG_OPTIONS` に集める。エディタから実行する会議資料の関数は、どの会議のものか分かる名前にする（`createBusinessMtgSummaries()`・`createServiceMtgSummaries()` など。`BusinessMtg` / `ServiceMtg`）。
 - シート名は1か所にだけ書く。追跡するシート（スーパー・GMS など。ドキュメントでは「新FMT」と書く）は `DIFF_RULES`（リクエストを読むシートも `DIFF_RULES` の `requests: true` で指定し、`SVC_OPTIONS` には書かない）。追跡するシートの名前を変えたら、前の名前を `formerNames` に足す（記録はシート名で残り、書き換えないため）。シートを増やしたり名前の設定を変えたりしたら、`docs/OPERATIONS.md` の「シート名の一覧」も直す。

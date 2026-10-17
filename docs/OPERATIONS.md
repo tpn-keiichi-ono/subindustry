@@ -261,7 +261,7 @@ D列以降（タスク・担当者・状況・メモ）の値はそのまま残�
 
 ### 会議サマリ（会議の事前資料のスライドと PDF）
 
-RX Business MTG（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ります。
+RX Business Meeting（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ります。
 会議の前に配り、参加者が通読してから会議に臨むための資料です。
 
 - 資料には、シートと変更の記録から分かる事実だけを書きます。論点・決めてほしいこと・支援の要否などは、各サブインダストリーのリーダーが会議で話すことなので、資料には入れません。
@@ -314,7 +314,7 @@ RX Business MTG（パイプライン会議）の事前資料（16:9 の Google �
 - 1枚目は各サブインダストリーと統合版の表紙、2枚目は扉（Appendix）に使います（`MTG_OPTIONS.templatePages`）。3枚目（紫）は使いません
   （統合版の表紙を紫にするときは `templatePages.combined` を 3 に、`MTG_OPTIONS.combined.coverTone` を `'combined'` にする）。2枚目が無ければ扉はグレーの絵柄で描きます。
 - 決まった文字を、文字の枠ごとに書き換えます：大きい `XXXXX`（見出し）→ サブインダストリー（統合版は「全サブインダストリー」、扉は「Appendix」）、
-  小さい `XXXXX`（その下）→ 「RX Business MTG　事前資料」（試作は【試作】。扉は空）、`2026年 4月 17日` → 会議日（扉は空）、`XXXX` → 空。
+  小さい `XXXXX`（その下）→ 「RX Business Meeting　事前資料」（試作は【試作】。扉は空）、`2026年 4月 17日` → 会議日（扉は空）、`XXXX` → 空。
   ひな形を直すときは、この文字をそのまま残してください（変えたら `MTG_OPTIONS.templateTexts` も合わせる）。字の大きさ・位置・色・字体は、ひな形のとおりになります。
 - 本編・Appendix は、ひな形のページの大きさ（いただいたひな形は 960 × 540pt）に合わせて拡大して描きます。
 - ひな形のファイルは、管理者（`createBusinessMtgSummaries()` を実行する人）が開けるところに置いてください。別のファイルにしたら、`MTG_TEMPLATE_URL` の URL を書き換えます。
@@ -373,18 +373,18 @@ RX Business MTG（パイプライン会議）の事前資料（16:9 の Google �
 - 初めて本番を作るとき・コピーの機能を入れたあと初めて作るときは、前回のコピーが無いので、今までどおり変更の記録から出します。
 - 会議日と作った日時は、シートごとに記録します（同じ会議日で作り直しても、「前回から」は変わりません）。前回の会議の記録が無ければ、直近14日の変化です。
 - 会議日を打ち間違えた・本番を作ったが会議が無くなったときは、`removeBusinessMtgRecord()` で、その会議日の記録を取り消します（資料のファイルは消しません。要らなければドライブで消す）。
-**会議のフォルダへの格納**：サブインダストリーごとのフォルダ（中に `260819_RX Business MTG_第4回` のような会議ごとのフォルダがある）を、
+**会議のフォルダへの格納**：サブインダストリーごとのフォルダ（中に `260819_RX Business Meeting_第4回` のような会議ごとのフォルダがある）を、
 `test.gs` の `DIFF_RULES` の各シートの `meetingFolder` に URL で書いておきます。本番の資料を作ると、その中の、名前が会議日の `yyMMdd_` で始まり、
-会議の名前（RX Business MTG）を含むフォルダ（10/23 なら `261023_RX Business MTG_…`）に PDF を移します（同じ名前の古い版はゴミ箱へ。試作は移しません）。
-会議のフォルダが無ければ `261023_RX Business MTG_第5回` のように作ります（第何回かは、前の同じ会議のフォルダの回数＋1。作りたくないときは `MTG_OPTIONS.createMeetingFolder` を `false`）。
-RX Service MTG の資料も、同じフォルダの中の `261113_RX Service MTG_第3回` のようなフォルダに入ります（第何回は会議ごとに数えます）。
-会議の名前を含まない前の版のフォルダ（`261023_第5回会議`）は、RX Business MTG のフォルダとして使い続けます（名前を直してもかまいません）。
+会議の名前（RX Business Meeting）を含むフォルダ（10/23 なら `261023_RX Business Meeting_…`）に PDF を移します（同じ名前の古い版はゴミ箱へ。試作は移しません）。
+会議のフォルダが無ければ `261023_RX Business Meeting_第5回` のように作ります（第何回かは、前の同じ会議のフォルダの回数＋1。作りたくないときは `MTG_OPTIONS.createMeetingFolder` を `false`）。
+RX Service Meeting の資料も、同じフォルダの中の `261113_RX Service Meeting_第3回` のようなフォルダに入ります（第何回は会議ごとに数えます）。
+会議の名前を含まない前の版のフォルダ（`261023_第5回会議`）は、RX Business Meeting のフォルダとして使い続けます（名前を直してもかまいません）。
 回数が合わないときは、作られたフォルダの名前をドライブで直してください（先頭の `yyMMdd_` と会議の名前で探すので、ほかは変えてかまいません）。
 
 - 今はテストのため、11シートとも `test.gs` の `TEST_MEETING_FOLDER`（資料の保存先と同じフォルダ）にしています。
   本番のフォルダが決まったら、各シートの `meetingFolder` をそれぞれのフォルダの URL に書き換えます。
 
-- 終わりの画面に「会議のフォルダ「261023_RX Business MTG_第5回」に格納しました」と出ます。
+- 終わりの画面に「会議のフォルダ「261023_RX Business Meeting_第5回」に格納しました」と出ます。
 - 格納できなかったとき（`meetingFolder` が空・フォルダを開けない・会議のフォルダがまだ無い・同じ日付のフォルダが2つある・書き込めない）は、
   「※ 会議のフォルダに格納できませんでした（理由）」と出ます。資料は保存先のフォルダにあり、会議日も記録しています（作り直さなくてよい）。
   理由を直して（会議のフォルダを作るなど）、エディタで `storeBusinessMtgSummaries()` を実行し、シートと会議日を入力すると、保存先の本番の PDF を会議のフォルダに移します
@@ -400,7 +400,7 @@ RX Service MTG の資料も、同じフォルダの中の `261113_RX Service MTG
   各サブインダストリーの資料（個別の資料と同じ作り方。`DIFF_RULES` の順）。ページ番号は資料全体の通し番号です。
   中身はそのときのシートの値で作り直します（前回からの変化は、個別の資料と同じく前回の会議時点と比べる）。資料を作ったあとにシートを直したら、その分は統合版にだけ出ます。
 - すべてのシートにその会議日の本番の記録があれば本番として、`MeetingSummary.gs` の `MTG_OPTIONS.combined.meetingFolder` のフォルダの中の会議のフォルダ
-  （`261023_RX Business MTG_第5回` など。無ければ作る）に格納し、インデックスの「全サブインダストリー」の列に書きます。今はテストのため、各サブインダストリーと同じテストのフォルダにしています
+  （`261023_RX Business Meeting_第5回` など。無ければ作る）に格納し、インデックスの「全サブインダストリー」の列に書きます。今はテストのため、各サブインダストリーと同じテストのフォルダにしています
   （本番のフォルダが決まったら URL を書き換える）。会議日・会議時点のコピーは記録しません。
 - 実行の条件：すべてのサブインダストリーに、その会議日の本番の資料（PDF）があること（「INDEX_会議資料」のその会議日の行に空のセルが無いこと）。
   足りないときは「統合版を作れません。…まだできていないサブインダストリーがあります」と、足りないサブインダストリーを出して、何も作らずに終えます（試作も作りません）。
@@ -427,12 +427,12 @@ RX Service MTG の資料も、同じフォルダの中の `261113_RX Service MTG
 
 | 日付 | 種別 | 全サブインダストリー | スーパー・GMS | コンビニ | … | 生協 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 2026/10/23 | RX Business MTG | 📄 20261023_全サブインダストリー_RX Business Meeting用資料.pdf（統合版） | 📄 20261023_スーパー・GMS_RX Business Meeting用資料.pdf | 📄 … | … | 📄 … |
+| 2026/10/23 | RX Business Meeting | 📄 20261023_全サブインダストリー_RX Business Meeting用資料.pdf（統合版） | 📄 20261023_スーパー・GMS_RX Business Meeting用資料.pdf | 📄 … | … | 📄 … |
 
 - シートが無ければ作ります（1行目に見出し。会議日の行は会議のたびに増え、新しい会議日が上に並びます。前の版で古い順に並んでいるシートは、次に書くときに並べ直します。
   古い順にしたいときは `MTG_OPTIONS.index.order` を `'asc'` にする）。同じ会議日で作り直したら上書きします。
 - 字は太字・9pt・黒、1行目は固定です。書式・列の幅は変えてかまいません。1行目の見出し（日付・種別・サブインダストリー名）と、A列の日付・B列の種別は変えないでください
-  （書くセルを見出しと日付で探します。種別が「RX Business MTG」以外の行には書きません）。手で入れた値は残ります。
+  （書くセルを見出しと日付で探します。種別が「RX Business Meeting」以外の行には書きません）。手で入れた値は残ります。
 - 会議のフォルダのリンクにしたいときは `MTG_OPTIONS.index.link` を `'folder'` にします。チップにしないときは `MTG_OPTIONS.index.chip` を `false` にします。
 - 書けなかったとき（ほかの処理が実行中など）は「※ 「INDEX_会議資料」シートに書き込めませんでした」と出ます。`storeBusinessMtgSummaries()` を実行すると書き直します。
 - **前の形式（行＝サブインダストリー・列＝会議日）からの切り替え**：エディタで `rebuildBusinessMtgIndex()` を実行し、「はい」を押します。
@@ -475,8 +475,8 @@ RX Service MTG の資料も、同じフォルダの中の `261113_RX Service MTG
 `{url}` はファイルの URL に置き換わります。`*〜*` は太字）。会議の時刻の決まりは `MTG_OPTIONS.chat.meetingTime`（9:00〜10:30）です。
 
 ```
-*【RX Business MTG】事前資料のご案内*
-RX Business MTG の事前資料を、下記に格納いたしました。
+*【RX Business Meeting】事前資料のご案内*
+RX Business Meeting の事前資料を、下記に格納いたしました。
 お手数ですが、会議の前にご一読いただけますと幸いです。
 
 ▼ 会議日程
@@ -554,9 +554,9 @@ RX Business MTG の事前資料を、下記に格納いたしました。
 - 貼り付けた案件の停滞の日数は、貼り付けた時から数えるので「N日以上」と出ます（旧フォーマットでいつからステータスが同じかは、記録に無いため）。
   最終更新日時も貼り付けた時になるので、「更新なし」は貼り付けてから30日たつまで出ません。
 
-### RX Service MTG の事前資料（サービス改善の会議のスライドと PDF）
+### RX Service Meeting の事前資料（サービス改善の会議のスライドと PDF）
 
-RX Service MTG（サービス改善。第二週の金曜）の事前資料を、「サービスリクエスト」と「サービス案タスク管理」のシートから、サブインダストリーごとに作ります
+RX Service Meeting（サービス改善。第二週の金曜）の事前資料を、「サービスリクエスト」と「サービス案タスク管理」のシートから、サブインダストリーごとに作ります
 （全サブインダストリーをまとめた資料も作れます）。紫を基調にしたトンマナで、表紙はひな形の3枚目（紫）です（ひな形が無ければ同じ絵柄で描きます）。書くのはシートから分かる事実だけです。
 
 表紙のあとに、サマリー（数字と前回比・前回以降の動き・議題と資料のページ）→ サービス案の一覧 → 顧客・業界の広がり（サービス案 × サブインダストリー）→
@@ -574,14 +574,14 @@ Appendix ① リクエスト・② タスク・③ 入力内容の確認事項�
 2. データがまだ無いときは、`addServiceMtgSampleData()` でサンプルのリクエスト13件・タスク7件を入れます（下の「サンプルで試す」）。
 3. `previewServiceMtgSummaries()` を実行し、作るサブインダストリーの番号（空欄なら、リクエストのあるサブインダストリーすべてと全サブインダストリー。複数は「1,3」）と
    会議日（例：11/13）を入力します。試作の PDF（`…_スーパー・GMS_RX Service Meeting用資料_試作.pdf` など）が会議サマリの保存先にできます。会議日は記録しません。
-4. 本番は `createServiceMtgSummaries()`。確かめの画面（会議日・前回の会議・作る資料）で「はい」を押すと、PDF を保存して「INDEX_会議資料」の種別「RX Service MTG」の行の、
+4. 本番は `createServiceMtgSummaries()`。確かめの画面（会議日・前回の会議・作る資料）で「はい」を押すと、PDF を保存して「INDEX_会議資料」の種別「RX Service Meeting」の行の、
    そのサブインダストリー（全サブインダストリー）の列に書き、すべて作ったら会議日とその時点の判断・タスクの状況・件数を記録します。
    次の会議の資料は、今回からの変化（新規リクエスト・判断の変更・完了したタスク・新しいタスク）と前回比を出します。
 5. 6分に収まらないときは区切って、約1分後に自動で続けます（トリガー `continueServiceMtgSummaries`）。結果は `showServiceMtgSummariesResult()` で見られます。
 
 - 同じ会議日で本番を作り直すと、記録を置き換えます（次の会議の起点が今になります）。配布したあとは作り直さないでください。
-- 本番の PDF は、RX Business MTG と同じフォルダ（各サブインダストリーの `meetingFolder`、全サブインダストリーは `MTG_OPTIONS.combined.meetingFolder`）の中の、
-  `261113_RX Service MTG_第3回` のような会議のフォルダに格納します（無ければ作ります。第何回は RX Service MTG のフォルダだけで数えます）。
+- 本番の PDF は、RX Business Meeting と同じフォルダ（各サブインダストリーの `meetingFolder`、全サブインダストリーは `MTG_OPTIONS.combined.meetingFolder`）の中の、
+  `261113_RX Service Meeting_第3回` のような会議のフォルダに格納します（無ければ作ります。第何回は RX Service Meeting のフォルダだけで数えます）。
 - 議題と見るページの対応・色は `SMTG_OPTIONS`（`agenda`・`colors`）で変えられます。
 
 **サンプルで試す**：
@@ -720,7 +720,7 @@ clasp を使わない場合は、変更したファイルの中身をエディ�
 | `catchUpDiffTracking` | 時間主導（5分ごと） | `setupDiffTracking()` |
 | `onCredentialLauncherEdit` | 編集時（2つのボタン列で共通） | `setupCredentialLauncher()`・`setupChangeHistoryLauncher()` |
 | `continueBusinessMtgSummaries` | 時間主導（1回きり。会議サマリを区切ったときだけ。終わったら消える） | `createBusinessMtgSummaries()`・`previewBusinessMtgSummaries()` |
-| `continueServiceMtgSummaries` | 時間主導（1回きり。RX Service MTG の資料を区切ったときだけ。終わったら消える） | `createServiceMtgSummaries()`・`previewServiceMtgSummaries()` |
+| `continueServiceMtgSummaries` | 時間主導（1回きり。RX Service Meeting の資料を区切ったときだけ。終わったら消える） | `createServiceMtgSummaries()`・`previewServiceMtgSummaries()` |
 
 前の版の `continueMeetingSummaries`（2026/10/17 に名前を改めた）は、会議サマリを区切る・やめる・続けるときに一緒に外れます。
 
@@ -828,7 +828,12 @@ clasp を使わない場合は、変更したファイルの中身をエディ�
 
 ### 古い版から上げるとき
 
-**会議サマリの関数名を改めた（2026/10/17）**：RX Service MTG の資料と見分けられるよう、RX Business MTG の会議サマリの関数名に `BusinessMtg` を入れました。
+**会議の名前を「MTG」から「Meeting」に改めた（2026/10/17）**：会議の名前を RX Business Meeting・RX Service Meeting にしました（表紙・出典の行・会議のフォルダの名前・
+インデックスの種別・チャットの文に出ます）。前の名前のフォルダ（`261023_RX Business MTG_第5回` など）は同じ会議のフォルダとしてそのまま使い、第N回も続きから数えます
+（`MTG_OPTIONS.formerMeetingNames`・`SMTG_OPTIONS.formerMeetingNames`）。インデックスの種別が前の名前（RX Business MTG）の行は、次にその行に書くときに今の名前に書き換えます
+（`index.formerKinds`）。フォルダの名前は自動では変えないので、そろえたいときはドライブで直してください。
+
+**会議サマリの関数名を改めた（2026/10/17）**：RX Service Meeting の資料と見分けられるよう、RX Business Meeting の会議サマリの関数名に `BusinessMtg` を入れました。
 設定・記録（スクリプト・ドキュメントのプロパティ）はそのまま使えます。`MeetingSummary.gs`・`サンプルデータ.gs` を貼り付けたあとは、新しい名前で実行してください。
 
 | 前の名前 | 今の名前 |
@@ -841,7 +846,7 @@ clasp を使わない場合は、変更したファイルの中身をエディ�
 | `setMeetingChat()`・`notifyMeetingSummaries()` | `setBusinessMtgChat()`・`notifyBusinessMtgSummaries()` |
 | `addMeetingDummyHistory()`・`removeMeetingDummyHistory()` | `addBusinessMtgDummyHistory()`・`removeBusinessMtgDummyHistory()` |
 
-`setMeetingTemplate()`（表紙・扉のひな形）は RX Business MTG と RX Service MTG で共通なので、名前は変えていません。
+`setMeetingTemplate()`（表紙・扉のひな形）は RX Business Meeting と RX Service Meeting で共通なので、名前は変えていません。
 会議サマリを区切って自動で続けている途中（`showBusinessMtgSummariesResult()` で「作っている途中」と出るとき）は、終わってから貼り付けてください
 （前の名前の続きのトリガーは、貼り付けたあとは動きません。動かなかったときは、作り直すと外れます）。
 

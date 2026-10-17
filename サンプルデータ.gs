@@ -15,7 +15,7 @@
  *   （前回の資料・基準の時点の値と、そのあとの変更）を足すので、資料の「前回から変化のある案件」（前進・後退・延期・増額・減額・活動更新・新規・削除）
  *   と停滞に出る。サンプル（SMP-）は会議サマリが数えないので、イベントIDは「DMY-」にする（会議サマリは数え、資料の出典の行に【ダミーデータを含む】と出す）。
  * - removeBusinessMtgDummyHistory()（エディタから実行）：イベントIDが「DMY-」の行だけを削除する（サンプルと同じく、ダミーの行に限って削除する）。
- * - addServiceMtgSampleData()（エディタから実行）：RX Service MTG の事前資料（ServiceMeeting.gs）の確認用に、サービスリクエスト・
+ * - addServiceMtgSampleData()（エディタから実行）：RX Service Meeting の事前資料（ServiceMeeting.gs）の確認用に、サービスリクエスト・
  *   サービス案タスク管理のシートの最後の行の下に、サンプルのリクエスト・タスクを書く（SMP_OPTIONS.service）。リクエストの先頭に「【サンプル】」を付ける
  *   （タスクの「サービス案」にも入る）。得意先・案件名は、リクエストを読むシートの案件（進行中で期待値の大きいもの）を使い、案件が無いシートでは架空の名前にする。
  *   追跡シート・取り込み元のシートには書かない。
@@ -69,7 +69,7 @@ const SMP_OPTIONS = {
     // 削除した案件（シートに無い架空の案件）の、削除前の行の内容（ステータスは進行中のいちばん前のもの、期待値は想定売上 × その率、受注月は来月）
     removed: {customer: 'ダミー商事', project: '（ダミー）削除した案件', amount: 20, owner: 'ダミー 担当'}
   },
-  // RX Service MTG の確認用のサンプル（addServiceMtgSampleData()）。sheet はリクエストを読むシート（その案件を使う。無ければ順に別のシート。
+  // RX Service Meeting の確認用のサンプル（addServiceMtgSampleData()）。sheet はリクエストを読むシート（その案件を使う。無ければ順に別のシート。
   // 案件が無ければ customer・project の架空の名前）。decision は判断（空なら未判断）。リクエストの先頭に namePrefix を付けて書く
   service: {
     requests: [
@@ -746,10 +746,10 @@ function smpAppendSnapshots_(ss, sheet, rule, schema, items, editor) {
   snap.getRange(start, 1, items.length, ROW_SNAPSHOT_FIXED_HEADERS.length).setVerticalAlignment('top');
 }
 
-/* ---------------- RX Service MTG のサンプル（サービスリクエスト・タスク） ---------------- */
+/* ---------------- RX Service Meeting のサンプル（サービスリクエスト・タスク） ---------------- */
 
 /**
- * RX Service MTG の事前資料の確認用に、サンプルのリクエストとタスクを書く（エディタから実行）。
+ * RX Service Meeting の事前資料の確認用に、サンプルのリクエストとタスクを書く（エディタから実行）。
  * サービスリクエスト・サービス案タスク管理のシートの、最後の行の下に書く（リクエストには ID を振り、タスクの「サービス案」のプルダウンの候補も合わせる）。
  * すでにサンプルがあれば書かない（removeServiceMtgSampleData() で消してから）
  */
@@ -769,7 +769,7 @@ function addServiceMtgSampleData() {
   const S = SMP_OPTIONS.service;
   const plan = smpServicePlan_(ss);
   if (ui) {
-    const answer = ui.alert(title, 'RX Service MTG の事前資料の確認用に、サンプルを書きます。\n\n' +
+    const answer = ui.alert(title, 'RX Service Meeting の事前資料の確認用に、サンプルを書きます。\n\n' +
       '・「' + SVC_OPTIONS.requestSheet + '」：リクエスト ' + S.requests.length + '件（リクエストの先頭に「' + SMP_OPTIONS.namePrefix + '」。' +
       '得意先・案件名は、シートの案件 ' + plan.filter(p => p.deal).length + '件と架空の名前 ' + plan.filter(p => !p.deal).length + '件）\n' +
       '・「' + TASK_OPTIONS.sheet + '」：タスク ' + S.tasks.length + '件\n\n' +

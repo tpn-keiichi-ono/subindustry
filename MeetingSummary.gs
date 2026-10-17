@@ -3,7 +3,7 @@
  * 差分追跡スクリプト（test.gs）・CredentialHistory.gs・HistorySidebar.gs と同じプロジェクトに置くファイル。
  *
  * 目的
- * - RX Business MTG（パイプライン会議。月1回）の事前資料。会議の前に配り、参加者（営業の統括・リーダー、BX、サブインダストリーのリーダー）が
+ * - RX Business Meeting（パイプライン会議。月1回）の事前資料。会議の前に配り、参加者（営業の統括・リーダー、BX、サブインダストリーのリーダー）が
  *   通読してから会議に臨む。発表は1サブインダストリー数分（報告＋フィードバック）なので、会議の目的（案件の進捗・受注見込みを確かめ、
  *   優先順位と次のアクションを決める）に向けて、状況を事前に共有しておく。
  * - 資料には、シートと変更の記録から分かる事実だけを書く。論点・決めてほしいこと・支援の要否などの判断は、各サブインダストリーのリーダーが
@@ -55,7 +55,8 @@
  */
 
 const MTG_OPTIONS = {
-  meetingName: 'RX Business MTG',    // 表紙に出す会議の名前
+  meetingName: 'RX Business Meeting',    // 表紙に出す会議の名前（会議のフォルダの名前・チャットの文にも使う）
+  formerMeetingNames: ['RX Business MTG'],   // 前の名前（2026/10/17 まで）。この名前の会議のフォルダも、この会議のフォルダとして使う
   // 空欄・該当なしの書き方。資料には推定で値を補わず、空欄は blankText と書く（「—」で済ませない）。該当する案件が無いときは noneText。
   // シートに列が無い・記録が無いなどで作れない（数えられない）ところは gapText と理由を、灰色の枠・セルで書く（資料の型は変えない）
   blankText: '未入力',
@@ -68,9 +69,9 @@ const MTG_OPTIONS = {
   folderName: '会議サマリ',
   folderKey: 'MTG_FOLDER_ID',         // 作ったフォルダの ID（ドキュメントのプロパティ）
   // 会議のフォルダへの格納（本番だけ）：サブインダストリーのフォルダ（test.gs の DIFF_RULES の meetingFolder）の中の、名前が会議日の
-  // meetingFolderDate（yyMMdd）＋「_」で始まり、会議の名前（RX Business MTG・RX Service MTG）を含むフォルダ（例：261023_RX Business MTG_第5回）に、
-  // 事前資料の PDF を置く。RX Service MTG の資料（ServiceMeeting.gs）も同じフォルダの中の、自分の会議の名前のフォルダに置く。
-  // 会議の名前を含まない前の版のフォルダ（261023_第5回会議）は、RX Business MTG のフォルダとして使い続ける。
+  // meetingFolderDate（yyMMdd）＋「_」で始まり、会議の名前（RX Business Meeting・RX Service Meeting）を含むフォルダ（例：261023_RX Business Meeting_第5回）に、
+  // 事前資料の PDF を置く。RX Service Meeting の資料（ServiceMeeting.gs）も同じフォルダの中の、自分の会議の名前のフォルダに置く。
+  // 会議の名前を含まない前の版のフォルダ（261023_第5回会議）は、RX Business Meeting のフォルダとして使い続ける。
   // 見つからない・格納できないときは保存先（folderId）にだけ残して知らせ、フォルダを用意してから storeBusinessMtgSummaries() で格納する
   meetingFolderDate: 'yyMMdd',
   // 会議日のフォルダが無ければ作る（false なら作らずに知らせる）。名前は meetingFolderName の {date}（meetingFolderDate）・{meeting}（会議の名前）・
@@ -80,7 +81,7 @@ const MTG_OPTIONS = {
   // 統合版（全サブインダストリーの資料を1つにまとめた資料）。すべてのサブインダストリーの資料を作ったあとに、createBusinessMtgCombinedSummary() で作る
   // （資料を作る関数とは分ける。1回の実行の6分の上限に収めるため）。
   // 表紙・全サブインダストリーの状況（一覧）のあとに、各サブインダストリーの資料（表紙から Appendix まで）を DIFF_RULES の順に入れる（ページ番号は通し）。
-  // 本番は会議のフォルダ（meetingFolder の中の yyMMdd_RX Business MTG_第N回）に格納し、インデックスの name の列に書く
+  // 本番は会議のフォルダ（meetingFolder の中の yyMMdd_RX Business Meeting_第N回）に格納し、インデックスの name の列に書く
   combined: {
     enabled: true,
     name: '全サブインダストリー',     // 表紙の見出し・ファイル名の {name}・インデックスの列の見出し
@@ -104,7 +105,8 @@ const MTG_OPTIONS = {
     dateHeader: '日付',              // A列：会議日（日付の値。order の順）
     order: 'desc',                   // 会議日の行の並び：'desc' 新しい会議日が上（2026/10/17 から）・'asc' 古い会議日が上
     kindHeader: '種別',              // B列：会議の種別
-    kind: 'RX Business MTG',         // 種別の列に書く値（同じ日付でも種別が違う行には書かない）
+    kind: 'RX Business Meeting',     // 種別の列に書く値（同じ日付でも種別が違う行には書かない）
+    formerKinds: ['RX Business MTG'], // 前の版で書いた種別（同じ会議の行として使い、書くときに今の種別に書き換える）
     // C列は統合版（combined.name の見出し）、その後ろにサブインダストリーの列（DIFF_RULES の順）
     link: 'file',
     chip: true,
@@ -134,7 +136,7 @@ const MTG_OPTIONS = {
   // ひな形の何枚目を使うか（2026/10/17 にいただいたひな形：1枚目 緑＝表紙、2枚目 グレー＝扉（Appendix）、3枚目 紫）。
   // 0 か無いページは、扉なら描き（mtgTemplateFallback_ と、同じ絵柄のグレーの画像）、統合版の表紙なら1枚目（緑）を使う。
   // 統合版の表紙は緑（1枚目。2026/10/17 から）。紫の3枚目にするときは combined を 3、MTG_OPTIONS.combined.coverTone を 'combined' にする。
-  // service は RX Service MTG の事前資料（ServiceMeeting.gs）の表紙（紫の3枚目）。無ければ、同じ絵柄の紫の画像を背景に描く
+  // service は RX Service Meeting の事前資料（ServiceMeeting.gs）の表紙（紫の3枚目）。無ければ、同じ絵柄の紫の画像を背景に描く
   templatePages: {cover: 1, divider: 2, combined: 0, service: 3},
   // ひな形のページの、置き換える文字。文字の枠ごとに書き換える（見出しとその下の文字が同じ「XXXXX」なので、文字の大きい順・上から順に
   // 見出し → その下の文字に当てる。5文字以上の X は同じとみなす。mtgTemplateTextRequests_）
@@ -1278,7 +1280,7 @@ function mtgStoreToMeetingFolder_(name, meeting, pdf, kind) {
 /**
  * シートの会議のフォルダ：サブインダストリーのフォルダ（DIFF_RULES の meetingFolder。統合版・全サブインダストリーは MTG_OPTIONS.combined.meetingFolder）の中の、
  * 名前が会議日の meetingFolderDate（yyMMdd）で始まり、そのすぐあとが数字でなく、会議 kind（会議の名前。省けば MTG_OPTIONS.meetingName）のフォルダ
- * （mtgFolderIsMeeting_。261023_RX Business MTG_第5回）。{folder} か {error: 理由}（設定が無い・開けない・見つからない・2つ以上ある）。
+ * （mtgFolderIsMeeting_。261023_RX Business Meeting_第5回）。{folder} か {error: 理由}（設定が無い・開けない・見つからない・2つ以上ある）。
  * 見つからなければ作る（createMeetingFolder。noCreate なら作らない。名前は meetingFolderName）
  */
 function mtgMeetingFolder_(name, meeting, noCreate, kind) {
@@ -1332,7 +1334,7 @@ function mtgMeetingFolderSetting_(name) {
  * 会議資料のインデックス（このスプレッドシートの MTG_OPTIONS.index.sheet）の、行＝会議日（meeting）・列＝サブインダストリー（name。統合版は combined.name）のセルに、
  * PDF（stored.file。index.link が 'folder' なら会議のフォルダ）をスマートチップで書く（できなければファイル名のリンク）。
  * シートが無ければ作り、1行目に見出し（日付・種別・統合版・追跡シートの名前（DIFF_RULES の順））を書く。
- * kind は種別の列の値（省けば MTG_OPTIONS.index.kind。RX Service MTG の資料は、その種別の行の統合版の列に書く）。
+ * kind は種別の列の値（省けば MTG_OPTIONS.index.kind。RX Service Meeting の資料は、その種別の行の統合版の列に書く）。
  * 会議日の行（日付が同じで、種別が kind か空の行）が無ければ、index.order の順（既定は新しい会議日が上）になる位置に差し込み（並びが違えば先に並べ直す）、
  * サブインダストリーの列が無ければ右に足す。
  * 同じセルは上書き（作り直したとき）。書き込みはドキュメントロックの中（差分追跡の対象外のシートだが、資料作成はエディタから実行するので待ってよい）。
@@ -1340,7 +1342,8 @@ function mtgMeetingFolderSetting_(name) {
  */
 function mtgWriteIndex_(name, meeting, stored, kind) {
   const o = MTG_OPTIONS.index;
-  const rowKind = kind || o.kind;   // 種別の列の値（RX Service MTG の資料は SMTG_OPTIONS.index.kind）
+  const rowKind = kind || o.kind;   // 種別の列の値（RX Service Meeting の資料は SMTG_OPTIONS.index.kind）
+  const kinds = mtgIndexKinds_(rowKind);   // 同じ会議とみなす種別（前の版の種別も）
   const lock = LockService.getDocumentLock();
   try {
     if (!lock.tryLock(MTG_OPTIONS.indexLockWaitMs)) throw new Error('ほかの処理が実行中');
@@ -1375,8 +1378,9 @@ function mtgWriteIndex_(name, meeting, stored, kind) {
         sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), col)).sort({column: layout.date, ascending: !desc});
         lines = read();
       }
-      let at = lines.findIndex(line => dateOf(line) === meeting && (!kindOf(line) || kindOf(line) === rowKind));
+      let at = lines.findIndex(line => dateOf(line) === meeting && (!kindOf(line) || kinds.indexOf(kindOf(line)) >= 0));
       let row = at + 2;
+      if (at >= 0 && layout.kind && kindOf(lines[at]) && kindOf(lines[at]) !== rowKind) sheet.getRange(row, layout.kind).setValue(credText_(rowKind));
       if (at < 0) {
         at = lines.findIndex(line => dateOf(line) && before(meeting, dateOf(line)));
         if (at >= 0) {
@@ -1458,7 +1462,7 @@ function mtgIndexLayout_(sheet) {
 }
 
 /**
- * 会議資料のインデックスを、各サブインダストリー・統合版の会議のフォルダ（DIFF_RULES・MTG_OPTIONS.combined の meetingFolder の中の「yyMMdd_RX Business MTG_第N回」・前の版の「yyMMdd_第N回会議」）にある
+ * 会議資料のインデックスを、各サブインダストリー・統合版の会議のフォルダ（DIFF_RULES・MTG_OPTIONS.combined の meetingFolder の中の「yyMMdd_RX Business Meeting_第N回」・前の版の「yyMMdd_第N回会議」）にある
  * 本番の事前資料（PDF。mtgFileName_）から書き直す（エディタから実行）。前の形式（行＝サブインダストリー）のシートは、中身を消して今の形式で作り直す。
  * 今の形式なら、ある行・列はそのまま（手で入れた値も残す）で、資料のセルだけ書き直す。何度実行してもよい
  */
@@ -1532,7 +1536,7 @@ function mtgStoredDecks_(name) {
   return {decks};
 }
 
-/** 会議のフォルダの名前（261023_RX Business MTG_第5回・261023_第5回会議）から会議日 'yyyy/MM/dd'（MTG_OPTIONS.meetingFolderDate の形の日付と「_」で始まらなければ空） */
+/** 会議のフォルダの名前（261023_RX Business Meeting_第5回・261023_第5回会議）から会議日 'yyyy/MM/dd'（MTG_OPTIONS.meetingFolderDate の形の日付と「_」で始まらなければ空） */
 function mtgMeetingOfFolder_(folderName) {
   const keys = [];
   const pattern = MTG_OPTIONS.meetingFolderDate.replace(/yyyy|yy|MM|dd|[^A-Za-z]/g, t => {
@@ -1582,9 +1586,16 @@ function mtgIndexDate_(value) {
   return /^\d{4}\s*[\/\-.年]/.test(text) ? mtgParseDate_(text, new Date()) : '';
 }
 
+/** 種別 kind と、同じ会議とみなす前の版の種別（MTG_OPTIONS.index.formerKinds・SMTG_OPTIONS.index.formerKinds） */
+function mtgIndexKinds_(kind) {
+  const all = [MTG_OPTIONS.index].concat(typeof SMTG_OPTIONS !== 'undefined' ? [SMTG_OPTIONS.index] : []);
+  const own = all.find(x => x.kind === kind);
+  return [kind].concat(own && own.formerKinds || []);
+}
+
 /**
  * 次の会議のフォルダの回数：parent の中の、会議日が prefix（yyMMdd）より前の、同じ会議（kind。mtgFolderIsMeeting_）のフォルダ
- * （「yyMMdd_RX Business MTG_第N回」「yyMMdd_第N回会議」）のいちばん大きい N ＋ 1（無ければ 1）
+ * （「yyMMdd_RX Business Meeting_第N回」「yyMMdd_第N回会議」）のいちばん大きい N ＋ 1（無ければ 1）
  */
 function mtgNextMeetingNumber_(parent, prefix, kind) {
   let max = 0;
@@ -1598,13 +1609,15 @@ function mtgNextMeetingNumber_(parent, prefix, kind) {
 }
 
 /**
- * 会議のフォルダの名前が、会議 meetingName のものか：名前に会議の名前（全角・半角・大文字小文字・空白の違いは無視）を含む。どの会議の名前も含まない
- * 前の版のフォルダ（261023_第5回会議）は、RX Business MTG（MTG_OPTIONS.meetingName）のものとみなす
+ * 会議のフォルダの名前が、会議 meetingName のものか：名前に会議の名前か前の名前（全角・半角・大文字小文字・空白の違いは無視）を含む。どの会議の名前も含まない
+ * 前の版のフォルダ（261023_第5回会議）は、RX Business Meeting（MTG_OPTIONS.meetingName）のものとみなす
  */
 function mtgFolderIsMeeting_(folderName, meetingName) {
   const norm = v => String(v || '').normalize('NFKC').toLowerCase().replace(/\s/g, '');
-  const names = [MTG_OPTIONS.meetingName].concat(typeof SMTG_OPTIONS !== 'undefined' ? [SMTG_OPTIONS.meetingName] : []);
-  const own = names.filter(n => norm(folderName).indexOf(norm(n)) >= 0);
+  // 会議ごとの名前（今の名前と前の名前。formerMeetingNames）
+  const meetings = [MTG_OPTIONS].concat(typeof SMTG_OPTIONS !== 'undefined' ? [SMTG_OPTIONS] : [])
+    .map(o => ({name: o.meetingName, names: [o.meetingName].concat(o.formerMeetingNames || [])}));
+  const own = meetings.filter(m => m.names.some(n => norm(folderName).indexOf(norm(n)) >= 0)).map(m => m.name);
   return own.length ? own.indexOf(meetingName) >= 0 : meetingName === MTG_OPTIONS.meetingName;
 }
 
@@ -4235,7 +4248,7 @@ function mtgSlideRequests_(slide, pageId, index, options) {
 
 /**
  * 表紙・扉の色（'cover' 表紙＝緑・'divider' 扉＝グレー・統合版の表紙は MTG_OPTIONS.combined.coverTone（緑。'combined' なら紫）・
- * RX Service MTG の表紙（service）は 'combined'（紫）。MTG_COVER・MTG_OPTIONS.colors のキー）
+ * RX Service Meeting の表紙（service）は 'combined'（紫）。MTG_COVER・MTG_OPTIONS.colors のキー）
  */
 function mtgCoverTone_(slide) {
   if (slide.service) return 'combined';
@@ -4250,7 +4263,7 @@ function mtgCoverTone_(slide) {
 function mtgTemplatePlan_(slides, pages) {
   const P = MTG_OPTIONS.templatePages;
   const page = n => (n ? pages[n - 1] || null : null);
-  // RX Service MTG の表紙（service）は紫のページだけ（無ければ緑の表紙は使わずに、紫で描く）
+  // RX Service Meeting の表紙（service）は紫のページだけ（無ければ緑の表紙は使わずに、紫で描く）
   const source = slide => (slide.service ? page(P.service) : slide.cover ? (slide.combined && page(P.combined)) || page(P.cover)
     : slide.divider ? page(P.divider) : null);
   const used = {};
@@ -4598,11 +4611,11 @@ function setMeetingTemplate() {
 function mtgTemplateMessage_(slides, sourceId) {
   const count = (Slides.Presentations.get(slides.getId(), {fields: MTG_SLIDES_FIELDS.count}).slides || []).length;
   const P = MTG_OPTIONS.templatePages;
-  const use = [[P.cover, '表紙'], [P.divider, '扉（Appendix）'], [P.combined, '統合版（全サブインダストリー）の表紙'], [P.service, 'RX Service MTG の表紙']]
+  const use = [[P.cover, '表紙'], [P.divider, '扉（Appendix）'], [P.combined, '統合版（全サブインダストリー）の表紙'], [P.service, 'RX Service Meeting の表紙']]
     .filter(([n]) => n && n <= count).map(([n, label]) => n + '枚目を' + label);
   return 'ひな形を登録しました（' + count + '枚。' + use.join('、') + 'に使います' +
     (count < P.divider ? '。扉はグレーの絵柄で描きます' : '') + (P.combined && P.combined <= count ? '' : '。統合版の表紙も1枚目を使います') +
-    (P.service && P.service <= count ? '' : '。RX Service MTG の表紙は紫の絵柄で描きます') + '）。次に作る会議サマリから使います。' +
+    (P.service && P.service <= count ? '' : '。RX Service Meeting の表紙は紫の絵柄で描きます') + '）。次に作る会議サマリから使います。' +
     (slides.getId() !== sourceId ? '\n.pptx を Google スライドに変換して使います（.pptx を更新したら、次に作るときに変換し直します）：' + slides.getUrl() : '');
 }
 

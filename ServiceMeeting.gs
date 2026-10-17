@@ -1,17 +1,17 @@
 /**
- * RX Service MTG の事前資料（サービス改善の会議。16:9 のスライドと PDF。紫を基調にしたトンマナ）
+ * RX Service Meeting の事前資料（サービス改善の会議。16:9 のスライドと PDF。紫を基調にしたトンマナ）
  * サービス管理（ServiceManagement.gs）・タスク管理（TaskManagement.gs）・会議サマリ（MeetingSummary.gs）と同じプロジェクトに置くファイル。
  *
  * 目的
- * - RX Service MTG（サービス改善。月1回・第二週の金曜 9:00〜9:30）の事前資料。会議の目的（顧客課題と提供価値の仮説をすり合わせ、
+ * - RX Service Meeting（サービス改善。月1回・第二週の金曜 9:00〜9:30）の事前資料。会議の目的（顧客課題と提供価値の仮説をすり合わせ、
  *   提案・実行のシナリオを具体化する）と議題（シナリオの有効性検証・顧客・業界との適合・マネタイズの検討・サービスの磨き込み）に向けて、
  *   サービス案ごとの状況を事前に共有する。
- * - 資料はサブインダストリー（リクエストを読むシート）ごとに作る（2026/10/17 から。RX Business MTG と同じ）。そのサブインダストリーのリクエストと、
+ * - 資料はサブインダストリー（リクエストを読むシート）ごとに作る（2026/10/17 から。RX Business Meeting と同じ）。そのサブインダストリーのリクエストと、
  *   それを含むサービス案を載せる（サービス案のタスク・サブインダストリーの広がりは、サービス案全体）。すべてのリクエストをまとめた資料
  *   （全サブインダストリー。MTG_OPTIONS.combined.name）も作れる。
- * - RX Business MTG の資料と同じく、シートから分かる事実だけを書く（サービス案の良し悪し・決めてほしいことなどの判断は書かない）。
+ * - RX Business Meeting の資料と同じく、シートから分かる事実だけを書く（サービス案の良し悪し・決めてほしいことなどの判断は書かない）。
  *
- * 資料の構成（RX Business MTG の資料と同じ形・同じ部品（MeetingSummary.gs の mtg*）で、色を紫（SMTG_OPTIONS.colors）にする）
+ * 資料の構成（RX Business Meeting の資料と同じ形・同じ部品（MeetingSummary.gs の mtg*）で、色を紫（SMTG_OPTIONS.colors）にする）
  *   表紙（ひな形の3枚目＝紫。MTG_OPTIONS.templatePages.service。ひな形が無ければ同じ絵柄の紫の画像に描く）
  *   1 サマリー：数字（登録リクエスト・判断待ち・サービス化検討・サービス案・タスクの完了）と前回比、前回以降の動き、議題と資料のページ
  *   2 サービス案の一覧：リクエストの数・得意先・サブインダストリー・元になった案件の期待値・主管本部と担当者・タスクの状況
@@ -40,7 +40,8 @@
  */
 
 const SMTG_OPTIONS = {
-  meetingName: 'RX Service MTG',          // 表紙・出典の行に出す会議の名前
+  meetingName: 'RX Service Meeting',          // 表紙・出典の行・会議のフォルダの名前に出す会議の名前
+  formerMeetingNames: ['RX Service MTG'],      // 前の名前（2026/10/17 まで）。この名前の会議のフォルダも、この会議のフォルダとして使う
   // ファイル名（スライド・PDF）。{date} は会議日（yyyyMMdd）、{name} はサブインダストリー（全体は MTG_OPTIONS.combined.name）。試作は末尾に「_試作」
   fileName: '{date}_{name}_RX Service Meeting用資料',
   // 会議の記録（ドキュメントのプロパティ）：会議日の一覧と、会議日ごとのリクエストの判断・タスクの状況・件数（後ろに yyyyMMdd）
@@ -49,7 +50,8 @@ const SMTG_OPTIONS = {
   keepMeetings: 24,
   detailMaxLength: 8000,                  // 判断・状況の記録の長さの上限（プロパティの1つの値の上限 9KB に収める。越えたら件数だけ残す）
   // 会議資料のインデックス（MTG_OPTIONS.index）の種別の列に書く値（その行の、サブインダストリー・全サブインダストリーの列に PDF を書く）
-  index: {kind: 'RX Service MTG'},
+  // formerKinds は前の版で書いた種別（同じ会議の行として使い、書くときに今の種別に書き換える）
+  index: {kind: 'RX Service Meeting', formerKinds: ['RX Service MTG']},
   // Apps Script の1回の実行は6分まで。作り始めてから limitMs を過ぎそうなら区切り、continueAfterMs あとに続ける（トリガー handler。1回きり）。
   // 見積もり：readMs シートを読む・deckMs 資料1つ・storeMs 格納とインデックス1つ
   run: {limitMs: 320000, readMs: 20000, deckMs: 40000, storeMs: 10000, continueAfterMs: 60000,
@@ -84,21 +86,21 @@ const SMTG_TITLES = {
   checks: 'Appendix ③　入力内容の確認事項（一覧）'
 };
 
-/* 入力内容の確認事項の種類（この順に出す。意味は docs/DESIGN.md の「RX Service MTG の事前資料」） */
+/* 入力内容の確認事項の種類（この順に出す。意味は docs/DESIGN.md の「RX Service Meeting の事前資料」） */
 const SMTG_CHECKS = ['サービス案未設定', '判断とサービス案の不整合', '選択肢外の判断', '主管本部・担当者未設定', 'タスクなし', 'タスクの担当者未入力',
   'タスクの状況未入力', 'リクエストが見つからない', '元の案件が見つからない'];
 
 /* ---------------- エディタから実行する ---------------- */
 
 /**
- * RX Service MTG の事前資料（Google スライドと PDF）を作る（作るサブインダストリーと今回の会議日を聞く）。
+ * RX Service Meeting の事前資料（Google スライドと PDF）を作る（作るサブインダストリーと今回の会議日を聞く）。
  * 会議日とその時点の状況を記録し、次の資料は今からの変化を出す。
  */
 function createServiceMtgSummaries() {
   smtgRun_(true);
 }
 
-/** 試しに RX Service MTG の事前資料を作る（保存するが、会議日は記録しない。ファイル名に「試作」が付く）。 */
+/** 試しに RX Service Meeting の事前資料を作る（保存するが、会議日は記録しない。ファイル名に「試作」が付く）。 */
 function previewServiceMtgSummaries() {
   smtgRun_(false);
 }
@@ -216,8 +218,8 @@ function smtgJobRun_(ss, job, started, base) {
 }
 
 /**
- * 1つの資料（name：サブインダストリーか全サブインダストリー）を作って保存する。本番は会議のフォルダ（yyMMdd_RX Service MTG_第N回）に格納し、
- * インデックスの種別「RX Service MTG」の行の name の列に書く。戻り値 {name, line: 知らせる文}
+ * 1つの資料（name：サブインダストリーか全サブインダストリー）を作って保存する。本番は会議のフォルダ（yyMMdd_RX Service Meeting_第N回）に格納し、
+ * インデックスの種別「RX Service Meeting」の行の name の列に書く。戻り値 {name, line: 知らせる文}
  */
 function smtgCreateOne_(base, job, name, folder) {
   const data = smtgView_(base, name, job.meeting);
@@ -228,7 +230,7 @@ function smtgCreateOne_(base, job, name, folder) {
     '・確認事項 ' + data.checks.length + '。' + slides.length + 'ページ）', '　' + out.pdf.getUrl()];
   if (!job.final) return {name, line: lines.join('\n')};
   // 会議のフォルダ：サブインダストリーのフォルダ（DIFF_RULES の meetingFolder。全サブインダストリーは MTG_OPTIONS.combined.meetingFolder）の中の
-  // 「yyMMdd_RX Service MTG_第N回」（無ければ作る。mtgMeetingFolder_）
+  // 「yyMMdd_RX Service Meeting_第N回」（無ければ作る。mtgMeetingFolder_）
   let stored = {file: out.pdf, folder};
   const moved = mtgStoreToMeetingFolder_(name, job.meeting, out.pdf, SMTG_OPTIONS.meetingName);
   if (moved.error) lines.push('　会議のフォルダに格納できませんでした（' + moved.error + '）。PDF は保存先に残しています。');
@@ -248,7 +250,7 @@ function smtgJobMessage_(job, done) {
     const rest = job.names.slice(job.items.length);
     return ['時間がかかるため、ここで区切りました（Apps Script の1回の実行は6分まで）。残りの資料 ' + rest.length + '件（' + rest.join('・') + '）は、約' +
       Math.round(SMTG_OPTIONS.run.continueAfterMs / 60000) + '分後に自動で続けます。',
-    '続きが終わったら、エディタで showServiceMtgSummariesResult() を実行すると結果が出ます（実行ログにも出ます）。終わるまで、RX Service MTG の資料の関数は実行しないでください。',
+    '続きが終わったら、エディタで showServiceMtgSummariesResult() を実行すると結果が出ます（実行ログにも出ます）。終わるまで、RX Service Meeting の資料の関数は実行しないでください。',
     ''].concat(lines, ['', '保存先：' + job.folderUrl]).join('\n');
   }
   if (job.skipped && job.skipped.length) lines.push('', 'リクエストが無いため作らなかったサブインダストリー：' + job.skipped.join('・'));
@@ -267,7 +269,7 @@ function smtgJobPause_(job) {
   PropertiesService.getScriptProperties().setProperty(R.jobKey, JSON.stringify(Object.assign({}, job, {savedAt: Date.now()})));
   smtgJobDeleteTriggers_();
   ScriptApp.newTrigger(R.handler).timeBased().after(R.continueAfterMs).create();
-  console.log('RX Service MTG の資料：時間がかかるため区切りました（資料 ' + job.items.length + '/' + job.names.length + '）。続きを予約しました。');
+  console.log('RX Service Meeting の資料：時間がかかるため区切りました（資料 ' + job.items.length + '/' + job.names.length + '）。続きを予約しました。');
   return false;
 }
 
@@ -294,7 +296,7 @@ function smtgJobSaveResult_(message) {
 }
 
 /**
- * 区切った RX Service MTG の資料の続き（時間主導のトリガーから。1回きり）。保存した仕事を続け、まだ残れば、また区切って次を予約する。
+ * 区切った RX Service Meeting の資料の続き（時間主導のトリガーから。1回きり）。保存した仕事を続け、まだ残れば、また区切って次を予約する。
  * 終わったら（止まったら）知らせを保存する（showServiceMtgSummariesResult() で出す。実行ログにも出す）
  */
 function continueServiceMtgSummaries() {
@@ -316,7 +318,7 @@ function continueServiceMtgSummaries() {
   console.log(message);
 }
 
-/** 自動で続けた RX Service MTG の資料の結果・進み具合を出す（エディタから実行） */
+/** 自動で続けた RX Service Meeting の資料の結果・進み具合を出す（エディタから実行） */
 function showServiceMtgSummariesResult() {
   const R = SMTG_OPTIONS.run;
   const ui = mtgUi_();
@@ -324,13 +326,13 @@ function showServiceMtgSummariesResult() {
   let message;
   if (job) {
     const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === R.handler).length;
-    message = 'RX Service MTG の資料を作っている途中です（会議日 ' + job.meeting + '。資料 ' + job.items.length + '/' + job.names.length + '件）。' +
+    message = 'RX Service Meeting の資料を作っている途中です（会議日 ' + job.meeting + '。資料 ' + job.items.length + '/' + job.names.length + '件）。' +
       (triggers ? '自動で続けています。少し待ってから、もう一度実行してください。'
         : '続きの予約がありません。createServiceMtgSummaries()（試作なら previewServiceMtgSummaries()）で作り直してください。');
   } else {
     const props = PropertiesService.getScriptProperties();
     const keys = props.getKeys().filter(key => key.indexOf(R.resultKey + '_') === 0).sort((a, b) => Number(a.split('_').pop()) - Number(b.split('_').pop()));
-    message = keys.length ? keys.map(key => props.getProperty(key)).join('') : '自動で続けた RX Service MTG の資料の結果はありません。';
+    message = keys.length ? keys.map(key => props.getProperty(key)).join('') : '自動で続けた RX Service Meeting の資料の結果はありません。';
   }
   console.log(message);
   ui.alert(SVC_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
@@ -340,7 +342,7 @@ function showServiceMtgSummariesResult() {
 function smtgJobStartCheck_(ui) {
   const job = smtgJobLoad_();
   if (!job) return true;
-  const answer = ui.alert(SVC_OPTIONS.menuTitle, '前に始めた RX Service MTG の資料（会議日 ' + job.meeting + '・' + (job.final ? '本番' : '試作') + '。資料 ' +
+  const answer = ui.alert(SVC_OPTIONS.menuTitle, '前に始めた RX Service Meeting の資料（会議日 ' + job.meeting + '・' + (job.final ? '本番' : '試作') + '。資料 ' +
     job.items.length + '/' + job.names.length + '件）を、自動で続けている途中です。\n\n' +
     'それをやめて、新しく作りますか？（「いいえ」なら何もしません。続きが終わったら showServiceMtgSummariesResult() で結果を見られます）', ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return false;
@@ -769,7 +771,7 @@ function smtgSlides_(data, meeting, final) {
   });
 }
 
-/** いちばん下の行（「スーパー・GMS（11/13 RX Service MTG 資料）」。試作は【試作】、サンプルを含めば【サンプルデータを含む】）{source} */
+/** いちばん下の行（「スーパー・GMS（11/13 RX Service Meeting 資料）」。試作は【試作】、サンプルを含めば【サンプルデータを含む】）{source} */
 function smtgFrame_(data, meeting, final) {
   return {source: (final ? '' : '【試作】') + (data.sample ? '【サンプルデータを含む】' : '') + data.name + '（' + mtgShortDate_(meeting) + ' ' +
     SMTG_OPTIONS.meetingName + ' 資料）　金額の単位：百万円'};

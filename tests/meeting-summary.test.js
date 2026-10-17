@@ -443,7 +443,7 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
 
   // 表紙（ひな形の1枚目）：決まった文字を、サブインダストリー・会議の名前と事前資料・会議日・（名前の欄は空）に置き換え、
   // その下にデータの時点・期間を白い字で足す。出典の行・ページ番号は置かない
-  assert.deepStrictEqual(slides[0].template, {title: '新FMT', subtitle: 'RX Business MTG　事前資料',
+  assert.deepStrictEqual(slides[0].template, {title: '新FMT', subtitle: 'RX Business Meeting　事前資料',
     date: slides[0].template.date, name: ''});
   assert.ok(slides[0].cover && !slides[0].divider);
   assert.match(slides[0].template.date, /^\d{4}年10月23日（[日月火水木金土]）$/);
@@ -451,7 +451,7 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
     '出典：「新FMT」シートおよび変更履歴（# 時点）', '対象期間：直近14日間（#〜。初回のため）']);
   assert.ok(slides[0].elements.every(el => el.color === c.white && el.align === 'CENTER'));
   assert.ok(!['title', 'footer', 'page', 'lead'].some(role => roleOf(slides[0], role).length), '表紙には見出し・出典の行・ページ番号を置かない');
-  assert.strictEqual(plain(g.mtgSlides_(Object.assign({}, s, {final: false})))[0].template.subtitle, 'RX Business MTG　事前資料【試作】');
+  assert.strictEqual(plain(g.mtgSlides_(Object.assign({}, s, {final: false})))[0].template.subtitle, 'RX Business Meeting　事前資料【試作】');
   assert.strictEqual(plain(g.mtgSlides_(Object.assign({}, s, {meeting: '2026/11/06'})))[0].template.date, '2026年11月6日（金）');
 
   // 扉（ひな形の1枚目を複製）：見出しを「Appendix」に（ほかの決まった文字は空）、その下に Appendix の見出し・始まりのページ（「（続き）」のページは出さない）
@@ -1029,7 +1029,7 @@ test('mtgSlideRequests_：一部の文字の書式（spans）・塗りの濃さ�
   assert.deepStrictEqual(fonts, [12, undefined, 10.67]);
 
   // ひな形のページ：スライドは作らず、足す部品だけ（決まった文字の書き換えは mtgTemplateTextRequests_）。部品の ID は idPrefix から
-  const cover = {template: {title: 'スーパー・GMS', subtitle: 'RX Business MTG　事前資料', date: '2026年11月6日（金）', name: ''}, elements: [slide.elements[0]]};
+  const cover = {template: {title: 'スーパー・GMS', subtitle: 'RX Business Meeting　事前資料', date: '2026年11月6日（金）', name: ''}, elements: [slide.elements[0]]};
   const onTemplate = plain(g.mtgSlideRequests_(cover, 'g1a2b3', 0, {scale: 4 / 3, existing: true, idPrefix: 'mtg_p1'}));
   assert.ok(!onTemplate.some(r => r.createSlide || r.replaceAllText || r.updatePageProperties));
   const added = onTemplate.find(r => r.createShape).createShape;
@@ -1041,7 +1041,7 @@ test('mtgSlideRequests_：一部の文字の書式（spans）・塗りの濃さ�
     plain(g.mtgRgb_('#3A7D22'))}}}}, fields: 'pageBackgroundFill.solidFill.color'}});
   assert.ok(!plainCover.some(r => r.createShape && r.createShape.elementProperties.size.width.magnitude >= 720), 'ページ全体を覆う四角は置かない（背景の画像が隠れる）');
   assert.deepStrictEqual(plainCover.filter(r => r.insertText).map(r => r.insertText.text),
-    ['スーパー・GMS', 'RX Business MTG　事前資料', '2026年11月6日（金）', '今期（2026/4〜）　受注']);
+    ['スーパー・GMS', 'RX Business Meeting　事前資料', '2026年11月6日（金）', '今期（2026/4〜）　受注']);
 });
 
 test('表紙・扉の背景の画像：1280 × 720 の PNG（表紙は緑のグラデーションに濃い緑の RX、扉はグレー）。正しく展開でき、小さい', () => {
@@ -1185,7 +1185,7 @@ test('会議のフォルダを作らない設定（createMeetingFolder: false）
   g.createBusinessMtgSummaries();
   const done = gas.alerts[gas.alerts.length - 1].message;
   assert.match(done, new RegExp('※ 会議のフォルダに格納できませんでした（「スーパー・GMS」の中に「' + yymmdd(meeting) +
-    '_」で始まる RX Business MTG のフォルダが無い）。資料は保存先にあります。フォルダを用意してから、エディタで storeBusinessMtgSummaries\\(\\) を実行して格納してください。'));
+    '_」で始まる RX Business Meeting のフォルダが無い）。資料は保存先にあります。フォルダを用意してから、エディタで storeBusinessMtgSummaries\\(\\) を実行して格納してください。'));
   assert.ok(JSON.parse(g.PropertiesService.getDocumentProperties().getProperty('MTG_MEETINGS_新FMT')).some(m => m.date === meeting), '会議日は記録する');
 
   gas.driveFolders.push({id: 'meeting-folder-new', name: yymmdd(meeting) + '_第5回会議', parent: 'SubIndustryFolder0001'});
@@ -1199,34 +1199,34 @@ test('会議のフォルダを作らない設定（createMeetingFolder: false）
   assert.match(gas.alerts[gas.alerts.length - 1].message, /「新FMT」：本番の資料（\d{4}1030_新FMT_RX Business Meeting用資料\.pdf）が保存先・会議のフォルダにありません。createBusinessMtgSummaries\(\) で作ってください。/);
 });
 
-test('会議のフォルダが無ければ「yyMMdd_RX Business MTG_第N回」を作って格納する（N は前の同じ会議のフォルダの回数＋1。後の会議・ほかの会議のフォルダは数えない）', () => {
+test('会議のフォルダが無ければ「yyMMdd_RX Business Meeting_第N回」を作って格納する（N は前の同じ会議のフォルダの回数＋1。後の会議・ほかの会議のフォルダは数えない）', () => {
   const {gas, g} = setup();
   const meeting = g.mtgParseDate_('10/23', new Date());
   const later = String(Number(meeting.slice(2, 4)) + 1) + '0101_第9回会議';   // 来年の会議（数えない）
-  // 前の版の名前（会議の名前なし）は RX Business MTG のフォルダ。RX Service MTG のフォルダ（同じ日付でも）は数えない・使わない
-  meetingFolders(gas, ['260420_第1回会議', '260819_第４回会議', later, '資料置き場', '260911_RX Service MTG_第7回', yymmdd(meeting) + '_RX Service MTG_第8回']);
+  // 前の版の名前（会議の名前なし）は RX Business Meeting のフォルダ。RX Service Meeting のフォルダ（同じ日付でも）は数えない・使わない
+  meetingFolders(gas, ['260420_第1回会議', '260819_第４回会議', later, '資料置き場', '260911_RX Service Meeting_第7回', yymmdd(meeting) + '_RX Service Meeting_第8回']);
   gas.promptAnswers = ['1', '10/23'];
   g.createBusinessMtgSummaries();
   const created = gas.driveFolders.filter(f => f.parent === 'SubIndustryFolder0001' && f.name.indexOf(yymmdd(meeting)) === 0);
-  assert.deepStrictEqual(created.filter(f => !/Service/.test(f.name)).map(f => f.name), [yymmdd(meeting) + '_RX Business MTG_第5回'], '全角の数字も読む');
+  assert.deepStrictEqual(created.filter(f => !/Service/.test(f.name)).map(f => f.name), [yymmdd(meeting) + '_RX Business Meeting_第5回'], '全角の数字も読む');
   const business = created.find(f => !/Service/.test(f.name));
   assert.ok(gas.driveFiles.some(f => f.folder === business.id && /_新FMT_RX Business Meeting用資料\.pdf$/.test(f.name)));
-  assert.match(gas.alerts[gas.alerts.length - 1].message, new RegExp('会議のフォルダ「' + yymmdd(meeting) + '_RX Business MTG_第5回」を作って格納しました'));
+  assert.match(gas.alerts[gas.alerts.length - 1].message, new RegExp('会議のフォルダ「' + yymmdd(meeting) + '_RX Business Meeting_第5回」を作って格納しました'));
   // 作り直しても、同じフォルダを使う（もう1つ作らない）
   gas.promptAnswers = ['1', '10/23'];
   g.createBusinessMtgSummaries();
-  assert.strictEqual(gas.driveFolders.filter(f => f.name.indexOf(yymmdd(meeting)) === 0).length, 2, 'RX Business MTG のフォルダは1つ（もう1つは RX Service MTG）');
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /会議のフォルダ「\d{6}_RX Business MTG_第5回」に格納しました/);
+  assert.strictEqual(gas.driveFolders.filter(f => f.name.indexOf(yymmdd(meeting)) === 0).length, 2, 'RX Business Meeting のフォルダは1つ（もう1つは RX Service Meeting）');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /会議のフォルダ「\d{6}_RX Business Meeting_第5回」に格納しました/);
   const parent = g.DriveApp.getFolderById('SubIndustryFolder0001');
   assert.strictEqual(g.mtgNextMeetingNumber_(parent, '260101'), 1, '前の会議が無ければ第1回');
-  assert.strictEqual(g.mtgNextMeetingNumber_(parent, yymmdd(meeting), 'RX Service MTG'), 8, 'RX Service MTG の回数は RX Service MTG のフォルダだけで数える');
+  assert.strictEqual(g.mtgNextMeetingNumber_(parent, yymmdd(meeting), 'RX Service Meeting'), 8, 'RX Service Meeting の回数は RX Service Meeting のフォルダだけで数える');
 });
 
 test('mtgMeetingFolder_：設定が無い・開けない・2つある・コピーできないときは理由を返す（止めない）。URL・ID のどちらでも設定できる', () => {
   const {gas, g} = setup({edits: false});
   assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /「新FMT」の会議のフォルダが設定されていない（test\.gs の DIFF_RULES の meetingFolder）/);
   meetingFolders(gas, ['261023_第5回会議', '261023_第5回会議（予備）']);
-  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /「261023_」で始まる RX Business MTG のフォルダが 2個ある（「261023_第5回会議」「261023_第5回会議（予備）」。1つにしてください）/);
+  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /「261023_」で始まる RX Business Meeting のフォルダが 2個ある（「261023_第5回会議」「261023_第5回会議（予備）」。1つにしてください）/);
   gas.driveFolders.pop();
   assert.strictEqual(g.mtgMeetingFolder_('新FMT', '2026/10/23').folder.getId(), 'meeting-folder-0');
   gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'SubIndustryFolder0001';
@@ -1256,7 +1256,7 @@ test('インデックス：会議のフォルダに格納したら、「INDEX_�
   const day = d => d.replace(/\/0?/g, '/');   // 2026/10/09 → 2026/10/9（表示形式 yyyy/m/d）
   assert.deepStrictEqual(plain(sheet.getRange(1, 1, 2, 5).getDisplayValues()), [
     ['日付', '種別', '全サブインダストリー', '新FMT', '新FMT2'],
-    [day(meeting), 'RX Business MTG', '', meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料.pdf', '']
+    [day(meeting), 'RX Business Meeting', '', meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料.pdf', '']
   ]);
   assert.deepStrictEqual([sheet.getMaxRows(), sheet.getMaxColumns()], [2, 5], '使わない行・列は持たない');
   assert.strictEqual(sheet.getRange(2, 4).getRichTextValues()[0][0].getLinkUrl(), 'https://drive.google.com/file/d/' + pdf.id + '/view', 'ファイルへの直リンク');
@@ -1275,9 +1275,9 @@ test('インデックス：会議のフォルダに格納したら、「INDEX_�
   assert.ok(g.mtgWriteIndex_('専門店', year + '/10/30', at('u-x')).url);
   assert.deepStrictEqual(plain(sheet.getRange(1, 1, 4, 6).getDisplayValues()), [
     ['日付', '種別', '全サブインダストリー', '新FMT', '新FMT2', '専門店'],
-    [year + '/10/30', 'RX Business MTG', '', 'u-1030', '', 'u-x'],
-    [day(meeting), 'RX Business MTG', '', 'u-1023b', '', ''],
-    [year + '/10/16', 'RX Business MTG', '', '', 'u-1016', '']
+    [year + '/10/30', 'RX Business Meeting', '', 'u-1030', '', 'u-x'],
+    [day(meeting), 'RX Business Meeting', '', 'u-1023b', '', ''],
+    [year + '/10/16', 'RX Business Meeting', '', '', 'u-1016', '']
   ]);
   assert.deepStrictEqual(plain(sheet.cell(4, 1).fmt), {fw: 'bold', fs: 9, fc: '#000000', va: 'middle'}, '差し込んだ行も同じ書式');
   // 手で入れた行：日付の値・種別が空なら同じ行に書く。種別が違う行には書かない（新しい行にする）
@@ -1288,7 +1288,7 @@ test('インデックス：会議のフォルダに格納したら、「INDEX_�
   g.mtgWriteIndex_('新FMT2', year + '/10/30', at('u-1030c'));
   assert.deepStrictEqual(plain(sheet.getRange(2, 1, 2, 5).getDisplayValues()), [
     [year + '/10/30', '別の会議', '全体の資料', 'u-1030', 'u-1030b'],
-    [year + '/10/30', 'RX Business MTG', '', '', 'u-1030c']
+    [year + '/10/30', 'RX Business Meeting', '', '', 'u-1030c']
   ]);
   // 前の版（古い会議日が上）で作ったシートは、次に書くときに新しい順に並べ直す（行ごと動かすので、手で入れた値もそのまま）
   const rows = () => plain(sheet.getRange(2, 1, sheet.getLastRow() - 1, 4).getDisplayValues()).map(r => [r[0], r[3]]);
@@ -1334,8 +1334,8 @@ test('インデックス：前の形式（行＝サブインダストリー）�
   const sheet = gas.ss.getSheetByName('INDEX_会議資料');
   assert.deepStrictEqual(plain(sheet.getRange(1, 1, 3, 5).getDisplayValues()), [
     ['日付', '種別', '全サブインダストリー', '新FMT', '新FMT2'],
-    [year + '/10/23', 'RX Business MTG', '', year + '1023_新FMT_RX Business Meeting用資料.pdf', ''],
-    [year + '/10/16', 'RX Business MTG', '', year + '1016_新FMT_RX Business Meeting用資料.pdf', '']
+    [year + '/10/23', 'RX Business Meeting', '', year + '1023_新FMT_RX Business Meeting用資料.pdf', ''],
+    [year + '/10/16', 'RX Business Meeting', '', year + '1016_新FMT_RX Business Meeting用資料.pdf', '']
   ]);
   assert.strictEqual(sheet.getLastRow(), 3, '試作の資料・会議日でないフォルダは書かない');
   assert.ok(gas.writes.filter(w => w.sheet === 'INDEX_会議資料').every(w => w.locked), '書き込みはロックの中');
@@ -1526,7 +1526,7 @@ test('createBusinessMtgSummaries：シートと会議日を聞き、シートご
   const requests = gas.decks[0].requests;
   assert.strictEqual(requests.filter(r => r.createSlide).length, 10, '表紙・本編4枚・扉・Appendix ①・②・③（責任者別・一覧）（停滞が無くても ② を出す）');
   const inserted = deck => deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
-  assert.match(inserted(gas.decks[1]), /^新FMT2\nRX Business MTG　事前資料\n/);
+  assert.match(inserted(gas.decks[1]), /^新FMT2\nRX Business Meeting　事前資料\n/);
   assert.match(inserted(gas.decks[1]), /\nサマリー\n/);
   assert.match(inserted(gas.decks[1]), /\n新FMT2（10\/23 会議資料）　金額の単位：百万円\n/);
   assert.deepStrictEqual(requests.filter(r => r.deleteObject).map(r => r.deleteObject.objectId), ['p'], '作ったときの白紙のスライドを消す');
@@ -1631,7 +1631,7 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
     ['post', 'Bearer oauth-token', {name: '会議サマリのひな形（表紙.pptx から変換）', mimeType: 'application/vnd.google-apps.presentation', parents: ['folder-1']}]);
   assert.deepStrictEqual(JSON.parse(props.getProperty('MTG_TEMPLATE_CONVERTED')), {source: pptx, updated: 1000, id});
   assert.match(gas.alerts[gas.alerts.length - 1].message,
-    /ひな形を登録しました（3枚。1枚目を表紙、2枚目を扉（Appendix）、3枚目をRX Service MTG の表紙に使います。統合版の表紙も1枚目を使います）。[\s\S]*\.pptx を Google スライドに変換して使います/);
+    /ひな形を登録しました（3枚。1枚目を表紙、2枚目を扉（Appendix）、3枚目をRX Service Meeting の表紙に使います。統合版の表紙も1枚目を使います）。[\s\S]*\.pptx を Google スライドに変換して使います/);
   const fetched = gas.fetches.length;
 
   gas.layoutPlaceholders = ['SLIDE_NUMBER', 'FOOTER'];   // ひな形の白紙のレイアウトにはページ番号・フッターの枠がある
@@ -1657,7 +1657,7 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   assert.match(date, /^\d{4}年10月23日（[日月火水木金土]）$/);
   assert.deepStrictEqual(texts('g_cover').filter(t => t[1] !== 'extra'), [
     ['入れる', 'title', 0, '新FMT'], ['消す', 'title', 'FIXED_RANGE', 4, 9],
-    ['入れる', 'subtitle', 0, 'RX Business MTG　事前資料'], ['消す', 'subtitle', 'FIXED_RANGE', 20, 25],
+    ['入れる', 'subtitle', 0, 'RX Business Meeting　事前資料'], ['消す', 'subtitle', 'FIXED_RANGE', 24, 29],
     ['入れる', 'date', 0, date], ['消す', 'date', 'FIXED_RANGE', date.length, date.length + '2026年 4月 17日'.length],
     ['消す', 'name', 'ALL', undefined, undefined]
   ], '新しい文字を先頭に入れてから元の文字を消す（元の書式を引き継ぐ）');
@@ -1854,7 +1854,7 @@ test('setBusinessMtgChat：webhook の URL と資料の格納先の URL を登�
   assert.strictEqual(gas.fetches[0].url, WEBHOOK);
   assert.deepStrictEqual([gas.fetches[0].params.method, gas.fetches[0].params.contentType], ['post', 'application/json; charset=UTF-8']);
   assert.strictEqual(sentText(gas.fetches[0]), '【テスト送信】会議サマリの通知の設定を確認するためのメッセージです。\n' +
-    '今後、RX Business MTG の事前資料のご案内をこちらにお送りいたします。');
+    '今後、RX Business Meeting の事前資料のご案内をこちらにお送りいたします。');
   assert.match(gas.alerts[gas.alerts.length - 1].message,
     new RegExp('・送り先：スペース AAAAtest123\n・送る URL：' + DEMO_URL + '\n・notifyBusinessMtgSummaries\\(\\) を実行すると、資料のファイルのリンクをすぐに送ります（フォルダなら、その中でいちばん新しい PDF）。\n・前の版の自動通知（2日前）のトリガーを外しました。'));
 
@@ -1899,8 +1899,8 @@ test('notifyBusinessMtgSummaries：会議日程を聞き、格納先のフォル
   file('slide-1', 'demo-folder-0001', '会議サマリ_デモ（スライド）', 'application/vnd.google-apps.presentation', 0);
   file('pdf-other-0001', 'other-folder-0001', '別の資料.pdf', 'application/pdf', 0);
   const lines = (link, schedule) => [
-    '*【RX Business MTG】事前資料のご案内*',
-    'RX Business MTG の事前資料を、下記に格納いたしました。',
+    '*【RX Business Meeting】事前資料のご案内*',
+    'RX Business Meeting の事前資料を、下記に格納いたしました。',
     'お手数ですが、会議の前にご一読いただけますと幸いです。',
     '',
     '▼ 会議日程',
@@ -1983,7 +1983,7 @@ test('notifyBusinessMtgSummaries：会議日程を聞き、格納先のフォル
   g.notifyBusinessMtgSummaries();
   assert.strictEqual(gas.fetches.length, 7, '一時的な失敗（5xx）は1回だけやり直す');
   assert.strictEqual(sentText(gas.fetches[6]),
-    'RX Business MTG（2026年10月23日（金）9:00〜10:30）：<https://drive.google.com/file/d/pdf-other-0001/view|別の資料.pdf>（https://drive.google.com/file/d/pdf-other-0001/view）');
+    'RX Business Meeting（2026年10月23日（金）9:00〜10:30）：<https://drive.google.com/file/d/pdf-other-0001/view|別の資料.pdf>（https://drive.google.com/file/d/pdf-other-0001/view）');
 
   gas.fetchStatuses = [404];
   gas.fetchText = '{"error": {"message": "Requested entity was not found."}}';
@@ -2232,7 +2232,7 @@ test('統合版のスライド：表紙・目次・全サブインダストリ�
   const one = plain(g.mtgSlides_(summaries[0]));
   const slides = plain(g.mtgCombinedSlides_(summaries, '2026/10/23', true));
   assert.strictEqual(slides.length, 3 + one.length + plain(g.mtgSlides_(summaries[1])).length);
-  assert.deepStrictEqual(slides[0].template, {title: '全サブインダストリー', subtitle: 'RX Business MTG　事前資料', date: '2026年10月23日（金）', name: ''});
+  assert.deepStrictEqual(slides[0].template, {title: '全サブインダストリー', subtitle: 'RX Business Meeting　事前資料', date: '2026年10月23日（金）', name: ''});
   assert.match(slides[0].elements[0].text, /^収録：新FMT・新FMT2（2サブインダストリー）$/);
   assert.deepStrictEqual([slides[0].combined, slides[0].cover], [true, true]);
   assert.deepStrictEqual(slides.slice(3, 3 + one.length).map(sl => sl.title), one.map(sl => sl.title), '各サブインダストリーの資料はそのまま');
@@ -2297,7 +2297,7 @@ test('統合版のスライド：表紙・目次・全サブインダストリ�
   assert.match(leadOf(t2), /（期待値の列が無いシートを除く）。$/);
   assert.strictEqual(roleOf(t2, 'footer')[0].text, '【試作】全サブインダストリー（10/23 会議資料）　金額の単位：百万円　※ は「データなし」のシートを除いた合計');
   assert.strictEqual(rows2[3].cells[5].text, 'データなし', '停滞はどのシートも数えられないので、合計も「データなし」');
-  assert.strictEqual(plain(g.mtgCombinedSlides_(summaries, '2026/10/23', false))[0].template.subtitle, 'RX Business MTG　事前資料【試作】');
+  assert.strictEqual(plain(g.mtgCombinedSlides_(summaries, '2026/10/23', false))[0].template.subtitle, 'RX Business Meeting　事前資料【試作】');
 
   // 11のサブインダストリーでも1ページに入る（文字を小さくする）
   const many = Array.from({length: 11}, (_, i) => Object.assign({}, summaries[0], {name: 'サブインダストリー' + (i + 1)}));

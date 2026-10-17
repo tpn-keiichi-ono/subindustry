@@ -169,12 +169,12 @@ test('本物の設定：11シートとも、会議サマリの格納先（meetin
   assert.ok(!rules[combined.name] && [index.dateHeader, index.kindHeader].indexOf(combined.name) < 0);
 });
 
-test('本物の設定：RX Service MTG の事前資料は、ひな形の3枚目（紫）を表紙に使い、インデックスには RX Business MTG と別の種別で書く', () => {
+test('本物の設定：RX Service Meeting の事前資料は、ひな形の3枚目（紫）を表紙に使い、インデックスには RX Business Meeting と別の種別で書く', () => {
   const gas = createGas({realSheetNames: true});
   const mtg = gas.get('MTG_OPTIONS');
   const smtg = gas.get('SMTG_OPTIONS');
   assert.strictEqual(mtg.templatePages.service, 3);
-  assert.ok(smtg.index.kind && smtg.index.kind !== mtg.index.kind, '種別で RX Business MTG の行と分ける');
+  assert.ok(smtg.index.kind && smtg.index.kind !== mtg.index.kind, '種別で RX Business Meeting の行と分ける');
   assert.notStrictEqual(smtg.fileName, mtg.fileName);
   // 会議のフォルダは同じ親フォルダに並ぶので、名前に会議の名前を入れて見分ける（第N回も会議ごと）
   assert.ok(/\{meeting\}/.test(mtg.meetingFolderName));

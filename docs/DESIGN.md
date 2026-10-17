@@ -21,8 +21,8 @@
 | サンプルデータ | `サンプルデータ.gs` | 画面の確認用に、選んだ行の得意先へサンプルの履歴を追加する・まとめて削除する |
 | サービス管理 | `ServiceManagement.gs`・`RequestPickerView.html`・`RequestListDialog.html` | 新FMT のリクエストを選択パネル（サイドバー）で選んで「リクエスト」シートに登録し、リクエストをもとにサービス案を考えて名前でまとめる・棄却する |
 | タスク管理 | `TaskManagement.gs` | 別のシート「タスク管理」で、サービス案ごとの検討の進捗をタスクで管理する |
-| 会議サマリ（RX Business MTG） | `MeetingSummary.gs` | RX Business MTG（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ってドライブに保存する（サマリー・パイプラインの変化・前回から変化のある案件・期待値上位案件の状況・課題、扉、Appendix。書くのは事実だけ）。資料の格納先の URL を Google チャットにすぐ送る（webhook。`notifyBusinessMtgSummaries()`） |
-| RX Service MTG の事前資料 | `ServiceMeeting.gs` | RX Service MTG（サービス改善）の事前資料（16:9 の Google スライドと PDF。紫）を、リクエスト・タスク管理のシートから、サブインダストリーごと（と全サブインダストリー）に作る。スライドの部品・ひな形・保存・インデックスは会議サマリと共通 |
+| 会議サマリ（RX Business Meeting） | `MeetingSummary.gs` | RX Business Meeting（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ってドライブに保存する（サマリー・パイプラインの変化・前回から変化のある案件・期待値上位案件の状況・課題、扉、Appendix。書くのは事実だけ）。資料の格納先の URL を Google チャットにすぐ送る（webhook。`notifyBusinessMtgSummaries()`） |
+| RX Service Meeting の事前資料 | `ServiceMeeting.gs` | RX Service Meeting（サービス改善）の事前資料（16:9 の Google スライドと PDF。紫）を、リクエスト・タスク管理のシートから、サブインダストリーごと（と全サブインダストリー）に作る。スライドの部品・ひな形・保存・インデックスは会議サマリと共通 |
 
 ファイル名は Apps Script エディタ側の名前に合わせています（`clasp pull` で同じ名前になるように）。
 差分追跡のファイルが `test.gs` という名前なのはそのためです。
@@ -114,9 +114,9 @@ Apps Script はプロジェクトの全ファイル（リポジトリ直下の `
 | ドキュメント | `CHAR_DIFF_ROWCHECK_V1_<シートID>` | 行の確かめの印（構成の変更でロックが取れなかったとき。回収で行数・ずれだけを確かめると消える） |
 | ドキュメント | `CRED_DIALOG_SIZE_V1_<メール>` | その人のブラウザに合わせたモーダルの大きさ |
 | ドキュメント | `HS_AUTO_OFF_<メール>` | 前の版でサイドバーの自動表示をオフにした人（今は使わない。`removeHistorySidebarAutoOpen()` などで消す） |
-| ドキュメント | `SMTG_MEETINGS` | RX Service MTG の本番の会議日の一覧（会議日・作った日時・その時点のリクエストの ID の最大。24回分） |
+| ドキュメント | `SMTG_MEETINGS` | RX Service Meeting の本番の会議日の一覧（会議日・作った日時・その時点のリクエストの ID の最大。24回分） |
 | ドキュメント | `SMTG_MEETING_<yyyyMMdd>` | その会議日の時点のリクエストの判断・タスクの状況（選択肢の番号で残す）と、資料（サブインダストリー・全サブインダストリー）ごとの件数（次の会議の「前回以降の動き」と前回比に使う） |
-| スクリプト | `SMTG_JOB`・`SMTG_JOB_RESULT_<n>` | RX Service MTG の資料を区切って続けている途中の仕事と、続けて終わったときの知らせ |
+| スクリプト | `SMTG_JOB`・`SMTG_JOB_RESULT_<n>` | RX Service Meeting の資料を区切って続けている途中の仕事と、続けて終わったときの知らせ |
 | ユーザー | `CRED_COLUMN_WIDTHS_V1` | その人の列幅 |
 | ユーザーキャッシュ | `HS_CUSTCOL_<シートID>` | 得意先列の位置（10分） |
 
@@ -402,7 +402,7 @@ Apps Script はプロジェクトの全ファイル（リポジトリ直下の `
 
 ### 会議サマリ（`MeetingSummary.gs`）
 
-RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ります。
+RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ります。
 
 - 会議の形：月1回（第一週の金曜 9:00〜10:30）。サブインダストリーごとに報告4分＋フィードバック3分。目的は、案件の進捗・受注見込みを確かめ、
   優先順位と次のアクションを決めること。資料は会議の2日前に PDF で配り（入力の締切は3日前）、参加者（営業の統括・リーダー、BX、サブインダストリーのリーダー）が通読してから会議に臨みます。
@@ -462,11 +462,13 @@ RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Goo
   名前が会議日の `meetingFolderDate`（yyMMdd）で始まり、すぐあとが数字でないフォルダを探し、PDF を移します（`moveTo`。保存先と二重にしないため。同じ名前の古い版はゴミ箱へ）。
   見つからない・2つ以上ある・開けない・書き込めないときは止めずに、理由を終わりの画面に出します（資料は保存先にある）。
   あとから `storeBusinessMtgSummaries()`（エディタから実行。シートと会議日を聞く）で、保存先の本番の PDF を同じように格納します。
-  会議のフォルダが無ければ作ります（`createMeetingFolder`。名前は `meetingFolderName` の `{date}_{meeting}_第{n}回`（`261023_RX Business MTG_第5回`）。
+  会議のフォルダが無ければ作ります（`createMeetingFolder`。名前は `meetingFolderName` の `{date}_{meeting}_第{n}回`（`261023_RX Business Meeting_第5回`）。
   `{n}` は、そのフォルダの中の、この会議日より前の同じ会議のフォルダの「第N回」のいちばん大きい N ＋ 1（`mtgNextMeetingNumber_`。全角の数字も読む。後の会議日のフォルダは数えない））。
   作り直したときは、作ったフォルダが見つかるので、もう1つは作りません。
-  会議のフォルダは、名前に含む会議の名前（RX Business MTG・RX Service MTG）で見分けます（`mtgFolderIsMeeting_`）。同じサブインダストリーのフォルダの中に両方の会議のフォルダが並び、
-  第N回は会議ごとに数えます。会議の名前を含まない前の版のフォルダ（`261023_第5回会議`）は、RX Business MTG のフォルダとして使い続けます（2026/10/17 から）。
+  会議のフォルダは、名前に含む会議の名前（RX Business Meeting・RX Service Meeting）で見分けます（`mtgFolderIsMeeting_`）。同じサブインダストリーのフォルダの中に両方の会議のフォルダが並び、
+  第N回は会議ごとに数えます。会議の名前を含まない前の版のフォルダ（`261023_第5回会議`）は、RX Business Meeting のフォルダとして使い続けます（2026/10/17 から）。
+  前の会議の名前（RX Business MTG・RX Service MTG。`formerMeetingNames`）のフォルダも、同じ会議のフォルダとして見分けます。インデックスの種別も、前の名前の行（`index.formerKinds`）を
+  同じ会議の行として使い、書くときに今の名前に書き換えます。
 - **統合版**（`createBusinessMtgCombinedSummary()`・`mtgCreateCombined_`・`mtgCombinedSlides_`。`MTG_OPTIONS.combined`）：すべてのサブインダストリーの資料を作ったあとに、
   別の関数で、全サブインダストリーの資料を1つにまとめた資料を作ります（`{date}_全サブインダストリー_RX Business Meeting用資料`。試作なら試作）。
   資料を作る関数（`createBusinessMtgSummaries()`）とは分けます：11シートの資料と格納で、1回の実行の6分の上限に近いため（2026/10/17 に統合版を続けて作る版でタイムアウトした）。
@@ -492,7 +494,7 @@ RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Goo
   仕事とトリガーを消します（`showBusinessMtgSummariesResult()` で出す）。資料の中身は、作り始めた時刻（`job.now`）で数え、本番の会議日の記録もその時刻にします。
   時刻は `mtgNow_()`（テストで差し替える）。
 - **会議資料のインデックス**（`mtgWriteIndex_`）：格納できたら、このスプレッドシートの `MTG_OPTIONS.index.sheet`（`INDEX_会議資料`）の
-  行＝会議日（A列「日付」。日付の値で、表示形式 `yyyy/m/d`。B列「種別」は `RX Business MTG`）・列＝サブインダストリー（1行目の見出しがシート名。
+  行＝会議日（A列「日付」。日付の値で、表示形式 `yyyy/m/d`。B列「種別」は `RX Business Meeting`）・列＝サブインダストリー（1行目の見出しがシート名。
   `formerNames` の前の名前も今の名前とみなす）のセルに、PDF（`link: 'folder'` なら会議のフォルダ）をスマートチップで書きます
   （2026/10/17 にいただいた「INDEX_会議資料 のコピー」の形。C列「全サブインダストリー」（`MTG_OPTIONS.combined.name`）には統合版を書く）。
   チップは `mtgWriteChip_` で書きます（SpreadsheetApp ではチップを書けないので、拡張サービス Sheets API の
@@ -501,7 +503,7 @@ RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Goo
   拡張サービスが無い・書けないときは、ファイル名のリンク（リッチテキスト）で書きます。シートが無ければ末尾に作り（開いていたシートに戻す）、
   1行目に見出し（日付・種別・全サブインダストリー・`DIFF_RULES` の順のサブインダストリー）を書きます（1行目を固定、タブは黒、使わない行・列は持たない）。
   字はどのセルも太字・9pt・黒・上下中央、行の高さは 38px、列の幅は日付 83・種別 119・全サブインダストリー 158・サブインダストリー 138px（`index.widths`）。
-  会議日の行（日付が同じで、種別が `RX Business MTG` か空の行）が無ければ `index.order` の順（既定 `'desc'`：上が新しい。2026/10/17 から）になる位置に差し込み、
+  会議日の行（日付が同じで、種別が `RX Business Meeting` か空の行）が無ければ `index.order` の順（既定 `'desc'`：上が新しい。2026/10/17 から）になる位置に差し込み、
   サブインダストリーの列が無ければ右に足します。並びが違うとき（前の版の古い順・手で足した行）は、先に日付の列で行ごと並べ直します（`Range.sort`）。
   手で入れた値（C列など）はそのまま残します。書き込みはドキュメントロックの中です（資料作成はエディタから実行するので待ってよい）。書けなくても止めず、理由を知らせます
   （`storeBusinessMtgSummaries()` で書き直す）。差分追跡の対象外のシートなので、行の差し込みで追跡は止まりません。
@@ -797,12 +799,12 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
 - いちばん下に薄いグレーの区切り線（`#D9D9D9`）、その下に出典（グレー `#7F7F7F` の小さな字）と右にページ番号。
 - 本文 9pt（Appendix 8.5pt）。金額は百万円で、整数でなければ小数1桁。増減は「+12.5」「▲3」。受注月は「2026/11」。
 
-### RX Service MTG の事前資料（`ServiceMeeting.gs`）
+### RX Service Meeting の事前資料（`ServiceMeeting.gs`）
 
-RX Service MTG（サービス改善。月1回・第二週の金曜 9:00〜9:30）の事前資料です。会議の目的（顧客課題と提供価値の仮説をすり合わせ、提案・実行のシナリオを具体化する）と
+RX Service Meeting（サービス改善。月1回・第二週の金曜 9:00〜9:30）の事前資料です。会議の目的（顧客課題と提供価値の仮説をすり合わせ、提案・実行のシナリオを具体化する）と
 議題（シナリオの有効性検証・顧客・業界との適合・マネタイズの検討・サービスの磨き込み）に向けて、サービス案ごとの状況を会議の前に共有します。
-RX Business MTG の資料と同じく、シートから分かる事実だけを書きます（サービス案の良し悪し・決めてほしいことは書かない）。
-資料はサブインダストリー（リクエストを読むシート）ごとに作ります（2026/10/17 から。RX Business MTG と同じ）。すべてのリクエストをまとめた資料（全サブインダストリー）も作れます。
+RX Business Meeting の資料と同じく、シートから分かる事実だけを書きます（サービス案の良し悪し・決めてほしいことは書かない）。
+資料はサブインダストリー（リクエストを読むシート）ごとに作ります（2026/10/17 から。RX Business Meeting と同じ）。すべてのリクエストをまとめた資料（全サブインダストリー）も作れます。
 
 **サブインダストリーの資料に載せるもの**（`smtgView_`。`smtgRead_` で一度読んだシートから、資料ごとに絞る）
 
@@ -828,7 +830,7 @@ RX Business MTG の資料と同じく、シートから分かる事実だけを�
 
 **スライドの構成**（`smtgSlides_`）
 
-- 表紙：ひな形の3枚目（紫。`MTG_OPTIONS.templatePages.service`）の決まった文字を、見出し（サブインダストリー・全サブインダストリー）・「RX Service MTG　事前資料」・会議日に置き換えます。
+- 表紙：ひな形の3枚目（紫。`MTG_OPTIONS.templatePages.service`）の決まった文字を、見出し（サブインダストリー・全サブインダストリー）・「RX Service Meeting　事前資料」・会議日に置き換えます。
   ひな形が無い（3枚目が無い）ときは、同じ絵柄の紫の画像（`mtgCoverPng_('combined')`）を背景に描きます（緑の表紙は使わない）。
 - 1 サマリー：数字（登録リクエスト・判断待ち・サービス化検討・サービス案・タスクの完了／全体。前回比）、前回以降の動き（区分ごとの件数と ID・名前）、議題と資料のページ（`SMTG_OPTIONS.agenda`）。
 - 2 サービス案の一覧：リクエストの多い順（同じなら期待値の大きい順）。件数・得意先・サブインダストリー・元の案件の期待値・主管本部と担当者・タスクの状況・そのサービス案のページ。
@@ -847,10 +849,10 @@ RX Business MTG の資料と同じく、シートから分かる事実だけを�
 Appendix は扉に合わせてグレー（ラベルは紫のまま）。
 
 **保存**：PDF を会議サマリの保存先（`mtgFolder_`）に保存します（`{date}_{サブインダストリー}_RX Service Meeting用資料.pdf`。試作は `_試作`）。本番は会議資料のインデックスの、
-種別が「RX Service MTG」の行（同じ日付でも RX Business MTG の行とは別）の、そのサブインダストリー（全サブインダストリー）の列に書きます（`mtgWriteIndex_` の `kind`）。
-1回の実行の6分に収まらなければ、RX Business MTG と同じく区切って、1回きりのトリガー `continueServiceMtgSummaries` で続けます（`smtgJobRun_`。見積もりは `SMTG_OPTIONS.run`）。
-本番の PDF は、RX Business MTG と同じフォルダ（サブインダストリーは `DIFF_RULES` の `meetingFolder`、全サブインダストリーは `MTG_OPTIONS.combined.meetingFolder`）の中の、
-「yyMMdd_RX Service MTG_第N回」フォルダに格納します（無ければ作る。第N回は RX Service MTG のフォルダだけで数える。`mtgMeetingFolder_` の `kind`）。
+種別が「RX Service Meeting」の行（同じ日付でも RX Business Meeting の行とは別）の、そのサブインダストリー（全サブインダストリー）の列に書きます（`mtgWriteIndex_` の `kind`）。
+1回の実行の6分に収まらなければ、RX Business Meeting と同じく区切って、1回きりのトリガー `continueServiceMtgSummaries` で続けます（`smtgJobRun_`。見積もりは `SMTG_OPTIONS.run`）。
+本番の PDF は、RX Business Meeting と同じフォルダ（サブインダストリーは `DIFF_RULES` の `meetingFolder`、全サブインダストリーは `MTG_OPTIONS.combined.meetingFolder`）の中の、
+「yyMMdd_RX Service Meeting_第N回」フォルダに格納します（無ければ作る。第N回は RX Service Meeting のフォルダだけで数える。`mtgMeetingFolder_` の `kind`）。
 
 **サンプル**：`addServiceMtgSampleData()`（`サンプルデータ.gs`）が、リクエスト・タスク管理の最後の行の下にサンプル（`SMP_OPTIONS.service`。リクエストの先頭に「【サンプル】」）を書きます。
 得意先・案件名は、`sheet` のシートの進行中で期待値の大きい案件を使い、案件が無いシートでは架空の名前にします。
@@ -1034,6 +1036,6 @@ Google Fonts が読み込めない環境では代わりのフォントで表示�
 `mtgSlides_(summary)` の戻り値（箱と表の部品の並び。位置と大きさは pt）を HTML の絶対配置に置き換え、1280 × 720px（1pt = 1280/720px）で Playwright のスクリーンショット・PDF にすると、
 Google スライドに送らずに見た目を確かめられます。箱・セルの余白は Slides と同じ上下左右 7.2pt、行の送りは 1.2、字は BIZ UDPゴシック（Google Fonts の BIZ UDPGothic の TTF を `@font-face` で読む）にします。
 ひな形が無いときの表紙は `mtgCoverPng_()`、扉は `mtgCoverPng_('divider')`、統合版の表紙は `mtgCoverPng_('combined')` の画像を背景に置きます。
-RX Service MTG の資料は `smtgSlides_(smtgCollect_(…), 会議日, false)` の戻り値を、`smtgWithPalette_` の中で `mtgSlideRequests_` にして同じように確かめます（表紙は `mtgCoverPng_('combined')`）。
+RX Service Meeting の資料は `smtgSlides_(smtgCollect_(…), 会議日, false)` の戻り値を、`smtgWithPalette_` の中で `mtgSlideRequests_` にして同じように確かめます（表紙は `mtgCoverPng_('combined')`）。
 文字の折り返しは `mtgWrap_` の見積もりで先に分けてあるので、HTML で行数が増えるところは見積もりが甘いところです。最後は本物のスライド（PDF）で確かめてください
 （`pdftotext -bbox` で文字の位置を出すと、行の高さ・文字の幅を測れる）。
