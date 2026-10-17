@@ -461,8 +461,9 @@ RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Goo
   会議のフォルダが無ければ作ります（`createMeetingFolder`。名前は `meetingFolderName` の `{date}_第{n}回会議`。`{n}` は、そのフォルダの中の
   この会議日より前の「yyMMdd_第N回」のいちばん大きい N ＋ 1（`mtgNextMeetingNumber_`。全角の数字も読む。後の会議日のフォルダは数えない））。
   作り直したときは、作ったフォルダが見つかるので、もう1つは作りません。
-- **統合版**（`mtgCreateCombined_`・`mtgCombinedSlides_`。`MTG_OPTIONS.combined`）：すべての追跡シート（このスプレッドシートにあるもの）の資料を作ったときに、
-  続けて全サブインダストリーの資料を1つにまとめた資料を作ります（`{date}_全サブインダストリー_RX Business Meeting用資料`。試作なら試作）。
+- **統合版**（`createCombinedMeetingSummary()`・`mtgCreateCombined_`・`mtgCombinedSlides_`。`MTG_OPTIONS.combined`）：すべてのサブインダストリーの資料を作ったあとに、
+  別の関数で、全サブインダストリーの資料を1つにまとめた資料を作ります（`{date}_全サブインダストリー_RX Business Meeting用資料`。試作なら試作）。
+  資料を作る関数（`createMeetingSummaries()`）とは分けます：11シートの資料と格納で、1回の実行の6分の上限に近いため（2026/10/17 に統合版を続けて作る版でタイムアウトした）。
   並びは、表紙（見出しは「全サブインダストリー」、下に収録したサブインダストリーと出典）→「全サブインダストリーの状況」（`mtgOverviewSlide_`）→
   各サブインダストリーの資料（`mtgSlides_` そのまま。表紙から Appendix まで、`DIFF_RULES` の順）。ページ番号と、各資料の扉の目次のページは資料全体の通し番号です
   （`mtgSlides_(summary, start)`・`mtgNumberSlides_(frame, slides, offset)`）。各資料の出典の行はそのサブインダストリーの名前のままです。
@@ -471,11 +472,15 @@ RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Goo
   ほかの比べ方のシートはセルの1行目に何との比かを書きます。作れない値は灰色の「データなし」、合計は作れたシートの分だけで ※ を付け、意味を出典の行の後ろに書きます
   （どのシートも作れなければ合計も「データなし」）。リード文は1行（11サブインダストリーと合計を1ページに入れるため。入らなければ表の字を 7pt まで小さくする）。
   本番は会議のフォルダ（`combined.meetingFolder` の中の `yyMMdd_第N回会議`。各サブインダストリーと同じ探し方・作り方。`mtgMeetingFolderSetting_`）に格納し、
-  インデックスの「全サブインダストリー」の列に書きます。一部のシートだけを作ったときは作らずに案内します（全サブインダストリーにならないため）。
-  個別の資料を作り終えた時点で `combined.maxElapsedMs`（3分）を過ぎていたら、Apps Script の6分の上限に掛からないよう作らずに案内し、
-  作れなかったとき（エラー）も個別の資料・会議日の記録はそのままにします。どちらも `createCombinedMeetingSummary()`（エディタから実行。会議日を聞く）で統合版だけを作れます：
-  すべてのシートの会議サマリを今の値で作り直してまとめ（`mtgSummaries_`。会議日・会議時点のコピーは記録しない）、すべてのシートにその会議日の本番の記録があれば本番、
-  無いシートがあれば試作にします。
+  インデックスの「全サブインダストリー」の列に書きます。`createCombinedMeetingSummary()` は会議日を聞き、すべてのシートの会議サマリを今の値で作り直してまとめ
+  （`mtgSummaries_`。会議日・会議時点のコピーは記録しない）、すべてのシートにその会議日の本番の記録があれば本番、無いシートがあれば知らせて試作にします。
+  資料を区切って作っている途中（下の「6分の上限」）なら止めます。`createMeetingSummaries()` は、すべてのシートを作ったとき、終わりの画面でこの関数を案内します。
+- **6分の上限**（`mtgJobRun_`。`MTG_OPTIONS.run`）：資料を作る仕事を、資料（シートごと）→ 本番なら会議時点のコピーと会議日の記録 → 会議のフォルダへの格納と
+  インデックス（シートごと）に分け、次の仕事の見積もり（`summaryMs`・`deckMs`・`copyMs`・`storeMs`）で、実行を始めてから `limitMs`（320秒）を越えそうなら区切ります
+  （`mtgJobPause_`：仕事をスクリプトのプロパティ `MTG_JOB`（資料ごとの知らせは `MTG_JOB_ITEM_n`）に保存し、時間主導の1回きりのトリガー `continueMeetingSummaries` を
+  `continueAfterMs`（60秒）後に1つだけ作る）。続き（`continueMeetingSummaries`）は、残りの仕事を同じように進め、終われば知らせを `MTG_JOB_RESULT_n`（2,000文字ずつ）に保存して
+  仕事とトリガーを消します（`showMeetingSummariesResult()` で出す）。資料の中身は、作り始めた時刻（`job.now`）で数え、本番の会議日の記録もその時刻にします。
+  時刻は `mtgNow_()`（テストで差し替える）。
 - **会議資料のインデックス**（`mtgWriteIndex_`）：格納できたら、このスプレッドシートの `MTG_OPTIONS.index.sheet`（`INDEX_会議資料`）の
   行＝会議日（A列「日付」。日付の値で、表示形式 `yyyy/m/d`。B列「種別」は `RX Business MTG`）・列＝サブインダストリー（1行目の見出しがシート名。
   `formerNames` の前の名前も今の名前とみなす）のセルに、PDF（`link: 'folder'` なら会議のフォルダ）をスマートチップで書きます

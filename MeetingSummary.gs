@@ -75,7 +75,8 @@ const MTG_OPTIONS = {
   // {n} は、そのフォルダの中の、この会議日より前の「yyMMdd_第N回会議」のいちばん大きい N ＋ 1（無ければ 1）
   createMeetingFolder: true,
   meetingFolderName: '{date}_第{n}回会議',
-  // 統合版（全サブインダストリーの資料を1つにまとめた資料）。すべての追跡シートの資料を作ったときに続けて作る（createCombinedMeetingSummary() で単独でも作れる）。
+  // 統合版（全サブインダストリーの資料を1つにまとめた資料）。すべてのサブインダストリーの資料を作ったあとに、createCombinedMeetingSummary() で作る
+  // （資料を作る関数とは分ける。1回の実行の6分の上限に収めるため）。
   // 表紙・全サブインダストリーの状況（一覧）のあとに、各サブインダストリーの資料（表紙から Appendix まで）を DIFF_RULES の順に入れる（ページ番号は通し）。
   // 本番は会議のフォルダ（meetingFolder の中の yyMMdd_第N回会議）に格納し、インデックスの name の列に書く
   combined: {
@@ -83,9 +84,12 @@ const MTG_OPTIONS = {
     name: '全サブインダストリー',     // 表紙の見出し・ファイル名の {name}・インデックスの列の見出し
     // 会議のフォルダを探す・作るフォルダ（URL か ID。各サブインダストリーの DIFF_RULES の meetingFolder と同じ形）。2026/10 はテストのフォルダ
     meetingFolder: 'https://drive.google.com/drive/folders/1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK',
-    // 個別の資料を作り終えた時点で、作り始めてからこれより時間がたっていたら、統合版は作らずに案内する（Apps Script の実行は6分まで）
-    maxElapsedMs: 180000
   },
+  // Apps Script の1回の実行は6分まで（入力・確かめの画面を出している時間も含む）。作り始めてから limitMs を過ぎそうなら、そこで区切り、
+  // 残りは continueAfterMs あとに自動で続ける（時間主導のトリガー continueMeetingSummaries。1回きり）。次の仕事にかかる時間の見積もり：
+  // summaryMs 中身を作る（シートと記録を読む）・deckMs 資料1つ・copyMs 会議時点のコピーと記録・storeMs 会議のフォルダへの格納とインデックス1つ
+  run: {limitMs: 320000, summaryMs: 30000, deckMs: 35000, copyMs: 60000, storeMs: 10000, continueAfterMs: 60000,
+    handler: 'continueMeetingSummaries', jobKey: 'MTG_JOB', resultKey: 'MTG_JOB_RESULT'},
   // 会議資料のインデックス（このスプレッドシートのシート）。会議のフォルダに格納したら、行＝会議日・列＝サブインダストリー（1行目の見出しがシート名）の
   // セルに、PDF のファイルをスマートチップ（chip。Sheets API の拡張サービスが要る）で書く。チップにできないときは、ファイル名のリンクで書く。
   // link を 'folder' にすると会議のフォルダ。シートが無ければ作る。書けなかったときは storeMeetingSummaries() で書き直す。
@@ -453,7 +457,7 @@ function mtgConfirmFinal_(ui, names, meeting) {
     const held = list.filter(m => !m.baseline && m.date < meeting).pop();
     const base = list.filter(m => m.baseline && m.date <= meeting).pop();
     const same = list.find(m => !m.baseline && m.date === meeting);
-    const legacy = Number(props.getProperty(MTG_OPTIONS.lastKeyPrefix + name)) || 0;   // 前の版の記録（mtgCreate_ と同じ順で選ぶ）
+    const legacy = Number(props.getProperty(MTG_OPTIONS.lastKeyPrefix + name)) || 0;   // 前の版の記録（mtgSummaries_ と同じ順で選ぶ）
     const from = base && (!held || base.cutoff > held.cutoff) ? '基準（' + fmt(base.cutoff) + '）以降'
       : held ? '前回会議（' + mtgShortDate_(held.date) + '）の資料作成時（' + fmt(held.cutoff) + '）以降'
         : legacy ? '前回の資料作成時（' + fmt(legacy) + '）以降'
@@ -472,53 +476,247 @@ function mtgConfirmFinal_(ui, names, meeting) {
 }
 
 function mtgRun_(final) {
+  const started = mtgNow_();   // 6分の上限は、実行を始めたときから（入力の画面の時間も含む）
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = mtgUi_();
+  if (!mtgJobStartCheck_(ui)) return;
   const names = mtgAskSheets_(ss, ui, final ? '会議サマリを作ります。' : '会議サマリを試しに作ります（会議日は記録しません）。');
   if (!names) return;
   const now = new Date();
   const meeting = mtgAskMeeting_(ui, names, now);
   if (!meeting) return;
   if (final && !mtgConfirmFinal_(ui, names, meeting)) return;
-  const {results, combined} = mtgCreate_(ss, names, now, final, meeting);
-  // 作れなかったところ（データなし）があれば、シートごとに理由を出す（資料にも、その場所に灰色の枠で書いてある）
-  const lines = results.map(r => {
-    const gaps = mtgGapList_(r.summary);
-    // 変化が無く、サンプル（addSampleHistory()。会議サマリは数えない）の記録だけがあるときは、資料の確認用の関数を案内する
-    const samples = !r.summary.kpi.changed && !r.summary.dummy ? smpCountEvents_(ss, SMP_OPTIONS.eventPrefix + '-', r.summary.name).changes : 0;
-    return '「' + r.summary.name + '」：' + r.file.getName() + '（' + mtgCountsText_(r.summary) + '）\n　' + r.file.getUrl() +
-      (r.stored ? '\n　会議のフォルダ「' + r.stored.folder.getName() + '」' + (r.stored.created ? 'を作って' : 'に') + '格納しました：' + r.stored.folder.getUrl() : '') +
-      (r.index && r.index.error ? '\n　※ ' + r.index.error : '') +
-      (r.storeError ? '\n　※ 会議のフォルダに格納できませんでした（' + r.storeError + '）。資料は保存先にあります。' +
-        'フォルダを用意してから、エディタで storeMeetingSummaries() を実行して格納してください。' : '') +
-      (r.summary.copy ? '\n　前回からの変化は「' + r.summary.copy.title + '」と比べました。' : '') +
-      (r.summary.copyError ? '\n　※ ' + r.summary.copyError : '') +
-      (r.summary.unlogged ? '\n　※ 変更の記録が無い変更 ' + r.summary.unlogged + '件（差分追跡が止まっていた間などの変更。資料には出しています）。' +
-        'diagnoseDiffState() で差分追跡が動いているか確かめてください。' : '') +
-      (gaps.length ? '\n　' + MTG_OPTIONS.gapText + '：' + gaps.join('\n　　') : '') +
-      (r.summary.dummy ? '\n　※ ダミーの変更の記録（' + r.summary.dummy + '件）を含みます（資料に【ダミーデータを含む】）。消すときは removeMeetingDummyHistory()。' : '') +
-      (samples ? '\n　※ サンプル（addSampleHistory()）の変更の記録 ' + samples + '件は、会議サマリには出ません（基準を変えても出ません）。' +
-        '資料の形を確かめるときは、addMeetingDummyHistory() でダミーの変更の記録を足してください。' : '');
-  });
-  if (combined) lines.push.apply(lines, [''].concat(mtgCombinedLines_(combined)));
-  else if (MTG_OPTIONS.combined.enabled && names.length < Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name)).length) {
-    lines.push('', '統合版（' + MTG_OPTIONS.combined.name + '）は、すべてのシートを選んだときに作ります（あとから createCombinedMeetingSummary() でも作れます）。');
+  const job = {final, meeting, now: now.getTime(), names, items: [], stored: 0, copy: null, index: null, folderUrl: '',
+    combined: !!MTG_OPTIONS.combined.enabled && mtgCombinedWanted_(ss, names)};
+  const done = mtgJobRun_(ss, job, started);
+  const message = mtgJobMessage_(job, done);
+  console.log(message);
+  ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+}
+
+/* ---------------- 作る仕事（6分の上限に掛からないよう、区切って続ける） ---------------- */
+
+/**
+ * 会議サマリを作る仕事を、時間の許す限り進める。job = {final, meeting, now: 作り始めた時刻（ms）, names, items: 作った資料 [{name, pdf: ID, line: 知らせる文}],
+ * stored: 格納した数, copy: 会議時点のコピー, index: 書いたインデックス, folderUrl, combined: すべてのシートを作るか（統合版の案内を出す）}。
+ * 順に、資料（シートごと）→ 本番なら会議時点のコピーと会議日の記録 → 会議のフォルダへの格納とインデックス（シートごと）。
+ * 統合版は作らない（すべてのサブインダストリーの資料を作ったあとに、createCombinedMeetingSummary() で作る）。
+ * 次の仕事が MTG_OPTIONS.run の見積もりで上限（limitMs）を越えそうなら、仕事を保存して1回きりのトリガーで続きを予約し、false を返す。全部済んだら true
+ */
+function mtgJobRun_(ss, job, started) {
+  const o = MTG_OPTIONS;
+  const R = o.run;
+  const fits = ms => mtgNow_() - started + ms <= R.limitMs;
+  mtgRequireSlides_();
+  const folder = mtgFolder_(ss);
+  job.folderUrl = folder.getUrl();
+  // 資料：残りのシートの中身をまとめて作り、1つずつスライドと PDF にする（中身は作り始めた時刻 job.now で数える）
+  if (job.items.length < job.names.length) {
+    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    const props = PropertiesService.getDocumentProperties();
+    const {plans, summaries} = mtgSummaries_(ss, job.names.slice(job.items.length), new Date(job.now), job.final, job.meeting);
+    for (let i = 0; i < summaries.length; i++) {
+      if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
+      const summary = summaries[i];
+      const out = mtgExportDeck_(mtgFileName_(summary.name, job.meeting, job.final), mtgSlides_(summary), folder);
+      // 試作：その会議日の最初の試作の、入力内容のチェックの結果を覚える（同じ会議日の資料で、解消した件数を出す）
+      if (!job.final && !plans[i].draft) {
+        props.setProperty(o.draftKeyPrefix + summary.name, JSON.stringify({meeting: job.meeting, at: job.now, keys: summary.alerts.map(a => mtgHash_(a.key))}));
+      }
+      job.items.push({name: summary.name, pdf: out.pdf.getId(), line: mtgResultLine_(ss, summary, out.pdf)});
+    }
   }
-  lines.push('', '保存先：' + results[0].folder.getUrl());
-  const index = results.map(r => r.index).concat(combined ? [combined.index] : []).find(x => x && x.url);
-  if (index) {
-    lines.push('「' + index.title + '」シートに、資料のファイルを書きました：' + index.url);
-    if (MTG_OPTIONS.index.chip && !index.chip) {
+  // 本番：今の値を会議時点のコピーに保存し（次の会議の資料はこれと比べる）、会議日を記録する。資料を全部作れてから
+  if (job.final && !job.copy) {
+    if (!fits(R.copyMs)) return mtgJobPause_(job);
+    const copy = mtgSaveCopy_(ss, job.names, new Date(job.now), '（会議日 ' + job.meeting.replace(/\//g, '-') + '）');
+    job.copy = {id: copy.id, title: copy.title, url: copy.url};
+    const props = PropertiesService.getDocumentProperties();
+    job.names.forEach(name => {
+      const list = mtgMeetings_(props, name).filter(m => m.baseline || m.date !== job.meeting)
+        .concat([{date: job.meeting, cutoff: job.now, copy: {id: copy.id, sheet: name}}])
+        .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).slice(-o.keepMeetings);
+      props.setProperty(o.meetingsKeyPrefix + name, JSON.stringify(list));
+    });
+  }
+  // 本番：会議のフォルダに PDF を格納し、インデックスに書く（できなくても止めない。資料は保存先にあるので、あとで storeMeetingSummaries() で格納できる）
+  while (job.final && job.stored < job.items.length) {
+    if (!fits(R.storeMs)) return mtgJobPause_(job);
+    const item = job.items[job.stored];
+    const stored = mtgStoreToMeetingFolder_(item.name, job.meeting, DriveApp.getFileById(item.pdf));
+    const index = stored.error ? null : mtgWriteIndex_(item.name, job.meeting, stored);
+    item.line += mtgStoredText_(stored, index);
+    if (index && index.url && !job.index) job.index = index;
+    job.stored++;
+  }
+  return true;
+}
+
+/** 今の時刻（ms。実行時間の上限を見る用。テストで差し替える） */
+function mtgNow_() {
+  return Date.now();
+}
+
+/** 資料1つの知らせ（ファイル名・件数・URL と、作れなかったところ（データなし）などの注意） */
+function mtgResultLine_(ss, summary, file) {
+  const gaps = mtgGapList_(summary);
+  // 変化が無く、サンプル（addSampleHistory()。会議サマリは数えない）の記録だけがあるときは、資料の確認用の関数を案内する
+  const samples = !summary.kpi.changed && !summary.dummy ? smpCountEvents_(ss, SMP_OPTIONS.eventPrefix + '-', summary.name).changes : 0;
+  return '「' + summary.name + '」：' + file.getName() + '（' + mtgCountsText_(summary) + '）\n　' + file.getUrl() +
+    (summary.copy ? '\n　前回からの変化は「' + summary.copy.title + '」と比べました。' : '') +
+    (summary.copyError ? '\n　※ ' + summary.copyError : '') +
+    (summary.unlogged ? '\n　※ 変更の記録が無い変更 ' + summary.unlogged + '件（差分追跡が止まっていた間などの変更。資料には出しています）。' +
+      'diagnoseDiffState() で差分追跡が動いているか確かめてください。' : '') +
+    (gaps.length ? '\n　' + MTG_OPTIONS.gapText + '：' + gaps.join('\n　　') : '') +
+    (summary.dummy ? '\n　※ ダミーの変更の記録（' + summary.dummy + '件）を含みます（資料に【ダミーデータを含む】）。消すときは removeMeetingDummyHistory()。' : '') +
+    (samples ? '\n　※ サンプル（addSampleHistory()）の変更の記録 ' + samples + '件は、会議サマリには出ません（基準を変えても出ません）。' +
+      '資料の形を確かめるときは、addMeetingDummyHistory() でダミーの変更の記録を足してください。' : '');
+}
+
+/** 会議のフォルダへの格納とインデックスの知らせ（資料1つの知らせの後ろに付ける） */
+function mtgStoredText_(stored, index) {
+  if (stored.error) {
+    return '\n　※ 会議のフォルダに格納できませんでした（' + stored.error + '）。資料は保存先にあります。' +
+      'フォルダを用意してから、エディタで storeMeetingSummaries() を実行して格納してください。';
+  }
+  return '\n　会議のフォルダ「' + stored.folder.getName() + '」' + (stored.created ? 'を作って' : 'に') + '格納しました：' + stored.folder.getUrl() +
+    (index && index.error ? '\n　※ ' + index.error : '');
+}
+
+/** 終わり（done）・区切ったときの知らせ */
+function mtgJobMessage_(job, done) {
+  const o = MTG_OPTIONS;
+  const lines = job.items.map(item => item.line);
+  if (!done) {
+    const rest = job.names.slice(job.items.length);
+    const left = [].concat(rest.length ? ['資料 ' + rest.length + '件（' + rest.join('・') + '）'] : [],
+      job.final && !job.copy ? ['会議時点のコピーと会議日の記録'] : [],
+      job.final && job.stored < job.names.length ? ['会議のフォルダへの格納とインデックス'] : []);
+    return ['時間がかかるため、ここで区切りました（Apps Script の1回の実行は6分まで）。残りは約' + Math.round(o.run.continueAfterMs / 60000) +
+      '分後に自動で続けます：' + left.join('・') + '。',
+    '続きが終わったら、エディタで showMeetingSummariesResult() を実行すると結果が出ます（実行ログにも出ます）。終わるまで、会議サマリの関数は実行しないでください。',
+    ''].concat(lines, ['', '保存先：' + job.folderUrl]).join('\n');
+  }
+  if (job.combined) {
+    lines.push('', '統合版（' + o.combined.name + '）は、エディタで createCombinedMeetingSummary() を実行して作ってください（会議日を入力します。' +
+      (job.final ? 'すべてのサブインダストリーの本番の資料を作ったあとに）。' : '試作なら試作として作ります）。'));
+  }
+  lines.push('', '保存先：' + job.folderUrl);
+  if (job.index) {
+    lines.push('「' + job.index.title + '」シートに、資料のファイルを書きました：' + job.index.url);
+    if (o.index.chip && !job.index.chip) {
       lines.push('（スマートチップにできなかったので、ファイル名のリンクで書きました。チップにするには、エディタの「サービス」に Google Sheets API を追加してください）');
     }
   }
-  if (results[0].copy) lines.push('今の値を「' + results[0].copy.title + '」に保存しました（次の会議の資料はこれと比べます）：' + results[0].copy.url);
-  if (MTG_OPTIONS.keepSlides) lines.push('同じフォルダに、Google スライド（同じ名前）も保存しました。');
-  lines.push(final
-    ? '会議日（' + meeting + '）を記録しました。次の会議の資料は、今以降の変化を出します。配るときは、PDF を参加者に共有してください（保存先のフォルダは共有しない）。'
+  if (job.copy) lines.push('今の値を「' + job.copy.title + '」に保存しました（次の会議の資料はこれと比べます）：' + job.copy.url);
+  if (o.keepSlides) lines.push('同じフォルダに、Google スライド（同じ名前）も保存しました。');
+  lines.push(job.final
+    ? '会議日（' + job.meeting + '）を記録しました。次の会議の資料は、今以降の変化を出します。配るときは、PDF を参加者に共有してください（保存先のフォルダは共有しない）。'
     : '試作のため、会議日は記録していません。');
-  console.log(lines.join('\n'));
-  ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
+  return lines.join('\n');
+}
+
+/** 仕事を保存し（スクリプトのプロパティ。資料ごとの知らせは別のキー）、続きのトリガーを1つだけ作る。false を返す */
+function mtgJobPause_(job) {
+  const R = MTG_OPTIONS.run;
+  const props = PropertiesService.getScriptProperties();
+  mtgJobClear_();
+  job.items.forEach((item, i) => props.setProperty(R.jobKey + '_ITEM_' + i, JSON.stringify(item)));
+  props.setProperty(R.jobKey, JSON.stringify(Object.assign({}, job, {items: job.items.length, savedAt: Date.now()})));
+  mtgJobDeleteTriggers_();
+  ScriptApp.newTrigger(R.handler).timeBased().after(R.continueAfterMs).create();
+  console.log('会議サマリ：時間がかかるため区切りました（資料 ' + job.items.length + '/' + job.names.length + '）。続きを予約しました。');
+  return false;
+}
+
+/** 保存した仕事（無ければ null） */
+function mtgJobLoad_() {
+  const R = MTG_OPTIONS.run;
+  const props = PropertiesService.getScriptProperties();
+  const job = mtgReadJson_(props, R.jobKey);
+  if (!job) return null;
+  const items = [];
+  for (let i = 0; i < job.items; i++) items.push(mtgReadJson_(props, R.jobKey + '_ITEM_' + i));
+  job.items = items;
+  return job;
+}
+
+/** 保存した仕事を消す（続きのトリガーは mtgJobDeleteTriggers_） */
+function mtgJobClear_() {
+  const R = MTG_OPTIONS.run;
+  const props = PropertiesService.getScriptProperties();
+  props.getKeys().filter(key => key === R.jobKey || key.indexOf(R.jobKey + '_ITEM_') === 0).forEach(key => props.deleteProperty(key));
+}
+
+function mtgJobDeleteTriggers_() {
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === MTG_OPTIONS.run.handler).forEach(t => ScriptApp.deleteTrigger(t));
+}
+
+/** 結果の知らせを保存する（スクリプトのプロパティ。1つの値の大きさに上限があるので、2,000文字ずつ分ける） */
+function mtgJobSaveResult_(message) {
+  const R = MTG_OPTIONS.run;
+  const props = PropertiesService.getScriptProperties();
+  props.getKeys().filter(key => key.indexOf(R.resultKey) === 0).forEach(key => props.deleteProperty(key));
+  const text = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm') + ' に終わりました。\n\n' + message;
+  for (let i = 0; i * 2000 < text.length; i++) props.setProperty(R.resultKey + '_' + i, text.slice(i * 2000, (i + 1) * 2000));
+}
+
+/**
+ * 区切った会議サマリの続き（時間主導のトリガーから。1回きり）。保存した仕事を続け、まだ残れば、また区切って次を予約する。
+ * 終わったら（止まったら）知らせを保存する（showMeetingSummariesResult() で出す。実行ログにも出す）
+ */
+function continueMeetingSummaries() {
+  const started = mtgNow_();
+  mtgJobDeleteTriggers_();
+  const job = mtgJobLoad_();
+  if (!job) return;
+  let message;
+  try {
+    if (!mtgJobRun_(SpreadsheetApp.getActiveSpreadsheet(), job, started)) return;   // また区切った（次を予約した）
+    message = mtgJobMessage_(job, true);
+  } catch (error) {
+    console.error(error && error.stack || error);
+    message = '途中で止まりました：' + (error && error.message || error) + '\ncreateMeetingSummaries()（試作なら previewMeetingSummaries()）で、作り直してください。\n\n' +
+      mtgJobMessage_(job, true);
+  }
+  mtgJobClear_();
+  mtgJobSaveResult_(message);
+  console.log(message);
+}
+
+/** 会議サマリの続き（自動で続けたもの）の結果・進み具合を出す（エディタから実行） */
+function showMeetingSummariesResult() {
+  const R = MTG_OPTIONS.run;
+  const ui = mtgUi_();
+  const job = mtgJobLoad_();
+  let message;
+  if (job) {
+    const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === R.handler).length;
+    message = '会議サマリを作っている途中です（会議日 ' + job.meeting + '。資料 ' + job.items.length + '/' + job.names.length + '件' +
+      (job.final ? '・格納 ' + job.stored + '/' + job.names.length + '件' : '') + '）。' +
+      (triggers ? '自動で続けています。少し待ってから、もう一度実行してください。'
+        : '続きの予約がありません。createMeetingSummaries()（試作なら previewMeetingSummaries()）で作り直してください。');
+  } else {
+    const props = PropertiesService.getScriptProperties();
+    const keys = props.getKeys().filter(key => key.indexOf(R.resultKey + '_') === 0).sort((a, b) => Number(a.split('_').pop()) - Number(b.split('_').pop()));
+    message = keys.length ? keys.map(key => props.getProperty(key)).join('') : '自動で続けた会議サマリの結果はありません。';
+  }
+  console.log(message);
+  ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+}
+
+/** 作っている途中の仕事があれば、やめて新しく作るかを聞く（やめるなら仕事と続きの予約を消す）。続けてよければ true */
+function mtgJobStartCheck_(ui) {
+  const job = mtgJobLoad_();
+  if (!job) return true;
+  const at = Utilities.formatDate(new Date(job.savedAt || job.now), Session.getScriptTimeZone(), 'M/d HH:mm');
+  const answer = ui.alert(CRED_OPTIONS.menuTitle, '前に始めた会議サマリ（会議日 ' + job.meeting + '・' + (job.final ? '本番' : '試作') + '。資料 ' +
+    job.items.length + '/' + job.names.length + '件。' + at + ' に区切り）を、自動で続けている途中です。\n\n' +
+    'それをやめて、新しく作りますか？（「いいえ」なら何もしません。続きが終わったら showMeetingSummariesResult() で結果を見られます）', ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return false;
+  mtgJobClear_();
+  mtgJobDeleteTriggers_();
+  return true;
 }
 
 /* ---------------- Google チャットへの通知（webhook） ---------------- */
@@ -790,65 +988,7 @@ function mtgCountsText_(summary) {
   return '変化のある案件 ' + summary.kpi.changed + '・停滞 ' + summary.stalled.length + '・確認事項 ' + summary.alerts.length;
 }
 
-/**
- * names のシート（サブインダストリー）ごとに会議サマリを作り、スライドと PDF を保存する。meeting は今回の会議日（yyyy/MM/dd）。
- * final なら会議日と今の日時を記録する。試作なら、その会議日の最初の試作の入力内容のチェックの結果を覚える。
- * すべての追跡シートを作ったときは、続けて統合版（mtgCreateCombined_）も作る（時間がかかっていれば作らずに理由を返す）。
- * 戻り値 {results: [{summary, file: PDF, deck: Google スライド（残さないときは null）, folder}], combined: 統合版の結果か {skipped|error}（作らないときは null）}
- */
-function mtgCreate_(ss, names, now, final, meeting) {
-  const o = MTG_OPTIONS;
-  const started = Date.now();
-  const props = PropertiesService.getDocumentProperties();
-  const {plans, summaries} = mtgSummaries_(ss, names, now, final, meeting);
-  mtgRequireSlides_();
-  const folder = mtgFolder_(ss);
-  const results = summaries.map(summary => {
-    const out = mtgExportDeck_(mtgFileName_(summary.name, meeting, final), mtgSlides_(summary), folder);
-    return {summary, file: out.pdf, deck: out.deck, folder};
-  });
-  // 本番：今の値を会議時点のコピーに保存する（次の会議の資料はこれと比べる）。資料を作れてから保存し、会議日の記録に結び付ける
-  const copy = final ? mtgSaveCopy_(ss, names, now, '（会議日 ' + meeting.replace(/\//g, '-') + '）') : null;
-  results.forEach(r => { r.copy = copy; });
-  plans.forEach((p, i) => {
-    if (final) {
-      const list = p.meetings.filter(m => m.baseline || m.date !== meeting)
-        .concat([{date: meeting, cutoff: now.getTime(), copy: {id: copy.id, sheet: p.name}}])
-        .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).slice(-o.keepMeetings);
-      props.setProperty(o.meetingsKeyPrefix + p.name, JSON.stringify(list));
-    } else if (!p.draft) {
-      props.setProperty(o.draftKeyPrefix + p.name, JSON.stringify({
-        meeting, at: now.getTime(), keys: summaries[i].alerts.map(a => mtgHash_(a.key))
-      }));
-    }
-  });
-  // 本番：会議のフォルダに PDF を格納する（できなくても止めない。資料は保存先にあるので、あとで storeMeetingSummaries() で格納できる）
-  if (final) {
-    results.forEach(r => {
-      const stored = mtgStoreToMeetingFolder_(r.summary.name, meeting, r.file);
-      if (stored.error) r.storeError = stored.error;
-      else r.stored = stored;
-      if (!stored.error) r.index = mtgWriteIndex_(r.summary.name, meeting, stored);
-    });
-  }
-  // 統合版：すべての追跡シートを作ったときだけ（一部だけでは全サブインダストリーにならない）。作れなくても個別の資料はそのまま
-  let combined = null;
-  if (mtgCombinedWanted_(ss, names)) {
-    if (Date.now() - started > o.combined.maxElapsedMs) {
-      combined = {skipped: '個別の資料を作るのに時間がかかったため（Apps Script の実行は6分まで）'};
-    } else {
-      try {
-        combined = mtgCreateCombined_(summaries, meeting, final, folder);
-      } catch (error) {
-        console.warn('統合版を作れませんでした：' + (error && error.stack || error));
-        combined = {error: String(error && error.message || error)};
-      }
-    }
-  }
-  return {results, combined};
-}
-
-/** 統合版を作るか：統合版を使う設定で、追跡シート（このスプレッドシートにあるもの）が2つ以上、すべて names に入っている */
+/** すべての追跡シート（このスプレッドシートにあるもの。2つ以上）を作るか（終わりに統合版の作り方を案内する） */
 function mtgCombinedWanted_(ss, names) {
   const all = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
   return !!MTG_OPTIONS.combined.enabled && all.length > 1 && all.every(name => names.indexOf(name) >= 0);
@@ -917,15 +1057,20 @@ function mtgCreateCombined_(summaries, meeting, final, folder) {
 }
 
 /**
- * 統合版だけを作る（エディタから実行）。本番の資料を作ったときに統合版を作れなかった（時間がかかった・一部のシートだけ作った）ときや、
- * 個別の資料を作り直したあとに。会議日を聞き、すべての追跡シートの会議サマリを今の値で作り直して1つの資料にする（会議日・会議時点のコピーは記録しない）。
- * すべてのシートにその会議日の本番の記録があれば本番（会議のフォルダに格納し、インデックスに書く）、無いシートがあれば試作として作る
+ * 統合版（全サブインダストリー）を作る（エディタから実行）。すべてのサブインダストリーの資料を createMeetingSummaries() で作ったあとに実行する
+ * （資料を作る関数とは分けてある。1回の実行の6分の上限に収めるため）。個別の資料を作り直したあとも、これで作り直す。
+ * 会議日を聞き、すべての追跡シートの会議サマリを今の値で作り直して1つの資料にする（会議日・会議時点のコピーは記録しない。前回からの変化は、
+ * 個別の資料と同じく前回の会議時点と比べる）。すべてのシートにその会議日の本番の記録があれば本番（会議のフォルダに格納し、インデックスに書く）、
+ * 無いシートがあれば、それを知らせて試作として作るかを聞く。資料を作っている途中（自動で続けている途中）なら、終わるまで待ってもらう
  */
 function createCombinedMeetingSummary() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = mtgUi_();
   const o = MTG_OPTIONS.combined;
   if (!o.enabled) throw new Error('統合版を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.combined.enabled）。');
+  if (mtgJobLoad_()) {
+    throw new Error('サブインダストリーの資料を作っている途中です（自動で続けています）。終わってから（showMeetingSummariesResult() で確かめてから）実行してください。');
+  }
   const names = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
   if (!names.length) throw new Error('追跡しているシート（test.gs の DIFF_RULES）が見つかりません。');
   const now = new Date();
@@ -936,13 +1081,14 @@ function createCombinedMeetingSummary() {
   const final = !missing.length;
   const answer = ui.alert(CRED_OPTIONS.menuTitle, '「' + o.name + '」の資料（' + names.length + 'サブインダストリーを1つにまとめた統合版）を、今のシートの値で作ります。\n\n' +
     (final ? '会議日 ' + meeting + ' の本番の資料として作り、会議のフォルダに格納します（会議日の記録・会議時点のコピーは変えません）。'
-      : 'この会議日（' + meeting + '）の本番の資料をまだ作っていないシート（' + missing.join('・') + '）があるので、試作として作ります（ファイル名に「試作」が付きます）。') +
+      : 'この会議日（' + meeting + '）の本番の資料をまだ作っていないシート（' + missing.join('・') + '）があります。本番の統合版は、' +
+        'すべてのサブインダストリーの本番の資料を createMeetingSummaries() で作ってから作ってください。\nこのまま試作として作ります（ファイル名に「試作」が付きます）。') +
     '\n作成してよろしいですか？', ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return;
   const {summaries} = mtgSummaries_(ss, names, now, final, meeting);
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
-  const message = mtgCombinedLines_(mtgCreateCombined_(summaries, meeting, final, folder)).concat(['', '保存先：' + folder.getUrl()]).join('\n');
+  const message = mtgCombinedLines_(mtgCombinedPlain_(mtgCreateCombined_(summaries, meeting, final, folder))).concat(['', '保存先：' + folder.getUrl()]).join('\n');
   console.log(message);
   ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
 }
@@ -951,16 +1097,22 @@ function createCombinedMeetingSummary() {
 function mtgCombinedLines_(combined) {
   const name = MTG_OPTIONS.combined.name;
   if (!combined) return [];
-  if (!combined.file) {
-    return ['※ 統合版（' + name + '）は作りませんでした（' + (combined.skipped || '理由：' + combined.error) + '）。' +
+  if (!combined.fileName) {
+    return ['※ 統合版（' + name + '）は作りませんでした（理由：' + combined.error + '）。' +
       'エディタで createCombinedMeetingSummary() を実行すると、統合版だけを作ります。'];
   }
-  return ['「' + name + '」（統合版）：' + combined.file.getName() + '（' + combined.pages + 'ページ）\n　' + combined.file.getUrl() +
-    (combined.stored ? '\n　会議のフォルダ「' + combined.stored.folder.getName() + '」' + (combined.stored.created ? 'を作って' : 'に') + '格納しました：' +
-      combined.stored.folder.getUrl() : '') +
-    (combined.index && combined.index.error ? '\n　※ ' + combined.index.error : '') +
+  return ['「' + name + '」（統合版）：' + combined.fileName + '（' + combined.pages + 'ページ）\n　' + combined.fileUrl +
+    (combined.folderName ? '\n　会議のフォルダ「' + combined.folderName + '」' + (combined.created ? 'を作って' : 'に') + '格納しました：' + combined.folderUrl : '') +
+    (combined.indexError ? '\n　※ ' + combined.indexError : '') +
     (combined.storeError ? '\n　※ 会議のフォルダに格納できませんでした（' + combined.storeError + '）。資料は保存先にあります。' +
       'フォルダを用意してから、エディタで storeMeetingSummaries() を実行し「' + name + '」を選んで格納してください。' : '')];
+}
+
+/** 統合版の結果（mtgCreateCombined_）を、保存できる形（文字だけ）に */
+function mtgCombinedPlain_(c) {
+  return {fileName: c.file.getName(), fileUrl: c.file.getUrl(), pages: c.pages,
+    folderName: c.stored ? c.stored.folder.getName() : '', folderUrl: c.stored ? c.stored.folder.getUrl() : '', created: !!(c.stored && c.stored.created),
+    indexError: c.index && c.index.error || '', storeError: c.storeError || ''};
 }
 
 /**

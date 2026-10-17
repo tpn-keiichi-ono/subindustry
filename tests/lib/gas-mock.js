@@ -988,7 +988,8 @@ function createGas(options) {
             everyDays: set('everyDays'),
             atHour: set('atHour'),
             nearMinute: set('nearMinute'),
-            inTimezone: set('inTimezone')
+            inTimezone: set('inTimezone'),
+            after: set('after')
           });
           return builder;
         }
