@@ -74,16 +74,23 @@ const MTG_OPTIONS = {
   // {n} は、そのフォルダの中の、この会議日より前の「yyMMdd_第N回会議」のいちばん大きい N ＋ 1（無ければ 1）
   createMeetingFolder: true,
   meetingFolderName: '{date}_第{n}回会議',
-  // 会議資料のインデックス（このスプレッドシートのシート）。会議のフォルダに格納したら、行＝サブインダストリー（シート名）・列＝会議日
-  // （1行目に yyyy/MM/dd。無ければ日付の順に差し込む）のセルに、PDF のファイルをスマートチップ（chip。Sheets API の拡張サービスが要る）で書く。
-  // チップにできないときは、ファイル名のリンクで書く。link を 'folder' にすると会議のフォルダ。
-  // シートが無ければ作る。書けなかったときは storeMeetingSummaries() で書き直す
+  // 会議資料のインデックス（このスプレッドシートのシート）。会議のフォルダに格納したら、行＝会議日・列＝サブインダストリー（1行目の見出しがシート名）の
+  // セルに、PDF のファイルをスマートチップ（chip。Sheets API の拡張サービスが要る）で書く。チップにできないときは、ファイル名のリンクで書く。
+  // link を 'folder' にすると会議のフォルダ。シートが無ければ作る。書けなかったときは storeMeetingSummaries() で書き直す。
+  // 前の形式（行＝サブインダストリー・列＝会議日）のシートや、書き漏れは rebuildMeetingIndex() で作り直す
   index: {
     sheet: 'INDEX_会議資料',
-    corner: 'サブインダストリー',   // A1 の見出し
+    dateHeader: '日付',              // A列：会議日（日付の値。上から日付の順）
+    kindHeader: '種別',              // B列：会議の種別
+    kind: 'RX Business MTG',         // 種別の列に書く値（同じ日付でも種別が違う行には書かない）
+    blankHeaders: ['全サブインダストリー'],   // 見出しだけ置いて書かない列（手で入れる資料など）。この後ろにサブインダストリーの列（DIFF_RULES の順）
     link: 'file',
     chip: true,
-    width: 280                      // 会議日の列の幅
+    dateFormat: 'yyyy/m/d',
+    fontSize: 9,                     // 字（太字・黒・上下中央）
+    rowHeight: 38,                   // 会議日の行の高さ（px）
+    tabColor: '#000000',
+    widths: {date: 83, kind: 119, blank: 158, sheet: 138}   // 列の幅（px）
   },
   // 会議時点のコピー：本番の資料を作ったとき・基準を記録したときに、追跡シートの値を別のスプレッドシート（タイトルは実行日時）に保存する。
   // 次の資料の「前回からの変化」は、前回のコピーと今のシートを比べて出す（差分追跡が止まっていた間・2,000セルを超える貼り付けの変更も出る）。
@@ -985,10 +992,11 @@ function mtgMeetingFolder_(name, meeting, noCreate) {
 }
 
 /**
- * 会議資料のインデックス（このスプレッドシートの MTG_OPTIONS.index.sheet）の、行＝サブインダストリー（name）・列＝会議日（meeting）のセルに、
- * PDF（stored.file。index.link が 'folder' なら会議のフォルダ）をスマートチップで書く（できなければファイル名のリンク）。シートが無ければ作り、A1 に見出しと、A列に追跡シートの名前（DIFF_RULES の順）を書く。
- * 会議日の列（1行目。yyyy/MM/dd の文字）が無ければ日付の順になる位置に差し込み、行が無ければ下に足す。同じセルは上書き（作り直したとき）。
- * 書き込みはドキュメントロックの中（差分追跡の対象外のシートだが、資料作成はエディタから実行するので待ってよい）。
+ * 会議資料のインデックス（このスプレッドシートの MTG_OPTIONS.index.sheet）の、行＝会議日（meeting）・列＝サブインダストリー（name）のセルに、
+ * PDF（stored.file。index.link が 'folder' なら会議のフォルダ）をスマートチップで書く（できなければファイル名のリンク）。
+ * シートが無ければ作り、1行目に見出し（日付・種別・全サブインダストリー・追跡シートの名前（DIFF_RULES の順））を書く。
+ * 会議日の行（日付が同じで、種別が kind か空の行）が無ければ日付の順になる位置に差し込み、サブインダストリーの列が無ければ右に足す。
+ * 同じセルは上書き（作り直したとき）。書き込みはドキュメントロックの中（差分追跡の対象外のシートだが、資料作成はエディタから実行するので待ってよい）。
  * 戻り値 {url: シートの URL, title: シート名} か {error: 知らせる文}（止めない）
  */
 function mtgWriteIndex_(name, meeting, stored) {
@@ -998,54 +1006,49 @@ function mtgWriteIndex_(name, meeting, stored) {
     if (!lock.tryLock(MTG_OPTIONS.indexLockWaitMs)) throw new Error('ほかの処理が実行中');
     try {
       const ss = SpreadsheetApp.getActiveSpreadsheet();
-      const names = Object.keys(DIFF_RULES);
-      let sheet = ss.getSheetByName(o.sheet);
-      if (!sheet) {
-        const active = ss.getActiveSheet();
-        sheet = ss.insertSheet(o.sheet, ss.getSheets().length);
-        if (active) active.activate();   // insertSheet は作ったシートを開くので、開いていたシートに戻す
+      const sheet = mtgIndexSheet_(ss);
+      const layout = mtgIndexLayout_(sheet);
+      if (!layout) {
+        const error = new Error('1行目に「' + o.dateHeader + '」の見出しがありません');
+        error.hint = '前の形式（行がサブインダストリー）のシートは、エディタで rebuildMeetingIndex() を実行すると、今の形式で作り直します。';
+        throw error;
       }
-      // 白紙：見出しとサブインダストリーの行を用意する（使わない行・列は持たない）
-      if (sheet.getLastRow() === 0) {
-        diffEnsureGrid_(sheet, names.length + 1, 1);
-        sheet.getRange(1, 1, names.length + 1, 1).setValues([[credText_(o.corner)]].concat(names.map(n => [credText_(n)])));
-        sheet.getRange(1, 1).setFontWeight('bold');
-        sheet.setColumnWidth(1, 180);
-        diffTrimGrid_(sheet, 1, names.length + 1);
-        sheet.setFrozenRows(1);
-      }
-      // 会議日の列
-      const lastCol = Math.max(sheet.getLastColumn(), 1);
-      const heads = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(mtgIndexDate_);
-      let col = heads.indexOf(meeting, 1) + 1;
+      // サブインダストリーの列（前の名前で書いてあれば今の名前とみなす。無ければ右に足す）
+      let col = layout.columns[name];
       if (!col) {
-        const after = heads.findIndex((d, i) => i >= 1 && d && d > meeting);   // この会議日より後の列があれば、その前に差し込む
-        if (after > 0) {
-          sheet.insertColumnBefore(after + 1);
-          col = after + 1;
-        } else {
-          col = lastCol + 1;
-          diffEnsureGrid_(sheet, 1, col);
-        }
-        sheet.getRange(1, col).setValue(credText_(meeting)).setFontWeight('bold');
-        sheet.setColumnWidth(col, o.width);
+        col = Math.max(sheet.getLastColumn(), 1) + 1;
+        diffEnsureGrid_(sheet, 1, col);
+        sheet.getRange(1, col).setValue(credText_(name));
+        mtgIndexFormat_(sheet.getRange(1, col, Math.max(sheet.getLastRow(), 1), 1));
+        sheet.setColumnWidth(col, o.widths.sheet);
       }
-      // サブインダストリーの行（前の名前で書いてあれば今の名前とみなす）
-      const resolve = diffSheetNameResolver_();
-      const lastRow = Math.max(sheet.getLastRow(), 1);
-      const labels = sheet.getRange(1, 1, lastRow, 1).getDisplayValues().map(r => resolve(String(r[0]).trim()));
-      let row = labels.indexOf(name, 1) + 1;
-      if (!row) {
-        row = lastRow + 1;
-        diffEnsureGrid_(sheet, row, col);
-        sheet.getRange(row, 1).setValue(credText_(name));
+      // 会議日の行（無ければ、この会議日より後の行の前に差し込む。無ければ下に足す）
+      const lastRow = sheet.getLastRow();
+      const lines = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, Math.max(layout.date, layout.kind || 1)).getValues() : [];
+      const kindOf = line => (layout.kind ? String(line[layout.kind - 1] == null ? '' : line[layout.kind - 1]).trim() : '');
+      const dateOf = line => mtgIndexDate_(line[layout.date - 1]);
+      let at = lines.findIndex(line => dateOf(line) === meeting && (!kindOf(line) || kindOf(line) === o.kind));
+      let row = at + 2;
+      if (at < 0) {
+        at = lines.findIndex(line => dateOf(line) > meeting);
+        if (at >= 0) {
+          row = at + 2;
+          sheet.insertRowBefore(row);
+        } else {
+          row = lastRow + 1;
+          diffEnsureGrid_(sheet, row, 1);
+        }
+        sheet.getRange(row, layout.date).setValue(Utilities.parseDate(meeting, Session.getScriptTimeZone(), 'yyyy/MM/dd')).setNumberFormat(o.dateFormat);
+        if (layout.kind) sheet.getRange(row, layout.kind).setValue(credText_(o.kind));
+        mtgIndexFormat_(sheet.getRange(row, 1, 1, Math.max(sheet.getLastColumn(), col)));
+        sheet.setRowHeight(row, o.rowHeight);
       }
       const target = o.link === 'folder' || !stored.file ? stored.folder : stored.file;
       const url = target.getUrl();
       const chip = !!o.chip && mtgWriteChip_(ss, sheet, row, col, url);
       if (!chip) {
-        const name = target.getName();
-        sheet.getRange(row, col).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText(name).setLinkUrl(url)
+        const fileName = target.getName();
+        sheet.getRange(row, col).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText(fileName).setLinkUrl(url)
           .setTextStyle(SpreadsheetApp.newTextStyle().setForegroundColor('#000000').setUnderline(false).build()).build()]]);   // 黒・下線なし
       }
       return {url: ss.getUrl() + '#gid=' + sheet.getSheetId(), title: o.sheet, chip};
@@ -1053,8 +1056,153 @@ function mtgWriteIndex_(name, meeting, stored) {
       lock.releaseLock();
     }
   } catch (error) {
-    return {error: '「' + o.sheet + '」シートに書き込めませんでした（' + (error && error.message || error) + '）。storeMeetingSummaries() を実行すると書き直します。'};
+    return {error: '「' + o.sheet + '」シートに書き込めませんでした（' + (error && error.message || error) + '）。' +
+      (error && error.hint || 'storeMeetingSummaries() を実行すると書き直します。')};
   }
+}
+
+/**
+ * インデックスのシート（無ければ作る。白紙なら見出しの行を用意する。ロックの中で呼ぶ）。
+ * 見出し：日付・種別・blankHeaders・追跡シートの名前（DIFF_RULES の順）。太字・黒・上下中央、1行目を固定、タブは黒。使わない行・列は持たない
+ */
+function mtgIndexSheet_(ss) {
+  const o = MTG_OPTIONS.index;
+  let sheet = ss.getSheetByName(o.sheet);
+  if (!sheet) {
+    const active = ss.getActiveSheet();
+    sheet = ss.insertSheet(o.sheet, ss.getSheets().length);
+    if (active) active.activate();   // insertSheet は作ったシートを開くので、開いていたシートに戻す
+  }
+  if (sheet.getLastRow() > 0) return sheet;
+  const fixed = [o.dateHeader, o.kindHeader].concat(o.blankHeaders || []);
+  const headers = fixed.concat(Object.keys(DIFF_RULES));
+  diffEnsureGrid_(sheet, 2, headers.length);
+  mtgIndexFormat_(sheet.getRange(1, 1, 1, headers.length).setValues([headers.map(credText_)]));
+  const widths = [o.widths.date, o.widths.kind].concat((o.blankHeaders || []).map(() => o.widths.blank));
+  headers.forEach((_, i) => sheet.setColumnWidth(i + 1, i < widths.length ? widths[i] : o.widths.sheet));
+  sheet.setFrozenRows(1);
+  if (o.tabColor) sheet.setTabColor(o.tabColor);
+  diffTrimGrid_(sheet, headers.length, 2);
+  return sheet;
+}
+
+/** インデックスの字の書式（太字・黒・上下中央・fontSize） */
+function mtgIndexFormat_(range) {
+  return range.setFontWeight('bold').setFontSize(MTG_OPTIONS.index.fontSize).setFontColor('#000000').setVerticalAlignment('middle');
+}
+
+/**
+ * インデックスの見出し（1行目）から列の位置を読む。{date, kind, columns: {シート名: 列}}（列は 1 から。前の名前の見出しは今の名前に）。
+ * 「日付」の見出しが無ければ null（前の形式（行＝サブインダストリー）など）
+ */
+function mtgIndexLayout_(sheet) {
+  const o = MTG_OPTIONS.index;
+  const width = Math.max(sheet.getLastColumn(), 1);
+  const heads = sheet.getRange(1, 1, 1, width).getDisplayValues()[0].map(h => String(h).trim());
+  const date = heads.indexOf(o.dateHeader) + 1;
+  if (!date) return null;
+  const resolve = diffSheetNameResolver_();
+  const columns = {};
+  heads.forEach((h, i) => {
+    const name = resolve(h);
+    if (DIFF_RULES[name] && !columns[name]) columns[name] = i + 1;
+  });
+  return {date, kind: heads.indexOf(o.kindHeader) + 1, columns};
+}
+
+/**
+ * 会議資料のインデックスを、各サブインダストリーの会議のフォルダ（DIFF_RULES の meetingFolder の中の「yyMMdd_第N回会議」）にある
+ * 本番の事前資料（PDF。mtgFileName_）から書き直す（エディタから実行）。前の形式（行＝サブインダストリー）のシートは、中身を消して今の形式で作り直す。
+ * 今の形式なら、ある行・列はそのまま（手で入れた値も残す）で、資料のセルだけ書き直す。何度実行してもよい
+ */
+function rebuildMeetingIndex() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = mtgUi_();
+  const o = MTG_OPTIONS.index;
+  const current = ss.getSheetByName(o.sheet);
+  const old = !!current && current.getLastRow() > 0 && !mtgIndexLayout_(current);
+  const answer = ui.alert(CRED_OPTIONS.menuTitle, '各サブインダストリーの会議のフォルダにある事前資料（PDF）から、「' + o.sheet + '」シートを書き直します。' +
+    (old ? '\n今のシートは前の形式（行がサブインダストリー）なので、中身を消して、行＝会議日・列＝サブインダストリーの形式で作り直します。' : '') +
+    '\nよろしいですか？', ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+  if (old) {
+    const lock = LockService.getDocumentLock();
+    lock.waitLock(MTG_OPTIONS.indexLockWaitMs);
+    try {
+      current.clear();
+    } finally {
+      lock.releaseLock();
+    }
+  }
+  let written = 0;
+  let index = null;
+  const lines = Object.keys(DIFF_RULES).map(name => {
+    const found = mtgStoredDecks_(name);
+    if (found.error) return '・' + name + '：' + found.error;
+    const errors = [];
+    found.decks.forEach(d => {
+      const r = mtgWriteIndex_(name, d.meeting, {folder: d.folder, file: d.file});
+      if (r.error) errors.push(d.meeting + '：' + r.error);
+      else {
+        written++;
+        index = r;
+      }
+    });
+    return '・' + name + '：' + (found.decks.length ? found.decks.length + '件（' + found.decks.map(d => d.meeting).join('・') + '）' : '資料なし') +
+      (errors.length ? '\n　※ ' + errors.join('\n　※ ') : '');
+  });
+  const message = '「' + o.sheet + '」シートに、資料のファイルを ' + written + '件書きました。' + (index ? index.url : '') + '\n\n' + lines.join('\n');
+  console.log(message);
+  ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+}
+
+/**
+ * サブインダストリー（name）の会議のフォルダにある本番の事前資料。{decks: [{meeting: 'yyyy/MM/dd', folder, file}]}（会議日の順）か {error: 理由}。
+ * 会議のフォルダは、名前が meetingFolderDate（yyMMdd）の日付と「_」で始まるもの。PDF の名前は mtgFileName_（本番）
+ */
+function mtgStoredDecks_(name) {
+  const rule = DIFF_RULES[name] || {};
+  const id = mtgFolderIdOf_(rule.meetingFolder);
+  if (!id) return {error: '会議のフォルダが設定されていない（test.gs の DIFF_RULES の meetingFolder）'};
+  let parent;
+  try {
+    parent = DriveApp.getFolderById(id);
+  } catch (_) {
+    return {error: 'フォルダ（ID：' + id + '）を開けない'};
+  }
+  const decks = [];
+  const folders = parent.getFolders();
+  while (folders.hasNext()) {
+    const folder = folders.next();
+    if (folder.isTrashed()) continue;
+    const meeting = mtgMeetingOfFolder_(String(folder.getName()));
+    if (!meeting) continue;
+    const files = folder.getFilesByName(mtgFileName_(name, meeting, true) + '.pdf');
+    if (files.hasNext()) decks.push({meeting, folder, file: DriveApp.getFileById(files.next().getId())});
+  }
+  decks.sort((a, b) => (a.meeting < b.meeting ? -1 : a.meeting > b.meeting ? 1 : 0));
+  return {decks};
+}
+
+/** 会議のフォルダの名前（261023_第5回会議）から会議日 'yyyy/MM/dd'（MTG_OPTIONS.meetingFolderDate の形の日付と「_」で始まらなければ空） */
+function mtgMeetingOfFolder_(folderName) {
+  const keys = [];
+  const pattern = MTG_OPTIONS.meetingFolderDate.replace(/yyyy|yy|MM|dd|[^A-Za-z]/g, t => {
+    if (/^[yMd]/.test(t)) {
+      keys.push(t);
+      return '(\\d{' + t.length + '})';
+    }
+    return t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  });
+  const m = new RegExp('^' + pattern + '_').exec(folderName.normalize('NFKC'));
+  if (!m) return '';
+  const part = {};
+  keys.forEach((k, i) => { part[k] = m[i + 1]; });
+  const year = part.yyyy || '20' + part.yy;
+  const month = Number(part.MM);
+  const day = Number(part.dd);
+  if (!(month >= 1 && month <= 12 && day >= 1 && day <= 31)) return '';
+  return year + '/' + ('0' + month).slice(-2) + '/' + ('0' + day).slice(-2);
 }
 
 /**

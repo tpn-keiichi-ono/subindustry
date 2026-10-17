@@ -314,9 +314,11 @@ class Range {
     this.each((cell, r, c) => { cell.note = String(matrix[r][c] == null ? '' : matrix[r][c]); });
     return this;
   }
-  setFontWeight() { return this; }
+  setFontWeight(v) { this.each(cell => { cell.fmt = Object.assign(cell.fmt || {}, {fw: v}); }); return this; }
+  setFontSize(v) { this.each(cell => { cell.fmt = Object.assign(cell.fmt || {}, {fs: v}); }); return this; }
+  setFontColor(v) { this.each(cell => { cell.fmt = Object.assign(cell.fmt || {}, {fc: v}); }); return this; }
   setBackground() { return this; }
-  setVerticalAlignment() { return this; }
+  setVerticalAlignment(v) { this.each(cell => { cell.fmt = Object.assign(cell.fmt || {}, {va: v}); }); return this; }
   setWrap() { return this; }
 
   /** 書式（まとめて付ける形）。セルの fmt に残す（テストと見た目の確認用） */
@@ -494,6 +496,7 @@ class Sheet {
     return this;
   }
   insertRowAfter(after) { return this.insertRowsAfter(after, 1); }
+  insertRowBefore(before) { return this.insertRowsAfter(before - 1, 1); }
   insertRowsBefore(before, count) { return this.insertRowsAfter(before - 1, count); }
 
   /** 行を動かす（Apps Script と同じく、destinationIndex は動かす前の行番号で「この行の前へ」）。 */
@@ -564,6 +567,13 @@ class Sheet {
     return this;
   }
 
+  /** 値と書式を消す（列の幅・行の高さは残る。本物と同じ） */
+  clear() {
+    this.gas.recordWrite(this.getRange(1, 1, this.maxRows, this.maxCols), 'clear');
+    this.data = [];
+    return this;
+  }
+  setTabColor(color) { this.tabColor = color; return this; }
   hideSheet() { this.hidden = true; return this; }
   activate() { this.gas.selection = {sheet: this, range: this.getRange('A1')}; return this; }
   isSheetHidden() { return this.hidden; }
@@ -722,7 +732,11 @@ function createGas(options) {
     const v = cell ? cell.v : '';
     if (v === '' || v == null) return '';
     if (isDate(v)) {
-      if (cell.nf && /[yd]/.test(cell.nf)) return formatDate(v, ss.timeZone, cell.nf);
+      if (cell.nf && /[yd]/.test(cell.nf)) {
+        // シートの表示形式（yyyy/m/d）の m は月（時刻の無い形式のとき）
+        const nf = /[hHs]/.test(cell.nf) ? cell.nf : cell.nf.replace(/m+/g, t => (t.length === 1 ? 'M' : 'MM'));
+        return formatDate(v, ss.timeZone, nf);
+      }
       return formatDate(v, ss.timeZone, formatDate(v, ss.timeZone, 'HH:mm:ss') === '00:00:00'
         ? 'yyyy/MM/dd' : 'yyyy/MM/dd HH:mm:ss');
     }

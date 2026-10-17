@@ -1222,7 +1222,7 @@ test('mtgMeetingFolder_：設定が無い・開けない・2つある・コピ�
     'AbCdEf123456', ''].map(g.mtgFolderIdOf_), ['AbCdEf123456', 'AbCdEf123456', 'AbCdEf123456', '']);
 });
 
-test('インデックス：会議のフォルダに格納したら、「INDEX_会議資料」シートの行＝サブインダストリー・列＝会議日のセルに PDF のファイルを書く（Sheets API が無ければファイル名のリンク）', () => {
+test('インデックス：会議のフォルダに格納したら、「INDEX_会議資料」シートの行＝会議日・列＝サブインダストリーのセルに PDF のファイルを書く（Sheets API が無ければファイル名のリンク）', () => {
   const {gas, g, sheet: source} = setup();
   gas.select(source, 'D3');
   const meeting = g.mtgParseDate_('10/23', new Date());
@@ -1234,34 +1234,91 @@ test('インデックス：会議のフォルダに格納したら、「INDEX_�
   assert.ok(sheet, 'シートが無ければ作る');
   assert.strictEqual(gas.ss.getActiveSheet().getName(), '新FMT', '開いていたシートに戻す');
   const pdf = gas.driveFiles.find(f => f.folder === 'meeting-folder-0');
-  assert.deepStrictEqual(plain(sheet.getRange(1, 1, 3, 2).getDisplayValues()), [
-    ['サブインダストリー', meeting],
-    ['新FMT', meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料.pdf'],
-    ['新FMT2', '']
+  const day = d => d.replace(/\/0?/g, '/');   // 2026/10/09 → 2026/10/9（表示形式 yyyy/m/d）
+  assert.deepStrictEqual(plain(sheet.getRange(1, 1, 2, 5).getDisplayValues()), [
+    ['日付', '種別', '全サブインダストリー', '新FMT', '新FMT2'],
+    [day(meeting), 'RX Business MTG', '', meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料.pdf', '']
   ]);
-  assert.deepStrictEqual([sheet.getMaxRows(), sheet.getMaxColumns()], [3, 2], '使わない行・列は持たない');
-  assert.strictEqual(sheet.getRange(2, 2).getRichTextValues()[0][0].getLinkUrl(), 'https://drive.google.com/file/d/' + pdf.id + '/view', 'ファイルへの直リンク');
-  assert.deepStrictEqual([sheet.getFrozenRows(), typeof sheet.getRange(1, 2).getValue()], [1, 'string'], '会議日は文字で書く');
+  assert.deepStrictEqual([sheet.getMaxRows(), sheet.getMaxColumns()], [2, 5], '使わない行・列は持たない');
+  assert.strictEqual(sheet.getRange(2, 4).getRichTextValues()[0][0].getLinkUrl(), 'https://drive.google.com/file/d/' + pdf.id + '/view', 'ファイルへの直リンク');
+  assert.strictEqual(Object.prototype.toString.call(sheet.getRange(2, 1).getValue()), '[object Date]', '会議日は日付の値');
+  assert.deepStrictEqual([sheet.getFrozenRows(), sheet.tabColor, sheet.widths[1], sheet.widths[3], sheet.widths[4], sheet.heights[2]], [1, '#000000', 83, 158, 138, 38]);
+  assert.deepStrictEqual(plain(sheet.cell(2, 4).fmt), {fw: 'bold', fs: 9, fc: '#000000', va: 'middle'}, '太字・9pt・黒・上下中央');
   assert.ok(gas.writes.filter(w => w.sheet === 'INDEX_会議資料').every(w => w.locked), '書き込みはロックの中');
   assert.match(gas.alerts[gas.alerts.length - 1].message, /「INDEX_会議資料」シートに、資料のファイルを書きました：https:\/\/docs\.google\.com\/spreadsheets\/d\/spreadsheet-id\/edit#gid=\d+\n（スマートチップにできなかったので、ファイル名のリンクで書きました。チップにするには、エディタの「サービス」に Google Sheets API を追加してください）/);
 
-  // 会議日は日付の順（前の会議日はその前に差し込む）。同じセルは上書き。ほかのサブインダストリーは下に足す。日付の値で入力した見出しも読む
+  // 会議日は日付の順（前の会議日はその前に差し込む）。同じセルは上書き。ほかのサブインダストリーは右に足す。日付の値で入力した会議日も読む
   const at = url => ({folder: {getUrl: () => 'folder', getName: () => 'folder'}, file: {getUrl: () => url, getName: () => url}});
   const year = meeting.slice(0, 4);
   assert.ok(g.mtgWriteIndex_('新FMT', year + '/10/30', at('u-1030')).url);
   assert.ok(g.mtgWriteIndex_('新FMT2', year + '/10/16', at('u-1016')).url);
   assert.ok(g.mtgWriteIndex_('新FMT', meeting, at('u-1023b')).url);
   assert.ok(g.mtgWriteIndex_('専門店', year + '/10/30', at('u-x')).url);
-  assert.deepStrictEqual(plain(sheet.getRange(1, 1, 4, 4).getDisplayValues()), [
-    ['サブインダストリー', year + '/10/16', meeting, year + '/10/30'],
-    ['新FMT', '', 'u-1023b', 'u-1030'],
-    ['新FMT2', 'u-1016', '', ''],
-    ['専門店', '', '', 'u-x']
+  assert.deepStrictEqual(plain(sheet.getRange(1, 1, 4, 6).getDisplayValues()), [
+    ['日付', '種別', '全サブインダストリー', '新FMT', '新FMT2', '専門店'],
+    [year + '/10/16', 'RX Business MTG', '', '', 'u-1016', ''],
+    [day(meeting), 'RX Business MTG', '', 'u-1023b', '', ''],
+    [year + '/10/30', 'RX Business MTG', '', 'u-1030', '', 'u-x']
   ]);
-  gas.asUser(() => sheet.getRange(1, 4).setValue(new gas.Date(Number(year), 9, 30)));
+  assert.deepStrictEqual(plain(sheet.cell(2, 1).fmt), {fw: 'bold', fs: 9, fc: '#000000', va: 'middle'}, '差し込んだ行も同じ書式');
+  // 手で入れた行：日付の値・種別が空なら同じ行に書く。種別が違う行には書かない（新しい行にする）
+  gas.asUser(() => sheet.getRange(4, 1, 1, 3).setValues([[new gas.Date(Number(year), 9, 30), '', '全体の資料']]));
   g.mtgWriteIndex_('新FMT2', year + '/10/30', at('u-1030b'));
-  assert.strictEqual(sheet.getRange(3, 4).getDisplayValue(), 'u-1030b');
-  assert.strictEqual(sheet.getLastColumn(), 4, '列は増やさない');
+  assert.deepStrictEqual(plain(sheet.getRange(4, 3, 1, 3).getDisplayValues()[0]), ['全体の資料', 'u-1030', 'u-1030b'], '手で入れた値は残す');
+  gas.asUser(() => sheet.getRange(4, 2).setValue('別の会議'));
+  g.mtgWriteIndex_('新FMT2', year + '/10/30', at('u-1030c'));
+  assert.deepStrictEqual(plain(sheet.getRange(4, 1, 2, 5).getDisplayValues()), [
+    [year + '/10/30', '別の会議', '全体の資料', 'u-1030', 'u-1030b'],
+    [year + '/10/30', 'RX Business MTG', '', '', 'u-1030c']
+  ]);
+  assert.strictEqual(sheet.getLastColumn(), 6, '列は増やさない');
+});
+
+test('インデックス：前の形式（行＝サブインダストリー）のシートには書かずに知らせ、rebuildMeetingIndex() で会議のフォルダの資料から今の形式に作り直す', () => {
+  const {gas, g} = setup({edits: false});
+  const year = g.mtgParseDate_('10/23', new Date()).slice(0, 4);
+  const old = gas.addSheet('INDEX_会議資料', [['サブインダストリー', year + '/10/23'], ['新FMT', '前のチップ']], {rows: 2, columns: 2});
+  const at = {folder: {getUrl: () => 'f', getName: () => 'f'}, file: {getUrl: () => 'u', getName: () => 'u'}};
+  const r = g.mtgWriteIndex_('新FMT', year + '/10/23', at);
+  assert.match(r.error, /「INDEX_会議資料」シートに書き込めませんでした（1行目に「日付」の見出しがありません）。前の形式（行がサブインダストリー）のシートは、エディタで rebuildMeetingIndex\(\) を実行すると、今の形式で作り直します。/);
+  assert.strictEqual(old.getRange(2, 2).getValue(), '前のチップ', '前の形式のシートは書き換えない');
+
+  // 会議のフォルダ：新FMT は 10/16・10/23（10/30 は資料なし）、新FMT2 は設定なし
+  gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'https://drive.google.com/drive/folders/SubIndustryFolder0001';
+  gas.driveFolders.push({id: 'm1023', name: year.slice(2) + '1023_第2回会議', parent: 'SubIndustryFolder0001'},
+    {id: 'm1016', name: year.slice(2) + '1016_第1回会議', parent: 'SubIndustryFolder0001'},
+    {id: 'm1030', name: year.slice(2) + '1030_第3回会議', parent: 'SubIndustryFolder0001'},
+    {id: 'other', name: '資料置き場', parent: 'SubIndustryFolder0001'});
+  const pdf = (folder, date) => gas.driveFiles.push({id: 'pdf-' + folder, folder, name: date + '_新FMT_RX Business Meeting用資料.pdf', blob: {}});
+  pdf('m1023', year + '1023');
+  pdf('m1016', year + '1016');
+  gas.driveFiles.push({id: 'draft', folder: 'm1030', name: year + '1030_新FMT_RX Business Meeting用資料_試作.pdf', blob: {}});
+
+  gas.confirmAnswer = 'NO';
+  g.rebuildMeetingIndex();
+  assert.match(gas.alerts[0].message, /今のシートは前の形式（行がサブインダストリー）なので、中身を消して、行＝会議日・列＝サブインダストリーの形式で作り直します。/);
+  assert.strictEqual(old.getRange(2, 2).getValue(), '前のチップ', '「いいえ」なら何もしない');
+
+  gas.confirmAnswer = 'YES';
+  g.rebuildMeetingIndex();
+  const sheet = gas.ss.getSheetByName('INDEX_会議資料');
+  assert.deepStrictEqual(plain(sheet.getRange(1, 1, 3, 5).getDisplayValues()), [
+    ['日付', '種別', '全サブインダストリー', '新FMT', '新FMT2'],
+    [year + '/10/16', 'RX Business MTG', '', year + '1016_新FMT_RX Business Meeting用資料.pdf', ''],
+    [year + '/10/23', 'RX Business MTG', '', year + '1023_新FMT_RX Business Meeting用資料.pdf', '']
+  ]);
+  assert.strictEqual(sheet.getLastRow(), 3, '試作の資料・会議日でないフォルダは書かない');
+  assert.ok(gas.writes.filter(w => w.sheet === 'INDEX_会議資料').every(w => w.locked), '書き込みはロックの中');
+  const done = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(done, /「INDEX_会議資料」シートに、資料のファイルを 2件書きました。/);
+  assert.match(done, new RegExp('・新FMT：2件（' + year + '/10/16・' + year + '/10/23）\n・新FMT2：会議のフォルダが設定されていない'));
+
+  // 今の形式なら消さずに書き直す（何度実行してもよい）
+  gas.asUser(() => sheet.getRange(2, 3).setValue('全体の資料'));
+  g.rebuildMeetingIndex();
+  assert.strictEqual(gas.alerts[gas.alerts.length - 2].message.indexOf('前の形式'), -1);
+  assert.deepStrictEqual([sheet.getLastRow(), sheet.getRange(2, 3).getValue()], [3, '全体の資料']);
+  assert.deepStrictEqual(['2026/10/23', '20261023', '261023_第5回会議', '261023第5回', '261332_第5回'].map(g.mtgMeetingOfFolder_), ['', '', '2026/10/23', '', '']);
 });
 
 test('インデックス：Sheets API（拡張サービス）があれば、PDF をスマートチップ（リッチリンク）で書く。書けなければリンクにする', () => {
@@ -1277,7 +1334,7 @@ test('インデックス：Sheets API（拡張サービス）があれば、PDF 
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(calls[0].id, gas.ss.getId());
   assert.deepStrictEqual(plain(calls[0].resource), {requests: [{updateCells: {
-    start: {sheetId: sheet.getSheetId(), rowIndex: 1, columnIndex: 1},
+    start: {sheetId: sheet.getSheetId(), rowIndex: 1, columnIndex: 3},
     rows: [{values: [{userEnteredValue: {stringValue: '@'}, chipRuns: [{startIndex: 0, chip: {richLinkProperties: {uri: 'https://drive.google.com/file/d/' + pdf.id + '/view'}}}],
       userEnteredFormat: {textFormat: {underline: false, foregroundColorStyle: {rgbColor: {red: 0, green: 0, blue: 0}}}}}]}],
     fields: 'userEnteredValue,chipRuns,textFormatRuns,userEnteredFormat.textFormat.underline,userEnteredFormat.textFormat.foregroundColorStyle'
@@ -1287,8 +1344,8 @@ test('インデックス：Sheets API（拡張サービス）があれば、PDF 
   g.Sheets = {Spreadsheets: {batchUpdate: () => { throw new Error('Invalid requests[0].updateCells'); }}};
   const r = g.mtgWriteIndex_('新FMT2', meeting, {folder: {getUrl: () => 'f', getName: () => 'f'}, file: {getUrl: () => 'https://drive.google.com/file/d/X/view', getName: () => 'X.pdf'}});
   assert.strictEqual(r.chip, false);
-  assert.strictEqual(sheet.getRange(3, 2).getRichTextValues()[0][0].getLinkUrl(), 'https://drive.google.com/file/d/X/view', '書けなければファイル名のリンク');
-  assert.deepStrictEqual(plain(sheet.getRange(3, 2).getRichTextValues()[0][0].styleAt(0)), {color: '#000000', underline: false}, '黒・下線なし');
+  assert.strictEqual(sheet.getRange(2, 5).getRichTextValues()[0][0].getLinkUrl(), 'https://drive.google.com/file/d/X/view', '書けなければファイル名のリンク');
+  assert.deepStrictEqual(plain(sheet.getRange(2, 5).getRichTextValues()[0][0].styleAt(0)), {color: '#000000', underline: false}, '黒・下線なし');
   assert.ok(gas.logs.some(l => l.level === 'warn' && /チップを書けなかった/.test(l.line)));
 });
 
@@ -1308,7 +1365,7 @@ test('インデックス：書けないとき（ほかの処理が実行中な�
   gas.promptAnswers = ['1', '10/23'];
   g.storeMeetingSummaries();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /「INDEX_会議資料」シートに書きました：https:\/\/docs\.google\.com\/spreadsheets\//);
-  assert.match(gas.ss.getSheetByName('INDEX_会議資料').getRange(2, 2).getDisplayValue(), /_新FMT_RX Business Meeting用資料\.pdf$/);
+  assert.match(gas.ss.getSheetByName('INDEX_会議資料').getRange(2, 4).getDisplayValue(), /_新FMT_RX Business Meeting用資料\.pdf$/);
 });
 
 test('会議時点のコピー：copyFolderId を設定すれば、そのフォルダに保存する（開けなければ止める）', () => {
