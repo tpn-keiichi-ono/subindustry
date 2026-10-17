@@ -104,9 +104,10 @@ const MTG_OPTIONS = {
     sheet: 'INDEX_会議資料',
     dateHeader: '日付',              // A列：会議日（日付の値。order の順）
     order: 'desc',                   // 会議日の行の並び：'desc' 新しい会議日が上（2026/10/17 から）・'asc' 古い会議日が上
-    kindHeader: '種別',              // B列：会議の種別
-    kind: 'RX Business Meeting',     // 種別の列に書く値（同じ日付でも種別が違う行には書かない）
-    formerKinds: ['RX Business MTG'], // 前の版で書いた種別（同じ会議の行として使い、書くときに今の種別に書き換える）
+    kindHeader: '会議名',            // B列：会議の名前（2026/10/17 に「種別」から改めた）
+    formerKindHeaders: ['種別'],     // 前の版の見出し（見つかったら、次に書くときに kindHeader に書き換える）
+    kind: 'RX Business Meeting',     // 会議名の列に書く値（同じ日付でも会議名が違う行には書かない）
+    formerKinds: ['RX Business MTG'], // 前の版で書いた会議名（同じ会議の行として使い、書くときに今の会議名に書き換える）
     // C列は統合版（combined.name の見出し）、その後ろにサブインダストリーの列（DIFF_RULES の順）
     link: 'file',
     chip: true,
@@ -349,16 +350,17 @@ const MTG_ASCII_WIDTHS = [
 /* ---------------- エディタから実行する ---------------- */
 
 /**
- * 会議サマリ（Google スライドと PDF）を作って保存する（作るシートと今回の会議日を聞く）。
+ * 会議サマリ（Google スライドと PDF）を作って保存する。画面（MeetingRunDialog）で、会議日程（「INDEX_会議資料」の RX Business Meeting の日程。
+ * Google カレンダーから importMeetingSchedules() で読む）をプルダウンで選び、作るシートを選んで作る。
  * 会議日と作った日時を記録し、次の会議の資料は今以降の変化を出す。
  */
 function createBusinessMtgSummaries() {
-  mtgRun_(true);
+  mschOpenRunDialog_('business', true);
 }
 
-/** 試しに会議サマリを作る（保存するが、会議日は記録しない。ファイル名に「試作」が付く）。 */
+/** 試しに会議サマリを作る（保存するが、会議日は記録しない。ファイル名に「試作」が付く）。画面は createBusinessMtgSummaries() と同じ */
 function previewBusinessMtgSummaries() {
-  mtgRun_(false);
+  mschOpenRunDialog_('business', false);
 }
 
 /**
@@ -457,56 +459,78 @@ function removeBusinessMtgRecord() {
 }
 
 /**
- * 本番：会議日を記録する前に、会議日（曜日）・シートごとの対象期間・同じ会議日の資料を作成済みかを出して確かめる。
- * 記録した会議日は次の会議の資料の起点になるので、配布したあとは作り直さないよう知らせる。はいのときだけ true
+ * シートごとの「前回」（mtgSummaries_ と同じ選び方）：基準・前回の会議の記録・前の版の記録の順。どれも無ければ、会議日程の一覧（インデックス）の
+ * 前の会議日（scheduled。その日の 0時から）。scheduled は mtgScheduledPrevious_ の戻り値（無ければ null）。
+ * {previous, legacy: 前の版の記録の時刻 | 0, held: この会議日より前の記録, same: この会議日の記録}
  */
-function mtgConfirmFinal_(ui, names, meeting) {
+function mtgPreviousOf_(props, name, meeting, scheduled) {
+  const list = mtgMeetings_(props, name);
+  const held = list.filter(m => !m.baseline && m.date < meeting).pop() || null;
+  const base = list.filter(m => m.baseline && m.date <= meeting).pop() || null;
+  const same = list.find(m => !m.baseline && m.date === meeting) || null;
+  let previous = base && (!held || base.cutoff > held.cutoff) ? base : held;
+  const legacy = previous ? 0 : Number(props.getProperty(MTG_OPTIONS.lastKeyPrefix + name)) || 0;
+  if (!previous && !legacy && scheduled) previous = scheduled;
+  return {previous, legacy, held, same};
+}
+
+/**
+ * 会議日程の一覧（インデックスの RX Business Meeting の行）で、meeting より前のいちばん新しい会議日（前回の会議）。
+ * {date, cutoff: その日の 0時, scheduled: true}。無ければ null（前回の会議の資料の記録が無いときの「前回」に使う）
+ */
+function mtgScheduledPrevious_(meeting) {
+  const prev = mtgIndexMeetings_(MTG_OPTIONS.index.kind).filter(m => m.date < meeting).pop();
+  if (!prev) return null;
+  return {date: prev.date, cutoff: Utilities.parseDate(prev.date, Session.getScriptTimeZone(), 'yyyy/MM/dd').getTime(), scheduled: true};
+}
+
+/** 作る前の確かめの文（会議日（曜日）・シートごとの対象期間・同じ会議日の資料を作成済みか・ダミーの記録）。本番なら記録の注意も */
+function mtgRunCheckText_(final, names, meeting) {
   const props = PropertiesService.getDocumentProperties();
   const tz = Session.getScriptTimeZone();
   const fmt = at => Utilities.formatDate(new Date(at), tz, 'M/d HH:mm');
-  const p = meeting.split('/').map(Number);
-  const week = '日月火水木金土'.charAt(new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay());
+  const scheduled = mtgScheduledPrevious_(meeting);
   const lines = names.map(name => {
-    const list = mtgMeetings_(props, name);
-    const held = list.filter(m => !m.baseline && m.date < meeting).pop();
-    const base = list.filter(m => m.baseline && m.date <= meeting).pop();
-    const same = list.find(m => !m.baseline && m.date === meeting);
-    const legacy = Number(props.getProperty(MTG_OPTIONS.lastKeyPrefix + name)) || 0;   // 前の版の記録（mtgSummaries_ と同じ順で選ぶ）
-    const from = base && (!held || base.cutoff > held.cutoff) ? '基準（' + fmt(base.cutoff) + '）以降'
-      : held ? '前回会議（' + mtgShortDate_(held.date) + '）の資料作成時（' + fmt(held.cutoff) + '）以降'
-        : legacy ? '前回の資料作成時（' + fmt(legacy) + '）以降'
-          : '直近' + MTG_OPTIONS.firstDays + '日間（前回の会議の記録なし）';
+    const p = mtgPreviousOf_(props, name, meeting, scheduled);
+    const prev = p.previous;
+    const from = prev && prev.baseline ? '基準（' + fmt(prev.cutoff) + '）以降'
+      : prev && prev.scheduled ? '前回会議（' + mtgShortDate_(prev.date) + '）以降（前回の資料の記録が無いため、会議日から）'
+        : prev ? '前回会議（' + mtgShortDate_(prev.date) + '）の資料作成時（' + fmt(prev.cutoff) + '）以降'
+          : p.legacy ? '前回の資料作成時（' + fmt(p.legacy) + '）以降'
+            : '直近' + MTG_OPTIONS.firstDays + '日間（前回の会議が無い）';
     const dummy = smpCountEvents_(SpreadsheetApp.getActiveSpreadsheet(), SMP_OPTIONS.dummy.eventPrefix + '-', name).changes;
-    const previous = base && (!held || base.cutoff > held.cutoff) ? base : held;
-    return '・' + name + '：' + from + (previous && previous.copy ? '（その時点のコピーと比べる）' : '') +
-      (same ? '\n　※ この会議日の資料は ' + fmt(same.cutoff) + ' に作成済み。作り直すと、次の会議の起点が今になります。' : '') +
-      (dummy ? '\n　※ ダミーの変更の記録（' + dummy + '件）があります。資料に【ダミーデータを含む】と出ます。配る資料なら、先に removeBusinessMtgDummyHistory() で消してください。' : '');
+    return '・' + name + '：' + from + (prev && prev.copy ? '（その時点のコピーと比べる）' : '') +
+      (final && p.same ? '\n　※ この会議日の資料は ' + fmt(p.same.cutoff) + ' に作成済み。作り直すと、次の会議の起点が今になります。' : '') +
+      (dummy ? '\n　※ ダミーの変更の記録（' + dummy + '件）があります。資料に【ダミーデータを含む】と出ます。' +
+        (final ? '配る資料なら、先に removeBusinessMtgDummyHistory() で消してください。' : '') : '');
   });
-  const answer = ui.alert(CRED_OPTIONS.menuTitle,
-    '本番の資料を作り、会議日を記録します。\n\n会議日：' + p[0] + '/' + p[1] + '/' + p[2] + '（' + week + '）\n対象期間\n' + lines.join('\n') +
-    '\n\n今の値は「' + MTG_OPTIONS.copyName + '」（別のスプレッドシート。タイトルは今の日時）に保存し、次の会議の資料はそれと比べます。' +
-    '\n記録した会議日は、次の会議の資料の起点になります。配布したあとは作り直さないでください。\n作成してよろしいですか？', ui.ButtonSet.YES_NO);
-  return answer === ui.Button.YES;
+  return (final ? '本番の資料を作り、会議日を記録します。' : '試しに資料を作ります（会議日は記録しません。ファイル名に「試作」が付きます）。') +
+    '\n\n会議日：' + mtgDateLabel_(meeting) + '\n対象期間\n' + lines.join('\n') +
+    (final ? '\n\n今の値は「' + MTG_OPTIONS.copyName + '」（別のスプレッドシート。タイトルは今の日時）に保存し、次の会議の資料はそれと比べます。' +
+      '\n記録した会議日は、次の会議の資料の起点になります。配布したあとは作り直さないでください。' : '');
 }
 
-function mtgRun_(final) {
-  const started = mtgNow_();   // 6分の上限は、実行を始めたときから（入力の画面の時間も含む）
+/**
+ * 会議サマリを作り始める（画面の「作成する」から。MeetingSchedule.gs の runMeetingMaterials）。作っている途中の仕事があれば、cancelJob ならやめて作り、
+ * そうでなければ止める。時間がかかれば区切って続ける（mtgJobRun_）。戻り値は終わり（区切ったとき）の知らせ
+ */
+function mtgRunStart_(final, meeting, names, cancelJob) {
+  const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = mtgUi_();
-  if (!mtgJobStartCheck_(ui)) return;
-  const names = mtgAskSheets_(ss, ui, final ? '会議サマリを作ります。' : '会議サマリを試しに作ります（会議日は記録しません）。');
-  if (!names) return;
+  if (mtgJobLoad_()) {
+    if (!cancelJob) throw new Error(mtgJobPendingText_());
+    mtgJobClear_();
+    mtgJobDeleteTriggers_();
+  }
   const now = new Date();
-  const meeting = mtgAskMeeting_(ui, names, now);
-  if (!meeting) return;
-  if (final && !mtgConfirmFinal_(ui, names, meeting)) return;
   const job = {final, meeting, now: now.getTime(), names, items: [], stored: 0, copy: null, index: null, folderUrl: '',
     combined: !!MTG_OPTIONS.combined.enabled};
   const done = mtgJobRun_(ss, job, started);
   const message = mtgJobMessage_(job, done);
   console.log(message);
-  ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+  return message;
 }
+
 
 /* ---------------- 作る仕事（6分の上限に掛からないよう、区切って続ける） ---------------- */
 
@@ -726,18 +750,14 @@ function showBusinessMtgSummariesResult() {
   ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
 }
 
-/** 作っている途中の仕事があれば、やめて新しく作るかを聞く（やめるなら仕事と続きの予約を消す）。続けてよければ true */
-function mtgJobStartCheck_(ui) {
+/** 作っている途中の仕事があれば、その知らせ（画面に出し、「やめて新しく作る」を選んでもらう）。無ければ空 */
+function mtgJobPendingText_() {
   const job = mtgJobLoad_();
-  if (!job) return true;
+  if (!job) return '';
   const at = Utilities.formatDate(new Date(job.savedAt || job.now), Session.getScriptTimeZone(), 'M/d HH:mm');
-  const answer = ui.alert(CRED_OPTIONS.menuTitle, '前に始めた会議サマリ（会議日 ' + job.meeting + '・' + (job.final ? '本番' : '試作') + '。資料 ' +
-    job.items.length + '/' + job.names.length + '件。' + at + ' に区切り）を、自動で続けている途中です。\n\n' +
-    'それをやめて、新しく作りますか？（「いいえ」なら何もしません。続きが終わったら showBusinessMtgSummariesResult() で結果を見られます）', ui.ButtonSet.YES_NO);
-  if (answer !== ui.Button.YES) return false;
-  mtgJobClear_();
-  mtgJobDeleteTriggers_();
-  return true;
+  return '前に始めた会議サマリ（会議日 ' + job.meeting + '・' + (job.final ? '本番' : '試作') + '。資料 ' + job.items.length + '/' + job.names.length + '件。' +
+    at + ' に区切り）を、自動で続けている途中です。やめて新しく作るときは「やめて新しく作る」にチェックを入れてください' +
+    '（続きが終わったら showBusinessMtgSummariesResult() で結果を見られます）。';
 }
 
 /* ---------------- Google チャットへの通知（webhook） ---------------- */
@@ -980,29 +1000,6 @@ function mtgAskSheets_(ss, ui, heading, extra) {
   return picked;
 }
 
-/** 今回の会議日を聞く（「10/23」「2026/10/23」）。「yyyy/MM/dd」を返す。やめたら null。 */
-function mtgAskMeeting_(ui, names, now) {
-  const props = PropertiesService.getDocumentProperties();
-  const tz = Session.getScriptTimeZone();
-  const last = names.map(name => {
-    const list = mtgMeetings_(props, name);
-    const held = list.filter(m => !m.baseline).pop();
-    const base = list.filter(m => m.baseline).pop();
-    return '・' + name + '：' + (held ? held.date : '記録なし') +
-      (base && (!held || base.cutoff > held.cutoff)
-        ? '（' + (held ? 'そのあと ' : '') + Utilities.formatDate(new Date(base.cutoff), tz, 'MM/dd HH:mm') + ' に基準を記録）' : '');
-  });
-  const message = '今回の会議日を入力してください（例：10/23）。\n' +
-    '前回の会議（今回より前で、いちばん新しい会議日）の資料を作った時点（そのあとに基準を記録していれば基準）からの変化を出します。\n\n' +
-    '記録してある最後の会議日\n' + last.join('\n');
-  const response = ui.prompt(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK_CANCEL);
-  if (response.getSelectedButton() !== ui.Button.OK) return null;
-  const text = String(response.getResponseText() || '').trim();
-  if (!text) throw new Error('会議日を入力してください（例：10/23）。');
-  const date = mtgParseDate_(text, now);
-  if (!date) throw new Error('「' + text + '」を会議日として読めません。10/23 か 2026/10/23 のように入力してください。');
-  return date;
-}
 
 /** 完成した結果の件数の知らせ（「変化のある案件 12・停滞 5・確認事項 7」） */
 function mtgCountsText_(summary) {
@@ -1026,13 +1023,11 @@ function mtgMeetingPending_(ss, meeting) {
 function mtgSummaries_(ss, names, now, final, meeting) {
   const o = MTG_OPTIONS;
   const props = PropertiesService.getDocumentProperties();
+  const scheduled = mtgScheduledPrevious_(meeting);
   const plans = names.map(name => {
     const meetings = mtgMeetings_(props, name);
-    // 前回：今回より前でいちばん新しい会議。そのあとに基準を記録していれば（今回の会議日まで）基準
-    const held = meetings.filter(m => !m.baseline && m.date < meeting).pop() || null;
-    const base = meetings.filter(m => m.baseline && m.date <= meeting).pop() || null;
-    const previous = base && (!held || base.cutoff > held.cutoff) ? base : held;
-    const legacy = previous ? 0 : Number(props.getProperty(o.lastKeyPrefix + name)) || 0;
+    // 前回：今回より前でいちばん新しい会議。そのあとに基準を記録していれば（今回の会議日まで）基準。どちらも無ければ会議日程の一覧の前の会議日
+    const {previous, legacy} = mtgPreviousOf_(props, name, meeting, scheduled);
     const since = previous ? previous.cutoff : (legacy || now.getTime() - o.firstDays * 86400000);
     const draft = mtgReadJson_(props, o.draftKeyPrefix + name);
     const baseline = meetings.filter(m => m.baseline && m.cutoff <= now.getTime()).pop();
@@ -1084,45 +1079,49 @@ function mtgCreateCombined_(summaries, meeting, final, folder) {
 /**
  * 統合版（全サブインダストリー）を作る（エディタから実行）。すべてのサブインダストリーの資料を createBusinessMtgSummaries() で作ったあとに実行する
  * （資料を作る関数とは分けてある。1回の実行の6分の上限に収めるため）。個別の資料を作り直したあとも、これで作り直す。
- * 会議日を聞き、すべての追跡シートの会議サマリを今の値で作り直して1つの資料にする（会議日・会議時点のコピーは記録しない。前回からの変化は、
- * 個別の資料と同じく前回の会議時点と比べる）。本番として作り、会議のフォルダに格納してインデックスに書く。
+ * 画面（MeetingRunDialog）で会議日程をプルダウンで選び、すべての追跡シートの会議サマリを今の値で作り直して1つの資料にする（会議日・会議時点のコピーは
+ * 記録しない。前回からの変化は、個別の資料と同じく前回の会議時点と比べる）。本番として作り、会議のフォルダに格納してインデックスに書く。
  * 実行の条件：すべてのサブインダストリーに、その会議日の本番の記録と PDF（会議のフォルダか保存先）があること。満たさなければ、足りないものを知らせて
  * 何も作らずに終える（試作も作らない）。資料を作っている途中（自動で続けている途中）なら、終わるまで待ってもらう
  */
 function createBusinessMtgCombinedSummary() {
+  mschOpenRunDialog_('combined', true);
+}
+
+/** 統合版を作れるか（作れなければ {error: 理由}、作れれば {text: 確かめの文}） */
+function mtgCombinedCheck_(meeting) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = mtgUi_();
   const o = MTG_OPTIONS.combined;
-  const stop = message => {
-    console.log(message);
-    ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
-  };
-  if (!o.enabled) return stop('統合版を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.combined.enabled）。');
+  if (!o.enabled) return {error: '統合版を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.combined.enabled）。'};
   if (mtgJobLoad_()) {
-    return stop('サブインダストリーの資料を作っている途中です（自動で続けています）。終わってから（showBusinessMtgSummariesResult() で確かめてから）実行してください。');
+    return {error: 'サブインダストリーの資料を作っている途中です（自動で続けています）。終わってから（showBusinessMtgSummariesResult() で確かめてから）実行してください。'};
   }
   const names = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
-  if (!names.length) return stop('追跡しているシート（test.gs の DIFF_RULES）が見つかりません。');
-  const now = new Date();
-  const meeting = mtgAskMeeting_(ui, names, now);
-  if (!meeting) return;
+  if (!names.length) return {error: '追跡しているシート（test.gs の DIFF_RULES）が見つかりません。'};
   // 実行の条件：すべてのサブインダストリーの、この会議日の本番の資料（PDF）ができている（インデックスのその会議日の行に空のセルが無い）。満たさなければ作らずに終える
   const missing = mtgMeetingPending_(ss, meeting);
   if (missing.length) {
-    return stop('統合版を作れません。会議日 ' + meeting + ' の本番の資料が、まだできていないサブインダストリーがあります（' + missing.length + '件）：\n' +
+    return {error: '統合版を作れません。会議日 ' + meeting + ' の本番の資料が、まだできていないサブインダストリーがあります（' + missing.length + '件）：\n' +
       missing.map(name => '・' + name).join('\n') + '\n\n' +
       'createBusinessMtgSummaries() で、すべてのサブインダストリーの本番の資料を作ってから（「' + MTG_OPTIONS.index.sheet + '」のその会議日の行に空のセルが無くなってから）、' +
-      'もう一度実行してください。');
+      'もう一度実行してください。'};
   }
-  const answer = ui.alert(CRED_OPTIONS.menuTitle, '「' + o.name + '」の資料（' + names.length + 'サブインダストリーを1つにまとめた統合版）を、今のシートの値で作ります。\n\n' +
-    '会議日 ' + meeting + ' の本番の資料として作り、会議のフォルダに格納します（会議日の記録・会議時点のコピーは変えません）。\n作成してよろしいですか？', ui.ButtonSet.YES_NO);
-  if (answer !== ui.Button.YES) return;
-  const {summaries} = mtgSummaries_(ss, names, now, true, meeting);
+  return {text: '「' + o.name + '」の資料（' + names.length + 'サブインダストリーを1つにまとめた統合版）を、今のシートの値で作ります。\n\n' +
+    '会議日 ' + mtgDateLabel_(meeting) + ' の本番の資料として作り、会議のフォルダに格納します（会議日の記録・会議時点のコピーは変えません）。'};
+}
+
+/** 統合版を作る（画面の「作成する」から。作れるかは先に mtgCombinedCheck_ で確かめる）。戻り値は終わりの知らせ */
+function mtgCombinedStart_(meeting) {
+  const check = mtgCombinedCheck_(meeting);
+  if (check.error) throw new Error(check.error);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const names = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
+  const {summaries} = mtgSummaries_(ss, names, new Date(), true, meeting);
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
   const message = mtgCombinedLines_(mtgCombinedPlain_(mtgCreateCombined_(summaries, meeting, true, folder))).concat(['', '保存先：' + folder.getUrl()]).join('\n');
   console.log(message);
-  ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+  return message;
 }
 
 /** サブインダストリー（name）の、会議日（meeting）の本番の資料（PDF）。会議のフォルダ（無ければ保存先のフォルダ）にあるもの。無ければ null */
@@ -1342,20 +1341,13 @@ function mtgMeetingFolderSetting_(name) {
  */
 function mtgWriteIndex_(name, meeting, stored, kind) {
   const o = MTG_OPTIONS.index;
-  const rowKind = kind || o.kind;   // 種別の列の値（RX Service Meeting の資料は SMTG_OPTIONS.index.kind）
-  const kinds = mtgIndexKinds_(rowKind);   // 同じ会議とみなす種別（前の版の種別も）
+  const rowKind = kind || o.kind;   // 会議名の列の値（RX Service Meeting の資料は SMTG_OPTIONS.index.kind）
   const lock = LockService.getDocumentLock();
   try {
     if (!lock.tryLock(MTG_OPTIONS.indexLockWaitMs)) throw new Error('ほかの処理が実行中');
     try {
       const ss = SpreadsheetApp.getActiveSpreadsheet();
-      const sheet = mtgIndexSheet_(ss);
-      const layout = mtgIndexLayout_(sheet);
-      if (!layout) {
-        const error = new Error('1行目に「' + o.dateHeader + '」の見出しがありません');
-        error.hint = '前の形式（行がサブインダストリー）のシートは、エディタで rebuildBusinessMtgIndex() を実行すると、今の形式で作り直します。';
-        throw error;
-      }
+      const {sheet, layout} = mtgIndexPrepare_(ss);
       // サブインダストリーの列（前の名前で書いてあれば今の名前とみなす。無ければ右に足す）
       let col = layout.columns[name];
       if (!col) {
@@ -1365,36 +1357,7 @@ function mtgWriteIndex_(name, meeting, stored, kind) {
         mtgIndexFormat_(sheet.getRange(1, col, Math.max(sheet.getLastRow(), 1), 1));
         sheet.setColumnWidth(col, name === MTG_OPTIONS.combined.name ? o.widths.combined : o.widths.sheet);
       }
-      // 会議日の行（無ければ、order の順になる位置に差し込む。無ければ下に足す）。並びが違えば（前の版で作った・手で足した）、先に並べ直す
-      const desc = o.order !== 'asc';
-      const lastRow = sheet.getLastRow();
-      const read = () => (lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, Math.max(layout.date, layout.kind || 1)).getValues() : []);
-      const kindOf = line => (layout.kind ? String(line[layout.kind - 1] == null ? '' : line[layout.kind - 1]).trim() : '');
-      const dateOf = line => mtgIndexDate_(line[layout.date - 1]);
-      const before = (a, b) => (desc ? a > b : a < b);   // a の行が b の行より上
-      let lines = read();
-      const dates = lines.map(dateOf).filter(Boolean);
-      if (dates.some((d, i) => i && before(d, dates[i - 1]))) {
-        sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), col)).sort({column: layout.date, ascending: !desc});
-        lines = read();
-      }
-      let at = lines.findIndex(line => dateOf(line) === meeting && (!kindOf(line) || kinds.indexOf(kindOf(line)) >= 0));
-      let row = at + 2;
-      if (at >= 0 && layout.kind && kindOf(lines[at]) && kindOf(lines[at]) !== rowKind) sheet.getRange(row, layout.kind).setValue(credText_(rowKind));
-      if (at < 0) {
-        at = lines.findIndex(line => dateOf(line) && before(meeting, dateOf(line)));
-        if (at >= 0) {
-          row = at + 2;
-          sheet.insertRowBefore(row);
-        } else {
-          row = lastRow + 1;
-          diffEnsureGrid_(sheet, row, 1);
-        }
-        sheet.getRange(row, layout.date).setValue(Utilities.parseDate(meeting, Session.getScriptTimeZone(), 'yyyy/MM/dd')).setNumberFormat(o.dateFormat);
-        if (layout.kind) sheet.getRange(row, layout.kind).setValue(credText_(rowKind));
-        mtgIndexFormat_(sheet.getRange(row, 1, 1, Math.max(sheet.getLastColumn(), col)));
-        sheet.setRowHeight(row, o.rowHeight);
-      }
+      const row = mtgIndexRow_(sheet, layout, meeting, rowKind).row;
       const target = o.link === 'folder' || !stored.file ? stored.folder : stored.file;
       const url = target.getUrl();
       const chip = !!o.chip && mtgWriteChip_(ss, sheet, row, col, url);
@@ -1411,6 +1374,112 @@ function mtgWriteIndex_(name, meeting, stored, kind) {
     return {error: '「' + o.sheet + '」シートに書き込めませんでした（' + (error && error.message || error) + '）。' +
       (error && error.hint || (kind ? '' : 'storeBusinessMtgSummaries() を実行すると書き直します。'))};
   }
+}
+
+/**
+ * インデックスのシートと見出しの位置を用意する（ロックの中で呼ぶ）。シートが無ければ作る。前の版の見出し（種別）は今の見出し（会議名）に書き換える。
+ * 前の形式（行＝サブインダストリー）なら、rebuildBusinessMtgIndex() の案内を付けて止める。{sheet, layout}
+ */
+function mtgIndexPrepare_(ss) {
+  const o = MTG_OPTIONS.index;
+  const sheet = mtgIndexSheet_(ss);
+  const layout = mtgIndexLayout_(sheet);
+  if (!layout) {
+    const error = new Error('1行目に「' + o.dateHeader + '」の見出しがありません');
+    error.hint = '前の形式（行がサブインダストリー）のシートは、エディタで rebuildBusinessMtgIndex() を実行すると、今の形式で作り直します。';
+    throw error;
+  }
+  if (layout.kind && layout.kindStale) sheet.getRange(1, layout.kind).setValue(credText_(o.kindHeader));
+  return {sheet, layout};
+}
+
+/**
+ * インデックスの、会議日 meeting・会議名 kind の行（ロックの中で呼ぶ）。会議名が同じ（前の版の会議名も）か空の行を使い、前の版の会議名・空なら今の会議名に書き換える。
+ * 無ければ、index.order の順（既定は新しい会議日が上）になる位置に差し込む（並びが違えば、先に並べ直す）。{row, added: 足したか}
+ */
+function mtgIndexRow_(sheet, layout, meeting, kind) {
+  const o = MTG_OPTIONS.index;
+  const kinds = mtgIndexKinds_(kind);   // 同じ会議とみなす会議名（前の版の会議名も）
+  const desc = o.order !== 'asc';
+  const lastRow = sheet.getLastRow();
+  const read = () => (lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, Math.max(layout.date, layout.kind || 1)).getValues() : []);
+  const kindOf = line => (layout.kind ? String(line[layout.kind - 1] == null ? '' : line[layout.kind - 1]).trim() : '');
+  const dateOf = line => mtgIndexDate_(line[layout.date - 1]);
+  const before = (a, b) => (desc ? a > b : a < b);   // a の行が b の行より上
+  let lines = read();
+  const dates = lines.map(dateOf).filter(Boolean);
+  if (dates.some((d, i) => i && before(d, dates[i - 1]))) {
+    sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), 1)).sort({column: layout.date, ascending: !desc});
+    lines = read();
+  }
+  let at = lines.findIndex(line => dateOf(line) === meeting && (!kindOf(line) || kinds.indexOf(kindOf(line)) >= 0));
+  if (at >= 0) {
+    const row = at + 2;
+    if (layout.kind && kindOf(lines[at]) !== kind) sheet.getRange(row, layout.kind).setValue(credText_(kind));
+    return {row, added: false};
+  }
+  let row;
+  at = lines.findIndex(line => dateOf(line) && before(meeting, dateOf(line)));
+  if (at >= 0) {
+    row = at + 2;
+    sheet.insertRowBefore(row);
+  } else {
+    row = lastRow + 1;
+    diffEnsureGrid_(sheet, row, 1);
+  }
+  sheet.getRange(row, layout.date).setValue(Utilities.parseDate(meeting, Session.getScriptTimeZone(), 'yyyy/MM/dd')).setNumberFormat(o.dateFormat);
+  if (layout.kind) sheet.getRange(row, layout.kind).setValue(credText_(kind));
+  mtgIndexFormat_(sheet.getRange(row, 1, 1, Math.max(sheet.getLastColumn(), 1)));
+  sheet.setRowHeight(row, o.rowHeight);
+  return {row, added: true};
+}
+
+/**
+ * 会議の日程（会議日・会議名）の行を、インデックスに先に足す（Google カレンダーから読んだ日程。MeetingSchedule.gs）。ある行はそのまま。
+ * entries = [{date: 'yyyy/MM/dd', kind: 会議名}]。{added, existing, url} か {error}
+ */
+function mtgIndexEnsureRows_(entries) {
+  const o = MTG_OPTIONS.index;
+  const lock = LockService.getDocumentLock();
+  try {
+    if (!lock.tryLock(MTG_OPTIONS.indexLockWaitMs)) throw new Error('ほかの処理が実行中です。少し待ってからもう一度お試しください');
+    try {
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      const {sheet, layout} = mtgIndexPrepare_(ss);
+      let added = 0;
+      entries.forEach(e => { if (mtgIndexRow_(sheet, layout, e.date, e.kind).added) added++; });
+      return {added, existing: entries.length - added, url: ss.getUrl() + '#gid=' + sheet.getSheetId()};
+    } finally {
+      lock.releaseLock();
+    }
+  } catch (error) {
+    return {error: '「' + o.sheet + '」シートに書き込めませんでした（' + (error && error.message || error) + '）。' + (error && error.hint || '')};
+  }
+}
+
+/**
+ * インデックスにある、会議名 kind の会議日（読むだけ）。[{date: 'yyyy/MM/dd', filled: その行に資料が書いてあるか}]（会議日の古い順。同じ日は1つ）。
+ * 会議名が空の行（会議名の列ができる前の行）は RX Business Meeting の行とみなす。シートが無い・前の形式なら空
+ */
+function mtgIndexMeetings_(kind) {
+  const o = MTG_OPTIONS.index;
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(o.sheet);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const layout = mtgIndexLayout_(sheet);
+  if (!layout) return [];
+  const kinds = mtgIndexKinds_(kind);
+  const width = Math.max(sheet.getLastColumn(), layout.date, layout.kind || 1);
+  const lines = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+  const shown = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getDisplayValues();
+  const byDate = new Map();
+  lines.forEach((line, i) => {
+    const date = mtgIndexDate_(line[layout.date - 1]);
+    const name = layout.kind ? String(line[layout.kind - 1] == null ? '' : line[layout.kind - 1]).trim() : '';
+    if (!date || (name ? kinds.indexOf(name) < 0 : kind !== o.kind)) return;
+    const filled = shown[i].some((v, c) => c + 1 !== layout.date && c + 1 !== layout.kind && String(v).trim() !== '');
+    byDate.set(date, (byDate.get(date) || false) || filled);
+  });
+  return Array.from(byDate.keys()).sort().map(date => ({date, filled: byDate.get(date)}));
 }
 
 /**
@@ -1458,7 +1527,10 @@ function mtgIndexLayout_(sheet) {
     const name = resolve(h);
     if ((DIFF_RULES[name] || name === MTG_OPTIONS.combined.name) && !columns[name]) columns[name] = i + 1;
   });
-  return {date, kind: heads.indexOf(o.kindHeader) + 1, columns};
+  // 会議名の列（前の版の見出し「種別」なら kindStale。mtgIndexPrepare_ が書き換える）
+  let kind = heads.indexOf(o.kindHeader) + 1;
+  const former = kind ? 0 : (o.formerKindHeaders || []).map(h => heads.indexOf(h) + 1).find(Boolean) || 0;
+  return {date, kind: kind || former, kindStale: !kind && !!former, columns};
 }
 
 /**
@@ -3785,6 +3857,7 @@ function mtgPeriodText_(s) {
   if (s.previous && s.previous.baseline) {
     return '基準時点（' + Utilities.formatDate(new Date(s.previous.cutoff), tz, 'M/d HH:mm') + '）以降';
   }
+  if (s.previous && s.previous.scheduled) return '前回会議（' + mtgShortDate_(s.previous.date) + '）以降';
   if (s.previous) {
     return '前回会議（' + mtgShortDate_(s.previous.date) + '）の資料作成時（' + Utilities.formatDate(new Date(s.previous.cutoff), tz, 'M/d HH:mm') + '）以降';
   }

@@ -1,7 +1,10 @@
 'use strict';
 
 const {test, assert} = require('./lib/harness');
-const {createGas, plain} = require('./lib/gas-mock');
+const {createGas: createMockGas, plain} = require('./lib/gas-mock');
+const {withRunDialog} = require('./lib/meeting-run');
+/** 資料を作る関数は画面（MeetingRunDialog）を開くだけなので、画面の操作を gas.promptAnswers でまねる（tests/lib/meeting-run.js） */
+const createGas = options => withRunDialog(createMockGas(options));
 
 /*
  * RX Service Meeting の事前資料（ServiceMeeting.gs）とサンプル（サンプルデータ.gs の addServiceMtgSampleData）
@@ -296,15 +299,18 @@ test('previewServiceMtgSummaries：空欄ならリクエストのあるサブイ
   gas.writes.length = 0;
   gas.promptAnswers = ['', '10/30'];
   g.previewServiceMtgSummaries();
-  assert.match(gas.prompts[0].message, /1\. 新FMT（リクエスト 3件）\n2\. 新FMT2（リクエスト 1件）\n3\. 新FMT3（リクエスト 0件）\n4\. 全サブインダストリー（リクエスト 5件）/);
+  // 画面の作る資料の候補（リクエストの件数。0件のサブインダストリーは初めは選ばない）
+  assert.deepStrictEqual(plain(g.getMeetingRunData('service', false).sheets), [{name: '新FMT', checked: true, note: 'リクエスト 3件'},
+    {name: '新FMT2', checked: true, note: 'リクエスト 1件'}, {name: '新FMT3', checked: false, note: 'リクエスト 0件'},
+    {name: '全サブインダストリー', checked: true, note: 'リクエスト 5件'}]);
   const year = g.mtgParseDate_('10/30', new Date()).slice(0, 4);
   assert.deepStrictEqual(gas.decks.map(d => d.title), ['新FMT', '新FMT2', '全サブインダストリー'].map(n => year + '1030_' + n + '_RX Service Meeting用資料_試作'));
   assert.ok(gas.driveFiles.some(f => f.name === year + '1030_新FMT_RX Service Meeting用資料_試作.pdf'));
   const done = gas.alerts[gas.alerts.length - 1];
-  assert.strictEqual(done.title, '🟪RXサービスMTG用');
   assert.match(done.message, /「新FMT」：\d+_新FMT_RX Service Meeting用資料_試作\.pdf（リクエスト 3・判断待ち 0・サービス案 1・確認事項 2。\d+ページ）/);
   assert.match(done.message, /「全サブインダストリー」：[^\n]*（リクエスト 5・判断待ち 1・サービス案 1・確認事項 4。/);
-  assert.match(done.message, /リクエストが無いため作らなかったサブインダストリー：新FMT3[\s\S]*試作のため、会議日は記録していません。/);
+  assert.match(done.message, /試作のため、会議日は記録していません。/);
+  assert.ok(!gas.decks.some(d => /新FMT3/.test(d.title)), 'リクエストの無いサブインダストリーは、画面で初めは選ばない（作らない）');
   assert.strictEqual(g.PropertiesService.getDocumentProperties().getProperty('SMTG_MEETINGS'), null);
   assert.strictEqual(gas.ss.getSheetByName('INDEX_会議資料'), null, '試作はインデックスに書かない');
   assert.ok(!gas.writes.some(w => ['リクエスト', 'タスク管理', '新FMT'].indexOf(w.sheet) >= 0), 'シートには書かない');
@@ -333,7 +339,7 @@ test('createServiceMtgSummaries：本番は会議日と判断・状況・資料�
   const day = d => d.replace(/\/0?/g, '/');
   const ymd = meeting.replace(/\//g, '');
   assert.deepStrictEqual(plain(index.getRange(1, 1, 2, 4).getDisplayValues()),
-    [['日付', '種別', '全サブインダストリー', '新FMT'],
+    [['日付', '会議名', '全サブインダストリー', '新FMT'],
       [day(meeting), 'RX Service Meeting', ymd + '_全サブインダストリー_RX Service Meeting用資料.pdf', ymd + '_新FMT_RX Service Meeting用資料.pdf']]);
   // 同じ日付でも、RX Business Meeting の資料は別の行
   const at = url => ({file: {getUrl: () => url, getName: () => url}});

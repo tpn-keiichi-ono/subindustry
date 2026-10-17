@@ -169,12 +169,12 @@ test('本物の設定：11シートとも、会議サマリの格納先（meetin
   assert.ok(!rules[combined.name] && [index.dateHeader, index.kindHeader].indexOf(combined.name) < 0);
 });
 
-test('本物の設定：RX Service Meeting の事前資料は、ひな形の3枚目（紫）を表紙に使い、インデックスには RX Business Meeting と別の種別で書く', () => {
+test('本物の設定：RX Service Meeting の事前資料は、ひな形の3枚目（紫）を表紙に使い、インデックスには RX Business Meeting と別の会議名で書く', () => {
   const gas = createGas({realSheetNames: true});
   const mtg = gas.get('MTG_OPTIONS');
   const smtg = gas.get('SMTG_OPTIONS');
   assert.strictEqual(mtg.templatePages.service, 3);
-  assert.ok(smtg.index.kind && smtg.index.kind !== mtg.index.kind, '種別で RX Business Meeting の行と分ける');
+  assert.ok(smtg.index.kind && smtg.index.kind !== mtg.index.kind, '会議名で RX Business Meeting の行と分ける');
   assert.notStrictEqual(smtg.fileName, mtg.fileName);
   // 会議のフォルダは同じ親フォルダに並ぶので、名前に会議の名前を入れて見分ける（第N回も会議ごと）
   assert.ok(/\{meeting\}/.test(mtg.meetingFolderName));
@@ -183,4 +183,16 @@ test('本物の設定：RX Service Meeting の事前資料は、ひな形の3枚
   // 判断・状況の選択肢（前回からの変化の記録は選択肢の番号で残す）
   assert.deepStrictEqual(Array.from(gas.global.smtgDecisionOptions_()), ['未判断', 'サービス化検討', '棄却']);
   assert.deepStrictEqual(Array.from(gas.global.smtgStatusOptions_()), ['未着手', '対応中', '完了']);
+});
+
+test('本物の設定：カレンダーの予定の名前で、RX Business Meeting・RX Service Meeting を見分け、インデックスの会議名と同じ名前で書く', () => {
+  const gas = createGas({realSheetNames: true});
+  const g = gas.global;
+  assert.strictEqual(gas.get('MTG_OPTIONS').index.kindHeader, '会議名');
+  assert.strictEqual(g.mschKindName_('business'), gas.get('MTG_OPTIONS').index.kind);
+  assert.strictEqual(g.mschKindName_('service'), gas.get('SMTG_OPTIONS').index.kind);
+  assert.strictEqual(g.mschKeyOfTitle_('RX Service Meeting'), 'service');
+  assert.strictEqual(g.mschKeyOfTitle_('RX Business MTG（パイプライン会議）'), 'business');
+  assert.strictEqual(g.mschKeyOfTitle_('RX Business Meeting'), 'business');
+  assert.strictEqual(g.mschKeyOfTitle_('部会'), '');
 });

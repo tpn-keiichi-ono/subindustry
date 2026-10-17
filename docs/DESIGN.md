@@ -22,6 +22,7 @@
 | サービス管理 | `ServiceManagement.gs`・`RequestPickerView.html`・`RequestListDialog.html` | 新FMT のリクエストを選択パネル（サイドバー）で選んで「リクエスト」シートに登録し、リクエストをもとにサービス案を考えて名前でまとめる・棄却する |
 | タスク管理 | `TaskManagement.gs` | 別のシート「タスク管理」で、サービス案ごとの検討の進捗をタスクで管理する |
 | 会議サマリ（RX Business Meeting） | `MeetingSummary.gs` | RX Business Meeting（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ってドライブに保存する（サマリー・パイプラインの変化・前回から変化のある案件・期待値上位案件の状況・課題、扉、Appendix。書くのは事実だけ）。資料の格納先の URL を Google チャットにすぐ送る（webhook。`notifyBusinessMtgSummaries()`） |
+| 会議の日程と資料を作る画面 | `MeetingSchedule.gs`・`MeetingRunDialog.html` | Google カレンダーから RX Business Meeting・RX Service Meeting の日程を読み、`INDEX_会議資料` に会議日と会議名の行を先に出す。資料を作る関数は画面を開き、その一覧から会議日程をプルダウンで選んで作る |
 | RX Service Meeting の事前資料 | `ServiceMeeting.gs` | RX Service Meeting（サービス改善）の事前資料（16:9 の Google スライドと PDF。紫）を、リクエスト・タスク管理のシートから、サブインダストリーごと（と全サブインダストリー）に作る。スライドの部品・ひな形・保存・インデックスは会議サマリと共通 |
 
 ファイル名は Apps Script エディタ側の名前に合わせています（`clasp pull` で同じ名前になるように）。
@@ -467,7 +468,7 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   作り直したときは、作ったフォルダが見つかるので、もう1つは作りません。
   会議のフォルダは、名前に含む会議の名前（RX Business Meeting・RX Service Meeting）で見分けます（`mtgFolderIsMeeting_`）。同じサブインダストリーのフォルダの中に両方の会議のフォルダが並び、
   第N回は会議ごとに数えます。会議の名前を含まない前の版のフォルダ（`261023_第5回会議`）は、RX Business Meeting のフォルダとして使い続けます（2026/10/17 から）。
-  前の会議の名前（RX Business MTG・RX Service MTG。`formerMeetingNames`）のフォルダも、同じ会議のフォルダとして見分けます。インデックスの種別も、前の名前の行（`index.formerKinds`）を
+  前の会議の名前（RX Business MTG・RX Service MTG。`formerMeetingNames`）のフォルダも、同じ会議のフォルダとして見分けます。インデックスの会議名も、前の名前の行（`index.formerKinds`）を
   同じ会議の行として使い、書くときに今の名前に書き換えます。
 - **統合版**（`createBusinessMtgCombinedSummary()`・`mtgCreateCombined_`・`mtgCombinedSlides_`。`MTG_OPTIONS.combined`）：すべてのサブインダストリーの資料を作ったあとに、
   別の関数で、全サブインダストリーの資料を1つにまとめた資料を作ります（`{date}_全サブインダストリー_RX Business Meeting用資料`。試作なら試作）。
@@ -494,16 +495,16 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   仕事とトリガーを消します（`showBusinessMtgSummariesResult()` で出す）。資料の中身は、作り始めた時刻（`job.now`）で数え、本番の会議日の記録もその時刻にします。
   時刻は `mtgNow_()`（テストで差し替える）。
 - **会議資料のインデックス**（`mtgWriteIndex_`）：格納できたら、このスプレッドシートの `MTG_OPTIONS.index.sheet`（`INDEX_会議資料`）の
-  行＝会議日（A列「日付」。日付の値で、表示形式 `yyyy/m/d`。B列「種別」は `RX Business Meeting`）・列＝サブインダストリー（1行目の見出しがシート名。
+  行＝会議日（A列「日付」。日付の値で、表示形式 `yyyy/m/d`。B列「会議名」は `RX Business Meeting`・`RX Service Meeting`。2026/10/17 に見出しを「種別」から改めた。前の見出し（`formerKindHeaders`）は `mtgIndexPrepare_` が書き換える）・列＝サブインダストリー（1行目の見出しがシート名。
   `formerNames` の前の名前も今の名前とみなす）のセルに、PDF（`link: 'folder'` なら会議のフォルダ）をスマートチップで書きます
   （2026/10/17 にいただいた「INDEX_会議資料 のコピー」の形。C列「全サブインダストリー」（`MTG_OPTIONS.combined.name`）には統合版を書く）。
   チップは `mtgWriteChip_` で書きます（SpreadsheetApp ではチップを書けないので、拡張サービス Sheets API の
   `batchUpdate` の `updateCells` で、`userEnteredValue` を `@`、`chipRuns` に `richLinkProperties.uri` を入れる。先に `SpreadsheetApp.flush()`）。
   文字は黒・下線なしにします（`userEnteredFormat.textFormat`。リンクの青・下線の書式が残っていると、チップの名前も青の下線になるため。リンクで書くときも同じ）。
   拡張サービスが無い・書けないときは、ファイル名のリンク（リッチテキスト）で書きます。シートが無ければ末尾に作り（開いていたシートに戻す）、
-  1行目に見出し（日付・種別・全サブインダストリー・`DIFF_RULES` の順のサブインダストリー）を書きます（1行目を固定、タブは黒、使わない行・列は持たない）。
-  字はどのセルも太字・9pt・黒・上下中央、行の高さは 38px、列の幅は日付 83・種別 119・全サブインダストリー 158・サブインダストリー 138px（`index.widths`）。
-  会議日の行（日付が同じで、種別が `RX Business Meeting` か空の行）が無ければ `index.order` の順（既定 `'desc'`：上が新しい。2026/10/17 から）になる位置に差し込み、
+  1行目に見出し（日付・会議名・全サブインダストリー・`DIFF_RULES` の順のサブインダストリー）を書きます（1行目を固定、タブは黒、使わない行・列は持たない）。
+  字はどのセルも太字・9pt・黒・上下中央、行の高さは 38px、列の幅は日付 83・会議名 119・全サブインダストリー 158・サブインダストリー 138px（`index.widths`）。
+  会議日の行（`mtgIndexRow_`。日付が同じで、会議名が同じ（前の名前も）か空の行）が無ければ `index.order` の順（既定 `'desc'`：上が新しい。2026/10/17 から）になる位置に差し込み、
   サブインダストリーの列が無ければ右に足します。並びが違うとき（前の版の古い順・手で足した行）は、先に日付の列で行ごと並べ直します（`Range.sort`）。
   手で入れた値（C列など）はそのまま残します。書き込みはドキュメントロックの中です（資料作成はエディタから実行するので待ってよい）。書けなくても止めず、理由を知らせます
   （`storeBusinessMtgSummaries()` で書き直す）。差分追跡の対象外のシートなので、行の差し込みで追跡は止まりません。
@@ -849,7 +850,7 @@ RX Business Meeting の資料と同じく、シートから分かる事実だけ
 Appendix は扉に合わせてグレー（ラベルは紫のまま）。
 
 **保存**：PDF を会議サマリの保存先（`mtgFolder_`）に保存します（`{date}_{サブインダストリー}_RX Service Meeting用資料.pdf`。試作は `_試作`）。本番は会議資料のインデックスの、
-種別が「RX Service Meeting」の行（同じ日付でも RX Business Meeting の行とは別）の、そのサブインダストリー（全サブインダストリー）の列に書きます（`mtgWriteIndex_` の `kind`）。
+会議名が「RX Service Meeting」の行（同じ日付でも RX Business Meeting の行とは別）の、そのサブインダストリー（全サブインダストリー）の列に書きます（`mtgWriteIndex_` の `kind`）。
 1回の実行の6分に収まらなければ、RX Business Meeting と同じく区切って、1回きりのトリガー `continueServiceMtgSummaries` で続けます（`smtgJobRun_`。見積もりは `SMTG_OPTIONS.run`）。
 本番の PDF は、RX Business Meeting と同じフォルダ（サブインダストリーは `DIFF_RULES` の `meetingFolder`、全サブインダストリーは `MTG_OPTIONS.combined.meetingFolder`）の中の、
 「yyMMdd_RX Service Meeting_第N回」フォルダに格納します（無ければ作る。第N回は RX Service Meeting のフォルダだけで数える。`mtgMeetingFolder_` の `kind`）。
@@ -859,6 +860,23 @@ Appendix は扉に合わせてグレー（ラベルは紫のまま）。
 タスク管理にシートで足した列（進捗状況・開始日／終了日（予定・実績））にも書きます（`SMP_OPTIONS.service.taskExtraColumns`。日付の列は日付で。見出しの無い列は書かず、
 設定に無い列は終わりの画面に出す）。`removeServiceMtgSampleData()` は「【サンプル】」の行だけを消します。
 サンプルを含む資料は、出典の行と表紙に【サンプルデータを含む】と出ます。
+
+### 会議の日程と資料を作る画面（`MeetingSchedule.gs`・`MeetingRunDialog.html`）
+
+- **日程を読む**（`importMeetingSchedules()`・`mschImport_`）：Google カレンダー（`MSCH_OPTIONS.calendarId`。空なら実行する人の既定のカレンダー）の、今日の `pastDays` 日前〜
+  `aheadDays` 日後の予定を `CalendarApp` で読み、予定の名前に `MSCH_OPTIONS.titles` の言葉を含むものを RX Business Meeting・RX Service Meeting とみなします
+  （全角・半角・大文字小文字・空白の違いは無視。RX Service を先に見る。断った予定・名前に `excludeWords` を含む予定は読まない。同じ会議・同じ日は1つ）。
+  `mtgIndexEnsureRows_` で、インデックスに会議日と会議名の行を足します（ドキュメントロックの中。ある行はそのまま、`index.order` の位置に差し込む。`mtgIndexRow_`）。
+  会議名の列には、予定の名前ではなく会議の名前（`MTG_OPTIONS.index.kind`・`SMTG_OPTIONS.index.kind`）を書きます（資料の行と同じ行を使うため）。
+- **資料を作る画面**（`MeetingRunDialog`）：資料を作る関数（エディタから実行）は `mschOpenRunDialog_(kind, final)` で画面を開くだけです（`kind`：'business' 会議サマリ・
+  'combined' 統合版・'service' RX Service Meeting）。画面は `getMeetingRunData` で、インデックスのその会議の日程（`mtgIndexMeetings_`。会議名が空の行は RX Business Meeting）と、
+  作るシートの候補（会議サマリ：追跡シートと前回の資料の会議日。RX Service Meeting：リクエストの件数。0件は初めは選ばない）を読みます。
+  会議日程をプルダウンで選び（初めは今日以降でいちばん近い会議日。一覧に無い日は日付を入力）、「次へ（確かめる）」で `checkMeetingRun`（確かめの文。統合版は作れない理由も）、
+  「作成する」で `runMeetingMaterials` を呼びます（`mtgRunStart_`・`mtgCombinedStart_`・`smtgRunStart_`）。作っている途中の仕事があれば知らせを出し、「やめて新しく作る」に
+  チェックを入れたときだけ作ります。結果の文は画面に出します（URL はリンク）。
+- **前回の会議**：前回の資料の記録（本番の会議日の記録・基準）が無ければ、会議日程の一覧の前の会議日（その日の 0時）からの変化を出します（RX Business Meeting。
+  `mtgScheduledPrevious_`・`mtgPreviousOf_`。資料の期間は「前回会議（10/9）以降」。会議時点のコピーは無いので、変更の記録から出す）。
+- テストでは、画面の操作を `tests/lib/meeting-run.js` でまねます（`gas.promptAnswers` の [シートの番号, 会議日] で選び、`gas.confirmAnswer` で「作成する」）。
 
 ### 案件の行を足す（`addDealRows`。`test.gs`）
 

@@ -714,6 +714,9 @@ function createGas(options) {
     promptAnswer: '',
     promptAnswers: [],        // 続けて聞かれるときの答え（先頭から使う。空になったら promptAnswer）
     promptButton: 'OK',
+    // Google カレンダーの予定 [{calendar: 'default' か カレンダーの ID, title, start: Date, end: Date, status: 'YES'|'NO'|'OWNER'…}]
+    calendarEvents: [],
+    calendarReads: [],        // getEvents で読んだ期間 [{calendar, start, end}]
     fetches: [],              // UrlFetchApp.fetch の記録
     fetchStatus: 200,
     fetchStatuses: [],        // 続けて呼ばれるときの応答のコード（先頭から使う。空になったら fetchStatus）
@@ -1206,6 +1209,27 @@ function createGas(options) {
 
   const Browser = {msgBox(message) { gas.alerts.push({message: String(message)}); return 'ok'; }};
 
+  /* ----- CalendarApp（予定を読むだけ） ----- */
+  const calendarOf = id => ({
+    getId: () => (id === 'default' ? 'owner@example.com' : id),
+    getName: () => (id === 'default' ? '既定のカレンダー' : 'カレンダー ' + id),
+    getEvents(start, end) {
+      gas.calendarReads.push({calendar: id, start, end});
+      return gas.calendarEvents.filter(e => (e.calendar || 'default') === id && e.start < end && e.end > start).map(e => ({
+        getTitle: () => e.title,
+        getStartTime: () => e.start,
+        getEndTime: () => e.end,
+        isAllDayEvent: () => !!e.allDay,
+        getMyStatus: () => e.status || 'OWNER'
+      }));
+    }
+  });
+  const CalendarApp = {
+    GuestStatus: {INVITED: 'INVITED', MAYBE: 'MAYBE', NO: 'NO', OWNER: 'OWNER', YES: 'YES'},
+    getDefaultCalendar: () => calendarOf('default'),
+    getCalendarById: id => (gas.calendarEvents.some(e => e.calendar === id) || gas.calendars && gas.calendars.indexOf(id) >= 0 ? calendarOf(id) : null)
+  };
+
   const capture = level => (...args) => {
     const line = args.map(a => (typeof a === 'string' ? a : (a && a.stack) || String(a))).join(' ');
     gas.logs.push({level, line});
@@ -1220,7 +1244,7 @@ function createGas(options) {
     PDF: 'application/pdf'};
   const globals = {
     SpreadsheetApp, HtmlService, PropertiesService, LockService, Utilities, Session,
-    ScriptApp, CacheService, DriveApp, MimeType, UrlFetchApp, Browser, console: logger
+    ScriptApp, CacheService, DriveApp, MimeType, UrlFetchApp, Browser, CalendarApp, console: logger
   };
   if (!options.noSlides) {
     globals.Slides = Slides;

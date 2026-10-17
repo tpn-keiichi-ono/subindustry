@@ -97,32 +97,60 @@ const SMTG_CHECKS = ['サービス案未設定', '判断とサービス案の不
  * 会議日とその時点の状況を記録し、次の資料は今からの変化を出す。
  */
 function createServiceMtgSummaries() {
-  smtgRun_(true);
+  mschOpenRunDialog_('service', true);
 }
 
 /** 試しに RX Service Meeting の事前資料を作る（保存するが、会議日は記録しない。ファイル名に「試作」が付く）。 */
 function previewServiceMtgSummaries() {
-  smtgRun_(false);
+  mschOpenRunDialog_('service', false);
 }
 
-function smtgRun_(final) {
-  const started = mtgNow_();   // 6分の上限は、実行を始めたときから（入力の画面の時間も含む）
+/**
+ * 画面（MeetingRunDialog）に出す、作る資料の候補：サブインダストリー（リクエストの件数。0件は選ばない）と全サブインダストリー。
+ * {sheets: [{name, checked, note}], job: 作っている途中の仕事の知らせ（無ければ空）}
+ */
+function smtgRunData_() {
+  const base = smtgRead_(SpreadsheetApp.getActiveSpreadsheet(), new Date());
+  const all = MTG_OPTIONS.combined.name;
+  const sheets = smtgSheetCounts_(base).map(c => ({name: c.name, checked: c.count > 0, note: 'リクエスト ' + c.count + '件'}))
+    .concat([{name: all, checked: true, note: 'リクエスト ' + base.requests.length + '件'}]);
+  return {sheets, job: smtgJobPendingText_()};
+}
+
+/** 作る前の確かめの文（会議日・前回の会議・作る資料・サンプルの有無・作成済み）。本番なら記録の注意も */
+function smtgRunCheckText_(final, meeting, names) {
+  const base = smtgRead_(SpreadsheetApp.getActiveSpreadsheet(), new Date());
+  const prev = smtgPrevious_(base.list, meeting);
+  return (final ? '本番の資料を作り、会議日を記録します。' : '試しに資料を作ります（会議日は記録しません。ファイル名に「試作」が付きます）。') +
+    '\n\n会議日：' + mtgDateLabel_(meeting) + '\n' +
+    '前回の会議：' + (prev ? mtgDateLabel_(prev.date) + '（その時点からの変化を出します）' : '記録なし（前回からの変化は出しません）') + '\n' +
+    '作る資料：' + names.join('・') + '（' + names.length + '件）' +
+    (base.sample ? '\n\n※ サンプルデータ（' + SMP_OPTIONS.namePrefix + '）が入っています。資料に【サンプルデータを含む】と出ます。' +
+      (final ? '配る資料なら、先に removeServiceMtgSampleData() で消してください。' : '') : '') +
+    (final && base.list.some(m => m.date === meeting) ? '\n\n※ この会議日の資料は作成済みです。作り直すと、次の会議の起点が今になります。' : '') +
+    (final ? '\n\n記録した会議日は、次の会議の資料の起点になります。配布したあとは作り直さないでください。' : '');
+}
+
+/**
+ * 資料を作り始める（画面の「作成する」から。MeetingSchedule.gs の runMeetingMaterials）。作っている途中の仕事があれば、cancelJob ならやめて作り、
+ * そうでなければ止める。リクエストの無いサブインダストリーは作らない（選んだときを除く）。戻り値は終わり（区切ったとき）の知らせ
+ */
+function smtgRunStart_(final, meeting, names, cancelJob) {
+  const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = mtgUi_();
   mtgRequireSlides_();
-  if (!smtgJobStartCheck_(ui)) return;
+  if (smtgJobLoad_()) {
+    if (!cancelJob) throw new Error(smtgJobPendingText_());
+    smtgJobClear_();
+    smtgJobDeleteTriggers_();
+  }
   const now = new Date();
   const base = smtgRead_(ss, now);
-  const names = smtgAskNames_(ui, base, final);
-  if (!names) return;
-  const meeting = smtgAskMeeting_(ui, now);
-  if (!meeting) return;
-  if (final && !smtgConfirmFinal_(ui, base, names, meeting)) return;
-  const job = {final, meeting, now: now.getTime(), names: names.names, skipped: names.skipped, items: [], recorded: false, folderUrl: ''};
+  const job = {final, meeting, now: now.getTime(), names, skipped: [], items: [], recorded: false, folderUrl: '', sample: base.sample};
   const done = smtgJobRun_(ss, job, started, base);
   const message = smtgJobMessage_(job, done);
   console.log(message);
-  ui.alert(SVC_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+  return message;
 }
 
 /** リクエストを読むシート（サブインダストリー）ごとのリクエストの件数 [{name, count}]（DIFF_RULES の順） */
@@ -130,61 +158,8 @@ function smtgSheetCounts_(base) {
   return base.sources.map(name => ({name, count: base.requests.filter(r => r.sheet === name).length}));
 }
 
-/**
- * 作る資料を聞く（サブインダストリーの番号。「1,3」のように複数も。最後の番号は全サブインダストリー）。
- * 空欄なら、リクエストのあるサブインダストリーすべてと全サブインダストリー（リクエストの無いサブインダストリーは作らずに skipped に）。
- * {names, skipped}。やめたら null
- */
-function smtgAskNames_(ui, base, final) {
-  const all = MTG_OPTIONS.combined.name;
-  const sheets = smtgSheetCounts_(base);
-  const choices = sheets.concat([{name: all, count: base.requests.length}]);
-  const response = ui.prompt(SVC_OPTIONS.menuTitle,
-    SMTG_OPTIONS.meetingName + ' の事前資料を' + (final ? '作ります。' : '試しに作ります（会議日は記録しません）。') + '\n' +
-    '作るサブインダストリーの番号を入力してください（空欄なら、リクエストのあるサブインダストリーすべてと' + all + '。複数は「1,3」のように）。\n\n' +
-    choices.map((c, i) => (i + 1) + '. ' + c.name + '（リクエスト ' + c.count + '件）').join('\n'), ui.ButtonSet.OK_CANCEL);
-  if (response.getSelectedButton() !== ui.Button.OK) return null;
-  const text = credNormalize_(response.getResponseText());
-  if (!text) {
-    return {names: sheets.filter(c => c.count).map(c => c.name).concat([all]), skipped: sheets.filter(c => !c.count).map(c => c.name)};
-  }
-  const picked = [];
-  text.split(/[,、・]/).filter(Boolean).forEach(part => {
-    const index = Number(part) - 1;
-    if (!(index >= 0 && index < choices.length)) throw new Error('「' + part + '」に当たる番号がありません。1〜' + choices.length + ' の番号で入力してください。');
-    if (picked.indexOf(choices[index].name) < 0) picked.push(choices[index].name);
-  });
-  return {names: picked, skipped: []};
-}
 
-/** 今回の会議日を聞く（「10/30」「2026/10/30」）。「yyyy/MM/dd」を返す。やめたら null。 */
-function smtgAskMeeting_(ui, now) {
-  const last = smtgMeetings_().pop();
-  const response = ui.prompt(SVC_OPTIONS.menuTitle,
-    '今回の会議日を入力してください（例：10/30）。前回の会議（今回より前で、いちばん新しい会議日）の資料を作った時点からの変化を出します。\n\n' +
-    '記録してある最後の会議日：' + (last ? last.date : '記録なし'), ui.ButtonSet.OK_CANCEL);
-  if (response.getSelectedButton() !== ui.Button.OK) return null;
-  const text = String(response.getResponseText() || '').trim();
-  if (!text) throw new Error('会議日を入力してください（例：10/30）。');
-  const date = mtgParseDate_(text, now);
-  if (!date) throw new Error('「' + text + '」を会議日として読めません。10/30 か 2026/10/30 のように入力してください。');
-  return date;
-}
 
-/** 本番：会議日（曜日）・前回の会議・作る資料・サンプルの有無を出して確かめる。はいのときだけ true */
-function smtgConfirmFinal_(ui, base, names, meeting) {
-  const prev = smtgPrevious_(base.list, meeting);
-  const answer = ui.alert(SVC_OPTIONS.menuTitle,
-    '本番の資料を作り、会議日を記録します。\n\n会議日：' + mtgDateLabel_(meeting) + '\n' +
-    '前回の会議：' + (prev ? mtgDateLabel_(prev.date) + '（その時点からの変化を出します）' : '記録なし（前回からの変化は出しません）') + '\n' +
-    '作る資料：' + names.names.join('・') + '（' + names.names.length + '件）' +
-    (names.skipped.length ? '\nリクエストが無いため作らない：' + names.skipped.join('・') : '') +
-    (base.sample ? '\n\n※ サンプルデータ（' + SMP_OPTIONS.namePrefix + '）が入っています。資料に【サンプルデータを含む】と出ます。' +
-      '配る資料なら、先に removeServiceMtgSampleData() で消してください。' : '') +
-    (base.list.some(m => m.date === meeting) ? '\n\n※ この会議日の資料は作成済みです。作り直すと、次の会議の起点が今になります。' : '') +
-    '\n\n記録した会議日は、次の会議の資料の起点になります。配布したあとは作り直さないでください。\n作成してよろしいですか？', ui.ButtonSet.YES_NO);
-  return answer === ui.Button.YES;
-}
 
 /* ---------------- 作る仕事（6分の上限に掛からないよう、区切って続ける） ---------------- */
 
@@ -338,17 +313,13 @@ function showServiceMtgSummariesResult() {
   ui.alert(SVC_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
 }
 
-/** 作っている途中の仕事があれば、やめて新しく作るかを聞く（やめるなら仕事と続きの予約を消す）。続けてよければ true */
-function smtgJobStartCheck_(ui) {
+/** 作っている途中の仕事があれば、その知らせ（画面に出し、「やめて新しく作る」を選んでもらう）。無ければ空 */
+function smtgJobPendingText_() {
   const job = smtgJobLoad_();
-  if (!job) return true;
-  const answer = ui.alert(SVC_OPTIONS.menuTitle, '前に始めた RX Service Meeting の資料（会議日 ' + job.meeting + '・' + (job.final ? '本番' : '試作') + '。資料 ' +
-    job.items.length + '/' + job.names.length + '件）を、自動で続けている途中です。\n\n' +
-    'それをやめて、新しく作りますか？（「いいえ」なら何もしません。続きが終わったら showServiceMtgSummariesResult() で結果を見られます）', ui.ButtonSet.YES_NO);
-  if (answer !== ui.Button.YES) return false;
-  smtgJobClear_();
-  smtgJobDeleteTriggers_();
-  return true;
+  if (!job) return '';
+  return '前に始めた RX Service Meeting の資料（会議日 ' + job.meeting + '・' + (job.final ? '本番' : '試作') + '。資料 ' + job.items.length + '/' +
+    job.names.length + '件）を、自動で続けている途中です。やめて新しく作るときは「やめて新しく作る」にチェックを入れてください' +
+    '（続きが終わったら showServiceMtgSummariesResult() で結果を見られます）。';
 }
 
 /** ファイル名（20261113_スーパー・GMS_RX Service Meeting用資料。試作は「_試作」つき） */

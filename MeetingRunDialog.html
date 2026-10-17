@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #1b1b1c;
+      --body: #3c4642;
+      --muted: #5a6660;
+      --faint: #8a968a;
+      --meta: #9AA59C;
+      --line: #EFF2EF;
+      --rail: #E2E7E2;
+      --border: #DDE2DD;
+      --soft: #F4F6F4;
+      --panel: #FAFBFA;
+      --teal: #36A191;
+      --teal-text: #297A6E;
+      --teal-soft: #E9F4F1;
+      --danger: #B42318;
+      --del-bg: #FCEDEC;
+      --warn-bg: #FFF7E6;
+      --warn-line: #F2D9A6;
+      --mono: 'Azeret Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: 'Inter', 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic UI', Meiryo, sans-serif;
+      color: var(--ink); background: #ffffff; -webkit-font-smoothing: antialiased;
+    }
+    button, input, select { font-family: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(54, 161, 145, .25); }
+    .mono { font-family: var(--mono); }
+
+    .modal { display: flex; flex-direction: column; height: 100%; }
+
+    /* ---------- 見出し ---------- */
+    .m-head { padding: 16px 24px 18px 32px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+    .eyebrow { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .04em; display: flex; align-items: center; gap: 8px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+    .m-title { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.3; }
+    .chip { align-self: flex-start; font-size: 11.5px; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: var(--soft); color: var(--body); }
+    .chip.final { background: var(--teal-soft); color: var(--teal-text); }
+
+    /* ---------- 本文 ---------- */
+    .m-body { flex: 1; overflow: auto; padding: 18px 32px 8px; display: flex; flex-direction: column; gap: 18px; }
+    .field { display: flex; flex-direction: column; gap: 8px; }
+    .label { font-size: 12.5px; font-weight: 700; color: var(--body); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .hint { font-size: 11px; color: var(--faint); font-weight: 400; }
+    .row { display: flex; align-items: center; gap: 8px; }
+    select, input[type="date"] {
+      height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13.5px; color: var(--ink); background: #ffffff;
+    }
+    select { flex: 1; min-width: 0; }
+    select:focus, input[type="date"]:focus { border-color: var(--teal); }
+    .notice { font-size: 12.5px; line-height: 1.6; padding: 10px 12px; border-radius: 8px; background: var(--soft); color: var(--body); white-space: pre-wrap; }
+    .notice.warn { background: var(--warn-bg); border: 1px solid var(--warn-line); }
+    .notice.error { background: var(--del-bg); color: var(--danger); }
+    .sheets { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; max-height: 210px; overflow: auto; }
+    .sheet { display: flex; align-items: center; gap: 8px; min-height: 28px; font-size: 13px; color: var(--ink); cursor: pointer; }
+    .sheet input { width: 15px; height: 15px; accent-color: var(--teal); flex: none; }
+    .sheet .note { font-size: 11px; color: var(--faint); margin-left: auto; white-space: nowrap; }
+    .link-btn { border: none; background: none; padding: 0; font-size: 11.5px; font-weight: 600; color: var(--teal-text); }
+    .link-btn:hover { text-decoration: underline; }
+    .check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink); margin-top: 8px; cursor: pointer; }
+    .check input { accent-color: var(--teal); }
+    .text { margin: 0; font-size: 13px; line-height: 1.7; color: var(--body); white-space: pre-wrap; word-break: break-word; }
+    .text a { color: var(--teal-text); }
+
+    /* ---------- ボタン ---------- */
+    .m-foot { padding: 14px 24px 18px 32px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 8px; }
+    .btn { height: 36px; padding: 0 18px; border: none; border-radius: 8px; background: var(--teal); color: #ffffff; font-size: 13px; font-weight: 600; }
+    .btn:disabled { opacity: .45; cursor: default; }
+    .btn.ghost { background: #ffffff; color: var(--body); border: 1px solid var(--border); }
+    .btn.ghost:hover { background: var(--soft); }
+    .btn.small { height: 32px; padding: 0 12px; font-size: 12px; }
+
+    /* ---------- 読み込み中・作成中 ---------- */
+    .loading {
+      position: fixed; inset: 0; z-index: 20; background: rgba(255, 255, 255, .96);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 0 40px;
+      color: var(--muted); font-size: 13px; text-align: center;
+    }
+    .loading p { margin: 0; line-height: 1.6; }
+    .loading small { color: var(--meta); font-size: 12px; min-height: 1.2em; }
+    .spinner { width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--rail); border-top-color: var(--teal); }
+    .loading.error .spinner { display: none; }
+    .loading.error p { color: var(--danger); }
+
+    @media (prefers-reduced-motion: reduce) {
+      *:not(.spinner) { transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+<!-- data-kind：'business' 会議サマリ・'combined' 統合版・'service' RX Service Meeting。data-final：本番なら true（MeetingSchedule.gs の mschOpenRunDialog_ が入れる） -->
+<body data-kind="<?= kind ?>" data-final="<?= final ?>">
+  <div class="loading" id="loading" role="status" aria-live="polite">
+    <div class="spinner"></div>
+    <p id="loadingText">読み込んでいます…</p>
+    <small id="loadingTime"></small>
+    <button type="button" class="btn" id="reload" hidden>もう一度読み込む</button>
+  </div>
+
+  <div class="modal">
+    <header class="m-head">
+      <div class="eyebrow"><span class="dot" id="dot"></span><span id="meetingName"></span></div>
+      <h1 class="m-title" id="title"></h1>
+      <span class="chip" id="mode"></span>
+    </header>
+
+    <!-- 1. 会議日程と作る資料を選ぶ -->
+    <main class="m-body" id="pick">
+      <div class="notice warn" id="job" hidden>
+        <span id="jobText"></span>
+        <label class="check"><input type="checkbox" id="cancelJob">やめて新しく作る</label>
+      </div>
+      <section class="field">
+        <div class="label">会議日程<button type="button" class="btn ghost small" id="import">カレンダーから読み込む</button></div>
+        <div class="row">
+          <select id="meeting" aria-label="会議日程"></select>
+          <input type="date" id="manual" aria-label="会議日" hidden>
+        </div>
+        <div class="notice" id="noMeetings" hidden>「INDEX_会議資料」に、この会議の日程がありません。「カレンダーから読み込む」で Google カレンダーの日程を読み込んでください（一覧に無い日は「一覧に無い日を入力」で選べます）。</div>
+        <div class="notice" id="importResult" hidden></div>
+        <span class="hint">「INDEX_会議資料」にある会議日程です。前回の会議からの変化を出します。</span>
+      </section>
+      <section class="field" id="sheetsField">
+        <div class="label">作る資料<span><button type="button" class="link-btn" id="all">すべて選ぶ</button>　<button type="button" class="link-btn" id="none">すべて外す</button></span></div>
+        <div class="sheets" id="sheets"></div>
+      </section>
+      <div class="notice error" id="error" hidden></div>
+    </main>
+
+    <!-- 2. 確かめる -->
+    <main class="m-body" id="confirm" hidden>
+      <p class="text" id="confirmText"></p>
+      <div class="notice error" id="confirmError" hidden></div>
+    </main>
+
+    <!-- 3. 結果 -->
+    <main class="m-body" id="done" hidden>
+      <p class="text" id="doneText"></p>
+    </main>
+
+    <footer class="m-foot">
+      <button type="button" class="btn ghost" id="cancel">閉じる</button>
+      <button type="button" class="btn ghost" id="back" hidden>戻る</button>
+      <button type="button" class="btn" id="next">次へ（確かめる）</button>
+      <button type="button" class="btn" id="run" hidden>作成する</button>
+      <button type="button" class="btn" id="close" hidden>閉じる</button>
+    </footer>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const KIND = document.body.dataset.kind;
+    const FINAL = document.body.dataset.final === 'true';
+    const MANUAL = '__manual__';
+    let data = null;
+
+    /* ---------- くるくる（JavaScript で動かす。OS の「動きを減らす」設定でも止まらない） ---------- */
+    let ticker = null;
+    function busy(text, note) {
+      $('loading').classList.remove('error');
+      $('loading').hidden = false;
+      $('loadingText').textContent = text;
+      $('reload').hidden = true;
+      if (ticker) clearInterval(ticker);
+      const spinner = document.querySelector('.spinner');
+      const began = Date.now();
+      let angle = 0;
+      ticker = setInterval(() => {
+        angle = (angle + 30) % 360;
+        spinner.style.transform = 'rotate(' + angle + 'deg)';
+        const seconds = Math.floor((Date.now() - began) / 1000);
+        $('loadingTime').textContent = seconds >= 2 ? seconds + '秒経過' + (note ? '　' + note : '') : '';
+      }, 70);
+    }
+    function idle() {
+      if (ticker) clearInterval(ticker);
+      ticker = null;
+      $('loading').hidden = true;
+    }
+    function failLoading(error) {
+      if (ticker) clearInterval(ticker);
+      ticker = null;
+      $('loading').classList.add('error');
+      $('loadingText').textContent = '読み込めませんでした：' + messageOf(error);
+      $('loadingTime').textContent = '';
+      $('reload').hidden = false;
+    }
+    function messageOf(error) {
+      return String(error && error.message || error).replace(/^(Exception|Error):\s*/, '');
+    }
+
+    /* ---------- 表示 ---------- */
+    function show(step) {
+      ['pick', 'confirm', 'done'].forEach(id => { $(id).hidden = id !== step; });
+      $('cancel').hidden = step === 'done';
+      $('back').hidden = step !== 'confirm';
+      $('next').hidden = step !== 'pick';
+      $('run').hidden = step !== 'confirm';
+      $('close').hidden = step !== 'done';
+    }
+
+    function render(d) {
+      data = d;
+      $('meetingName').textContent = d.meetingName;
+      $('dot').style.background = d.color;
+      $('title').textContent = d.title;
+      $('mode').textContent = FINAL ? '本番（会議日を記録します）' : '試作（会議日は記録しません）';
+      $('mode').classList.toggle('final', FINAL);
+      $('run').textContent = FINAL ? '本番として作成する' : '試作を作成する';
+      // 会議日程（会議日の新しい順。初めは今日以降でいちばん近い会議日）
+      const select = $('meeting');
+      const keep = select.value;
+      select.textContent = '';
+      d.meetings.slice().reverse().forEach(m => {
+        const option = document.createElement('option');
+        option.value = m.date;
+        option.textContent = m.label + (m.filled ? '　（作成済み）' : '') + (m.date === d.selected && !m.past ? '　次回' : '');
+        select.appendChild(option);
+      });
+      const manual = document.createElement('option');
+      manual.value = MANUAL;
+      manual.textContent = '一覧に無い日を入力…';
+      select.appendChild(manual);
+      select.value = keep && Array.from(select.options).some(o => o.value === keep) ? keep : (d.selected || (d.meetings.length ? '' : MANUAL));
+      if (!select.value) select.selectedIndex = 0;
+      $('noMeetings').hidden = d.meetings.length > 0;
+      onMeetingChange();
+      // 作る資料（統合版は選ばない）
+      $('sheetsField').hidden = KIND === 'combined';
+      const box = $('sheets');
+      box.textContent = '';
+      d.sheets.forEach(s => {
+        const label = document.createElement('label');
+        label.className = 'sheet';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.value = s.name;
+        input.checked = !!s.checked;
+        const name = document.createElement('span');
+        name.textContent = s.name;
+        const note = document.createElement('span');
+        note.className = 'note';
+        note.textContent = s.note || '';
+        label.append(input, name, note);
+        box.appendChild(label);
+      });
+      $('job').hidden = !d.job;
+      $('jobText').textContent = d.job || '';
+      $('cancelJob').checked = false;
+      updateNext();
+    }
+
+    function onMeetingChange() {
+      const manual = $('meeting').value === MANUAL;
+      $('manual').hidden = !manual;
+      updateNext();
+    }
+
+    function meetingValue() {
+      if ($('meeting').value !== MANUAL) return $('meeting').value;
+      const v = $('manual').value;   // yyyy-mm-dd
+      return v ? v.replace(/-/g, '/') : '';
+    }
+
+    function pickedSheets() {
+      return Array.from($('sheets').querySelectorAll('input:checked')).map(i => i.value);
+    }
+
+    function updateNext() {
+      const ok = !!meetingValue() && (KIND === 'combined' || pickedSheets().length > 0) && (!data || !data.job || $('cancelJob').checked);
+      $('next').disabled = !ok;
+    }
+
+    function showError(id, error) {
+      $(id).textContent = messageOf(error);
+      $(id).hidden = !error;
+    }
+
+    /* ---------- サーバー ---------- */
+    function load() {
+      busy('読み込んでいます…');
+      google.script.run
+        .withSuccessHandler(d => { idle(); render(d); show('pick'); })
+        .withFailureHandler(failLoading)
+        .getMeetingRunData(KIND, FINAL);
+    }
+
+    function importCalendar() {
+      busy('Google カレンダーから会議日程を読み込んでいます…');
+      google.script.run
+        .withSuccessHandler(r => {
+          idle();
+          render(r.data);
+          $('importResult').textContent = r.message;
+          $('importResult').hidden = false;
+        })
+        .withFailureHandler(e => { idle(); showError('error', e); })
+        .importMeetingSchedulesFromDialog(KIND, FINAL);
+    }
+
+    function check() {
+      showError('error', '');
+      busy('確かめています…');
+      google.script.run
+        .withSuccessHandler(r => {
+          idle();
+          if (r.error) {
+            showError('error', r.error);
+            return;
+          }
+          $('confirmText').textContent = r.text + (FINAL ? '\n\n作成してよろしいですか？' : '');
+          showError('confirmError', '');
+          show('confirm');
+        })
+        .withFailureHandler(e => { idle(); showError('error', e); })
+        .checkMeetingRun(KIND, FINAL, meetingValue(), pickedSheets());
+    }
+
+    function run() {
+      busy('資料を作っています。画面を閉じないでください…', '（数分かかることがあります）');
+      google.script.run
+        .withSuccessHandler(r => {
+          idle();
+          renderLinks($('doneText'), r.message);
+          show('done');
+        })
+        .withFailureHandler(e => { idle(); showError('confirmError', e); })
+        .runMeetingMaterials(KIND, FINAL, meetingValue(), pickedSheets(), $('cancelJob').checked);
+    }
+
+    // 知らせの文の URL をリンクにする（文字は textContent で入れる）
+    function renderLinks(target, text) {
+      target.textContent = '';
+      String(text || '').split(/(https?:\/\/[^\s）」]+)/).forEach((part, i) => {
+        if (i % 2) {
+          const a = document.createElement('a');
+          a.href = part;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.textContent = part;
+          target.appendChild(a);
+        } else {
+          target.appendChild(document.createTextNode(part));
+        }
+      });
+    }
+
+    /* ---------- 操作 ---------- */
+    $('meeting').addEventListener('change', onMeetingChange);
+    $('manual').addEventListener('input', updateNext);
+    $('sheets').addEventListener('change', updateNext);
+    $('cancelJob').addEventListener('change', updateNext);
+    $('all').addEventListener('click', () => { $('sheets').querySelectorAll('input').forEach(i => { i.checked = true; }); updateNext(); });
+    $('none').addEventListener('click', () => { $('sheets').querySelectorAll('input').forEach(i => { i.checked = false; }); updateNext(); });
+    $('import').addEventListener('click', importCalendar);
+    $('next').addEventListener('click', check);
+    $('back').addEventListener('click', () => show('pick'));
+    $('run').addEventListener('click', run);
+    $('cancel').addEventListener('click', () => google.script.host.close());
+    $('close').addEventListener('click', () => google.script.host.close());
+    $('reload').addEventListener('click', load);
+    load();
+  </script>
+</body>
+</html>
