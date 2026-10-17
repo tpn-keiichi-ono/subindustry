@@ -208,6 +208,9 @@ const MTG_OPTIONS = {
   mainRows: {changes: 7, focus: 5, owners: 9, deals: 4},   // 本編の表に出す行の数（残りは Appendix）。owners は Appendix ③ の責任者別の表の行、
                                                            // deals はサマリーの内訳の1区分に名前を出す案件の数
   // 色（緑を基調にしたトンマナ）。表の見出し・帯は green、表の1列目・合計は greenSoft、大きな数字・期待値の棒は greenDark
+  // Appendix のページ（扉のあと）の色：扉（グレー）に合わせて、緑の見出し・1列目・大きな数字をグレーにする（本編と見分けやすく。2026/10/17 から）。
+  // 区分・該当事項のラベルは意味の色（前向きは緑）なので変えない（mtgPills_ は colors のまま）。null なら本編と同じ緑
+  appendixColors: {green: '#7F7F7F', greenSoft: '#EDEDED', greenDeep: '#595959', greenDark: '#404040', greenText: '#404040'},
   colors: {
     green: '#70AD47', greenDark: '#38761D', greenDeep: '#548235', greenSoft: '#E2EFDA', greenText: '#274E13',
     up: '#8FD36B', down: '#A6A6A6', dark: '#595959',
@@ -1043,9 +1046,9 @@ function mtgSummaries_(ss, names, now, final, meeting) {
  * 本番は会議のフォルダ（MTG_OPTIONS.combined.meetingFolder の中）に格納し、インデックスの統合版の列に書く（できなくても止めない）。
  * 戻り値 {name, file: PDF, pages, stored, storeError, index}
  */
-function mtgCreateCombined_(summaries, meeting, final, folder, urls) {
+function mtgCreateCombined_(summaries, meeting, final, folder) {
   const name = MTG_OPTIONS.combined.name;
-  const slides = mtgCombinedSlides_(summaries, meeting, final, urls);
+  const slides = mtgCombinedSlides_(summaries, meeting, final);
   const out = mtgExportDeck_(mtgFileName_(name, meeting, final), slides, folder);
   const result = {name, file: out.pdf, deck: out.deck, pages: slides.length};
   if (final) {
@@ -1086,12 +1089,7 @@ function createCombinedMeetingSummary() {
   if (!meeting) return;
   // 実行の条件：すべてのサブインダストリーの、この会議日の本番の資料（PDF）ができている（インデックスのその会議日の行に空のセルが無い）。満たさなければ作らずに終える
   const props = PropertiesService.getDocumentProperties();
-  const urls = {};   // 各サブインダストリーの PDF（目次の名前のリンク先）
-  const missing = names.filter(name => {
-    const pdf = mtgMeetings_(props, name).some(m => !m.baseline && m.date === meeting) && mtgStoredPdf_(ss, name, meeting);
-    if (pdf) urls[name] = pdf.getUrl();
-    return !pdf;
-  });
+  const missing = names.filter(name => !mtgMeetings_(props, name).some(m => !m.baseline && m.date === meeting) || !mtgStoredPdf_(ss, name, meeting));
   if (missing.length) {
     return stop('統合版を作れません。会議日 ' + meeting + ' の本番の資料が、まだできていないサブインダストリーがあります（' + missing.length + '件）：\n' +
       missing.map(name => '・' + name).join('\n') + '\n\n' +
@@ -1104,7 +1102,7 @@ function createCombinedMeetingSummary() {
   const {summaries} = mtgSummaries_(ss, names, now, true, meeting);
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
-  const message = mtgCombinedLines_(mtgCombinedPlain_(mtgCreateCombined_(summaries, meeting, true, folder, urls))).concat(['', '保存先：' + folder.getUrl()]).join('\n');
+  const message = mtgCombinedLines_(mtgCombinedPlain_(mtgCreateCombined_(summaries, meeting, true, folder))).concat(['', '保存先：' + folder.getUrl()]).join('\n');
   console.log(message);
   ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
 }
@@ -2640,9 +2638,9 @@ function mtgSlides_(summary, start) {
   const offset = start || 0;   // 前に入るページの数（統合版。ページ番号と扉の目次のページを通しにする）
   const cover = mtgCoverSlide_(summary);
   const main = [mtgSummarySlide_(summary), mtgBridgeSlide_(summary), mtgMovesSlide_(summary)].concat(mtgFocusSlide_(summary));
-  // Appendix はいつも ①〜③ を出す（中身が無ければ、表の見出しの行の下に「データなし」と理由・「該当なし」）
-  const appendix = [].concat(mtgAppendixChanges_(summary), mtgAppendixStalled_(summary), mtgAppendixOwners_(summary),
-    mtgAppendixAlerts_(summary));
+  // Appendix はいつも ①〜③ を出す（中身が無ければ、表の見出しの行の下に「データなし」と理由・「該当なし」）。色は appendixColors（グレー）
+  const appendix = mtgWithColors_(MTG_OPTIONS.appendixColors, () => [].concat(mtgAppendixChanges_(summary), mtgAppendixStalled_(summary),
+    mtgAppendixOwners_(summary), mtgAppendixAlerts_(summary)));
   return mtgNumberSlides_(mtgSheetFrame_(summary), [cover].concat(main, [mtgDividerSlide_(appendix, offset + 1 + main.length + 1 + 1)], appendix), offset);
 }
 
@@ -2650,7 +2648,7 @@ function mtgSlides_(summary, start) {
  * 統合版のスライドの並び：表紙（全サブインダストリー）・目次（mtgContentsSlide_）・全サブインダストリーの状況（mtgOverviewSlide_）のあとに、各サブインダストリーの資料
  * （mtgSlides_。表紙から Appendix まで。summaries の順）をそのまま続ける。ページ番号・扉の目次のページは資料全体の通し番号にする
  */
-function mtgCombinedSlides_(summaries, meeting, final, urls) {
+function mtgCombinedSlides_(summaries, meeting, final) {
   const o = MTG_OPTIONS;
   const c = o.colors;
   const S = MTG_SLIDE;
@@ -2677,17 +2675,16 @@ function mtgCombinedSlides_(summaries, meeting, final, urls) {
     ]
   };
   const frame = {source: (final ? '' : '【試作】') + (dummy ? '【ダミーデータを含む】' : '') + name + '（' + mtgShortDate_(meeting) + ' 会議資料）　金額の単位：百万円'};
-  const first = mtgNumberSlides_(frame, [cover, mtgContentsSlide_(sections, urls), mtgOverviewSlide_(sections)]);
+  const first = mtgNumberSlides_(frame, [cover, mtgContentsSlide_(sections), mtgOverviewSlide_(sections)]);
   return first.concat.apply(first, sections.map(x => x.slides));
 }
 
 /**
- * 統合版の2枚目「目次」：全サブインダストリーの状況と、各サブインダストリーの資料（表紙）の、この資料の中のページ。
- * ページ番号は、そのページへのリンク（部品の link にスライドの番号（0 から）。mtgExportDeck_ がすべてのスライドを作ったあとにリンクにする）。
- * 名前は、urls（シート名 → 個別の資料の PDF の URL）があれば、その PDF へのリンク（url）。Google ドライブのプレビュー画面は PDF の中のページへの
- * リンクに移らないが、外の URL は開けるため。urls が無ければ、名前もページへのリンク。9件以上なら2列
+ * 統合版の2枚目「目次」：全サブインダストリーの状況と、各サブインダストリーの資料（表紙）の、この資料の中のページ。名前とページ番号は、そのページへのリンク
+ * （部品の link にスライドの番号（0 から）を入れ、mtgExportDeck_ がすべてのスライドを作ったあとにリンクにする）。9件以上なら2列。
+ * ブラウザで開いた Google ドライブのプレビュー画面は PDF の中のページへのリンクに移らないので、リード文の補足にそう書く
  */
-function mtgContentsSlide_(sections, urls) {
+function mtgContentsSlide_(sections) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
   const entries = [{label: MTG_TITLES.overview, page: 3}].concat(sections.map(x => ({label: x.summary.name, page: x.start})));
@@ -2702,14 +2699,13 @@ function mtgContentsSlide_(sections, urls) {
     const y = S.top + (i % per) * rowH;
     const h = rowH - 6;
     const link = entry.page - 1;
-    const url = i && urls && urls[entry.label];
     el.push(mtgBox_(x, y, colW - 56, h, mtgWrap_((i ? i + '.　' : '') + entry.label, colW - 56, 12, 1)[0],
-      Object.assign({size: 12, bold: true, color: c.ink, fill: c.greenSoft, shape: 'RECTANGLE', role: 'toc'}, url ? {url} : {link})));
+      {size: 12, bold: true, color: c.ink, fill: c.greenSoft, shape: 'RECTANGLE', link, role: 'toc'}));
     el.push(mtgBox_(x + colW - 56, y, 56, h, String(entry.page), {size: 12, bold: true, color: c.greenDark, fill: c.greenSoft, shape: 'RECTANGLE',
       align: 'END', link, role: 'toc'}));
   });
-  const lead = urls ? '名前を押すと、各サブインダストリーの資料（PDF）が開きます。\nページ番号を押すと、この資料のそのページに移ります（ダウンロードして開いたとき）。'
-    : '名前かページ番号を押すと、そのページに移ります。';
+  const lead = '名前かページ番号を押すと、そのページに移ります。\n' +
+    '※ ブラウザの Google ドライブのプレビュー画面ではリンクは動きません（ダウンロードして Acrobat などで開いてください）。';
   return {title: MTG_TITLES.contents, lead, elements: el};
 }
 
@@ -2783,6 +2779,24 @@ function mtgOverviewSlide_(sections) {
   }
   return Object.assign({title: MTG_TITLES.overview, lead, elements: [{type: 'table', x: S.x, y: top, columns, rows}]},
     marked ? {note: '※ は「' + G + '」のシートを除いた合計'} : {});
+}
+
+/**
+ * fn を、MTG_OPTIONS.colors の一部を overrides に置き換えた色で作る（Appendix をグレーにする。終わったら元に戻す）。
+ * 区分などのラベル（mtgPills_）は意味の色なので、元の色（MTG_OPTIONS.baseColors）で描く
+ */
+function mtgWithColors_(overrides, fn) {
+  if (!overrides) return fn();
+  const o = MTG_OPTIONS;
+  const base = o.colors;
+  o.baseColors = base;
+  o.colors = Object.assign({}, base, overrides);
+  try {
+    return fn();
+  } finally {
+    o.colors = base;
+    delete o.baseColors;
+  }
 }
 
 /**
@@ -3391,7 +3405,7 @@ function mtgCategoryPill_(key) {
  * どれも枠なし）。width はラベルの幅（列の中で同じにする。mtgPillWidth_）。複数は縦に並べ、セルの上下の中央に置く。セルの文字は空にしておく
  */
 function mtgPills_(table, row, col, labels, width) {
-  const c = MTG_OPTIONS.colors;
+  const c = MTG_OPTIONS.baseColors || MTG_OPTIONS.colors;   // Appendix をグレーにしていても、ラベルは意味の色のまま
   const P = MTG_SLIDE.pill;
   const styles = {
     up: {fill: c.greenDeep, color: c.white},
@@ -4656,9 +4670,9 @@ function mtgExportDeck_(name, slides, folder) {
     // ページへのリンク（目次）：リンク先のスライドができてから付ける（部品の ID は「mtg_p{ページ}_{部品の番号}」）
     const pageId = i => plan.pageOf[i] || 'mtg_p' + (i + 1);
     slides.forEach((slide, i) => slide.elements.forEach((el, n) => {
-      if (!(el.url || (el.link != null && slides[el.link])) || el.text == null || el.text === '') return;
-      // ページへのリンク（link）か、外の URL へのリンク（url）。リンクを付けると青の下線になるので、字の色を戻し、下線を付けない
-      extra.push({updateTextStyle: {objectId: 'mtg_p' + (i + 1) + '_' + n, textRange: {type: 'ALL'}, style: {link: el.url ? {url: el.url} : {pageObjectId: pageId(el.link)},
+      if (el.link == null || !slides[el.link] || el.text == null || el.text === '') return;
+      // リンクを付けると青の下線になるので、字の色を戻し、下線を付けない
+      extra.push({updateTextStyle: {objectId: 'mtg_p' + (i + 1) + '_' + n, textRange: {type: 'ALL'}, style: {link: {pageObjectId: pageId(el.link)},
         underline: false, foregroundColor: {opaqueColor: {rgbColor: mtgRgb_(el.color || MTG_OPTIONS.colors.body)}}}, fields: 'link,underline,foregroundColor'}});
     }));
     // ひな形のページ（複製は元のページのすぐ次に入る）と足したスライドを、1枚目から順に決まった位置に動かす（前のスライドの位置は決まっているので、順に動かせばそろう）

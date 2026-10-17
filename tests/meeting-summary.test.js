@@ -2225,7 +2225,9 @@ test('統合版のスライド：表紙・目次・全サブインダストリ�
   assert.deepStrictEqual([slides[3].template.title, slides[start2 - 1].template.title], ['新FMT', '新FMT2'], '各資料の表紙が区切り');
   // 目次：全サブインダストリーの状況（3ページ）と各資料の表紙のページ。名前とページ番号は、そのスライドへのリンク（スライドの番号は 0 から）
   const contents = slides[1];
-  assert.deepStrictEqual([contents.title, leadOf(contents)], ['目次', '名前かページ番号を押すと、そのページに移ります。']);
+  assert.deepStrictEqual([contents.title, leadOf(contents)], ['目次', '名前かページ番号を押すと、そのページに移ります。' +
+    '※ ブラウザの Google ドライブのプレビュー画面ではリンクは動きません（ダウンロードして Acrobat などで開いてください）。']);
+  assert.ok(roleOf(contents, 'lead').every(el => el.text.indexOf('\n') < 0) && roleOf(contents, 'lead').length === 2, 'リード文は2行（補足は1行に入る）');
   assert.deepStrictEqual(roleOf(contents, 'toc').map(el => [el.text, el.link]), [
     ['全サブインダストリーの状況', 2], ['3', 2], ['1.　新FMT', 3], ['4', 3], ['2.　新FMT2', start2 - 1], [String(start2), start2 - 1]]);
   const eleven = Array.from({length: 11}, (_, i) => ({summary: Object.assign({}, summaries[0], {name: 'サブインダストリー' + (i + 1)}), start: 4 + i * 10}));
@@ -2315,13 +2317,10 @@ test('統合版：createMeetingSummaries() では作らず、すべてのシー�
   assert.strictEqual(combined.title, file + '_全サブインダストリー_RX Business Meeting用資料');
   assert.strictEqual(combined.requests.filter(r => r.createSlide).length, 3 + 10 + 10, '表紙・目次・状況と、2つの資料（10枚ずつ）');
   // 目次のリンク：すべてのスライドを作ったあとに、リンク先のスライドの ID で付ける
-  // 目次のリンク：名前は各サブインダストリーの PDF（ドライブのプレビューでも開ける）、ページ番号はこの資料のページ（全サブインダストリーの状況は名前も）
+  // 目次のリンク：名前もページ番号も、この資料のそのページ
   const links = combined.requests.filter(r => r.updateTextStyle && r.updateTextStyle.fields === 'link,underline,foregroundColor')
-    .map(r => [r.updateTextStyle.objectId, r.updateTextStyle.style.link.pageObjectId || r.updateTextStyle.style.link.url]);
-  const pdfUrl = sheet => 'https://drive.google.com/file/d/' + gas.driveFiles.find(f => f.name === file + '_' + sheet + '_RX Business Meeting用資料.pdf').id + '/view';
-  assert.deepStrictEqual(plain(links).map(l => l[1]), ['mtg_p3', 'mtg_p3', pdfUrl('新FMT'), 'mtg_p4', pdfUrl('新FMT2'), 'mtg_p14']);
-  assert.match(plain(g.mtgContentsSlide_([{summary: {name: '新FMT'}, start: 4}], {'新FMT': 'u'})).lead,
-    /^名前を押すと、各サブインダストリーの資料（PDF）が開きます。\nページ番号を押すと、この資料のそのページに移ります（ダウンロードして開いたとき）。$/);
+    .map(r => [r.updateTextStyle.objectId, r.updateTextStyle.style.link.pageObjectId]);
+  assert.deepStrictEqual(plain(links).map(l => l[1]), ['mtg_p3', 'mtg_p3', 'mtg_p4', 'mtg_p4', 'mtg_p14', 'mtg_p14']);
   assert.ok(plain(links).every(l => /^mtg_p2_\d+$/.test(l[0])), '目次（2枚目）の部品');
   const linkStyle = combined.requests.find(r => r.updateTextStyle && r.updateTextStyle.style.link).updateTextStyle.style;
   assert.deepStrictEqual(plain([linkStyle.underline, linkStyle.foregroundColor]), [false, {opaqueColor: {rgbColor: plain(g.mtgRgb_('#1A1A1A'))}}],
@@ -2535,4 +2534,30 @@ test('mtgPdfFitLinks_：PDF のページへのリンクの飛び先「/XYZ null 
   const file = g.mtgExportDeck_('統合', slides, g.DriveApp.getFolderById('folder-x')).pdf;
   const saved = gas.driveFiles.find(f => f.id === file.getId()).blob;
   assert.ok(Buffer.from(saved.getBytes().map(b => b & 255)).toString('latin1').indexOf('/Fit') > 0);
+});
+
+test('Appendix のページはグレー（扉に合わせる）：表の見出し・1列目・大きな数字をグレーに。区分・該当事項のラベルは意味の色のまま。本編は緑', () => {
+  const {gas, g} = setup();
+  const T = gas.get('MTG_TITLES');
+  const c = gas.get('MTG_OPTIONS').colors;
+  const slides = plain(g.mtgSlides_(summarize(g, '新FMT')));
+  const fills = slide => [].concat(...slide.elements.filter(el => el.type === 'table').map(t => [].concat(...t.rows.map(r => r.cells.map(cell => cell.fill)))));
+  const appendix = slides.filter(sl => /^Appendix /.test(sl.title));
+  assert.ok(appendix.length >= 3);
+  appendix.forEach(sl => {
+    const f = fills(sl);
+    assert.ok(f.indexOf('#7F7F7F') >= 0 && f.indexOf(c.green) < 0 && f.indexOf(c.greenSoft) < 0, sl.title + '：' + JSON.stringify(Array.from(new Set(f))));
+  });
+  const changes = appendix.find(sl => sl.title === T.changes);
+  const pills = changes.elements.filter(el => el.role === 'pill');
+  assert.ok(pills.some(p => p.fill === c.greenDeep), '前向きの区分は緑のまま');
+  // 本編は緑のまま（色を戻している）
+  const moves = slides.find(sl => sl.title === T.progress);
+  assert.ok(fills(moves).indexOf(c.green) >= 0 && fills(moves).indexOf('#7F7F7F') < 0);
+  assert.strictEqual(gas.get('MTG_OPTIONS').colors.green, '#70AD47');
+  assert.strictEqual(gas.get('MTG_OPTIONS').baseColors, undefined);
+  // appendixColors を null にすると、本編と同じ緑
+  gas.get('MTG_OPTIONS').appendixColors = null;
+  const green = plain(g.mtgSlides_(summarize(g, '新FMT'))).find(sl => sl.title === T.changes);
+  assert.ok(fills(green).indexOf(c.green) >= 0);
 });
