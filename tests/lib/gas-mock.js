@@ -1129,6 +1129,14 @@ function createGas(options) {
         resource.requests.forEach(q => {
           if (q.createSlide) deck.slides.push({objectId: q.createSlide.objectId,
             pageElements: (gas.layoutPlaceholders || []).map((type, n) => ({objectId: q.createSlide.objectId + '_ph' + n, shape: {placeholder: {type}}}))});
+          // ページの複製：元のページのすぐ次に入る（中の部品の ID は「新しいページの ID_e番号」）
+          if (q.duplicateObject) {
+            const at = deck.slides.findIndex(sl => sl.objectId === q.duplicateObject.objectId);
+            if (at < 0) throw new Error('The object (' + q.duplicateObject.objectId + ') could not be found.');
+            const copy = q.duplicateObject.objectIds[q.duplicateObject.objectId];
+            deck.slides.splice(at + 1, 0, Object.assign({}, deck.slides[at], {objectId: copy,
+              pageElements: (deck.slides[at].pageElements || []).map((el, n) => Object.assign({}, el, {objectId: copy + '_e' + n}))}));
+          }
           if (q.deleteObject) {
             const gone = q.deleteObject.objectId;
             deck.slides = deck.slides.filter(sl => sl.objectId !== gone)

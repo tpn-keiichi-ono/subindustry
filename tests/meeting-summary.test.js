@@ -1028,22 +1028,15 @@ test('mtgSlideRequests_：一部の文字の書式（spans）・塗りの濃さ�
   const fonts = big.filter(r => r.updateTextStyle).map(r => r.updateTextStyle.style.fontSize && r.updateTextStyle.style.fontSize.magnitude);
   assert.deepStrictEqual(fonts, [12, undefined, 10.67]);
 
-  // ひな形のページ：スライドは作らず、決まった文字を長い順に置き換える（そのページだけ）。部品の ID は idPrefix から
+  // ひな形のページ：スライドは作らず、足す部品だけ（決まった文字の書き換えは mtgTemplateTextRequests_）。部品の ID は idPrefix から
   const cover = {template: {title: 'スーパー・GMS', subtitle: 'RX Business MTG　事前資料', date: '2026年11月6日（金）', name: ''}, elements: [slide.elements[0]]};
   const onTemplate = plain(g.mtgSlideRequests_(cover, 'g1a2b3', 0, {scale: 4 / 3, existing: true, idPrefix: 'mtg_p1'}));
-  assert.ok(!onTemplate.some(r => r.createSlide));
-  assert.deepStrictEqual(onTemplate.filter(r => r.replaceAllText).map(r => [r.replaceAllText.containsText.text, r.replaceAllText.replaceText,
-    r.replaceAllText.pageObjectIds.join(), r.replaceAllText.containsText.matchCase]), [
-    ['2026年 4月 17日', '2026年11月6日（金）', 'g1a2b3', true],
-    ['XXXXXX', 'スーパー・GMS', 'g1a2b3', true],
-    ['XXXXX', 'RX Business MTG　事前資料', 'g1a2b3', true],
-    ['XXXX', '', 'g1a2b3', true]
-  ], '「XXXXXX」は「XXXXX」より先に置き換える');
+  assert.ok(!onTemplate.some(r => r.createSlide || r.replaceAllText || r.updatePageProperties));
   const added = onTemplate.find(r => r.createShape).createShape;
   assert.deepStrictEqual([added.objectId, added.elementProperties.pageObjectId], ['mtg_p1_0', 'g1a2b3']);
   // ひな形が無いとき：ページの背景を緑一色にし（あとで画像にする）、ひな形と同じ位置で白い字（名前の欄は空なので描かない）
   const plainCover = plain(g.mtgSlideRequests_(cover, 'mtg_p1', 0));
-  assert.ok(plainCover[0].createSlide && !plainCover.some(r => r.replaceAllText));
+  assert.ok(plainCover[0].createSlide);
   assert.deepStrictEqual(plainCover[1], {updatePageProperties: {objectId: 'mtg_p1', pageProperties: {pageBackgroundFill: {solidFill: {color: {rgbColor:
     plain(g.mtgRgb_('#3A7D22'))}}}}, fields: 'pageBackgroundFill.solidFill.color'}});
   assert.ok(!plainCover.some(r => r.createShape && r.createShape.elementProperties.size.width.magnitude >= 720), 'ページ全体を覆う四角は置かない（背景の画像が隠れる）');
@@ -1089,7 +1082,8 @@ test('表紙・扉の背景の画像：1280 × 720 の PNG（表紙は緑のグ�
   // 扉：同じ絵柄のグレー
   const gray = zlib.inflateSync(Buffer.from(g.mtgCoverPng_('divider')).slice(41, -12));
   const grayPixel = (x, y) => '#' + Array.from(gray.slice(y * stride + 1 + x * 3, y * stride + 4 + x * 3)).map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
-  assert.deepStrictEqual([grayPixel(60, 400), grayPixel(300, 200), grayPixel(1279, 719)], ['#3F3F3F', '#5F5F5F', '#3F3F3F']);
+  assert.deepStrictEqual([grayPixel(60, 400), grayPixel(300, 200), grayPixel(1279, 719)], ['#A6A6A6', '#7F7F7F', '#A6A6A6'],
+    'いただいたひな形の2枚目と同じ色（RX は背景より明るいグレー）');
   let colored = 0;
   let light = 0;
   for (let y = 0; y < 720; y++) {
@@ -1099,7 +1093,14 @@ test('表紙・扉の背景の画像：1280 × 720 の PNG（表紙は緑のグ�
       light = Math.max(light, gray[at]);
     }
   }
-  assert.deepStrictEqual([colored, light >= 0xA0], [0, true], 'どの画素もグレーで、右下へ明るくなる（いちばん明るい ' + light.toString(16) + '）');
+  assert.deepStrictEqual([colored, light >= 0xC0], [0, true], 'どの画素もグレーで、右下へ明るくなる（いちばん明るい ' + light.toString(16) + '）');
+  // 統合版の表紙：紫（ひな形の3枚目）。RX は 33pt 左（R の縦棒が左に寄る）
+  const purple = zlib.inflateSync(Buffer.from(g.mtgCoverPng_('combined')).slice(41, -12));
+  const purplePixel = (x, y) => '#' + Array.from(purple.slice(y * stride + 1 + x * 3, y * stride + 4 + x * 3)).map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
+  assert.deepStrictEqual([purplePixel(20, 400), purplePixel(300, 200)], ['#421C5E', '#7030A0']);
+  const stemEnd = at => { let x = 0; while (at(x, 400) === at(0, 400)) x++; return x; };   // R の縦棒の右端（y = 400）
+  const shift = stemEnd(pixel) - stemEnd(purplePixel);
+  assert.ok(shift >= 43 && shift <= 46, 'RX は 33pt（1280px の画像で 44px）左：' + shift);
 });
 
 test('表紙・扉の背景の画像を付けられなくても、資料は作る（一色の背景のまま。ログに残す）', () => {
@@ -1589,8 +1590,7 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   gas.get('MTG_OPTIONS').folderId = '';   // 保存先を決めていないとき：スプレッドシートと同じフォルダの中に作る
   const props = g.PropertiesService.getDocumentProperties();
   const id = '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
-  gas.slideTemplates[id] = {pageSize: {width: {magnitude: 12192000, unit: 'EMU'}, height: {magnitude: 6858000, unit: 'EMU'}},
-    slides: [{objectId: 'g_cover'}, {objectId: 'g_extra'}]};
+  gas.slideTemplates[id] = pptxTemplate();
   const pptx = '1PptxFileIdAbCdEfGhIjKlMnOpQrStUv';
   gas.files[pptx] = {mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'};
   gas.promptAnswers = ['https://docs.google.com/presentation/d/' + pptx + '/edit'];
@@ -1601,7 +1601,8 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   gas.promptAnswers = ['https://docs.google.com/presentation/d/' + id + '/edit#slide=id.p'];
   g.setMeetingTemplate();
   assert.strictEqual(props.getProperty('MTG_TEMPLATE_ID'), id);
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /ひな形を登録しました（2枚。1枚目を表紙・扉に使います）/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message,
+    /ひな形を登録しました（3枚。1枚目を表紙、2枚目を扉（Appendix）、3枚目を統合版（全サブインダストリー）の表紙に使います）/);
 
   gas.layoutPlaceholders = ['SLIDE_NUMBER', 'FOOTER'];   // ひな形の白紙のレイアウトにはページ番号・フッターの枠がある
   gas.promptAnswers = ['1', '10/23'];
@@ -1610,25 +1611,35 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   const deck = gas.decks.find(d => d.template === id);
   const r = plain(deck.requests);
   assert.deepStrictEqual(r.filter(q => q.deleteObject && /_ph\d$/.test(q.deleteObject.objectId)).map(q => q.deleteObject.objectId),
-    ['mtg_p2_ph0', 'mtg_p2_ph1', 'mtg_p3_ph0', 'mtg_p3_ph1', 'mtg_p4_ph0', 'mtg_p4_ph1', 'mtg_p5_ph0', 'mtg_p5_ph1', 'mtg_p6_ph0', 'mtg_p6_ph1',
+    ['mtg_p2_ph0', 'mtg_p2_ph1', 'mtg_p3_ph0', 'mtg_p3_ph1', 'mtg_p4_ph0', 'mtg_p4_ph1', 'mtg_p5_ph0', 'mtg_p5_ph1',
       'mtg_p7_ph0', 'mtg_p7_ph1', 'mtg_p8_ph0', 'mtg_p8_ph1', 'mtg_p9_ph0', 'mtg_p9_ph1', 'mtg_p10_ph0', 'mtg_p10_ph1'],
     '足したスライドのレイアウトの枠（ページ番号など）は消す（ページ番号が2つ出ないように）');
-  assert.ok(deck.slides.every(sl => !(sl.pageElements || []).length));
-  assert.strictEqual(deck.batches[deck.batches.length - 1], 18, '枠の削除は最後にまとめて送る');
-  assert.deepStrictEqual(r[0], {deleteObject: {objectId: 'g_extra'}}, 'ひな形の2枚目以降は消す');
-  assert.ok(!r.some(q => q.duplicateObject), '扉はひな形を複製しない');
-  const replaced = page => r.filter(q => q.replaceAllText && q.replaceAllText.pageObjectIds[0] === page)
-    .map(q => [q.replaceAllText.containsText.text, q.replaceAllText.replaceText]);
-  assert.deepStrictEqual(replaced('g_cover').slice(1), [['XXXXXX', '新FMT'], ['XXXXX', 'RX Business MTG　事前資料'], ['XXXX', '']]);
-  assert.match(replaced('g_cover')[0][1], /^\d{4}年10月23日（[日月火水木金土]）$/);
-  // 扉：白紙のスライドに、ひな形と同じ位置に「Appendix」と一覧を描き、背景はグレー（画像を付けるまではグレー一色）
-  const divider = r.find(q => q.createSlide && q.createSlide.objectId === 'mtg_p6');
-  assert.ok(divider);
-  assert.deepStrictEqual(r.find(q => q.updatePageProperties && q.updatePageProperties.objectId === 'mtg_p6').updatePageProperties.pageProperties
-    .pageBackgroundFill.solidFill.color.rgbColor, plain(g.mtgRgb_('#5F5F5F')));
-  assert.ok(r.some(q => q.insertText && q.insertText.objectId === 'mtg_p6_0' && q.insertText.text === 'Appendix'));
-  assert.ok(!r.some(q => q.deleteObject && q.deleteObject.objectId === 'g_cover'), '表紙（ひな形の1枚目）は消さない');
-  assert.deepStrictEqual(r.filter(q => q.createSlide).map(q => q.createSlide.insertionIndex), [1, 2, 3, 4, 5, 6, 7, 8, 9], '表紙の次から順に入れる');
+  assert.ok(deck.slides.every(sl => !(sl.pageElements || []).some(el => el.shape && el.shape.placeholder)));
+  assert.deepStrictEqual(r[0], {deleteObject: {objectId: 'g_combined'}}, '使わないページ（統合版の表紙）は消す');
+  assert.deepStrictEqual(deck.batches[0], 1, '先に消して（複製して）から、ひな形のページを読み直す');
+  assert.ok(!r.some(q => q.duplicateObject || q.replaceAllText), '1回ずつなので複製しない。同じ文字の枠が2つあるので replaceAllText は使わない');
+  // 決まった文字は枠ごとに書き換える：見出し（40pt）→ サブインダストリー、その下（20pt）→ 会議の名前、日付、名前の欄は空
+  const texts = page => r.filter(q => (q.insertText || q.deleteText) && (q.insertText || q.deleteText).objectId.indexOf(page + '_') === 0)
+    .map(q => (q.insertText ? ['入れる', q.insertText.objectId.slice(page.length + 1), q.insertText.insertionIndex, q.insertText.text]
+      : ['消す', q.deleteText.objectId.slice(page.length + 1), q.deleteText.textRange.type, q.deleteText.textRange.startIndex, q.deleteText.textRange.endIndex]));
+  const date = r.find(q => q.insertText && q.insertText.objectId === 'g_cover_date').insertText.text;
+  assert.match(date, /^\d{4}年10月23日（[日月火水木金土]）$/);
+  assert.deepStrictEqual(texts('g_cover').filter(t => t[1] !== 'extra'), [
+    ['入れる', 'title', 0, '新FMT'], ['消す', 'title', 'FIXED_RANGE', 4, 9],
+    ['入れる', 'subtitle', 0, 'RX Business MTG　事前資料'], ['消す', 'subtitle', 'FIXED_RANGE', 20, 25],
+    ['入れる', 'date', 0, date], ['消す', 'date', 'FIXED_RANGE', date.length, date.length + '2026年 4月 17日'.length],
+    ['消す', 'name', 'ALL', undefined, undefined]
+  ], '新しい文字を先頭に入れてから元の文字を消す（元の書式を引き継ぐ）');
+  // 扉：ひな形の2枚目（グレー）。見出しは「Appendix」、ほかの文字は消す。一覧はその上に描く
+  assert.deepStrictEqual(texts('g_divider'), [['入れる', 'title', 0, 'Appendix'], ['消す', 'title', 'FIXED_RANGE', 8, 13],
+    ['消す', 'subtitle', 'ALL', undefined, undefined], ['消す', 'date', 'ALL', undefined, undefined], ['消す', 'name', 'ALL', undefined, undefined]]);
+  assert.ok(r.some(q => q.createShape && q.createShape.elementProperties.pageObjectId === 'g_divider'), '扉に一覧を足す');
+  assert.ok(!r.some(q => q.createSlide && q.createSlide.objectId === 'mtg_p6'), '扉はひな形のページ（作らない）');
+  assert.ok(!r.some(q => q.deleteObject && /^g_(cover|divider)$/.test(q.deleteObject.objectId)), '表紙・扉（ひな形の1・2枚目）は消さない');
+  assert.deepStrictEqual(r.filter(q => q.createSlide).map(q => q.createSlide.insertionIndex), [1, 2, 3, 4, 6, 7, 8, 9]);
+  // 最後に、1枚目から順に決まった位置に動かす（ひな形の扉のページは表紙の次にあるため）
+  const moves = r.filter(q => q.updateSlidesPosition).map(q => [q.updateSlidesPosition.slideObjectIds[0], q.updateSlidesPosition.insertionIndex]);
+  assert.deepStrictEqual(moves, ['g_cover', 'mtg_p2', 'mtg_p3', 'mtg_p4', 'mtg_p5', 'g_divider', 'mtg_p7', 'mtg_p8', 'mtg_p9', 'mtg_p10'].map((id, i) => [id, i]));
   // 本編はページの大きさ（960 × 540pt）に合わせて 4/3 倍
   const title = r.find(q => q.createShape && q.createShape.elementProperties.pageObjectId === 'mtg_p2').createShape;
   assert.deepStrictEqual([title.elementProperties.size.width.magnitude, title.elementProperties.transform.translateX], [901.33, 29.33]);
@@ -1637,8 +1648,15 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   assert.ok(r.some(q => q.createShape && q.createShape.elementProperties.pageObjectId === 'g_cover'), '表紙にデータの時点・期間を足す');
   assert.ok(!gas.moved.some(m => m.id === deck.id), 'コピーは保存先のフォルダにできるので動かさない');
   assert.strictEqual(gas.driveFiles[0].blob.from, deck.id, 'ひな形のコピーを PDF にする');
-  assert.deepStrictEqual(plain(gas.slideBackgrounds.map(b => [b.page, b.blob.getName()])), [['mtg_p6', 'meeting-divider.png']],
-    'ひな形があれば、表紙はひな形のまま（背景の画像は付けない）。扉はグレーの絵柄の画像');
+  assert.deepStrictEqual(gas.slideBackgrounds, [], 'ひな形があれば、表紙・扉はひな形のまま（背景の画像は付けない）');
+
+  // 1枚だけのひな形（前の版）：扉はグレーの絵柄で描く
+  gas.slideTemplates[id] = pptxTemplate(1);
+  gas.promptAnswers = ['1', '10/23'];
+  g.createMeetingSummaries();
+  const one = gas.decks[gas.decks.length - 1];
+  assert.ok(one.requests.some(q => q.createSlide && q.createSlide.objectId === 'mtg_p6'));
+  assert.deepStrictEqual(plain(gas.slideBackgrounds.map(b => [b.deck, b.page, b.blob.getName()])), [[one.id, 'mtg_p6', 'meeting-divider.png']]);
 
   // 空欄で登録を外すと、ひな形なしで作る
   gas.promptAnswers = [''];
@@ -1646,8 +1664,22 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   assert.strictEqual(props.getProperty('MTG_TEMPLATE_ID'), null);
   gas.promptAnswers = ['1', '10/23'];
   g.createMeetingSummaries();
-  assert.strictEqual(gas.driveCopies.length, 1);
+  assert.strictEqual(gas.driveCopies.length, 2);
 });
+
+/**
+ * いただいたひな形（2026/10/17。3枚：緑の表紙・グレーの扉・紫の統合版の表紙）を Google スライドにしたものと同じ形（文字の枠は見出し 40pt・その下 20pt が
+ * どちらも「XXXXX」、日付・名前 16pt）。count 枚まで
+ */
+function pptxTemplate(count) {
+  const box = (page, key, text, size, y) => ({objectId: page + '_' + key, transform: {translateY: y * 12700, unit: 'EMU'},
+    shape: {shapeType: 'TEXT_BOX', text: {textElements: [{paragraphMarker: {}}, {textRun: {content: text + '\n', style: {fontSize: {magnitude: size, unit: 'PT'}}}}]}}});
+  const page = id => ({objectId: id, pageElements: [{objectId: id + '_bg', shape: {shapeType: 'RECTANGLE'}},
+    box(id, 'rx', 'RX', 857, -252.9), box(id, 'subtitle', 'XXXXX', 20, 305.6), box(id, 'title', 'XXXXX', 40, 231.8),
+    box(id, 'name', 'XXXX', 16, 463.2), box(id, 'date', '2026年 4月 17日', 16, 443.8)]});
+  return {pageSize: {width: {magnitude: 12192000, unit: 'EMU'}, height: {magnitude: 6858000, unit: 'EMU'}},
+    slides: ['g_cover', 'g_divider', 'g_combined'].slice(0, count || 3).map(page)};
+}
 
 test('previewMeetingSummaries：試作は会議日を記録しない（ファイル名に「試作」）。最初の試作の入力内容のチェックの結果を覚え、同じ会議日の資料で解消した件数を出す', () => {
   const {gas, g, sheet} = setup();
@@ -2317,29 +2349,30 @@ test('createCombinedMeetingSummary：統合版だけを作る。すべてのシ�
   assert.throws(() => g.createCombinedMeetingSummary(), /統合版を使わない設定です/);
 });
 
-test('統合版・ひな形：表紙が何枚もあれば、ひな形の1枚目をその数だけ複製し、最後にスライドを決まった順に並べ直す（扉は複製しない）', () => {
+test('統合版・ひな形：統合版の表紙はひな形の3枚目（紫）、各資料の表紙は1枚目・扉は2枚目を使い、2回目からは複製して、最後に決まった順に並べ直す', () => {
   const {gas, g} = setup();
   const id = '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
-  gas.slideTemplates[id] = {pageSize: {width: {magnitude: 12192000, unit: 'EMU'}, height: {magnitude: 6858000, unit: 'EMU'}},
-    slides: [{objectId: 'g_cover'}]};
+  gas.slideTemplates[id] = pptxTemplate();
   g.PropertiesService.getDocumentProperties().setProperty('MTG_TEMPLATE_ID', id);
   const summaries = [summarize(g, '新FMT'), summarize(g, '新FMT2')];
   const slides = g.mtgCombinedSlides_(summaries, '2026/10/23', true);
   g.mtgExportDeck_('統合', slides, g.DriveApp.getFolderById('folder-x'));
-  const r = plain(gas.decks[gas.decks.length - 1].requests);
-  const dups = r.filter(q => q.duplicateObject).map(q => q.duplicateObject.objectIds.g_cover);
-  assert.deepStrictEqual(dups, ['mtg_cover2', 'mtg_cover3'], '各資料の表紙');
-  const pages = slides.map((sl, i) => (i === 0 ? 'g_cover' : sl.cover ? null : 'mtg_p' + (i + 1)));
+  const deck = gas.decks[gas.decks.length - 1];
+  const r = plain(deck.requests);
+  const kinds = slides.map(sl => (sl.combined ? 'combined' : sl.cover ? 'cover' : sl.divider ? 'divider' : ''));
+  const second = kinds.indexOf('cover', kinds.indexOf('cover') + 1);
+  const divider2 = kinds.indexOf('divider', kinds.indexOf('divider') + 1);
+  assert.deepStrictEqual(r.filter(q => q.duplicateObject).map(q => [q.duplicateObject.objectId, q.duplicateObject.objectIds[q.duplicateObject.objectId]]),
+    [['g_cover', 'mtg_t' + (second + 1)], ['g_divider', 'mtg_t' + (divider2 + 1)]], '2つ目の資料の表紙・扉は複製');
+  assert.ok(!r.some(q => q.deleteObject && /^g_/.test(q.deleteObject.objectId)), '3枚とも使う');
+  const expected = slides.map((sl, i) => (kinds[i] === 'combined' ? 'g_combined' : i === second ? 'mtg_t' + (i + 1) : i === divider2 ? 'mtg_t' + (i + 1)
+    : kinds[i] === 'cover' ? 'g_cover' : kinds[i] === 'divider' ? 'g_divider' : 'mtg_p' + (i + 1)));
   const moves = r.filter(q => q.updateSlidesPosition).map(q => [q.updateSlidesPosition.slideObjectIds[0], q.updateSlidesPosition.insertionIndex]);
-  assert.strictEqual(moves.length, slides.length);
-  moves.forEach(([page, at], i) => {
-    assert.strictEqual(at, i);
-    if (pages[i]) assert.strictEqual(page, pages[i]);
-  });
-  const templated = moves.filter(([page]) => /^mtg_cover/.test(page)).map(([page, at]) => [page, slides[at].template.title]);
-  assert.deepStrictEqual(templated, [['mtg_cover2', '新FMT'], ['mtg_cover3', '新FMT2']]);
-  const replaced = page => r.filter(q => q.replaceAllText && q.replaceAllText.pageObjectIds[0] === page && q.replaceAllText.containsText.text === 'XXXXXX')
-    .map(q => q.replaceAllText.replaceText);
-  assert.deepStrictEqual(['g_cover', 'mtg_cover2', 'mtg_cover3'].map(replaced), [['全サブインダストリー'], ['新FMT'], ['新FMT2']]);
-  assert.strictEqual(gas.slideBackgrounds.filter(b => b.blob.getName() === 'meeting-divider.png').length, 2, '各資料の扉はグレーの絵柄');
+  assert.deepStrictEqual(moves, plain(expected).map((page, i) => [page, i]));
+  // 複製したページも、枠ごとに書き換える（複製の部品の ID はページの ID から）
+  const title = page => r.filter(q => q.insertText && /_e\d+$|_title$/.test(q.insertText.objectId) && q.insertText.objectId.indexOf(page + '_') === 0)
+    .map(q => q.insertText.text)[0];
+  assert.deepStrictEqual(['g_combined', 'g_cover', 'mtg_t' + (second + 1), 'g_divider', 'mtg_t' + (divider2 + 1)].map(title),
+    ['全サブインダストリー', '新FMT', '新FMT2', 'Appendix', 'Appendix']);
+  assert.deepStrictEqual(gas.slideBackgrounds, [], '表紙・扉はどれもひな形のページ');
 });
