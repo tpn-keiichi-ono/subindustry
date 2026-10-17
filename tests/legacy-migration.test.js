@@ -95,7 +95,7 @@ test('migrateLegacyDeals：旧の「案件_{シート名}」の案件を、見�
   assert.deepStrictEqual(['得意先', '案件名', '案件ステータス', '想定売上規模（百万）'].map(h => at(4, h)), ['', '新規開拓', '', 3],
     '選択肢に無い値は空欄。ほかの列は書く');
   assert.deepStrictEqual(['得意先', '案件名', '先方部門'].map(h => at(5, h)), ['', '', ''], '前の行は上書き（消す）');
-  assert.ok(gas.writes.filter(w => w.ss === gas.ss.getId() && w.sheet === '新FMT').every(w => w.locked), '書き込みはロックの中（会議時点のコピーは別のファイル）');
+  assert.ok(gas.writes.filter(w => w.ss === gas.ss.getId() && w.sheet === '新FMT').every(w => w.locked), '書き込みはロックの中（時点コピーは別のファイル）');
 
   const done = gas.alerts[gas.alerts.length - 1].message;
   assert.match(done, /選択肢に無いため空欄にしたセル（2セル）：\n新FMT!D4（得意先）：Z社\n新FMT!M4（案件ステータス）：失注\n得意先マスタ・ステータスの定義に足してから、もう一度実行すると入ります/);

@@ -1094,6 +1094,9 @@ function createGas(options) {
           gas.moved.push({id, folder: folder.getId()});
           const entry = gas.driveFiles.find(f => f.id === id);
           if (entry) entry.folder = folder.getId();
+          // SpreadsheetApp.create で作ったスプレッドシート：フォルダの一覧（getFiles・getFilesByType）に出るようにする
+          const book = !entry && gas.created.find(b => b.getId() === id);
+          if (book) gas.driveFiles.push({id, folder: folder.getId(), name: book.getName(), blob: {getContentType: () => MimeType.GOOGLE_SHEETS}});
           const deck = gas.decks.find(d => d.id === id);
           if (deck) deck.folder = folder.getId();
           return this;

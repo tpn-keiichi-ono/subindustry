@@ -541,7 +541,7 @@ function smpDummySince_(name, now) {
   const list = mtgMeetings_(props, name).filter(m => m.cutoff <= now.getTime());
   if (list.length) {
     const last = list.reduce((a, b) => (b.cutoff > a.cutoff ? b : a));
-    // copy：その時点の会議時点のコピーがある（会議サマリの前回からの変化はコピーと比べるので、ダミーの記録は出ない）
+    // copy：その時点の時点コピーがある（会議サマリの前回からの変化はコピーと比べるので、ダミーの記録は出ない）
     return {at: last.cutoff, label: last.baseline ? '基準' : '前回の資料', copy: !!last.copy};
   }
   const legacy = Number(props.getProperty(o.lastKeyPrefix + name)) || 0;

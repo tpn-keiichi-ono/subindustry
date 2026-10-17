@@ -9,7 +9,7 @@
  * - 資料を作る関数（createBusinessMtgSummaries()・previewBusinessMtgSummaries()・createBusinessMtgCombinedSummary()・
  *   createServiceMtgSummaries()・previewServiceMtgSummaries()）は、画面（MeetingRunDialog）を開く。画面で、インデックスにある会議日程を
  *   プルダウンで選び、作るシート（サブインダストリー）を選んで、確かめてから作る。前回の会議からの変化を出す（前回の資料の記録が無ければ、
- *   一覧の前の会議日から。RX Business Meeting）。比べる時点（会議時点のコピー・会議日・日時。RX Service Meeting は記録した会議）も選べる。
+ *   一覧の前の会議日から。RX Business Meeting）。比べる時点（保存先のフォルダの時点コピー・会議日・日時。RX Service Meeting は記録した会議）も選べる。
  *   画面の「カレンダーから読み込む」でも importMeetingSchedules() と同じことをする。
  * - 画面から呼ぶ関数（getMeetingRunData など）は末尾に _ を付けない（google.script.run から呼ぶため）。
  */
@@ -139,7 +139,8 @@ function mschOpenRunDialog_(kind, final) {
 /**
  * 画面が読む内容（google.script.run から呼ぶ）。
  * {kind, final, title, meetingName, color, meetings: [{date, label, filled, past}], selected: 初めに選ぶ会議日, sheets: [{name, checked, note}],
- *  points: 比べる時点の候補 [{key, label, day}]（空の key は前回の会議。画面で、選んだ会議日より前の day のものだけ出す）, canPickTime: 日時を指定できるか,
+ *  points: 比べる時点の候補 [{key, label, day, group: プルダウンの見出し（無ければ見出しなし）}]（空の key は前回の会議。画面で、選んだ会議日より前の
+ *  day のものだけ出す）, canPickTime: 日時を指定できるか,
  *  job: 途中の仕事の知らせ}
  */
 function getMeetingRunData(kind, final) {
@@ -168,7 +169,7 @@ function getMeetingRunData(kind, final) {
     points = data.points;
     job = data.job;
   }
-  if (!service) points = mtgComparePoints_(SpreadsheetApp.getActiveSpreadsheet()).map(p => ({key: p.key, label: p.label, day: p.day}));
+  if (!service) points = mtgComparePoints_(SpreadsheetApp.getActiveSpreadsheet()).map(p => ({key: p.key, label: p.label, day: p.day, group: p.group}));
   const titles = {business: '会議サマリ（' + meetingName + '）', combined: '統合版（' + MTG_OPTIONS.combined.name + '）', service: meetingName + ' の事前資料'};
   return {kind, final: !!final, title: titles[kind] + (final ? 'を作る' : 'を試しに作る'), meetingName,
     color: service ? SMTG_OPTIONS.colors.green : MTG_OPTIONS.colors.cover, meetings, selected, sheets, points, canPickTime: !service, job};

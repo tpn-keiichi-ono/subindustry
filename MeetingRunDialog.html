@@ -246,7 +246,7 @@
       $('noMeetings').hidden = d.meetings.length > 0;
       $('pointHint').textContent = KIND === 'service'
         ? '本番の資料を作ったときの記録（判断・タスクの状況・件数）と今を比べます。'
-        : 'その時点のシートの値（会議時点のコピー）と今を比べます。会議日・日時を選んだときは、変更の記録から変化を出します。';
+        : '時点コピー（資料作成時・日次・基準に保存したシートの値）と今を比べます。会議日・日時を選んだときは、変更の記録から変化を出します。';
       onMeetingChange();
       // 作る資料（統合版は選ばない）
       $('sheetsField').hidden = KIND === 'combined';
@@ -287,14 +287,28 @@
       const keep = select.value;
       const meeting = meetingValue();
       select.textContent = '';
-      const add = (value, text) => {
+      const add = (value, text, parent) => {
         const option = document.createElement('option');
         option.value = value;
         option.textContent = text;
-        select.appendChild(option);
+        (parent || select).appendChild(option);
       };
       add('', KIND === 'service' ? '前回の会議（自動）' : '前回の会議（自動。シートごとに、前回の資料を作った時点）');
-      (data.points || []).filter(p => !meeting || p.day < meeting).forEach(p => add(p.key, p.label));
+      // 見出し（group）ごとにまとめる（時点コピー・会議日。見出しの順は、はじめに出てきた順）
+      const groups = new Map();
+      (data.points || []).filter(p => !meeting || p.day < meeting).forEach(p => {
+        let parent = null;
+        if (p.group) {
+          parent = groups.get(p.group);
+          if (!parent) {
+            parent = document.createElement('optgroup');
+            parent.label = p.group;
+            groups.set(p.group, parent);
+            select.appendChild(parent);
+          }
+        }
+        add(p.key, p.label, parent);
+      });
       if (data.canPickTime) add(TIME, '日時を指定…');
       select.value = Array.from(select.options).some(o => o.value === keep) ? keep : '';
       onPointChange();
