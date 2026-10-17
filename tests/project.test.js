@@ -161,4 +161,10 @@ test('本物の設定：11シートとも、会議サマリの格納先（meetin
   const gas = createGas({realSheetNames: true});
   const rules = gas.get('DIFF_RULES');
   Object.keys(rules).forEach(name => assert.ok(gas.global.mtgFolderIdOf_(rules[name].meetingFolder), name + ' の meetingFolder'));
+  // 統合版（全サブインダストリー）も作り、会議のフォルダに格納する。名前はシート名・インデックスの見出しと重ならない
+  const combined = gas.get('MTG_OPTIONS').combined;
+  assert.strictEqual(combined.enabled, true);
+  assert.ok(gas.global.mtgFolderIdOf_(combined.meetingFolder), '統合版の meetingFolder');
+  const index = gas.get('MTG_OPTIONS').index;
+  assert.ok(!rules[combined.name] && [index.dateHeader, index.kindHeader].indexOf(combined.name) < 0);
 });

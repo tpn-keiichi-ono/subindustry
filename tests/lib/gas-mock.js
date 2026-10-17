@@ -1211,6 +1211,8 @@ function createGas(options) {
       // クレデンシャル・オファリング履歴は、本物では一旦止めている（enabled: false）。機能のテストのため、テストでは使う状態にする
       // （止めた状態は gas.get('CRED_OPTIONS').enabled = false で確かめる）
       if (typeof CRED_OPTIONS !== 'undefined') CRED_OPTIONS.enabled = true;
+      // 会議サマリの統合版は、統合版のテストだけで使う（ほかのテストの資料の数・ファイルを変えないように）。格納先も本物のフォルダにしない
+      if (typeof MTG_OPTIONS !== 'undefined') Object.assign(MTG_OPTIONS.combined, {enabled: false, meetingFolder: ''});
     } + ')(' + JSON.stringify(TEST_DIFF_RULES) + ')', context);
   }
 

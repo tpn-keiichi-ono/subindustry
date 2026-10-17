@@ -1492,7 +1492,7 @@ test('createMeetingSummaries：シートと会議日を聞き、シートごと�
   assert.match(gas.prompts[0].message, /1\. 新FMT\n2\. 新FMT2/);
   assert.match(gas.prompts[1].message, /今回の会議日を入力してください（例：10\/23）。[\s\S]*・新FMT：記録なし\n・新FMT2：記録なし$/);
   assert.deepStrictEqual(gas.decks.map(d => [d.title, d.pageSize.width.magnitude, d.pageSize.height.magnitude]),
-    [[file + '_新FMT_RX Business Meeting用資料', 720, 405], [file + '_新FMT2_RX Business Meeting用資料', 720, 405]], 'サブインダストリー（シート）ごとに1つ。まとめた資料は作らない');
+    [[file + '_新FMT_RX Business Meeting用資料', 720, 405], [file + '_新FMT2_RX Business Meeting用資料', 720, 405]], 'サブインダストリー（シート）ごとに1つ（統合版を使わない設定のとき）');
   const requests = gas.decks[0].requests;
   assert.strictEqual(requests.filter(r => r.createSlide).length, 10, '表紙・本編4枚・扉・Appendix ①・②・③（責任者別・一覧）（停滞が無くても ② を出す）');
   const inserted = deck => deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
@@ -2123,4 +2123,202 @@ test('setMeetingBaseline：今を基準として記録し（はいのときだ�
   const list = JSON.parse(props.getProperty('MTG_MEETINGS_新FMT'));
   assert.strictEqual(list.filter(m => m.baseline).length, 1);
   assert.ok(list.find(m => m.baseline).cutoff > cutoff);
+});
+
+/* ---------------- 統合版（全サブインダストリー） ---------------- */
+
+test('統合版のスライド：表紙・全サブインダストリーの状況のあとに、各サブインダストリーの資料をそのまま続ける（ページ番号・扉の目次は通し）', () => {
+  const {gas, g} = setup();
+  const S = gas.get('MTG_SLIDE');
+  const T = gas.get('MTG_TITLES');
+  const summaries = [summarize(g, '新FMT'), summarize(g, '新FMT2')];
+  const one = plain(g.mtgSlides_(summaries[0]));
+  const slides = plain(g.mtgCombinedSlides_(summaries, '2026/10/23', true));
+  assert.strictEqual(slides.length, 2 + one.length + plain(g.mtgSlides_(summaries[1])).length);
+  assert.deepStrictEqual(slides[0].template, {title: '全サブインダストリー', subtitle: 'RX Business MTG　事前資料', date: '2026年10月23日（金）', name: ''});
+  assert.match(slides[0].elements[0].text, /^収録：新FMT・新FMT2（2サブインダストリー）$/);
+  assert.deepStrictEqual(slides.slice(2, 2 + one.length).map(sl => sl.title), one.map(sl => sl.title), '各サブインダストリーの資料はそのまま');
+  const start2 = 3 + one.length;
+  assert.deepStrictEqual([slides[2].template.title, slides[start2 - 1].template.title], ['新FMT', '新FMT2'], '各資料の表紙が区切り');
+  // ページ番号は通し（表紙・扉には付けない）
+  slides.forEach((sl, i) => {
+    const page = roleOf(sl, 'page');
+    if (sl.cover || sl.divider) assert.strictEqual(page.length, 0);
+    else assert.strictEqual(page[0].text, String(i + 1), (i + 1) + '枚目');
+  });
+  assert.strictEqual(roleOf(slides[1], 'footer')[0].text, '全サブインダストリー（10/23 会議資料）　金額の単位：百万円');
+  assert.strictEqual(roleOf(slides[start2], 'footer')[0].text, '新FMT2（10/23 会議資料）　金額の単位：百万円');
+  // 2つ目の資料の扉の目次は、この資料の中のページ
+  const divider = slides.findIndex((sl, i) => i >= start2 && sl.divider);
+  const toc = roleOf(slides[divider], 'toc').map(el => el.text);
+  assert.deepStrictEqual([toc[0], toc[2]], ['Appendix ①', String(divider + 2)]);
+
+  // 全サブインダストリーの状況：サブインダストリーごとの数と、その資料の表紙のページ。合計
+  const overview = slides[1];
+  assert.strictEqual(overview.title, T.overview);
+  const table = overview.elements.find(el => el.type === 'table');
+  const text = table.rows.map(r => r.cells.map(cell => cell.text.replace(/\n/g, ' ')));
+  assert.deepStrictEqual(table.rows[0].cells.map(cell => cell.text.replace(/\n/g, '')), ['サブインダストリー', '進行中案件', '期待値合計', '直近14日間の増減', '変化のある案件', '停滞', '確認事項', 'ページ'],
+    '増減の見出しは、いちばん多い比べ方（どれも初回なので直近14日間）');
+  const k = summaries.map(s => plain(s.kpi));
+  const b = summaries.map(s => plain(s.bridge));
+  const signed = v => g.mtgSigned_(v);
+  // 停滞をまだ数えられないシートは「データなし」（どのシートも数えられなければ合計も）
+  assert.ok(summaries.every(s => s.first && s.gaps.stalled));
+  assert.deepStrictEqual(text.slice(1), [
+    ['新FMT', k[0].active + '件', g.mtgAmount_(b[0].end), signed(b[0].end - b[0].start), k[0].changed + '件', 'データなし', k[0].alerts + '項目', '3'],
+    ['新FMT2', k[1].active + '件', g.mtgAmount_(b[1].end), signed(b[1].end - b[1].start), k[1].changed + '件', 'データなし', k[1].alerts + '項目', String(start2)],
+    ['合計', (k[0].active + k[1].active) + '件', g.mtgAmount_(b[0].end + b[1].end), signed(b[0].end - b[0].start + b[1].end - b[1].start),
+      (k[0].changed + k[1].changed) + '件', 'データなし', (k[0].alerts + k[1].alerts) + '項目', '']
+  ]);
+  assert.match(leadOf(overview), /^2サブインダストリーの進行中案件 \d+件、期待値合計 [\d,.]+百万円。$/);
+  assert.strictEqual(roleOf(overview, 'footer')[0].text, '全サブインダストリー（10/23 会議資料）　金額の単位：百万円', '※ が無ければ補足なし');
+  // 比べ方が違うシートは、セルの1行目に何との比か
+  const held = Object.assign({}, summaries[1], {first: false, previous: {date: '2026/10/09', cutoff: 1}});
+  const mixed = plain(g.mtgOverviewSlide_([{summary: summaries[0], start: 3}, {summary: held, start: 13}, {summary: summaries[0], start: 23}]));
+  assert.strictEqual(mixed.elements[0].rows[2].cells[3].text, '前回比\n' + signed(b[1].end - b[1].start));
+  assert.ok(table.y + table.rows.reduce((h, r) => h + r.h, 0) <= S.bottom, 'ページに入る');
+
+  // 作れない値（列・記録が無い）は灰色の「データなし」、合計は作れたシートの分だけ（※）
+  const lacking = Object.assign({}, summaries[1], {gaps: Object.assign({}, summaries[1].gaps, {weighted: '列が無い', changes: '記録が無い'})});
+  const t2 = plain(g.mtgCombinedSlides_([summaries[0], lacking], '2026/10/23', false))[1];
+  const rows2 = t2.elements.find(el => el.type === 'table').rows;
+  assert.deepStrictEqual(rows2[2].cells.slice(2, 5).map(cell => [cell.text, cell.fill]), [['データなし', '#F2F2F2'], ['データなし', '#F2F2F2'], ['データなし', '#F2F2F2']]);
+  assert.deepStrictEqual(rows2[3].cells.slice(2, 5).map(cell => cell.text), [g.mtgAmount_(b[0].end) + '※', signed(b[0].end - b[0].start) + '※', k[0].changed + '件※']);
+  assert.match(leadOf(t2), /（期待値の列が無いシートを除く）。$/);
+  assert.strictEqual(roleOf(t2, 'footer')[0].text, '【試作】全サブインダストリー（10/23 会議資料）　金額の単位：百万円　※ は「データなし」のシートを除いた合計');
+  assert.strictEqual(rows2[3].cells[5].text, 'データなし', '停滞はどのシートも数えられないので、合計も「データなし」');
+  assert.strictEqual(plain(g.mtgCombinedSlides_(summaries, '2026/10/23', false))[0].template.subtitle, 'RX Business MTG　事前資料【試作】');
+
+  // 11のサブインダストリーでも1ページに入る（文字を小さくする）
+  const many = Array.from({length: 11}, (_, i) => Object.assign({}, summaries[0], {name: 'サブインダストリー' + (i + 1)}));
+  many[0] = Object.assign({}, many[0], {gaps: {weighted: '列が無い'}});   // リード文が長く、合計に ※ があっても
+  const big = plain(g.mtgOverviewSlide_(many.map((s, i) => ({summary: s, start: 3 + i * 10}))));
+  const bigTable = big.elements.find(el => el.type === 'table');
+  assert.strictEqual(bigTable.rows.length, 13);
+  assert.ok(bigTable.y + bigTable.rows.reduce((h, r) => h + r.h, 0) <= S.bottom, '11行と合計がページに入る');
+});
+
+test('統合版：すべてのシートの本番の資料を作ると、続けて統合版を作り、会議のフォルダに格納してインデックスの「全サブインダストリー」の列に書く', () => {
+  const {gas, g} = setup();
+  const o = gas.get('MTG_OPTIONS');
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  const parent = meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
+  Object.assign(o.combined, {enabled: true, meetingFolder: parent});
+  gas.promptAnswers = ['', '10/23'];
+  g.createMeetingSummaries();
+
+  const file = meeting.replace(/\//g, '');
+  assert.deepStrictEqual(gas.decks.map(d => d.title), [file + '_新FMT_RX Business Meeting用資料', file + '_新FMT2_RX Business Meeting用資料',
+    file + '_全サブインダストリー_RX Business Meeting用資料']);
+  const combined = gas.decks[2];
+  const created = combined.requests.filter(r => r.createSlide).length;
+  assert.strictEqual(created, 2 + 10 + 10, '表紙・状況と、2つの資料（10枚ずつ）');
+  assert.ok(combined.batches.length >= 2, '何枚かずつまとめて送る');
+  assert.strictEqual(gas.slideBackgrounds.filter(b => b.deck === combined.id).length, 5, '表紙と、各資料の表紙・扉（ひな形なし）');
+  const pdf = gas.driveFiles.find(f => f.name === file + '_全サブインダストリー_RX Business Meeting用資料.pdf');
+  assert.strictEqual(pdf.folder, 'meeting-folder-0', '会議のフォルダに格納');
+  const index = gas.ss.getSheetByName('INDEX_会議資料');
+  assert.deepStrictEqual(plain(index.getRange(1, 3, 2, 2).getDisplayValues()), [['全サブインダストリー', '新FMT'],
+    [file + '_全サブインダストリー_RX Business Meeting用資料.pdf', file + '_新FMT_RX Business Meeting用資料.pdf']]);
+  const done = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(done, new RegExp('「全サブインダストリー」（統合版）：' + file + '_全サブインダストリー_RX Business Meeting用資料\\.pdf（22ページ）\\n　https://drive\\.google\\.com/file/d/' +
+    pdf.id + '/view\\n　会議のフォルダ「\\d{6}_第5回会議」に格納しました'));
+  assert.ok(done.indexOf('統合版') < done.indexOf('保存先：'));
+
+  // rebuildMeetingIndex は統合版も書き直す
+  index.clear();
+  g.rebuildMeetingIndex();
+  assert.strictEqual(index.getRange(2, 3).getDisplayValue(), file + '_全サブインダストリー_RX Business Meeting用資料.pdf');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /・全サブインダストリー：1件/);
+});
+
+test('統合版：一部のシートだけなら作らずに案内する。時間がかかったとき・作れなかったときは個別の資料はそのままにして createCombinedMeetingSummary() を案内する', () => {
+  let {gas, g} = setup();
+  gas.get('MTG_OPTIONS').combined.enabled = true;
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewMeetingSummaries();
+  assert.strictEqual(gas.decks.length, 1);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /統合版（全サブインダストリー）は、すべてのシートを選んだときに作ります（あとから createCombinedMeetingSummary\(\) でも作れます）。/);
+
+  ({gas, g} = setup());
+  Object.assign(gas.get('MTG_OPTIONS').combined, {enabled: true, maxElapsedMs: -1});
+  gas.promptAnswers = ['', '10/23'];
+  g.previewMeetingSummaries();
+  assert.strictEqual(gas.decks.length, 2);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /※ 統合版（全サブインダストリー）は作りませんでした（個別の資料を作るのに時間がかかったため（Apps Script の実行は6分まで））。エディタで createCombinedMeetingSummary\(\) を実行すると、統合版だけを作ります。/);
+
+  ({gas, g} = setup());
+  gas.get('MTG_OPTIONS').combined.enabled = true;
+  g.mtgCombinedSlides_ = () => { throw new Error('統合版の失敗'); };
+  gas.promptAnswers = ['', '10/23'];
+  g.createMeetingSummaries();
+  const done = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(done, /※ 統合版（全サブインダストリー）は作りませんでした（理由：統合版の失敗）。/);
+  assert.match(done, /会議日（\d{4}\/10\/23）を記録しました。/, '個別の資料・会議日の記録はそのまま');
+});
+
+test('createCombinedMeetingSummary：統合版だけを作る。すべてのシートに会議日の本番の記録があれば本番（格納する）、無ければ試作。会議日・コピーは記録しない', () => {
+  const {gas, g} = setup();
+  const o = gas.get('MTG_OPTIONS');
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  const parent = meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
+  Object.assign(o.combined, {enabled: true, meetingFolder: parent});
+  const props = g.PropertiesService.getDocumentProperties();
+
+  gas.promptAnswers = ['1', '10/23'];
+  g.createMeetingSummaries();   // 新FMT だけ本番
+  gas.promptAnswers = ['10/23'];
+  g.createCombinedMeetingSummary();
+  assert.match(gas.alerts[gas.alerts.length - 2].message, /本番の資料をまだ作っていないシート（新FMT2）があるので、試作として作ります/);
+  assert.match(gas.decks[gas.decks.length - 1].title, /_全サブインダストリー_RX Business Meeting用資料_試作$/);
+  assert.ok(!gas.driveFiles.some(f => /全サブインダストリー/.test(f.name) && f.folder === 'meeting-folder-0'), '試作は格納しない');
+
+  gas.promptAnswers = ['2', '10/23'];
+  g.createMeetingSummaries();   // 新FMT2 も本番
+  const before = [props.getProperty('MTG_MEETINGS_新FMT'), props.getProperty('MTG_MEETINGS_新FMT2')];
+  const copies = gas.created.length;
+  gas.promptAnswers = ['10/23'];
+  g.createCombinedMeetingSummary();
+  assert.match(gas.alerts[gas.alerts.length - 2].message, /会議日 \d{4}\/10\/23 の本番の資料として作り、会議のフォルダに格納します/);
+  assert.match(gas.decks[gas.decks.length - 1].title, /\d{8}_全サブインダストリー_RX Business Meeting用資料$/);
+  assert.ok(gas.driveFiles.some(f => /_全サブインダストリー_RX Business Meeting用資料\.pdf$/.test(f.name) && f.folder === 'meeting-folder-0'));
+  assert.deepStrictEqual([props.getProperty('MTG_MEETINGS_新FMT'), props.getProperty('MTG_MEETINGS_新FMT2')], before, '会議日の記録は変えない');
+  assert.strictEqual(gas.created.length, copies, '会議時点のコピーは作らない');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「全サブインダストリー」（統合版）：.*（22ページ）/);
+
+  // 「いいえ」なら作らない。使わない設定なら止める
+  const decks = gas.decks.length;
+  gas.promptAnswers = ['10/23'];
+  gas.confirmAnswer = 'NO';
+  g.createCombinedMeetingSummary();
+  assert.strictEqual(gas.decks.length, decks);
+  o.combined.enabled = false;
+  assert.throws(() => g.createCombinedMeetingSummary(), /統合版を使わない設定です/);
+});
+
+test('統合版・ひな形：表紙・扉が何枚もあれば、ひな形の1枚目をその数だけ複製し、最後にスライドを決まった順に並べ直す', () => {
+  const {gas, g} = setup();
+  const id = '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
+  gas.slideTemplates[id] = {pageSize: {width: {magnitude: 12192000, unit: 'EMU'}, height: {magnitude: 6858000, unit: 'EMU'}},
+    slides: [{objectId: 'g_cover'}]};
+  g.PropertiesService.getDocumentProperties().setProperty('MTG_TEMPLATE_ID', id);
+  const summaries = [summarize(g, '新FMT'), summarize(g, '新FMT2')];
+  const slides = g.mtgCombinedSlides_(summaries, '2026/10/23', true);
+  g.mtgExportDeck_('統合', slides, g.DriveApp.getFolderById('folder-x'));
+  const r = plain(gas.decks[gas.decks.length - 1].requests);
+  const dups = r.filter(q => q.duplicateObject).map(q => q.duplicateObject.objectIds.g_cover);
+  assert.deepStrictEqual(dups, ['mtg_divider', 'mtg_divider2', 'mtg_divider3', 'mtg_divider4'], '各資料の表紙・扉（2つずつ）');
+  const pages = slides.map((sl, i) => (i === 0 ? 'g_cover' : sl.cover || sl.divider ? null : 'mtg_p' + (i + 1)));
+  const moves = r.filter(q => q.updateSlidesPosition).map(q => [q.updateSlidesPosition.slideObjectIds[0], q.updateSlidesPosition.insertionIndex]);
+  assert.strictEqual(moves.length, slides.length);
+  moves.forEach(([page, at], i) => {
+    assert.strictEqual(at, i);
+    if (pages[i]) assert.strictEqual(page, pages[i]);
+  });
+  const templated = moves.filter(([page]) => /^mtg_divider/.test(page)).map(([page, at]) => [page, slides[at].template.title]);
+  assert.deepStrictEqual(templated, [['mtg_divider', '新FMT'], ['mtg_divider2', 'Appendix'], ['mtg_divider3', '新FMT2'], ['mtg_divider4', 'Appendix']]);
+  const replaced = page => r.filter(q => q.replaceAllText && q.replaceAllText.pageObjectIds[0] === page && q.replaceAllText.containsText.text === 'XXXXXX')
+    .map(q => q.replaceAllText.replaceText);
+  assert.deepStrictEqual(['g_cover', 'mtg_divider', 'mtg_divider3'].map(replaced), [['全サブインダストリー'], ['新FMT'], ['新FMT2']]);
 });

@@ -9,6 +9,7 @@
  * - 資料には、シートと変更の記録から分かる事実だけを書く。論点・決めてほしいこと・支援の要否などの判断は、各サブインダストリーのリーダーが
  *   会議で話すことなので、資料には入れない（資料が判断を先に書くと、読み手を誤った方向に導くおそれがある）。
  * - 資料はサブインダストリー（追跡シート）ごとに1つ。スライドの見出しはどのシートでも同じ（MTG_TITLES）で、状態は見出しの下のリード文に書く。
+ *   すべてのシートの資料を作ったときは、それらを1つにまとめた統合版（全サブインダストリー。MTG_OPTIONS.combined）も作る。
  *   使う言葉は docs/DESIGN.md（会議サマリの数え方）で決め、資料の中で同じ意味で使う。
  *
  * 資料の構成（16:9。緑を基調にしたトンマナ：黒の見出し・リード文・緑の見出しの表・区分のラベル・区切り線と出典・ページ番号。
@@ -74,6 +75,17 @@ const MTG_OPTIONS = {
   // {n} は、そのフォルダの中の、この会議日より前の「yyMMdd_第N回会議」のいちばん大きい N ＋ 1（無ければ 1）
   createMeetingFolder: true,
   meetingFolderName: '{date}_第{n}回会議',
+  // 統合版（全サブインダストリーの資料を1つにまとめた資料）。すべての追跡シートの資料を作ったときに続けて作る（createCombinedMeetingSummary() で単独でも作れる）。
+  // 表紙・全サブインダストリーの状況（一覧）のあとに、各サブインダストリーの資料（表紙から Appendix まで）を DIFF_RULES の順に入れる（ページ番号は通し）。
+  // 本番は会議のフォルダ（meetingFolder の中の yyMMdd_第N回会議）に格納し、インデックスの name の列に書く
+  combined: {
+    enabled: true,
+    name: '全サブインダストリー',     // 表紙の見出し・ファイル名の {name}・インデックスの列の見出し
+    // 会議のフォルダを探す・作るフォルダ（URL か ID。各サブインダストリーの DIFF_RULES の meetingFolder と同じ形）。2026/10 はテストのフォルダ
+    meetingFolder: 'https://drive.google.com/drive/folders/1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK',
+    // 個別の資料を作り終えた時点で、作り始めてからこれより時間がたっていたら、統合版は作らずに案内する（Apps Script の実行は6分まで）
+    maxElapsedMs: 180000
+  },
   // 会議資料のインデックス（このスプレッドシートのシート）。会議のフォルダに格納したら、行＝会議日・列＝サブインダストリー（1行目の見出しがシート名）の
   // セルに、PDF のファイルをスマートチップ（chip。Sheets API の拡張サービスが要る）で書く。チップにできないときは、ファイル名のリンクで書く。
   // link を 'folder' にすると会議のフォルダ。シートが無ければ作る。書けなかったときは storeMeetingSummaries() で書き直す。
@@ -83,14 +95,14 @@ const MTG_OPTIONS = {
     dateHeader: '日付',              // A列：会議日（日付の値。上から日付の順）
     kindHeader: '種別',              // B列：会議の種別
     kind: 'RX Business MTG',         // 種別の列に書く値（同じ日付でも種別が違う行には書かない）
-    blankHeaders: ['全サブインダストリー'],   // 見出しだけ置いて書かない列（手で入れる資料など）。この後ろにサブインダストリーの列（DIFF_RULES の順）
+    // C列は統合版（combined.name の見出し）、その後ろにサブインダストリーの列（DIFF_RULES の順）
     link: 'file',
     chip: true,
     dateFormat: 'yyyy/m/d',
     fontSize: 9,                     // 字（太字・黒・上下中央）
     rowHeight: 38,                   // 会議日の行の高さ（px）
     tabColor: '#000000',
-    widths: {date: 83, kind: 119, blank: 158, sheet: 138}   // 列の幅（px）
+    widths: {date: 83, kind: 119, combined: 158, sheet: 138}   // 列の幅（px）
   },
   // 会議時点のコピー：本番の資料を作ったとき・基準を記録したときに、追跡シートの値を別のスプレッドシート（タイトルは実行日時）に保存する。
   // 次の資料の「前回からの変化」は、前回のコピーと今のシートを比べて出す（差分追跡が止まっていた間・2,000セルを超える貼り付けの変更も出る）。
@@ -224,6 +236,7 @@ const MTG_TITLES = {
   pipeline: 'パイプラインの変化',
   progress: '前回から変化のある案件',
   focus: '期待値上位案件の状況・課題',
+  overview: '全サブインダストリーの状況',   // 統合版の2枚目
   appendix: 'Appendix',
   changes: 'Appendix ①　前回から変化のある案件（一覧）',
   stalled: 'Appendix ②　停滞案件（一覧）',
@@ -457,7 +470,7 @@ function mtgRun_(final) {
   const meeting = mtgAskMeeting_(ui, names, now);
   if (!meeting) return;
   if (final && !mtgConfirmFinal_(ui, names, meeting)) return;
-  const results = mtgCreate_(ss, names, now, final, meeting);
+  const {results, combined} = mtgCreate_(ss, names, now, final, meeting);
   // 作れなかったところ（データなし）があれば、シートごとに理由を出す（資料にも、その場所に灰色の枠で書いてある）
   const lines = results.map(r => {
     const gaps = mtgGapList_(r.summary);
@@ -477,8 +490,12 @@ function mtgRun_(final) {
       (samples ? '\n　※ サンプル（addSampleHistory()）の変更の記録 ' + samples + '件は、会議サマリには出ません（基準を変えても出ません）。' +
         '資料の形を確かめるときは、addMeetingDummyHistory() でダミーの変更の記録を足してください。' : '');
   });
+  if (combined) lines.push.apply(lines, [''].concat(mtgCombinedLines_(combined)));
+  else if (MTG_OPTIONS.combined.enabled && names.length < Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name)).length) {
+    lines.push('', '統合版（' + MTG_OPTIONS.combined.name + '）は、すべてのシートを選んだときに作ります（あとから createCombinedMeetingSummary() でも作れます）。');
+  }
   lines.push('', '保存先：' + results[0].folder.getUrl());
-  const index = results.map(r => r.index).find(x => x && x.url);
+  const index = results.map(r => r.index).concat(combined ? [combined.index] : []).find(x => x && x.url);
   if (index) {
     lines.push('「' + index.title + '」シートに、資料のファイルを書きました：' + index.url);
     if (MTG_OPTIONS.index.chip && !index.chip) {
@@ -713,10 +730,11 @@ function mtgUiOrNull_() {
   }
 }
 
-/** シートを聞く（空欄ならすべて。「1,3」のように複数も）。heading は最初の行。やめたら null。 */
-function mtgAskSheets_(ss, ui, heading) {
-  const all = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
-  if (!all.length) throw new Error('追跡しているシート（test.gs の DIFF_RULES）が見つかりません。');
+/** シートを聞く（空欄ならすべて。「1,3」のように複数も）。heading は最初の行。extra はシートの後ろに並べる名前（統合版など）。やめたら null。 */
+function mtgAskSheets_(ss, ui, heading, extra) {
+  const sheets = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
+  if (!sheets.length) throw new Error('追跡しているシート（test.gs の DIFF_RULES）が見つかりません。');
+  const all = sheets.concat(extra || []);
   const message = heading +
     '\nシートの番号を入力してください（空欄ならすべて。複数は「1,3」のように）。\n\n' +
     all.map((name, i) => (i + 1) + '. ' + name).join('\n');
@@ -765,9 +783,72 @@ function mtgCountsText_(summary) {
 /**
  * names のシート（サブインダストリー）ごとに会議サマリを作り、スライドと PDF を保存する。meeting は今回の会議日（yyyy/MM/dd）。
  * final なら会議日と今の日時を記録する。試作なら、その会議日の最初の試作の入力内容のチェックの結果を覚える。
- * 戻り値 [{summary, file: PDF, deck: Google スライド（残さないときは null）, folder}]
+ * すべての追跡シートを作ったときは、続けて統合版（mtgCreateCombined_）も作る（時間がかかっていれば作らずに理由を返す）。
+ * 戻り値 {results: [{summary, file: PDF, deck: Google スライド（残さないときは null）, folder}], combined: 統合版の結果か {skipped|error}（作らないときは null）}
  */
 function mtgCreate_(ss, names, now, final, meeting) {
+  const o = MTG_OPTIONS;
+  const started = Date.now();
+  const props = PropertiesService.getDocumentProperties();
+  const {plans, summaries} = mtgSummaries_(ss, names, now, final, meeting);
+  mtgRequireSlides_();
+  const folder = mtgFolder_(ss);
+  const results = summaries.map(summary => {
+    const out = mtgExportDeck_(mtgFileName_(summary.name, meeting, final), mtgSlides_(summary), folder);
+    return {summary, file: out.pdf, deck: out.deck, folder};
+  });
+  // 本番：今の値を会議時点のコピーに保存する（次の会議の資料はこれと比べる）。資料を作れてから保存し、会議日の記録に結び付ける
+  const copy = final ? mtgSaveCopy_(ss, names, now, '（会議日 ' + meeting.replace(/\//g, '-') + '）') : null;
+  results.forEach(r => { r.copy = copy; });
+  plans.forEach((p, i) => {
+    if (final) {
+      const list = p.meetings.filter(m => m.baseline || m.date !== meeting)
+        .concat([{date: meeting, cutoff: now.getTime(), copy: {id: copy.id, sheet: p.name}}])
+        .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).slice(-o.keepMeetings);
+      props.setProperty(o.meetingsKeyPrefix + p.name, JSON.stringify(list));
+    } else if (!p.draft) {
+      props.setProperty(o.draftKeyPrefix + p.name, JSON.stringify({
+        meeting, at: now.getTime(), keys: summaries[i].alerts.map(a => mtgHash_(a.key))
+      }));
+    }
+  });
+  // 本番：会議のフォルダに PDF を格納する（できなくても止めない。資料は保存先にあるので、あとで storeMeetingSummaries() で格納できる）
+  if (final) {
+    results.forEach(r => {
+      const stored = mtgStoreToMeetingFolder_(r.summary.name, meeting, r.file);
+      if (stored.error) r.storeError = stored.error;
+      else r.stored = stored;
+      if (!stored.error) r.index = mtgWriteIndex_(r.summary.name, meeting, stored);
+    });
+  }
+  // 統合版：すべての追跡シートを作ったときだけ（一部だけでは全サブインダストリーにならない）。作れなくても個別の資料はそのまま
+  let combined = null;
+  if (mtgCombinedWanted_(ss, names)) {
+    if (Date.now() - started > o.combined.maxElapsedMs) {
+      combined = {skipped: '個別の資料を作るのに時間がかかったため（Apps Script の実行は6分まで）'};
+    } else {
+      try {
+        combined = mtgCreateCombined_(summaries, meeting, final, folder);
+      } catch (error) {
+        console.warn('統合版を作れませんでした：' + (error && error.stack || error));
+        combined = {error: String(error && error.message || error)};
+      }
+    }
+  }
+  return {results, combined};
+}
+
+/** 統合版を作るか：統合版を使う設定で、追跡シート（このスプレッドシートにあるもの）が2つ以上、すべて names に入っている */
+function mtgCombinedWanted_(ss, names) {
+  const all = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
+  return !!MTG_OPTIONS.combined.enabled && all.length > 1 && all.every(name => names.indexOf(name) >= 0);
+}
+
+/**
+ * names のシートの会議サマリの中身（mtgSummarize_）を、前回の会議（今回より前でいちばん新しい会議。そのあとに基準があれば基準）からの変化で作る。
+ * 戻り値 {plans: [{name, meetings, previous, legacy, since, baseline, draft}], summaries}（読むだけ。記録しない）
+ */
+function mtgSummaries_(ss, names, now, final, meeting) {
   const o = MTG_OPTIONS;
   const props = PropertiesService.getDocumentProperties();
   const plans = names.map(name => {
@@ -801,37 +882,75 @@ function mtgCreate_(ss, names, now, final, meeting) {
     since: p.since, previous: p.previous, legacy: p.legacy, baseline: p.baseline, draft: p.draft, final,
     copy: copies[i] && copies[i].table ? copies[i] : null, copyError: copies[i] && copies[i].error || ''
   }, context)));
+  return {plans, summaries};
+}
+
+/**
+ * 統合版（全サブインダストリーの資料を1つにまとめた資料。mtgCombinedSlides_）を作り、PDF を保存先に保存する。
+ * 本番は会議のフォルダ（MTG_OPTIONS.combined.meetingFolder の中）に格納し、インデックスの統合版の列に書く（できなくても止めない）。
+ * 戻り値 {name, file: PDF, pages, stored, storeError, index}
+ */
+function mtgCreateCombined_(summaries, meeting, final, folder) {
+  const name = MTG_OPTIONS.combined.name;
+  const slides = mtgCombinedSlides_(summaries, meeting, final);
+  const out = mtgExportDeck_(mtgFileName_(name, meeting, final), slides, folder);
+  const result = {name, file: out.pdf, deck: out.deck, pages: slides.length};
+  if (final) {
+    const stored = mtgStoreToMeetingFolder_(name, meeting, out.pdf);
+    if (stored.error) result.storeError = stored.error;
+    else {
+      result.stored = stored;
+      result.index = mtgWriteIndex_(name, meeting, stored);
+    }
+  }
+  return result;
+}
+
+/**
+ * 統合版だけを作る（エディタから実行）。本番の資料を作ったときに統合版を作れなかった（時間がかかった・一部のシートだけ作った）ときや、
+ * 個別の資料を作り直したあとに。会議日を聞き、すべての追跡シートの会議サマリを今の値で作り直して1つの資料にする（会議日・会議時点のコピーは記録しない）。
+ * すべてのシートにその会議日の本番の記録があれば本番（会議のフォルダに格納し、インデックスに書く）、無いシートがあれば試作として作る
+ */
+function createCombinedMeetingSummary() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = mtgUi_();
+  const o = MTG_OPTIONS.combined;
+  if (!o.enabled) throw new Error('統合版を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.combined.enabled）。');
+  const names = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
+  if (!names.length) throw new Error('追跡しているシート（test.gs の DIFF_RULES）が見つかりません。');
+  const now = new Date();
+  const meeting = mtgAskMeeting_(ui, names, now);
+  if (!meeting) return;
+  const props = PropertiesService.getDocumentProperties();
+  const missing = names.filter(name => !mtgMeetings_(props, name).some(m => !m.baseline && m.date === meeting));
+  const final = !missing.length;
+  const answer = ui.alert(CRED_OPTIONS.menuTitle, '「' + o.name + '」の資料（' + names.length + 'サブインダストリーを1つにまとめた統合版）を、今のシートの値で作ります。\n\n' +
+    (final ? '会議日 ' + meeting + ' の本番の資料として作り、会議のフォルダに格納します（会議日の記録・会議時点のコピーは変えません）。'
+      : 'この会議日（' + meeting + '）の本番の資料をまだ作っていないシート（' + missing.join('・') + '）があるので、試作として作ります（ファイル名に「試作」が付きます）。') +
+    '\n作成してよろしいですか？', ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+  const {summaries} = mtgSummaries_(ss, names, now, final, meeting);
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
-  const results = summaries.map(summary => {
-    const out = mtgExportDeck_(mtgFileName_(summary.name, meeting, final), mtgSlides_(summary), folder);
-    return {summary, file: out.pdf, deck: out.deck, folder};
-  });
-  // 本番：今の値を会議時点のコピーに保存する（次の会議の資料はこれと比べる）。資料を作れてから保存し、会議日の記録に結び付ける
-  const copy = final ? mtgSaveCopy_(ss, names, now, '（会議日 ' + meeting.replace(/\//g, '-') + '）') : null;
-  results.forEach(r => { r.copy = copy; });
-  plans.forEach((p, i) => {
-    if (final) {
-      const list = p.meetings.filter(m => m.baseline || m.date !== meeting)
-        .concat([{date: meeting, cutoff: now.getTime(), copy: {id: copy.id, sheet: p.name}}])
-        .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).slice(-o.keepMeetings);
-      props.setProperty(o.meetingsKeyPrefix + p.name, JSON.stringify(list));
-    } else if (!p.draft) {
-      props.setProperty(o.draftKeyPrefix + p.name, JSON.stringify({
-        meeting, at: now.getTime(), keys: summaries[i].alerts.map(a => mtgHash_(a.key))
-      }));
-    }
-  });
-  // 本番：会議のフォルダに PDF を格納する（できなくても止めない。資料は保存先にあるので、あとで storeMeetingSummaries() で格納できる）
-  if (final) {
-    results.forEach(r => {
-      const stored = mtgStoreToMeetingFolder_(r.summary.name, meeting, r.file);
-      if (stored.error) r.storeError = stored.error;
-      else r.stored = stored;
-      if (!stored.error) r.index = mtgWriteIndex_(r.summary.name, meeting, stored);
-    });
+  const message = mtgCombinedLines_(mtgCreateCombined_(summaries, meeting, final, folder)).concat(['', '保存先：' + folder.getUrl()]).join('\n');
+  console.log(message);
+  ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+}
+
+/** 統合版の結果の知らせ（終わりの画面の行） */
+function mtgCombinedLines_(combined) {
+  const name = MTG_OPTIONS.combined.name;
+  if (!combined) return [];
+  if (!combined.file) {
+    return ['※ 統合版（' + name + '）は作りませんでした（' + (combined.skipped || '理由：' + combined.error) + '）。' +
+      'エディタで createCombinedMeetingSummary() を実行すると、統合版だけを作ります。'];
   }
-  return results;
+  return ['「' + name + '」（統合版）：' + combined.file.getName() + '（' + combined.pages + 'ページ）\n　' + combined.file.getUrl() +
+    (combined.stored ? '\n　会議のフォルダ「' + combined.stored.folder.getName() + '」' + (combined.stored.created ? 'を作って' : 'に') + '格納しました：' +
+      combined.stored.folder.getUrl() : '') +
+    (combined.index && combined.index.error ? '\n　※ ' + combined.index.error : '') +
+    (combined.storeError ? '\n　※ 会議のフォルダに格納できませんでした（' + combined.storeError + '）。資料は保存先にあります。' +
+      'フォルダを用意してから、エディタで storeMeetingSummaries() を実行し「' + name + '」を選んで格納してください。' : '')];
 }
 
 /**
@@ -899,7 +1018,8 @@ function mtgHash_(text) {
 function storeMeetingSummaries() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = mtgUi_();
-  const names = mtgAskSheets_(ss, ui, '作成済みの事前資料（PDF）を、会議のフォルダに格納します。');
+  const combined = MTG_OPTIONS.combined;
+  const names = mtgAskSheets_(ss, ui, '作成済みの事前資料（PDF）を、会議のフォルダに格納します。', combined.enabled ? [combined.name] : []);
   if (!names) return;
   const response = ui.prompt(CRED_OPTIONS.menuTitle, '格納する資料の会議日を入力してください（例：10/23）。', ui.ButtonSet.OK_CANCEL);
   if (response.getSelectedButton() !== ui.Button.OK) return;
@@ -957,9 +1077,9 @@ function mtgStoreToMeetingFolder_(name, meeting, pdf) {
  * 見つからなければ作る（createMeetingFolder。noCreate なら作らない）
  */
 function mtgMeetingFolder_(name, meeting, noCreate) {
-  const rule = DIFF_RULES[name] || {};
-  const id = mtgFolderIdOf_(rule.meetingFolder);
-  if (!id) return {error: '「' + name + '」の会議のフォルダが設定されていない（test.gs の DIFF_RULES の meetingFolder）'};
+  const setting = mtgMeetingFolderSetting_(name);
+  const id = mtgFolderIdOf_(setting.value);
+  if (!id) return {error: '「' + name + '」の会議のフォルダが設定されていない（' + setting.where + '）'};
   let parent;
   try {
     parent = DriveApp.getFolderById(id);
@@ -991,10 +1111,17 @@ function mtgMeetingFolder_(name, meeting, noCreate) {
   return {folder: found[0]};
 }
 
+/** 会議のフォルダを探すフォルダの設定 {value: URL か ID, where: 設定の場所}（統合版は MTG_OPTIONS.combined.meetingFolder、ほかは DIFF_RULES の meetingFolder） */
+function mtgMeetingFolderSetting_(name) {
+  const combined = MTG_OPTIONS.combined;
+  if (name === combined.name && !DIFF_RULES[name]) return {value: combined.meetingFolder, where: 'MeetingSummary.gs の MTG_OPTIONS.combined.meetingFolder'};
+  return {value: (DIFF_RULES[name] || {}).meetingFolder, where: 'test.gs の DIFF_RULES の meetingFolder'};
+}
+
 /**
- * 会議資料のインデックス（このスプレッドシートの MTG_OPTIONS.index.sheet）の、行＝会議日（meeting）・列＝サブインダストリー（name）のセルに、
+ * 会議資料のインデックス（このスプレッドシートの MTG_OPTIONS.index.sheet）の、行＝会議日（meeting）・列＝サブインダストリー（name。統合版は combined.name）のセルに、
  * PDF（stored.file。index.link が 'folder' なら会議のフォルダ）をスマートチップで書く（できなければファイル名のリンク）。
- * シートが無ければ作り、1行目に見出し（日付・種別・全サブインダストリー・追跡シートの名前（DIFF_RULES の順））を書く。
+ * シートが無ければ作り、1行目に見出し（日付・種別・統合版・追跡シートの名前（DIFF_RULES の順））を書く。
  * 会議日の行（日付が同じで、種別が kind か空の行）が無ければ日付の順になる位置に差し込み、サブインダストリーの列が無ければ右に足す。
  * 同じセルは上書き（作り直したとき）。書き込みはドキュメントロックの中（差分追跡の対象外のシートだが、資料作成はエディタから実行するので待ってよい）。
  * 戻り値 {url: シートの URL, title: シート名} か {error: 知らせる文}（止めない）
@@ -1020,7 +1147,7 @@ function mtgWriteIndex_(name, meeting, stored) {
         diffEnsureGrid_(sheet, 1, col);
         sheet.getRange(1, col).setValue(credText_(name));
         mtgIndexFormat_(sheet.getRange(1, col, Math.max(sheet.getLastRow(), 1), 1));
-        sheet.setColumnWidth(col, o.widths.sheet);
+        sheet.setColumnWidth(col, name === MTG_OPTIONS.combined.name ? o.widths.combined : o.widths.sheet);
       }
       // 会議日の行（無ければ、この会議日より後の行の前に差し込む。無ければ下に足す）
       const lastRow = sheet.getLastRow();
@@ -1063,7 +1190,7 @@ function mtgWriteIndex_(name, meeting, stored) {
 
 /**
  * インデックスのシート（無ければ作る。白紙なら見出しの行を用意する。ロックの中で呼ぶ）。
- * 見出し：日付・種別・blankHeaders・追跡シートの名前（DIFF_RULES の順）。太字・黒・上下中央、1行目を固定、タブは黒。使わない行・列は持たない
+ * 見出し：日付・種別・統合版（MTG_OPTIONS.combined.name）・追跡シートの名前（DIFF_RULES の順）。太字・黒・上下中央、1行目を固定、タブは黒。使わない行・列は持たない
  */
 function mtgIndexSheet_(ss) {
   const o = MTG_OPTIONS.index;
@@ -1074,11 +1201,10 @@ function mtgIndexSheet_(ss) {
     if (active) active.activate();   // insertSheet は作ったシートを開くので、開いていたシートに戻す
   }
   if (sheet.getLastRow() > 0) return sheet;
-  const fixed = [o.dateHeader, o.kindHeader].concat(o.blankHeaders || []);
-  const headers = fixed.concat(Object.keys(DIFF_RULES));
+  const headers = [o.dateHeader, o.kindHeader, MTG_OPTIONS.combined.name].concat(Object.keys(DIFF_RULES));
   diffEnsureGrid_(sheet, 2, headers.length);
   mtgIndexFormat_(sheet.getRange(1, 1, 1, headers.length).setValues([headers.map(credText_)]));
-  const widths = [o.widths.date, o.widths.kind].concat((o.blankHeaders || []).map(() => o.widths.blank));
+  const widths = [o.widths.date, o.widths.kind, o.widths.combined];
   headers.forEach((_, i) => sheet.setColumnWidth(i + 1, i < widths.length ? widths[i] : o.widths.sheet));
   sheet.setFrozenRows(1);
   if (o.tabColor) sheet.setTabColor(o.tabColor);
@@ -1092,7 +1218,7 @@ function mtgIndexFormat_(range) {
 }
 
 /**
- * インデックスの見出し（1行目）から列の位置を読む。{date, kind, columns: {シート名: 列}}（列は 1 から。前の名前の見出しは今の名前に）。
+ * インデックスの見出し（1行目）から列の位置を読む。{date, kind, columns: {シート名（統合版は combined.name）: 列}}（列は 1 から。前の名前の見出しは今の名前に）。
  * 「日付」の見出しが無ければ null（前の形式（行＝サブインダストリー）など）
  */
 function mtgIndexLayout_(sheet) {
@@ -1105,13 +1231,13 @@ function mtgIndexLayout_(sheet) {
   const columns = {};
   heads.forEach((h, i) => {
     const name = resolve(h);
-    if (DIFF_RULES[name] && !columns[name]) columns[name] = i + 1;
+    if ((DIFF_RULES[name] || name === MTG_OPTIONS.combined.name) && !columns[name]) columns[name] = i + 1;
   });
   return {date, kind: heads.indexOf(o.kindHeader) + 1, columns};
 }
 
 /**
- * 会議資料のインデックスを、各サブインダストリーの会議のフォルダ（DIFF_RULES の meetingFolder の中の「yyMMdd_第N回会議」）にある
+ * 会議資料のインデックスを、各サブインダストリー・統合版の会議のフォルダ（DIFF_RULES・MTG_OPTIONS.combined の meetingFolder の中の「yyMMdd_第N回会議」）にある
  * 本番の事前資料（PDF。mtgFileName_）から書き直す（エディタから実行）。前の形式（行＝サブインダストリー）のシートは、中身を消して今の形式で作り直す。
  * 今の形式なら、ある行・列はそのまま（手で入れた値も残す）で、資料のセルだけ書き直す。何度実行してもよい
  */
@@ -1136,7 +1262,8 @@ function rebuildMeetingIndex() {
   }
   let written = 0;
   let index = null;
-  const lines = Object.keys(DIFF_RULES).map(name => {
+  const combined = MTG_OPTIONS.combined;
+  const lines = Object.keys(DIFF_RULES).concat(combined.enabled ? [combined.name] : []).map(name => {
     const found = mtgStoredDecks_(name);
     if (found.error) return '・' + name + '：' + found.error;
     const errors = [];
@@ -1157,13 +1284,13 @@ function rebuildMeetingIndex() {
 }
 
 /**
- * サブインダストリー（name）の会議のフォルダにある本番の事前資料。{decks: [{meeting: 'yyyy/MM/dd', folder, file}]}（会議日の順）か {error: 理由}。
+ * サブインダストリー（name。統合版は combined.name）の会議のフォルダにある本番の事前資料。{decks: [{meeting: 'yyyy/MM/dd', folder, file}]}（会議日の順）か {error: 理由}。
  * 会議のフォルダは、名前が meetingFolderDate（yyMMdd）の日付と「_」で始まるもの。PDF の名前は mtgFileName_（本番）
  */
 function mtgStoredDecks_(name) {
-  const rule = DIFF_RULES[name] || {};
-  const id = mtgFolderIdOf_(rule.meetingFolder);
-  if (!id) return {error: '会議のフォルダが設定されていない（test.gs の DIFF_RULES の meetingFolder）'};
+  const setting = mtgMeetingFolderSetting_(name);
+  const id = mtgFolderIdOf_(setting.value);
+  if (!id) return {error: '会議のフォルダが設定されていない（' + setting.where + '）'};
   let parent;
   try {
     parent = DriveApp.getFolderById(id);
@@ -2319,13 +2446,120 @@ function mtgDealLabel_(item) {
  * 見出しは MTG_TITLES（どのシートでも同じ）。書くのはシートと変更の記録から分かる事実だけ（論点・決めてほしいことなどの判断は、会議でリーダーが話す）。
  * 戻り値 [{title, elements}]（elements は mtgSlideRequests_ の部品。タイトル・リード文・出典・ページ番号も含む）
  */
-function mtgSlides_(summary) {
+function mtgSlides_(summary, start) {
+  const offset = start || 0;   // 前に入るページの数（統合版。ページ番号と扉の目次のページを通しにする）
   const cover = mtgCoverSlide_(summary);
   const main = [mtgSummarySlide_(summary), mtgBridgeSlide_(summary), mtgMovesSlide_(summary)].concat(mtgFocusSlide_(summary));
   // Appendix はいつも ①〜③ を出す（中身が無ければ、表の見出しの行の下に「データなし」と理由・「該当なし」）
   const appendix = [].concat(mtgAppendixChanges_(summary), mtgAppendixStalled_(summary), mtgAppendixOwners_(summary),
     mtgAppendixAlerts_(summary));
-  return mtgNumberSlides_(mtgSheetFrame_(summary), [cover].concat(main, [mtgDividerSlide_(appendix, 1 + main.length + 1 + 1)], appendix));
+  return mtgNumberSlides_(mtgSheetFrame_(summary), [cover].concat(main, [mtgDividerSlide_(appendix, offset + 1 + main.length + 1 + 1)], appendix), offset);
+}
+
+/**
+ * 統合版のスライドの並び：表紙（全サブインダストリー）・全サブインダストリーの状況（mtgOverviewSlide_）のあとに、各サブインダストリーの資料
+ * （mtgSlides_。表紙から Appendix まで。summaries の順）をそのまま続ける。ページ番号・扉の目次のページは資料全体の通し番号にする
+ */
+function mtgCombinedSlides_(summaries, meeting, final) {
+  const o = MTG_OPTIONS;
+  const c = o.colors;
+  const S = MTG_SLIDE;
+  const name = o.combined.name;
+  const dummy = summaries.some(s => s.dummy);
+  let page = 2;   // 前に表紙・全サブインダストリーの状況
+  const sections = summaries.map(s => {
+    const slides = mtgSlides_(s, page);
+    const section = {summary: s, start: page + 1, slides};
+    page += slides.length;
+    return section;
+  });
+  const line = (y, text) => mtgBox_(S.x, y, S.w, 16, mtgWrap_(text, S.w, 9, 1)[0], {size: 9, color: c.white, align: 'CENTER'});
+  const now = summaries.length ? summaries[0].now : new Date();
+  const cover = {
+    title: MTG_TITLES.cover,
+    cover: true,
+    template: {title: name, subtitle: o.meetingName + '　事前資料' + (final ? '' : '【試作】'), date: mtgDateLabel_(meeting), name: ''},
+    elements: [
+      line(350, '収録：' + summaries.map(s => s.name).join('・') + '（' + summaries.length + 'サブインダストリー）'),
+      line(365, '出典：各サブインダストリーのシートおよび変更履歴（' + (dummy ? 'ダミーデータを含む。' : '') +
+        Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/M/d HH:mm') + ' 時点）')
+    ]
+  };
+  const frame = {source: (final ? '' : '【試作】') + (dummy ? '【ダミーデータを含む】' : '') + name + '（' + mtgShortDate_(meeting) + ' 会議資料）　金額の単位：百万円'};
+  const first = mtgNumberSlides_(frame, [cover, mtgOverviewSlide_(sections)]);
+  return first.concat.apply(first, sections.map(x => x.slides));
+}
+
+/**
+ * 統合版の2枚目「全サブインダストリーの状況」：サブインダストリーごとの進行中案件・期待値合計・前回比・変化のある案件・停滞・確認事項と、
+ * その資料の表紙のページ（この資料の中のページ。各資料のサマリーと同じ数え方。作れない値は灰色の「データなし」）。いちばん下に合計（作れたシートの分だけ）。
+ * sections = [{summary, start: 始まりのページ}]
+ */
+function mtgOverviewSlide_(sections) {
+  const o = MTG_OPTIONS;
+  const c = o.colors;
+  const S = MTG_SLIDE;
+  const G = o.gapText;
+  const columns = mtgColumns_([142, 70, 84, 84, 92, 68, 70, 50], 0);
+  // 増減の列の見出しは、いちばん多い比べ方（前回比・基準比・直近14日間の増減）。ほかの比べ方のシートは、セルの1行目に何との比かを書く
+  const versus = s => mtgVersus_(s).trim().replace(/で$/, '');   // 前回比・基準比・直近14日間
+  const counts = {};
+  sections.forEach(x => { counts[versus(x.summary)] = (counts[versus(x.summary)] || 0) + 1; });
+  const common = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || '前回比';
+  const vs = s => (versus(s) === common ? '' : versus(s) + '\n');
+  const labels = ['サブインダストリー', '進行中案件', '期待値合計', /比$/.test(common) ? common : common + 'の増減', '変化のある案件', '停滞', '確認事項', 'ページ'];
+  const total = {active: 0, weighted: 0, delta: 0, changed: 0, stalled: 0, alerts: 0, lack: {}};
+  const lines = sections.map(({summary: s, start}) => {
+    const k = s.kpi;
+    const lack = s.gaps || {};
+    const b = s.bridge;
+    total.active += k.active;
+    total.alerts += k.alerts;
+    if (lack.weighted) total.lack.weighted = true;
+    else total.weighted += b.end;
+    if (lack.weighted || lack.changes) total.lack.delta = true;
+    else total.delta += b.end - b.start;
+    if (lack.changes) total.lack.changed = true;
+    else total.changed += k.changed;
+    if (lack.stalled) total.lack.stalled = true;
+    else total.stalled += k.stalled;
+    return {name: s.name, page: String(start), values: [
+      k.active + '件',
+      lack.weighted ? null : mtgAmount_(b.end),
+      lack.weighted || lack.changes ? null : vs(s) + mtgSigned_(b.end - b.start),
+      lack.changes ? null : k.changed + '件',
+      lack.stalled ? null : k.stalled + '件',
+      k.alerts + '項目'
+    ]};
+  });
+  // 合計：作れたシートの分だけ（作れないシートがあれば ※。どのシートも作れなければ「データなし」）
+  const of = (i, text, key) => (lines.every(line => line.values[i] == null) ? null : text + (total.lack[key] ? '※' : ''));
+  const sum = {name: '合計', page: '', total: true, values: [total.active + '件', of(1, mtgAmount_(total.weighted), 'weighted'),
+    of(2, mtgSigned_(total.delta), 'delta'), of(3, total.changed + '件', 'changed'), of(4, total.stalled + '件', 'stalled'), total.alerts + '項目']};
+  // リード文は1行（表を大きく。11サブインダストリーと合計が1ページに入るように）。合計に ※ があるときは、出典の行の後ろに意味を書く
+  const lead = sections.length + 'サブインダストリーの進行中案件 ' + total.active + '件、期待値合計 ' + mtgAmount_(total.weighted) + '百万円' +
+    (total.lack.weighted ? '（期待値の列が無いシートを除く）' : '') + '。';
+  const marked = sum.values.some(v => /※$/.test(v || ''));
+  const top = Math.max(S.summaryTop, Math.max.apply(null, mtgLead_(lead).map(e => e.y + e.h)) + 4);
+  // 表の文字は、ページに入る大きさ（9pt から 0.5pt ずつ 7pt まで）
+  const build = size => {
+    const cell = (text, extra) => Object.assign({text, size, lines: 2, align: 'CENTER', fill: c.white, color: c.body}, extra || {});
+    const rows = lines.concat([sum]).map(line => mtgRow_(columns, [
+      {text: line.name, size, bold: true, color: c.ink, fill: c.greenSoft}
+    ].concat(line.values.map((v, i) => (v == null ? mtgGapCell_(cell('')) : cell(v, i === 1 || i === 2 ? {align: 'END'} : {}))))
+      .concat([cell(line.page, {bold: true, color: c.greenDark})])
+      .map(x => (line.total && x.fill !== c.gap ? Object.assign({}, x, {bold: true, fill: c.greenSoft}) : x)), 0));
+    return [mtgHeadRow_(columns, labels, size)].concat(rows);
+  };
+  let size = S.bodySize;
+  let rows = build(size);
+  const height = list => list.reduce((h, r) => h + r.h, 0);
+  while (top + height(rows) > S.bottom && size - 0.5 >= S.minFitSize) {
+    size = Math.round((size - 0.5) * 10) / 10;
+    rows = build(size);
+  }
+  return Object.assign({title: MTG_TITLES.overview, lead, elements: [{type: 'table', x: S.x, y: top, columns, rows}]},
+    marked ? {note: '※ は「' + G + '」のシートを除いた合計'} : {});
 }
 
 /**
@@ -2378,10 +2612,10 @@ function mtgDividerSlide_(appendix, firstPage) {
   return {title: MTG_TITLES.appendix, divider: true, template: {title: MTG_TITLES.appendix, subtitle: '', date: '', name: ''}, elements: el};
 }
 
-/** スライドに、どのスライドにも付ける部品（mtgFrame_）とページ番号を付ける（表紙・扉の印と、ひな形の置き換える文字は残す） */
-function mtgNumberSlides_(frame, slides) {
+/** スライドに、どのスライドにも付ける部品（mtgFrame_）とページ番号（offset ＋ 1 から）を付ける（表紙・扉の印と、ひな形の置き換える文字は残す） */
+function mtgNumberSlides_(frame, slides, offset) {
   return slides.map((slide, i) => {
-    const out = {title: slide.title, elements: mtgFrame_(frame, slide, i + 1).concat(slide.elements)};
+    const out = {title: slide.title, elements: mtgFrame_(frame, slide, (offset || 0) + i + 1).concat(slide.elements)};
     ['cover', 'divider', 'template', 'empty'].forEach(key => { if (slide[key]) out[key] = slide[key]; });
     return out;
   });
@@ -4051,11 +4285,19 @@ function mtgExportDeck_(name, slides, folder) {
     const scale = mtgPageWidth_(deck) / MTG_SLIDE.width;
     const pages = (deck.slides || []).map(sl => sl.objectId);
     const cover = templateId ? pages[0] : null;
-    // ひな形：2枚目以降を消し、1枚目を複製して扉にする（表紙の次に入る。本編を表紙の次から順に入れると、扉は本編のあとになる）
+    // ひな形：2枚目以降を消し、1枚目を表紙にして、ほかの表紙・扉（統合版では各サブインダストリーの表紙と扉）は1枚目を複製して作る。
+    // 複製は表紙のすぐ次に入る。1枚だけなら、本編を表紙の次から順に入れると扉は本編のあとになる。2枚以上なら、最後に並べ直す
+    const templatePages = {};
+    let copies = 0;
+    slides.forEach((slide, i) => {
+      if (!cover || !(slide.cover || slide.divider)) return;
+      templatePages[i] = i === 0 && slide.cover ? cover : 'mtg_divider' + (copies++ ? copies : '');
+    });
     let requests = [];
     if (cover) {
       pages.slice(1).forEach(id => requests.push({deleteObject: {objectId: id}}));
-      if (slides.some(sl => sl.divider)) requests.push({duplicateObject: {objectId: cover, objectIds: {[cover]: 'mtg_divider'}}});
+      Object.keys(templatePages).map(i => templatePages[i]).filter(id => id !== cover)
+        .forEach(id => requests.push({duplicateObject: {objectId: cover, objectIds: {[cover]: id}}}));
     }
     let first = true;
     const flush = () => {
@@ -4066,14 +4308,15 @@ function mtgExportDeck_(name, slides, folder) {
     };
     slides.forEach((slide, i) => {
       const own = 'mtg_p' + (i + 1);
-      const add = cover && slide.cover ? mtgSlideRequests_(slide, cover, i, {scale, existing: true, idPrefix: own})
-        : cover && slide.divider ? mtgSlideRequests_(slide, 'mtg_divider', i, {scale, existing: true, idPrefix: own})
-          : mtgSlideRequests_(slide, own, i, {scale});
+      const add = templatePages[i] ? mtgSlideRequests_(slide, templatePages[i], i, {scale, existing: true, idPrefix: own})
+        : mtgSlideRequests_(slide, own, i, {scale});
       if (requests.length && requests.length + add.length > MTG_OPTIONS.batchRequests) flush();
       requests = requests.concat(add);
     });
     flush();
     const extra = mtgPlaceholderRequests_(Slides.Presentations.get(deck.presentationId), slides.map((slide, i) => 'mtg_p' + (i + 1)));
+    // ひな形の複製が2枚以上：1枚目から順に、決まった位置に動かす（前のスライドの位置は決まっているので、順に動かせばそろう）
+    if (copies > 1) slides.forEach((slide, i) => extra.push({updateSlidesPosition: {slideObjectIds: [templatePages[i] || 'mtg_p' + (i + 1)], insertionIndex: i}}));
     if (extra.length) Slides.Presentations.batchUpdate({requests: extra}, deck.presentationId);
     // ひな形が無ければ、表紙・扉の背景をいただいたひな形と同じ絵柄（緑のグラデーションと RX）の画像にする
     if (!templateId) mtgCoverBackground_(deck.presentationId, slides.map((slide, i) => (slide.cover || slide.divider ? 'mtg_p' + (i + 1) : '')).filter(Boolean));
