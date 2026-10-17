@@ -10,11 +10,16 @@
  *   変更の記録のイベントIDは「SMP-」で始まる。
  * - removeSampleHistory()（エディタから実行）：上の印が付いた行だけを削除する
  *   （記録は追記のみが原則だが、サンプルの行に限って削除する）。
- * - addMeetingDummyHistory()（エディタから実行。シートを選ぶ）：会議サマリ（MeetingSummary.gs）の確認用に、追跡シートの案件へ
+ * - addBusinessMtgDummyHistory()（エディタから実行。シートを選ぶ）：会議サマリ（MeetingSummary.gs）の確認用に、追跡シートの案件へ
  *   ダミーの変更の記録（変更履歴_差分・変更時点スナップショット）を足す。シートのセルの値は変えず、今の値になるまでの記録
  *   （前回の資料・基準の時点の値と、そのあとの変更）を足すので、資料の「前回から変化のある案件」（前進・後退・延期・増額・減額・活動更新・新規・削除）
  *   と停滞に出る。サンプル（SMP-）は会議サマリが数えないので、イベントIDは「DMY-」にする（会議サマリは数え、資料の出典の行に【ダミーデータを含む】と出す）。
- * - removeMeetingDummyHistory()（エディタから実行）：イベントIDが「DMY-」の行だけを削除する（サンプルと同じく、ダミーの行に限って削除する）。
+ * - removeBusinessMtgDummyHistory()（エディタから実行）：イベントIDが「DMY-」の行だけを削除する（サンプルと同じく、ダミーの行に限って削除する）。
+ * - addServiceMtgSampleData()（エディタから実行）：RX Service MTG の事前資料（ServiceMeeting.gs）の確認用に、サービスリクエスト・
+ *   サービス案タスク管理のシートの最後の行の下に、サンプルのリクエスト・タスクを書く（SMP_OPTIONS.service）。リクエストの先頭に「【サンプル】」を付ける
+ *   （タスクの「サービス案」にも入る）。得意先・案件名は、リクエストを読むシートの案件（進行中で期待値の大きいもの）を使い、案件が無いシートでは架空の名前にする。
+ *   追跡シート・取り込み元のシートには書かない。
+ * - removeServiceMtgSampleData()（エディタから実行）：リクエストが「【サンプル】」で始まる行と、そのタスクの行だけを削除する。
  */
 
 const SMP_OPTIONS = {
@@ -51,9 +56,9 @@ const SMP_OPTIONS = {
     {daysAgo: 1, time: '11:20', value: '受注見込み'}
   ],
   maxChangeColumns: 3,           // 変更の記録に使う列の数
-  // 会議サマリの確認用のダミーの変更の記録（addMeetingDummyHistory()）
+  // 会議サマリの確認用のダミーの変更の記録（addBusinessMtgDummyHistory()）
   dummy: {
-    eventPrefix: 'DMY',          // イベントIDの接頭辞（会議サマリは数える。removeMeetingDummyHistory() で消す目印）
+    eventPrefix: 'DMY',          // イベントIDの接頭辞（会議サマリは数える。removeBusinessMtgDummyHistory() で消す目印）
     marker: 'ダミーデータ',       // 編集者メールアドレスの列に入れる印
     kindSuffix: ' / ダミー',      // 種類に付ける（行の追加・削除の記録には付けない。会議サマリが種類で見分けるため）
     activity: '（ダミー）前回までの活動状況',   // 前回の時点の活動状況
@@ -63,6 +68,54 @@ const SMP_OPTIONS = {
     stallDays: {stall: 100, stallActivity: 70},
     // 削除した案件（シートに無い架空の案件）の、削除前の行の内容（ステータスは進行中のいちばん前のもの、期待値は想定売上 × その率、受注月は来月）
     removed: {customer: 'ダミー商事', project: '（ダミー）削除した案件', amount: 20, owner: 'ダミー 担当'}
+  },
+  // RX Service MTG の確認用のサンプル（addServiceMtgSampleData()）。sheet はリクエストを読むシート（その案件を使う。無ければ順に別のシート。
+  // 案件が無ければ customer・project の架空の名前）。decision は判断（空なら未判断）。リクエストの先頭に namePrefix を付けて書く
+  service: {
+    requests: [
+      {sheet: 'スーパー・GMS', customer: 'サンプルスーパー', project: '会員アプリ刷新', request: '会員アプリの購買データから、優良顧客の離反の兆しを早めに知りたい',
+        decision: 'サービス化検討', service: '購買データ分析', department: 'DX事業本部', owner: '山本',
+        feedback: '既存の ID-POS 分析基盤で対応できる見込み。データ連携の範囲を確かめたい'},
+      {sheet: 'コンビニ', customer: 'サンプルマート', project: '売場改善', request: '店舗ごとの売れ筋を、メーカーと共有する仕組みがほしい',
+        decision: 'サービス化検討', service: '購買データ分析', department: 'DX事業本部', owner: '山本',
+        feedback: '共有の範囲（個店・エリア）で、必要な加工が変わる'},
+      {sheet: '化粧品・トイレタリー', customer: 'サンプル化粧品', project: 'EC連携', request: 'EC と店舗の購買をつないで、顧客ごとに提案したい',
+        decision: 'サービス化検討', service: '購買データ分析', department: 'DX事業本部', owner: '山本', feedback: ''},
+      {sheet: 'スーパー・GMS', customer: 'サンプルスーパー', project: '店舗DX', request: '紙の POP の差し替えの手間を減らしたい（電子棚札）',
+        decision: 'サービス化検討', service: 'デジタル販促（電子棚札・サイネージ）', department: '情報コミュニケーション事業本部', owner: '田中',
+        feedback: '電源・通信の工事の要否で、費用が大きく変わる'},
+      {sheet: '百貨店', customer: 'サンプル百貨店', project: '売場サイネージ', request: '売場のサイネージの内容を、本部からまとめて配信したい',
+        decision: 'サービス化検討', service: 'デジタル販促（電子棚札・サイネージ）', department: '情報コミュニケーション事業本部', owner: '田中', feedback: ''},
+      {sheet: '生協', customer: 'サンプル生協', project: '宅配チラシ', request: '宅配のチラシを、アプリでも見られるようにしたい',
+        decision: 'サービス化検討', service: 'デジタル販促（電子棚札・サイネージ）', department: '', owner: '', feedback: ''},
+      {sheet: '飲料・食品', customer: 'サンプル飲料', project: '店頭販促', request: '店頭什器を季節ごとに入れ替えたいが、買い切りは負担が大きい',
+        decision: 'サービス化検討', service: '店頭什器のサブスクリプション', department: '生活・産業事業本部', owner: '中村',
+        feedback: '回収・再利用の物流の設計が課題'},
+      {sheet: '住設', customer: 'サンプル住設', project: 'ショールーム改装', request: 'ショールームの展示什器を、短いサイクルで変えたい',
+        decision: 'サービス化検討', service: '店頭什器のサブスクリプション', department: '生活・産業事業本部', owner: '中村', feedback: ''},
+      {sheet: '自動車販売', customer: 'サンプル自動車販売', project: '来店予約', request: '来店予約から商談までを、アプリで完結させたい',
+        decision: 'サービス化検討', service: '来店予約アプリ', department: 'DX事業本部', owner: '小林', feedback: '既存のアプリの型で作れるか確かめる'},
+      {sheet: 'コンビニ', customer: 'サンプルマート', project: '会員施策', request: 'カード会員のアンケートを、店頭の端末で取りたい',
+        decision: 'サービス化検討', service: '', department: '', owner: '', feedback: ''},
+      {sheet: '地方銀行', customer: 'サンプル銀行', project: 'アプリ利用促進', request: 'アプリの利用を店頭で案内する販促物を作りたい',
+        decision: '', service: '', department: '', owner: '', feedback: ''},
+      {sheet: '電鉄・不動産', customer: 'サンプル電鉄', project: '駅ナカ活性化', request: '駅ナカ店舗の購買データを、テナントと共有したい',
+        decision: '', service: '', department: '', owner: '', feedback: ''},
+      {sheet: 'エネルギー', customer: 'サンプルエネルギー', project: '検針票', request: '検針票の紙をなくしたいが、高齢の顧客への案内が課題',
+        decision: '棄却', service: '', department: '', owner: '', feedback: 'ほかの部署の通知サービスで対応済みのため、ここでは扱わない'}
+    ],
+    // タスク（request は上の requests の番号（0 から））
+    tasks: [
+      {request: 0, task: '既存の ID-POS 分析基盤で、離反の兆しの指標を試算する', department: 'DX事業本部', owner: '山本', status: '対応中',
+        note: '1社のデータで試算中。11月上旬に結果を出す'},
+      {request: 1, task: 'メーカーへの共有の範囲（個店・エリア）の要件を整理する', department: 'DX事業本部', owner: '山本', status: '未着手', note: ''},
+      {request: 0, task: '料金の考え方（分析の回数・データ量）の案を作る', department: '事業企画部', owner: '佐々木', status: '未着手', note: ''},
+      {request: 3, task: '電子棚札の工事の要否を、店舗の型ごとに整理する', department: '情報コミュニケーション事業本部', owner: '田中', status: '完了',
+        note: '3つの型に分けた'},
+      {request: 4, task: 'サイネージの配信を、既存の CMS で動かせるか確かめる', department: '情報コミュニケーション事業本部', owner: '田中', status: '対応中', note: ''},
+      {request: 3, task: '導入事例の資料をまとめる', department: '情報コミュニケーション事業本部', owner: '', status: '未着手', note: ''},
+      {request: 6, task: '什器の回収・再利用の物流の費用を試算する', department: '生活・産業事業本部', owner: '中村', status: '未着手', note: ''}
+    ]
   }
 };
 
@@ -86,7 +139,7 @@ function addSampleHistory() {
         '・オファリング ' + SMP_OPTIONS.offerings.length + '件\n' : '') +
       '・変更の記録 ' + SMP_OPTIONS.changes.length + '件\n\n' +
       'シートのセルの値は変わりません。サンプルは、エディタで removeSampleHistory を実行すると消せます。\n' +
-      '※ サンプルは会議サマリには出ません（会議サマリの確認用のダミーデータは addMeetingDummyHistory()）。追加しますか？',
+      '※ サンプルは会議サマリには出ません（会議サマリの確認用のダミーデータは addBusinessMtgDummyHistory()）。追加しますか？',
       ui.ButtonSet.YES_NO);
     if (answer !== ui.Button.YES) return;
 
@@ -161,7 +214,7 @@ function smpSelectedTargets_(sheet) {
   if (!targets.length) {
     throw new Error('選んだ行（' + range.getRow() + (range.getLastRow() > range.getRow() ? '〜' + range.getLastRow() : '') + '行目）に、' +
       '「' + CRED_OPTIONS.customerHeader + '」が入力された行がありません。案件のある行を選んでから実行してください。\n' +
-      '会議サマリの確認用のダミーの変更の記録を足すときは、addMeetingDummyHistory() を実行してください（行を選ぶ必要はありません）。');
+      '会議サマリの確認用のダミーの変更の記録を足すときは、addBusinessMtgDummyHistory() を実行してください（行を選ぶ必要はありません）。');
   }
   return targets;
 }
@@ -329,9 +382,9 @@ function smpDeleteRows_(sheet, rows) {
  * - 前回の時点の値：前回の資料（または基準）を作った時刻の1秒前に、前回の値のスナップショットと活動状況の記録
  * - 前回より後の変更：前回の値 → 今の値の記録（今の行のスナップショット）。新規は行の追加、削除は架空の案件の行の削除
  * - 停滞：ステータスを stallDays 日前に変えた記録（それより新しいステータスの変更・案件ができた記録が無い案件だけ。あると停滞にならないため）
- * 同じシートに前に足したダミーは、消してから入れ直す。消すときは removeMeetingDummyHistory()
+ * 同じシートに前に足したダミーは、消してから入れ直す。消すときは removeBusinessMtgDummyHistory()
  */
-function addMeetingDummyHistory() {
+function addBusinessMtgDummyHistory() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = mtgUi_();
   const title = CRED_OPTIONS.menuTitle;
@@ -352,18 +405,18 @@ function addMeetingDummyHistory() {
   });
   const answer = ui.alert(title, '会議サマリの確認用に、次のダミーの変更の記録を足します。\n\n' + lines.join('\n') + '\n\n' +
     'シートのセルの値は変わりません。記録のイベントIDは「' + D.eventPrefix + '-」で始まり、資料の出典の行に【ダミーデータを含む】と出ます。\n' +
-    '消すときは、エディタで removeMeetingDummyHistory() を実行してください。足しますか？', ui.ButtonSet.YES_NO);
+    '消すときは、エディタで removeBusinessMtgDummyHistory() を実行してください。足しますか？', ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return;
   const results = smpWithLock_(() => plans.map(plan => smpAddDummy_(ss, plan, now)));
   const message = 'ダミーの変更の記録を足しました。\n' +
     results.map(r => '・' + r.name + '：変更の記録 ' + r.changes + '件・スナップショット ' + r.snapshots + '件').join('\n') +
-    '\n\npreviewMeetingSummaries() で資料を作って確かめてください（会議日は、記録の時刻より後の日にする）。';
+    '\n\npreviewBusinessMtgSummaries() で資料を作って確かめてください（会議日は、記録の時刻より後の日にする）。';
   console.log(message);
   ui.alert(title, message, ui.ButtonSet.OK);
 }
 
 /** ダミーの変更の記録（イベントIDが DMY-）を、すべてのシートの分、記録のシートから削除する（エディタから実行）。 */
-function removeMeetingDummyHistory() {
+function removeBusinessMtgDummyHistory() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = mtgUi_();
   const title = CRED_OPTIONS.menuTitle;
@@ -662,6 +715,190 @@ function smpAppendSnapshots_(ss, sheet, rule, schema, items, editor) {
     snap.getRange(start, contentColumn, items.length, 1).setRichTextValues(tail.map(t => [t[1]]));
   }
   snap.getRange(start, 1, items.length, ROW_SNAPSHOT_FIXED_HEADERS.length).setVerticalAlignment('top');
+}
+
+/* ---------------- RX Service MTG のサンプル（サービスリクエスト・タスク） ---------------- */
+
+/**
+ * RX Service MTG の事前資料の確認用に、サンプルのリクエストとタスクを書く（エディタから実行）。
+ * サービスリクエスト・サービス案タスク管理のシートの、最後の行の下に書く（リクエストには ID を振り、タスクの「サービス案」のプルダウンの候補も合わせる）。
+ * すでにサンプルがあれば書かない（removeServiceMtgSampleData() で消してから）
+ */
+function addServiceMtgSampleData() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = mtgUiOrNull_();
+  const title = SVC_OPTIONS.menuTitle;
+  const sheets = smpServiceSheets_(ss);
+  const existing = smpServiceSampleRows_(sheets);
+  if (existing.requests.length || existing.tasks.length) {
+    const text = 'サンプルのリクエスト ' + existing.requests.length + '件・タスク ' + existing.tasks.length + '件が、すでにあります。' +
+      '入れ直すときは、先に removeServiceMtgSampleData() で消してください。';
+    if (ui) ui.alert(title, text, ui.ButtonSet.OK);
+    console.log(text);
+    return;
+  }
+  const S = SMP_OPTIONS.service;
+  const plan = smpServicePlan_(ss);
+  if (ui) {
+    const answer = ui.alert(title, 'RX Service MTG の事前資料の確認用に、サンプルを書きます。\n\n' +
+      '・「' + SVC_OPTIONS.requestSheet + '」：リクエスト ' + S.requests.length + '件（リクエストの先頭に「' + SMP_OPTIONS.namePrefix + '」。' +
+      '得意先・案件名は、シートの案件 ' + plan.filter(p => p.deal).length + '件と架空の名前 ' + plan.filter(p => !p.deal).length + '件）\n' +
+      '・「' + TASK_OPTIONS.sheet + '」：タスク ' + S.tasks.length + '件\n\n' +
+      'どちらも最後の行の下に書きます（今の行は変えません。リクエストを読むシートには書きません）。\n' +
+      (plan.some(p => !p.deal) ? '架空の名前のリクエストは、資料の Appendix ③ に「元の案件が見つからない」と出ます。\n' : '') +
+      '消すときは、エディタで removeServiceMtgSampleData() を実行してください。書きますか？', ui.ButtonSet.YES_NO);
+    if (answer !== ui.Button.YES) return;
+  }
+  const result = taskWithLock_(() => smpAddServiceSample_(ss, sheets, plan), SVC_OPTIONS.lockWaitMs, 'addServiceMtgSampleData()');
+  const message = 'サンプルを書きました：リクエスト ' + result.requests + '件（' + result.ids[0] + '〜' + result.ids[result.ids.length - 1] + '）・タスク ' +
+    result.tasks + '件。\npreviewServiceMtgSummary() で資料を作って確かめてください（資料に【サンプルデータを含む】と出ます）。';
+  console.log(message);
+  if (ui) ui.alert(title, message, ui.ButtonSet.OK);
+}
+
+/** サンプルのリクエスト（リクエストが「【サンプル】」で始まる行）と、そのタスクの行を削除する（エディタから実行）。ほかの行は消さない */
+function removeServiceMtgSampleData() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = mtgUiOrNull_();
+  const title = SVC_OPTIONS.menuTitle;
+  const sheets = smpServiceSheets_(ss);
+  const found = smpServiceSampleRows_(sheets);
+  if (!found.requests.length && !found.tasks.length) {
+    const text = 'サンプルのリクエスト・タスク（「' + SMP_OPTIONS.namePrefix + '」の付いたもの）はありません。';
+    if (ui) ui.alert(title, text, ui.ButtonSet.OK);
+    console.log(text);
+    return;
+  }
+  if (ui) {
+    const answer = ui.alert(title, 'サンプルを削除します：「' + SVC_OPTIONS.requestSheet + '」のリクエスト ' + found.requests.length + '行・「' +
+      TASK_OPTIONS.sheet + '」のタスク ' + found.tasks.length + '行（「' + SMP_OPTIONS.namePrefix + '」の付いた行だけ）。\nほかの行は消えません。削除しますか？',
+    ui.ButtonSet.YES_NO);
+    if (answer !== ui.Button.YES) return;
+  }
+  const result = taskWithLock_(() => {
+    const rows = smpServiceSampleRows_(sheets);   // ロックの中で読み直す
+    smpDeleteRows_(sheets.task, rows.tasks);
+    smpDeleteRows_(sheets.request, rows.requests);
+    const warning = svcRefreshTaskChoices_(ss);
+    return {requests: rows.requests.length, tasks: rows.tasks.length, warning};
+  }, SVC_OPTIONS.lockWaitMs, 'removeServiceMtgSampleData()');
+  const message = 'サンプルを削除しました：リクエスト ' + result.requests + '行・タスク ' + result.tasks + '行。' + (result.warning ? '\n' + result.warning : '');
+  console.log(message);
+  if (ui) ui.alert(title, message, ui.ButtonSet.OK);
+}
+
+/** サービスリクエスト・タスク管理のシート {request, task}（無ければ、用意する関数を知らせて止める） */
+function smpServiceSheets_(ss) {
+  const request = ss.getSheetByName(SVC_OPTIONS.requestSheet);
+  if (!request) throw new Error('「' + SVC_OPTIONS.requestSheet + '」シートがありません。先に setupRequestSheet() を実行してください。');
+  const task = ss.getSheetByName(TASK_OPTIONS.sheet);
+  if (!task) throw new Error('「' + TASK_OPTIONS.sheet + '」シートがありません。先に setupTaskSheet() を実行してください。');
+  return {request, task};
+}
+
+/** サンプルの行 {requests: 行番号, tasks: 行番号}（リクエストが「【サンプル】」で始まる行・サービス案に「【サンプル】」を含むタスクの行） */
+function smpServiceSampleRows_(sheets) {
+  const marker = SMP_OPTIONS.namePrefix;
+  const requests = svcRegistered_(sheets.request).rows.filter(r => r.values.request.indexOf(marker) === 0).map(r => r.row);
+  const tasks = [];
+  const headerRow = TASK_OPTIONS.headerRow;
+  const count = sheets.task.getLastRow() - headerRow;
+  const col = taskColumnMap_(sheets.task, TASK_OPTIONS.columns, headerRow).service;
+  if (count > 0 && col) {
+    sheets.task.getRange(headerRow + 1, col, count, 1).getDisplayValues().forEach((line, i) => {
+      if (String(line[0]).indexOf(marker) >= 0) tasks.push(headerRow + 1 + i);
+    });
+  }
+  return {requests, tasks};
+}
+
+/**
+ * サンプルのリクエストごとに使う案件（読むだけ）。[{spec, sheet: シート名, deal: 案件（無ければ null）}]。
+ * spec.sheet（無ければリクエストを読むシートを順に）の、進行中で期待値の大きい案件から、まだ使っていないもの（同じ得意先・案件名のリクエストは同じ案件）
+ */
+function smpServicePlan_(ss) {
+  const sources = svcSourceSheets_().filter(name => ss.getSheetByName(name));
+  const pools = {};
+  const poolOf = name => {
+    if (!(name in pools)) {
+      let deals = [];
+      try {
+        deals = mtgReadDeals_(ss.getSheetByName(name), DIFF_RULES[name]).deals.filter(d => d.customer && d.project && d.kind === 'active');
+      } catch (_) {}
+      pools[name] = deals.sort((a, b) => (b.weighted || 0) - (a.weighted || 0));
+    }
+    return pools[name];
+  };
+  const used = new Set();
+  const byName = new Map();
+  return SMP_OPTIONS.service.requests.map((spec, i) => {
+    const sheet = sources.indexOf(spec.sheet) >= 0 ? spec.sheet : sources.length ? sources[i % sources.length] : spec.sheet;
+    const named = spec.customer + '\u0001' + spec.project;
+    if (byName.has(named)) return {spec, sheet: byName.get(named).sheet, deal: byName.get(named).deal};
+    const deal = sources.indexOf(sheet) >= 0 ? poolOf(sheet).find(d => !used.has(d.key)) || null : null;
+    if (deal) used.add(deal.key);
+    byName.set(named, {sheet, deal});
+    return {spec, sheet, deal};
+  });
+}
+
+/**
+ * サンプルを書く（ロックの中で呼ぶ）：リクエストを最後の行の下に書いて ID を振り、タスクの候補を合わせてから、タスクを最後の行の下に書く。
+ * {requests, tasks, ids}
+ */
+function smpAddServiceSample_(ss, sheets, plan) {
+  const S = SMP_OPTIONS.service;
+  const marker = SMP_OPTIONS.namePrefix;
+  const request = sheets.request;
+  const cols = taskColumnMap_(request, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
+  const start = svcRegistered_(request).lastRow + 1;
+  const numbers = cols.id ? svcTakeIds_(plan.length, svcMaxIdInSheet_(request, cols.id)) : [];
+  const ids = numbers.map(svcFormatId_);
+  const width = Math.max.apply(null, Object.keys(cols).map(k => cols[k]));
+  diffEnsureGrid_(request, start + plan.length - 1, width);
+  const values = plan.map((p, i) => {
+    const d = p.deal;
+    const cell = label => (d && d.cells[credNormalize_(label)]) || '';
+    const row = new Array(width).fill('');
+    const put = (key, value) => { if (cols[key]) row[cols[key] - 1] = credText_(value || ''); };
+    put('id', ids[i]);
+    put('subIndustry', cell('サブインダストリー') || p.sheet);
+    put('customer', d ? d.customer : p.spec.customer);
+    put('project', d ? d.project : p.spec.project);
+    put('accountDept', cell('アカウント責任者部署'));
+    put('accountOwner', d ? d.owner : 'サンプル 担当');
+    put('bxDept', cell('BX部署'));
+    put('bxOwner', cell('BX担当'));
+    put('request', marker + p.spec.request);
+    put('decision', p.spec.decision || SVC_OPTIONS.defaultDecision);
+    put('feedback', p.spec.feedback);
+    put('service', p.spec.service);
+    put('department', p.spec.department);
+    put('owner', p.spec.owner);
+    return row;
+  });
+  request.getRange(start, 1, values.length, width).setValues(values);
+
+  // タスクの「サービス案」は、今書いたリクエストの候補（ID とリクエスト）から選ぶので、先に候補を合わせる
+  svcLinkTaskServiceColumn_(ss, true);
+  const task = sheets.task;
+  const tcols = taskColumnMap_(task, TASK_OPTIONS.columns, TASK_OPTIONS.headerRow);
+  const tlast = task.getLastRow();
+  const twidth = Math.max.apply(null, Object.keys(tcols).map(k => tcols[k]));
+  diffEnsureGrid_(task, tlast + S.tasks.length, twidth);
+  const tvalues = S.tasks.map(t => {
+    const row = new Array(twidth).fill('');
+    const put = (key, value) => { if (tcols[key]) row[tcols[key] - 1] = credText_(value || ''); };
+    put('service', svcTaskChoiceLabel_(ids[t.request] || '', marker + S.requests[t.request].request));
+    put('task', t.task);
+    put('department', t.department);
+    put('owner', t.owner);
+    put('status', t.status);
+    put('note', t.note);
+    return row;
+  });
+  task.getRange(tlast + 1, 1, tvalues.length, twidth).setValues(tvalues);
+  return {requests: values.length, tasks: tvalues.length, ids};
 }
 
 /* ---------------- 共通 ---------------- */
