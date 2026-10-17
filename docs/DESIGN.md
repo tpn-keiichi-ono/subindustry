@@ -462,9 +462,11 @@ RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Goo
   名前が会議日の `meetingFolderDate`（yyMMdd）で始まり、すぐあとが数字でないフォルダを探し、PDF を移します（`moveTo`。保存先と二重にしないため。同じ名前の古い版はゴミ箱へ）。
   見つからない・2つ以上ある・開けない・書き込めないときは止めずに、理由を終わりの画面に出します（資料は保存先にある）。
   あとから `storeBusinessMtgSummaries()`（エディタから実行。シートと会議日を聞く）で、保存先の本番の PDF を同じように格納します。
-  会議のフォルダが無ければ作ります（`createMeetingFolder`。名前は `meetingFolderName` の `{date}_第{n}回会議`。`{n}` は、そのフォルダの中の
-  この会議日より前の「yyMMdd_第N回」のいちばん大きい N ＋ 1（`mtgNextMeetingNumber_`。全角の数字も読む。後の会議日のフォルダは数えない））。
+  会議のフォルダが無ければ作ります（`createMeetingFolder`。名前は `meetingFolderName` の `{date}_{meeting}_第{n}回`（`261023_RX Business MTG_第5回`）。
+  `{n}` は、そのフォルダの中の、この会議日より前の同じ会議のフォルダの「第N回」のいちばん大きい N ＋ 1（`mtgNextMeetingNumber_`。全角の数字も読む。後の会議日のフォルダは数えない））。
   作り直したときは、作ったフォルダが見つかるので、もう1つは作りません。
+  会議のフォルダは、名前に含む会議の名前（RX Business MTG・RX Service MTG）で見分けます（`mtgFolderIsMeeting_`）。同じサブインダストリーのフォルダの中に両方の会議のフォルダが並び、
+  第N回は会議ごとに数えます。会議の名前を含まない前の版のフォルダ（`261023_第5回会議`）は、RX Business MTG のフォルダとして使い続けます（2026/10/17 から）。
 - **統合版**（`createBusinessMtgCombinedSummary()`・`mtgCreateCombined_`・`mtgCombinedSlides_`。`MTG_OPTIONS.combined`）：すべてのサブインダストリーの資料を作ったあとに、
   別の関数で、全サブインダストリーの資料を1つにまとめた資料を作ります（`{date}_全サブインダストリー_RX Business Meeting用資料`。試作なら試作）。
   資料を作る関数（`createBusinessMtgSummaries()`）とは分けます：11シートの資料と格納で、1回の実行の6分の上限に近いため（2026/10/17 に統合版を続けて作る版でタイムアウトした）。
@@ -847,7 +849,8 @@ Appendix は扉に合わせてグレー（ラベルは紫のまま）。
 **保存**：PDF を会議サマリの保存先（`mtgFolder_`）に保存します（`{date}_{サブインダストリー}_RX Service Meeting用資料.pdf`。試作は `_試作`）。本番は会議資料のインデックスの、
 種別が「RX Service MTG」の行（同じ日付でも RX Business MTG の行とは別）の、そのサブインダストリー（全サブインダストリー）の列に書きます（`mtgWriteIndex_` の `kind`）。
 1回の実行の6分に収まらなければ、RX Business MTG と同じく区切って、1回きりのトリガー `continueServiceMtgSummaries` で続けます（`smtgJobRun_`。見積もりは `SMTG_OPTIONS.run`）。
-`SMTG_OPTIONS.meetingFolder` を入れれば、その中の「yyMMdd_第N回会議」フォルダに格納します（RX Business MTG とは別のフォルダにする。第N回の数え方が混ざるため）。
+本番の PDF は、RX Business MTG と同じフォルダ（サブインダストリーは `DIFF_RULES` の `meetingFolder`、全サブインダストリーは `MTG_OPTIONS.combined.meetingFolder`）の中の、
+「yyMMdd_RX Service MTG_第N回」フォルダに格納します（無ければ作る。第N回は RX Service MTG のフォルダだけで数える。`mtgMeetingFolder_` の `kind`）。
 
 **サンプル**：`addServiceMtgSampleData()`（`サンプルデータ.gs`）が、リクエスト・タスク管理の最後の行の下にサンプル（`SMP_OPTIONS.service`。リクエストの先頭に「【サンプル】」）を書きます。
 得意先・案件名は、`sheet` のシートの進行中で期待値の大きい案件を使い、案件が無いシートでは架空の名前にします。

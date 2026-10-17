@@ -68,17 +68,19 @@ const MTG_OPTIONS = {
   folderName: '会議サマリ',
   folderKey: 'MTG_FOLDER_ID',         // 作ったフォルダの ID（ドキュメントのプロパティ）
   // 会議のフォルダへの格納（本番だけ）：サブインダストリーのフォルダ（test.gs の DIFF_RULES の meetingFolder）の中の、名前が会議日の
-  // meetingFolderDate（yyMMdd）＋「_」で始まるフォルダ（例：261023_第5回会議）に、事前資料の PDF のコピーを置く。
+  // meetingFolderDate（yyMMdd）＋「_」で始まり、会議の名前（RX Business MTG・RX Service MTG）を含むフォルダ（例：261023_RX Business MTG_第5回）に、
+  // 事前資料の PDF を置く。RX Service MTG の資料（ServiceMeeting.gs）も同じフォルダの中の、自分の会議の名前のフォルダに置く。
+  // 会議の名前を含まない前の版のフォルダ（261023_第5回会議）は、RX Business MTG のフォルダとして使い続ける。
   // 見つからない・格納できないときは保存先（folderId）にだけ残して知らせ、フォルダを用意してから storeBusinessMtgSummaries() で格納する
   meetingFolderDate: 'yyMMdd',
-  // 会議日のフォルダが無ければ作る（false なら作らずに知らせる）。名前は meetingFolderName の {date}（meetingFolderDate）・{n}（第何回）を置き換えたもの。
-  // {n} は、そのフォルダの中の、この会議日より前の「yyMMdd_第N回会議」のいちばん大きい N ＋ 1（無ければ 1）
+  // 会議日のフォルダが無ければ作る（false なら作らずに知らせる）。名前は meetingFolderName の {date}（meetingFolderDate）・{meeting}（会議の名前）・
+  // {n}（第何回）を置き換えたもの。{n} は、そのフォルダの中の、この会議日より前の同じ会議のフォルダ（「yyMMdd_…第N回」）のいちばん大きい N ＋ 1（無ければ 1）
   createMeetingFolder: true,
-  meetingFolderName: '{date}_第{n}回会議',
+  meetingFolderName: '{date}_{meeting}_第{n}回',
   // 統合版（全サブインダストリーの資料を1つにまとめた資料）。すべてのサブインダストリーの資料を作ったあとに、createBusinessMtgCombinedSummary() で作る
   // （資料を作る関数とは分ける。1回の実行の6分の上限に収めるため）。
   // 表紙・全サブインダストリーの状況（一覧）のあとに、各サブインダストリーの資料（表紙から Appendix まで）を DIFF_RULES の順に入れる（ページ番号は通し）。
-  // 本番は会議のフォルダ（meetingFolder の中の yyMMdd_第N回会議）に格納し、インデックスの name の列に書く
+  // 本番は会議のフォルダ（meetingFolder の中の yyMMdd_RX Business MTG_第N回）に格納し、インデックスの name の列に書く
   combined: {
     enabled: true,
     name: '全サブインダストリー',     // 表紙の見出し・ファイル名の {name}・インデックスの列の見出し
@@ -1259,8 +1261,8 @@ function storeBusinessMtgSummaries() {
  * 事前資料の PDF（pdf）を、そのシートの会議日のフォルダに移す（保存先と会議のフォルダに同じ PDF が2つできないように。同じ名前の古い版はゴミ箱に移す）。
  * 戻り値 {folder, file, created: 会議のフォルダを作ったか} か {error: 理由}（止めない。移せなければ PDF は保存先に残る）
  */
-function mtgStoreToMeetingFolder_(name, meeting, pdf, setting) {
-  const target = mtgMeetingFolder_(name, meeting, false, setting);
+function mtgStoreToMeetingFolder_(name, meeting, pdf, kind) {
+  const target = mtgMeetingFolder_(name, meeting, false, kind);
   if (target.error) return target;
   try {
     const fileName = pdf.getName();
@@ -1274,12 +1276,14 @@ function mtgStoreToMeetingFolder_(name, meeting, pdf, setting) {
 }
 
 /**
- * シートの会議のフォルダ：サブインダストリーのフォルダ（DIFF_RULES の meetingFolder）の中の、名前が会議日の meetingFolderDate（yyMMdd）で始まり、
- * そのすぐあとが数字でないフォルダ（261023_第5回会議）。{folder} か {error: 理由}（設定が無い・開けない・見つからない・2つ以上ある）。
- * 見つからなければ作る（createMeetingFolder。noCreate なら作らない）。override = {value, where} なら、その設定のフォルダの中を探す（RX Service MTG）
+ * シートの会議のフォルダ：サブインダストリーのフォルダ（DIFF_RULES の meetingFolder。統合版・全サブインダストリーは MTG_OPTIONS.combined.meetingFolder）の中の、
+ * 名前が会議日の meetingFolderDate（yyMMdd）で始まり、そのすぐあとが数字でなく、会議 kind（会議の名前。省けば MTG_OPTIONS.meetingName）のフォルダ
+ * （mtgFolderIsMeeting_。261023_RX Business MTG_第5回）。{folder} か {error: 理由}（設定が無い・開けない・見つからない・2つ以上ある）。
+ * 見つからなければ作る（createMeetingFolder。noCreate なら作らない。名前は meetingFolderName）
  */
-function mtgMeetingFolder_(name, meeting, noCreate, override) {
-  const setting = override || mtgMeetingFolderSetting_(name);
+function mtgMeetingFolder_(name, meeting, noCreate, kind) {
+  const meetingName = kind || MTG_OPTIONS.meetingName;
+  const setting = mtgMeetingFolderSetting_(name);
   const id = mtgFolderIdOf_(setting.value);
   if (!id) return {error: '「' + name + '」の会議のフォルダが設定されていない（' + setting.where + '）'};
   let parent;
@@ -1295,11 +1299,15 @@ function mtgMeetingFolder_(name, meeting, noCreate, override) {
   while (folders.hasNext()) {
     const folder = folders.next();
     const folderName = String(folder.getName());
-    if (folderName.indexOf(prefix) === 0 && !/^\d/.test(folderName.slice(prefix.length)) && !folder.isTrashed()) found.push(folder);
+    if (folderName.indexOf(prefix) === 0 && !/^\d/.test(folderName.slice(prefix.length)) && mtgFolderIsMeeting_(folderName, meetingName) &&
+      !folder.isTrashed()) found.push(folder);
   }
   if (!found.length) {
-    if (!MTG_OPTIONS.createMeetingFolder || noCreate) return {error: '「' + parent.getName() + '」の中に「' + prefix + '_」で始まる会議のフォルダが無い'};
-    const folderName = MTG_OPTIONS.meetingFolderName.replace('{date}', prefix).replace('{n}', String(mtgNextMeetingNumber_(parent, prefix)));
+    if (!MTG_OPTIONS.createMeetingFolder || noCreate) {
+      return {error: '「' + parent.getName() + '」の中に「' + prefix + '_」で始まる ' + meetingName + ' のフォルダが無い'};
+    }
+    const folderName = MTG_OPTIONS.meetingFolderName.replace('{date}', prefix).replace('{meeting}', meetingName)
+      .replace('{n}', String(mtgNextMeetingNumber_(parent, prefix, meetingName)));
     try {
       return {folder: parent.createFolder(folderName), created: true};
     } catch (error) {
@@ -1307,7 +1315,7 @@ function mtgMeetingFolder_(name, meeting, noCreate, override) {
     }
   }
   if (found.length > 1) {
-    return {error: '「' + parent.getName() + '」の中に「' + prefix + '_」で始まるフォルダが ' + found.length + '個ある（「' +
+    return {error: '「' + parent.getName() + '」の中に「' + prefix + '_」で始まる ' + meetingName + ' のフォルダが ' + found.length + '個ある（「' +
       found.map(f => f.getName()).join('」「') + '」。1つにしてください）'};
   }
   return {folder: found[0]};
@@ -1450,7 +1458,7 @@ function mtgIndexLayout_(sheet) {
 }
 
 /**
- * 会議資料のインデックスを、各サブインダストリー・統合版の会議のフォルダ（DIFF_RULES・MTG_OPTIONS.combined の meetingFolder の中の「yyMMdd_第N回会議」）にある
+ * 会議資料のインデックスを、各サブインダストリー・統合版の会議のフォルダ（DIFF_RULES・MTG_OPTIONS.combined の meetingFolder の中の「yyMMdd_RX Business MTG_第N回」・前の版の「yyMMdd_第N回会議」）にある
  * 本番の事前資料（PDF。mtgFileName_）から書き直す（エディタから実行）。前の形式（行＝サブインダストリー）のシートは、中身を消して今の形式で作り直す。
  * 今の形式なら、ある行・列はそのまま（手で入れた値も残す）で、資料のセルだけ書き直す。何度実行してもよい
  */
@@ -1524,7 +1532,7 @@ function mtgStoredDecks_(name) {
   return {decks};
 }
 
-/** 会議のフォルダの名前（261023_第5回会議）から会議日 'yyyy/MM/dd'（MTG_OPTIONS.meetingFolderDate の形の日付と「_」で始まらなければ空） */
+/** 会議のフォルダの名前（261023_RX Business MTG_第5回・261023_第5回会議）から会議日 'yyyy/MM/dd'（MTG_OPTIONS.meetingFolderDate の形の日付と「_」で始まらなければ空） */
 function mtgMeetingOfFolder_(folderName) {
   const keys = [];
   const pattern = MTG_OPTIONS.meetingFolderDate.replace(/yyyy|yy|MM|dd|[^A-Za-z]/g, t => {
@@ -1574,15 +1582,30 @@ function mtgIndexDate_(value) {
   return /^\d{4}\s*[\/\-.年]/.test(text) ? mtgParseDate_(text, new Date()) : '';
 }
 
-/** 次の会議のフォルダの回数：parent の中の、会議日が prefix（yyMMdd）より前の「yyMMdd_第N回」のいちばん大きい N ＋ 1（無ければ 1） */
-function mtgNextMeetingNumber_(parent, prefix) {
+/**
+ * 次の会議のフォルダの回数：parent の中の、会議日が prefix（yyMMdd）より前の、同じ会議（kind。mtgFolderIsMeeting_）のフォルダ
+ * （「yyMMdd_RX Business MTG_第N回」「yyMMdd_第N回会議」）のいちばん大きい N ＋ 1（無ければ 1）
+ */
+function mtgNextMeetingNumber_(parent, prefix, kind) {
   let max = 0;
   const folders = parent.getFolders();
   while (folders.hasNext()) {
-    const m = /^(\d{6})_第\s*(\d+)\s*回/.exec(String(folders.next().getName()).normalize('NFKC'));
-    if (m && m[1] < prefix) max = Math.max(max, Number(m[2]));
+    const folderName = String(folders.next().getName());
+    const m = /^(\d{6})_.*?第\s*(\d+)\s*回/.exec(folderName.normalize('NFKC'));
+    if (m && m[1] < prefix && mtgFolderIsMeeting_(folderName, kind || MTG_OPTIONS.meetingName)) max = Math.max(max, Number(m[2]));
   }
   return max + 1;
+}
+
+/**
+ * 会議のフォルダの名前が、会議 meetingName のものか：名前に会議の名前（全角・半角・大文字小文字・空白の違いは無視）を含む。どの会議の名前も含まない
+ * 前の版のフォルダ（261023_第5回会議）は、RX Business MTG（MTG_OPTIONS.meetingName）のものとみなす
+ */
+function mtgFolderIsMeeting_(folderName, meetingName) {
+  const norm = v => String(v || '').normalize('NFKC').toLowerCase().replace(/\s/g, '');
+  const names = [MTG_OPTIONS.meetingName].concat(typeof SMTG_OPTIONS !== 'undefined' ? [SMTG_OPTIONS.meetingName] : []);
+  const own = names.filter(n => norm(folderName).indexOf(norm(n)) >= 0);
+  return own.length ? own.indexOf(meetingName) >= 0 : meetingName === MTG_OPTIONS.meetingName;
 }
 
 /** フォルダの URL（…/folders/ID、?id=ID）か ID から ID を取り出す（読めなければ空）。 */

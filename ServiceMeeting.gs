@@ -48,9 +48,6 @@ const SMTG_OPTIONS = {
   meetingDetailPrefix: 'SMTG_MEETING_',
   keepMeetings: 24,
   detailMaxLength: 8000,                  // 判断・状況の記録の長さの上限（プロパティの1つの値の上限 9KB に収める。越えたら件数だけ残す）
-  // 会議のフォルダへの格納（本番だけ）：このフォルダ（URL か ID）の中の「yyMMdd_第N回会議」（MTG_OPTIONS.meetingFolderDate・meetingFolderName）に
-  // PDF を移す。空なら格納しない（会議サマリの保存先に残す）。RX Business MTG とは別のフォルダにする（第N回の数え方が混ざるため）
-  meetingFolder: '',
   // 会議資料のインデックス（MTG_OPTIONS.index）の種別の列に書く値（その行の、サブインダストリー・全サブインダストリーの列に PDF を書く）
   index: {kind: 'RX Service MTG'},
   // Apps Script の1回の実行は6分まで。作り始めてから limitMs を過ぎそうなら区切り、continueAfterMs あとに続ける（トリガー handler。1回きり）。
@@ -219,7 +216,7 @@ function smtgJobRun_(ss, job, started, base) {
 }
 
 /**
- * 1つの資料（name：サブインダストリーか全サブインダストリー）を作って保存する。本番は会議のフォルダ（SMTG_OPTIONS.meetingFolder）に格納し、
+ * 1つの資料（name：サブインダストリーか全サブインダストリー）を作って保存する。本番は会議のフォルダ（yyMMdd_RX Service MTG_第N回）に格納し、
  * インデックスの種別「RX Service MTG」の行の name の列に書く。戻り値 {name, line: 知らせる文}
  */
 function smtgCreateOne_(base, job, name, folder) {
@@ -230,15 +227,14 @@ function smtgCreateOne_(base, job, name, folder) {
   const lines = ['「' + name + '」：' + out.pdf.getName() + '（リクエスト ' + k.requests + '・判断待ち ' + k.undecided + '・サービス案 ' + k.services +
     '・確認事項 ' + data.checks.length + '。' + slides.length + 'ページ）', '　' + out.pdf.getUrl()];
   if (!job.final) return {name, line: lines.join('\n')};
+  // 会議のフォルダ：サブインダストリーのフォルダ（DIFF_RULES の meetingFolder。全サブインダストリーは MTG_OPTIONS.combined.meetingFolder）の中の
+  // 「yyMMdd_RX Service MTG_第N回」（無ければ作る。mtgMeetingFolder_）
   let stored = {file: out.pdf, folder};
-  if (SMTG_OPTIONS.meetingFolder) {
-    const moved = mtgStoreToMeetingFolder_(SMTG_OPTIONS.meetingName, job.meeting, out.pdf,
-      {value: SMTG_OPTIONS.meetingFolder, where: 'ServiceMeeting.gs の SMTG_OPTIONS.meetingFolder'});
-    if (moved.error) lines.push('　会議のフォルダに格納できませんでした（' + moved.error + '）。PDF は保存先に残しています。');
-    else {
-      stored = moved;
-      lines.push('　会議のフォルダ「' + moved.folder.getName() + '」に格納しました。');
-    }
+  const moved = mtgStoreToMeetingFolder_(name, job.meeting, out.pdf, SMTG_OPTIONS.meetingName);
+  if (moved.error) lines.push('　会議のフォルダに格納できませんでした（' + moved.error + '）。PDF は保存先に残しています。');
+  else {
+    stored = moved;
+    lines.push('　会議のフォルダ「' + moved.folder.getName() + '」に' + (moved.created ? '作って' : '') + '格納しました：' + moved.folder.getUrl());
   }
   const index = mtgWriteIndex_(name, job.meeting, stored, SMTG_OPTIONS.index.kind);
   lines.push('　' + (index.error || '「' + index.title + '」シートの「' + SMTG_OPTIONS.index.kind + '」の行に書きました。'));

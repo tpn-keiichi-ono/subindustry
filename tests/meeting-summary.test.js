@@ -1185,7 +1185,7 @@ test('会議のフォルダを作らない設定（createMeetingFolder: false）
   g.createBusinessMtgSummaries();
   const done = gas.alerts[gas.alerts.length - 1].message;
   assert.match(done, new RegExp('※ 会議のフォルダに格納できませんでした（「スーパー・GMS」の中に「' + yymmdd(meeting) +
-    '_」で始まる会議のフォルダが無い）。資料は保存先にあります。フォルダを用意してから、エディタで storeBusinessMtgSummaries\\(\\) を実行して格納してください。'));
+    '_」で始まる RX Business MTG のフォルダが無い）。資料は保存先にあります。フォルダを用意してから、エディタで storeBusinessMtgSummaries\\(\\) を実行して格納してください。'));
   assert.ok(JSON.parse(g.PropertiesService.getDocumentProperties().getProperty('MTG_MEETINGS_新FMT')).some(m => m.date === meeting), '会議日は記録する');
 
   gas.driveFolders.push({id: 'meeting-folder-new', name: yymmdd(meeting) + '_第5回会議', parent: 'SubIndustryFolder0001'});
@@ -1199,30 +1199,34 @@ test('会議のフォルダを作らない設定（createMeetingFolder: false）
   assert.match(gas.alerts[gas.alerts.length - 1].message, /「新FMT」：本番の資料（\d{4}1030_新FMT_RX Business Meeting用資料\.pdf）が保存先・会議のフォルダにありません。createBusinessMtgSummaries\(\) で作ってください。/);
 });
 
-test('会議のフォルダが無ければ「yyMMdd_第N回会議」を作って格納する（N は前の会議のフォルダの回数＋1。後の会議のフォルダは数えない）', () => {
+test('会議のフォルダが無ければ「yyMMdd_RX Business MTG_第N回」を作って格納する（N は前の同じ会議のフォルダの回数＋1。後の会議・ほかの会議のフォルダは数えない）', () => {
   const {gas, g} = setup();
   const meeting = g.mtgParseDate_('10/23', new Date());
   const later = String(Number(meeting.slice(2, 4)) + 1) + '0101_第9回会議';   // 来年の会議（数えない）
-  meetingFolders(gas, ['260420_第1回会議', '260819_第４回会議', later, '資料置き場']);
+  // 前の版の名前（会議の名前なし）は RX Business MTG のフォルダ。RX Service MTG のフォルダ（同じ日付でも）は数えない・使わない
+  meetingFolders(gas, ['260420_第1回会議', '260819_第４回会議', later, '資料置き場', '260911_RX Service MTG_第7回', yymmdd(meeting) + '_RX Service MTG_第8回']);
   gas.promptAnswers = ['1', '10/23'];
   g.createBusinessMtgSummaries();
   const created = gas.driveFolders.filter(f => f.parent === 'SubIndustryFolder0001' && f.name.indexOf(yymmdd(meeting)) === 0);
-  assert.deepStrictEqual(created.map(f => f.name), [yymmdd(meeting) + '_第5回会議'], '全角の数字も読む');
-  assert.ok(gas.driveFiles.some(f => f.folder === created[0].id && /_新FMT_RX Business Meeting用資料\.pdf$/.test(f.name)));
-  assert.match(gas.alerts[gas.alerts.length - 1].message, new RegExp('会議のフォルダ「' + yymmdd(meeting) + '_第5回会議」を作って格納しました'));
+  assert.deepStrictEqual(created.filter(f => !/Service/.test(f.name)).map(f => f.name), [yymmdd(meeting) + '_RX Business MTG_第5回'], '全角の数字も読む');
+  const business = created.find(f => !/Service/.test(f.name));
+  assert.ok(gas.driveFiles.some(f => f.folder === business.id && /_新FMT_RX Business Meeting用資料\.pdf$/.test(f.name)));
+  assert.match(gas.alerts[gas.alerts.length - 1].message, new RegExp('会議のフォルダ「' + yymmdd(meeting) + '_RX Business MTG_第5回」を作って格納しました'));
   // 作り直しても、同じフォルダを使う（もう1つ作らない）
   gas.promptAnswers = ['1', '10/23'];
   g.createBusinessMtgSummaries();
-  assert.strictEqual(gas.driveFolders.filter(f => f.name.indexOf(yymmdd(meeting)) === 0).length, 1);
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /会議のフォルダ「\d{6}_第5回会議」に格納しました/);
-  assert.strictEqual(g.mtgNextMeetingNumber_(g.DriveApp.getFolderById('SubIndustryFolder0001'), '260101'), 1, '前の会議が無ければ第1回');
+  assert.strictEqual(gas.driveFolders.filter(f => f.name.indexOf(yymmdd(meeting)) === 0).length, 2, 'RX Business MTG のフォルダは1つ（もう1つは RX Service MTG）');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /会議のフォルダ「\d{6}_RX Business MTG_第5回」に格納しました/);
+  const parent = g.DriveApp.getFolderById('SubIndustryFolder0001');
+  assert.strictEqual(g.mtgNextMeetingNumber_(parent, '260101'), 1, '前の会議が無ければ第1回');
+  assert.strictEqual(g.mtgNextMeetingNumber_(parent, yymmdd(meeting), 'RX Service MTG'), 8, 'RX Service MTG の回数は RX Service MTG のフォルダだけで数える');
 });
 
 test('mtgMeetingFolder_：設定が無い・開けない・2つある・コピーできないときは理由を返す（止めない）。URL・ID のどちらでも設定できる', () => {
   const {gas, g} = setup({edits: false});
   assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /「新FMT」の会議のフォルダが設定されていない（test\.gs の DIFF_RULES の meetingFolder）/);
   meetingFolders(gas, ['261023_第5回会議', '261023_第5回会議（予備）']);
-  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /「261023_」で始まるフォルダが 2個ある（「261023_第5回会議」「261023_第5回会議（予備）」。1つにしてください）/);
+  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /「261023_」で始まる RX Business MTG のフォルダが 2個ある（「261023_第5回会議」「261023_第5回会議（予備）」。1つにしてください）/);
   gas.driveFolders.pop();
   assert.strictEqual(g.mtgMeetingFolder_('新FMT', '2026/10/23').folder.getId(), 'meeting-folder-0');
   gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'SubIndustryFolder0001';

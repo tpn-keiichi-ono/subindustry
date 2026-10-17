@@ -176,10 +176,10 @@ test('本物の設定：RX Service MTG の事前資料は、ひな形の3枚目�
   assert.strictEqual(mtg.templatePages.service, 3);
   assert.ok(smtg.index.kind && smtg.index.kind !== mtg.index.kind, '種別で RX Business MTG の行と分ける');
   assert.notStrictEqual(smtg.fileName, mtg.fileName);
-  // 会議のフォルダに格納するなら、RX Business MTG とは別のフォルダ（第N回の数え方が混ざらないように）
-  const business = Object.keys(gas.get('DIFF_RULES')).map(name => gas.global.mtgFolderIdOf_(gas.get('DIFF_RULES')[name].meetingFolder))
-    .concat([gas.global.mtgFolderIdOf_(mtg.combined.meetingFolder)]);
-  assert.ok(!smtg.meetingFolder || business.indexOf(gas.global.mtgFolderIdOf_(smtg.meetingFolder)) < 0);
+  // 会議のフォルダは同じ親フォルダに並ぶので、名前に会議の名前を入れて見分ける（第N回も会議ごと）
+  assert.ok(/\{meeting\}/.test(mtg.meetingFolderName));
+  assert.ok(gas.global.mtgFolderIsMeeting_('261113_' + smtg.meetingName + '_第3回', smtg.meetingName));
+  assert.ok(!gas.global.mtgFolderIsMeeting_('261113_' + smtg.meetingName + '_第3回', mtg.meetingName));
   // 判断・状況の選択肢（前回からの変化の記録は選択肢の番号で残す）
   assert.deepStrictEqual(Array.from(gas.global.smtgDecisionOptions_()), ['未判断', 'サービス化検討', '棄却']);
   assert.deepStrictEqual(Array.from(gas.global.smtgStatusOptions_()), ['未着手', '対応中', '完了']);
