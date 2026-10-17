@@ -2338,7 +2338,7 @@ test('統合版：createMeetingSummaries() では作らず、すべてのシー�
   assert.match(gas.alerts[gas.alerts.length - 1].message, /・全サブインダストリー：1件/);
 });
 
-test('createCombinedMeetingSummary：統合版だけを作る。すべてのシートに会議日の本番の記録があれば本番（格納する）、無ければ試作。会議日・コピーは記録しない', () => {
+test('createCombinedMeetingSummary：すべてのシートに会議日の本番の資料（記録と PDF）があるときだけ作る（無ければ何も作らずに終える）。会議日・コピーは記録しない', () => {
   const {gas, g} = setup();
   const o = gas.get('MTG_OPTIONS');
   const meeting = g.mtgParseDate_('10/23', new Date());
@@ -2348,14 +2348,23 @@ test('createCombinedMeetingSummary：統合版だけを作る。すべてのシ�
 
   gas.promptAnswers = ['1', '10/23'];
   g.createMeetingSummaries();   // 新FMT だけ本番
+  const decks0 = gas.decks.length;
+  const alerts0 = gas.alerts.length;
   gas.promptAnswers = ['10/23'];
   g.createCombinedMeetingSummary();
-  assert.match(gas.alerts[gas.alerts.length - 2].message, /本番の資料をまだ作っていないシート（新FMT2）があります。本番の統合版は、すべてのサブインダストリーの本番の資料を createMeetingSummaries\(\) で作ってから作ってください。\nこのまま試作として作ります/);
-  assert.match(gas.decks[gas.decks.length - 1].title, /_全サブインダストリー_RX Business Meeting用資料_試作$/);
-  assert.ok(!gas.driveFiles.some(f => /全サブインダストリー/.test(f.name) && f.folder === 'meeting-folder-0'), '試作は格納しない');
-
+  assert.strictEqual(gas.alerts.length, alerts0 + 1, '確かめの画面も出さずに終える');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版を作れません。会議日 \d{4}\/10\/23 の本番の資料が、まだできていないサブインダストリーがあります（1件）：\n・新FMT2\n\ncreateMeetingSummaries\(\) で、すべてのサブインダストリーの本番の資料を作ってから（「INDEX_会議資料」のその会議日の行に空のセルが無くなってから）、もう一度実行してください。$/);
+  assert.strictEqual(gas.decks.length, decks0, '試作も作らない');
+  // 本番の記録があっても、PDF が無ければ作らない（消した・名前を変えたなど）
   gas.promptAnswers = ['2', '10/23'];
   g.createMeetingSummaries();   // 新FMT2 も本番
+  const pdf = gas.driveFiles.find(f => /_新FMT2_RX Business Meeting用資料\.pdf$/.test(f.name));
+  gas.trashed.push(pdf.id);
+  gas.promptAnswers = ['10/23'];
+  g.createCombinedMeetingSummary();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版を作れません。[\s\S]*（1件）：\n・新FMT2\n/);
+  gas.trashed.pop();
+
   const before = [props.getProperty('MTG_MEETINGS_新FMT'), props.getProperty('MTG_MEETINGS_新FMT2')];
   const copies = gas.created.length;
   gas.promptAnswers = ['10/23'];
@@ -2374,7 +2383,9 @@ test('createCombinedMeetingSummary：統合版だけを作る。すべてのシ�
   g.createCombinedMeetingSummary();
   assert.strictEqual(gas.decks.length, decks);
   o.combined.enabled = false;
-  assert.throws(() => g.createCombinedMeetingSummary(), /統合版を使わない設定です/);
+  g.createCombinedMeetingSummary();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /統合版を使わない設定です/);
+  assert.strictEqual(gas.decks.length, decks);
 });
 
 test('統合版・ひな形：統合版の表紙も各資料の表紙もひな形の1枚目（緑）、扉は2枚目を使い、2回目からは複製して、最後に決まった順に並べ直す（3枚目は使わない）', () => {
@@ -2450,7 +2461,8 @@ test('6分の上限：次の仕事が上限を越えそうなら区切り、続�
   assert.match(gas.alerts[gas.alerts.length - 1].message, /自動で続けている途中です。[\s\S]*それをやめて、新しく作りますか？/);
   assert.strictEqual(gas.decks.length, 2);
   o.combined.enabled = true;
-  assert.throws(() => g.createCombinedMeetingSummary(), /サブインダストリーの資料を作っている途中です/);
+  g.createCombinedMeetingSummary();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^サブインダストリーの資料を作っている途中です/);
   g.showMeetingSummariesResult();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /作っている途中です（会議日 \d{4}\/10\/23。資料 2\/2件・格納 0\/2件）。自動で続けています。/);
   gas.confirmAnswer = 'YES';

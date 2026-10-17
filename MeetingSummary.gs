@@ -1063,37 +1063,57 @@ function mtgCreateCombined_(summaries, meeting, final, folder) {
  * 統合版（全サブインダストリー）を作る（エディタから実行）。すべてのサブインダストリーの資料を createMeetingSummaries() で作ったあとに実行する
  * （資料を作る関数とは分けてある。1回の実行の6分の上限に収めるため）。個別の資料を作り直したあとも、これで作り直す。
  * 会議日を聞き、すべての追跡シートの会議サマリを今の値で作り直して1つの資料にする（会議日・会議時点のコピーは記録しない。前回からの変化は、
- * 個別の資料と同じく前回の会議時点と比べる）。すべてのシートにその会議日の本番の記録があれば本番（会議のフォルダに格納し、インデックスに書く）、
- * 無いシートがあれば、それを知らせて試作として作るかを聞く。資料を作っている途中（自動で続けている途中）なら、終わるまで待ってもらう
+ * 個別の資料と同じく前回の会議時点と比べる）。本番として作り、会議のフォルダに格納してインデックスに書く。
+ * 実行の条件：すべてのサブインダストリーに、その会議日の本番の記録と PDF（会議のフォルダか保存先）があること。満たさなければ、足りないものを知らせて
+ * 何も作らずに終える（試作も作らない）。資料を作っている途中（自動で続けている途中）なら、終わるまで待ってもらう
  */
 function createCombinedMeetingSummary() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = mtgUi_();
   const o = MTG_OPTIONS.combined;
-  if (!o.enabled) throw new Error('統合版を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.combined.enabled）。');
+  const stop = message => {
+    console.log(message);
+    ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+  };
+  if (!o.enabled) return stop('統合版を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.combined.enabled）。');
   if (mtgJobLoad_()) {
-    throw new Error('サブインダストリーの資料を作っている途中です（自動で続けています）。終わってから（showMeetingSummariesResult() で確かめてから）実行してください。');
+    return stop('サブインダストリーの資料を作っている途中です（自動で続けています）。終わってから（showMeetingSummariesResult() で確かめてから）実行してください。');
   }
   const names = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
-  if (!names.length) throw new Error('追跡しているシート（test.gs の DIFF_RULES）が見つかりません。');
+  if (!names.length) return stop('追跡しているシート（test.gs の DIFF_RULES）が見つかりません。');
   const now = new Date();
   const meeting = mtgAskMeeting_(ui, names, now);
   if (!meeting) return;
+  // 実行の条件：すべてのサブインダストリーの、この会議日の本番の資料（PDF）ができている（インデックスのその会議日の行に空のセルが無い）。満たさなければ作らずに終える
   const props = PropertiesService.getDocumentProperties();
-  const missing = names.filter(name => !mtgMeetings_(props, name).some(m => !m.baseline && m.date === meeting));
-  const final = !missing.length;
+  const missing = names.filter(name => !mtgMeetings_(props, name).some(m => !m.baseline && m.date === meeting) || !mtgStoredPdf_(ss, name, meeting));
+  if (missing.length) {
+    return stop('統合版を作れません。会議日 ' + meeting + ' の本番の資料が、まだできていないサブインダストリーがあります（' + missing.length + '件）：\n' +
+      missing.map(name => '・' + name).join('\n') + '\n\n' +
+      'createMeetingSummaries() で、すべてのサブインダストリーの本番の資料を作ってから（「' + MTG_OPTIONS.index.sheet + '」のその会議日の行に空のセルが無くなってから）、' +
+      'もう一度実行してください。');
+  }
   const answer = ui.alert(CRED_OPTIONS.menuTitle, '「' + o.name + '」の資料（' + names.length + 'サブインダストリーを1つにまとめた統合版）を、今のシートの値で作ります。\n\n' +
-    (final ? '会議日 ' + meeting + ' の本番の資料として作り、会議のフォルダに格納します（会議日の記録・会議時点のコピーは変えません）。'
-      : 'この会議日（' + meeting + '）の本番の資料をまだ作っていないシート（' + missing.join('・') + '）があります。本番の統合版は、' +
-        'すべてのサブインダストリーの本番の資料を createMeetingSummaries() で作ってから作ってください。\nこのまま試作として作ります（ファイル名に「試作」が付きます）。') +
-    '\n作成してよろしいですか？', ui.ButtonSet.YES_NO);
+    '会議日 ' + meeting + ' の本番の資料として作り、会議のフォルダに格納します（会議日の記録・会議時点のコピーは変えません）。\n作成してよろしいですか？', ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return;
-  const {summaries} = mtgSummaries_(ss, names, now, final, meeting);
+  const {summaries} = mtgSummaries_(ss, names, now, true, meeting);
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
-  const message = mtgCombinedLines_(mtgCombinedPlain_(mtgCreateCombined_(summaries, meeting, final, folder))).concat(['', '保存先：' + folder.getUrl()]).join('\n');
+  const message = mtgCombinedLines_(mtgCombinedPlain_(mtgCreateCombined_(summaries, meeting, true, folder))).concat(['', '保存先：' + folder.getUrl()]).join('\n');
   console.log(message);
   ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+}
+
+/** サブインダストリー（name）の、会議日（meeting）の本番の資料（PDF）。会議のフォルダ（無ければ保存先のフォルダ）にあるもの。無ければ null */
+function mtgStoredPdf_(ss, name, meeting) {
+  const fileName = mtgFileName_(name, meeting, true) + '.pdf';
+  const target = mtgMeetingFolder_(name, meeting, true);
+  const folders = [target.folder, mtgFolder_(ss)].filter(Boolean);
+  for (let i = 0; i < folders.length; i++) {
+    const files = folders[i].getFilesByName(fileName);
+    if (files.hasNext()) return files.next();
+  }
+  return null;
 }
 
 /** 統合版の結果の知らせ（終わりの画面の行） */
