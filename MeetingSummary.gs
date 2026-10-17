@@ -114,9 +114,13 @@ const MTG_OPTIONS = {
   copyChunkRows: 500,                 // コピーするときの1回の行数
   indexLockWaitMs: 30000,             // インデックスに書くときのロック（ドキュメントロック）の待ち時間
   // 表紙・扉のひな形（Google スライド。いただいた .pptx を Google スライドにしたもの）。資料はひな形のコピーに作る（ページの大きさもひな形のまま）。
-  // ID は setMeetingTemplate() で登録する（ドキュメントのプロパティ templateKey）。templateId を書けば、そちらを使う。どちらも無ければ、ひな形なしで作る
+  // ひな形の URL は、スクリプトのプロパティ templateUrlKey（MTG_TEMPLATE_URL）に入れる（エディタの「プロジェクトの設定」→「スクリプト プロパティ」。
+  // setMeetingTemplate() でも入れられる）。.pptx のままでもよい（Google スライドに変換したもの（templateConvertedKey に覚える）を使う。.pptx を
+  // 更新したら変換し直す）。templateId を書けば、そちらを使う。どれも無ければ、ひな形なしで作る
   templateId: '',
-  templateKey: 'MTG_TEMPLATE_ID',
+  templateUrlKey: 'MTG_TEMPLATE_URL',             // スクリプトのプロパティ：ひな形の URL（Google スライドか .pptx）
+  templateConvertedKey: 'MTG_TEMPLATE_CONVERTED', // スクリプトのプロパティ：.pptx を変換した Google スライド {source, updated, id}
+  templateKey: 'MTG_TEMPLATE_ID',                 // 前の版の登録（ドキュメントのプロパティ。スクリプトのプロパティが空のときだけ読む）
   // ひな形の何枚目を使うか（2026/10/17 にいただいたひな形：1枚目 緑＝表紙、2枚目 グレー＝扉（Appendix）、3枚目 紫＝統合版の表紙）。
   // 無いページは、扉なら描き（mtgTemplateFallback_ と、同じ絵柄のグレーの画像）、統合版の表紙なら1枚目を使う
   templatePages: {cover: 1, divider: 2, combined: 3},
@@ -4251,65 +4255,121 @@ function mtgZlib_(data, stride) {
   return out.concat([(b >>> 8) & 255, b & 255, (a >>> 8) & 255, a & 255]);
 }
 
-/** 表紙・扉のひな形の ID（MTG_OPTIONS.templateId か、setMeetingTemplate() で登録したもの。無ければ空） */
+/** ひな形のファイルの ID（MTG_OPTIONS.templateId・スクリプトのプロパティ MTG_TEMPLATE_URL・前の版の登録の順。Google スライドか .pptx。無ければ空） */
+function mtgTemplateSourceId_() {
+  const o = MTG_OPTIONS;
+  if (o.templateId) return mtgFileIdOf_(o.templateId);
+  const url = PropertiesService.getScriptProperties().getProperty(o.templateUrlKey);
+  if (url) {
+    const id = mtgFileIdOf_(url);
+    if (!id) throw new Error('スクリプトのプロパティ ' + o.templateUrlKey + ' の「' + url + '」から、ひな形のファイルの ID を読めません。Google スライド（か .pptx）を開いたときの URL を入れてください。');
+    return id;
+  }
+  return PropertiesService.getDocumentProperties().getProperty(o.templateKey) || '';
+}
+
+/**
+ * 資料を作るときにコピーする、ひな形の Google スライドの ID（無ければ空）。ひな形が .pptx なら、Google スライドに変換したものを使う
+ * （mtgTemplateSlides_。変換は .pptx を更新したときだけ）
+ */
 function mtgTemplateId_() {
-  return MTG_OPTIONS.templateId || PropertiesService.getDocumentProperties().getProperty(MTG_OPTIONS.templateKey) || '';
+  const id = mtgTemplateSourceId_();
+  return id ? mtgTemplateSlides_(id).getId() : '';
 }
 
 /** 「https://docs.google.com/presentation/d/ID/edit」や ID だけの文字から ID を取り出す（読めなければ空） */
 function mtgFileIdOf_(text) {
   const t = String(text || '').trim();
-  const m = /\/d\/([A-Za-z0-9_-]{20,})/.exec(t) || /^([A-Za-z0-9_-]{20,})$/.exec(t);
+  const m = /\/d\/([A-Za-z0-9_-]{20,})/.exec(t) || /[?&]id=([A-Za-z0-9_-]{20,})/.exec(t) || /^([A-Za-z0-9_-]{20,})$/.exec(t);
   return m ? m[1] : '';
 }
 
 /**
- * 表紙・扉のひな形（Google スライド）を登録する（URL を聞く。空欄なら登録を外し、ひな形なしで作る）。
- * いただいた .pptx は、ドライブにアップロードして Google スライドで開き、「ファイル」→「Google スライドとして保存」したものを登録する
+ * 表紙・扉のひな形の URL を、スクリプトのプロパティ（MTG_TEMPLATE_URL）に入れる・外す（エディタから実行。URL を聞く。空欄なら外し、ひな形なしで作る）。
+ * エディタの「プロジェクトの設定」→「スクリプト プロパティ」で直接入れてもよい。Google スライドでも .pptx（ドライブに置いたもの）でもよい
  */
 function setMeetingTemplate() {
   const ui = mtgUi_();
-  const props = PropertiesService.getDocumentProperties();
-  const current = props.getProperty(MTG_OPTIONS.templateKey);
+  const o = MTG_OPTIONS;
+  const props = PropertiesService.getScriptProperties();
+  const current = props.getProperty(o.templateUrlKey);
   const response = ui.prompt(CRED_OPTIONS.menuTitle,
-    '会議サマリの表紙・扉のひな形（Google スライド）の URL を入力してください。\n空欄なら登録を外します（ひな形なしで作ります）。\n\n' +
-    '今の登録：' + (current ? 'https://docs.google.com/presentation/d/' + current + '/edit' : 'なし'), ui.ButtonSet.OK_CANCEL);
+    '会議サマリの表紙・扉のひな形（Google スライドか .pptx）の URL を入力してください。\n空欄なら登録を外します（ひな形なしで作ります）。\n\n' +
+    '今の登録（スクリプトのプロパティ ' + o.templateUrlKey + '）：' + (current || 'なし'), ui.ButtonSet.OK_CANCEL);
   if (response.getSelectedButton() !== ui.Button.OK) return;
   const text = String(response.getResponseText() || '').trim();
+  PropertiesService.getDocumentProperties().deleteProperty(o.templateKey);   // 前の版の登録は使わない
   if (!text) {
-    props.deleteProperty(MTG_OPTIONS.templateKey);
+    props.deleteProperty(o.templateUrlKey);
     ui.alert(CRED_OPTIONS.menuTitle, 'ひな形の登録を外しました。会議サマリは、ひな形なしで作ります。', ui.ButtonSet.OK);
     return;
   }
   const id = mtgFileIdOf_(text);
-  if (!id) throw new Error('「' + text + '」から Google スライドの ID を読めません。Google スライドを開いたときのアドレス（URL）を貼り付けてください。');
+  if (!id) throw new Error('「' + text + '」から、ひな形のファイルの ID を読めません。Google スライド（か .pptx）を開いたときのアドレス（URL）を貼り付けてください。');
   mtgRequireSlides_();
-  mtgTemplateCheck_(id);
-  props.setProperty(MTG_OPTIONS.templateKey, id);
-  const deck = Slides.Presentations.get(id);
-  const count = (deck.slides || []).length;
-  const P = MTG_OPTIONS.templatePages;
-  const use = [[P.cover, '表紙'], [P.divider, '扉（Appendix）'], [P.combined, '統合版（全サブインダストリー）の表紙']]
-    .filter(([n]) => n && n <= count).map(([n, label]) => n + '枚目を' + label);
-  const message = 'ひな形を登録しました（' + count + '枚。' + use.join('、') + 'に使います' +
-    (count < P.divider ? '。扉はグレーの絵柄で描きます' : '') + (count < P.combined ? '。統合版の表紙は表紙のページを使います' : '') + '）。次に作る会議サマリから使います。';
+  const slides = mtgTemplateSlides_(id);
+  props.setProperty(o.templateUrlKey, text);
+  const message = mtgTemplateMessage_(slides, id);
   console.log(message);
   ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
 }
 
-/** ひな形が Google スライドか確かめる（.pptx のままなら、Google スライドにしてもらう） */
-function mtgTemplateCheck_(id) {
+/** 登録したひな形の知らせ（何枚目を何に使うか。.pptx なら変換した Google スライドの URL も） */
+function mtgTemplateMessage_(slides, sourceId) {
+  const count = (Slides.Presentations.get(slides.getId()).slides || []).length;
+  const P = MTG_OPTIONS.templatePages;
+  const use = [[P.cover, '表紙'], [P.divider, '扉（Appendix）'], [P.combined, '統合版（全サブインダストリー）の表紙']]
+    .filter(([n]) => n && n <= count).map(([n, label]) => n + '枚目を' + label);
+  return 'ひな形を登録しました（' + count + '枚。' + use.join('、') + 'に使います' +
+    (count < P.divider ? '。扉はグレーの絵柄で描きます' : '') + (count < P.combined ? '。統合版の表紙は表紙のページを使います' : '') + '）。次に作る会議サマリから使います。' +
+    (slides.getId() !== sourceId ? '\n.pptx を Google スライドに変換して使います（.pptx を更新したら、次に作るときに変換し直します）：' + slides.getUrl() : '');
+}
+
+/**
+ * ひな形のファイル（id）を Google スライドとして返す（DriveApp の File）。.pptx などなら、Google スライドに変換したもの（保存先のフォルダの
+ * 「会議サマリのひな形（…から変換）」。スクリプトのプロパティ templateConvertedKey に元の ID・更新日時と一緒に覚え、.pptx を更新したら変換し直す）
+ */
+function mtgTemplateSlides_(id) {
   let file;
   try {
     file = DriveApp.getFileById(id);
   } catch (e) {
     throw new Error('ひな形（ID：' + id + '）を開けません。ファイルがあるか、この管理者のアカウントで開けるかを確かめてください（' + e.message + '）。');
   }
-  if (file.getMimeType() !== MimeType.GOOGLE_SLIDES) {
-    throw new Error('ひな形が Google スライドではありません（.pptx のままなど）。ドライブで開いて「ファイル」→「Google スライドとして保存」し、' +
-      'できた Google スライドを setMeetingTemplate() で登録してください。');
+  if (file.getMimeType() === MimeType.GOOGLE_SLIDES) return file;
+  if (!/presentation|powerpoint/i.test(String(file.getMimeType()))) {
+    throw new Error('ひな形（' + file.getName() + '）が Google スライドでも .pptx でもありません。スクリプトのプロパティ ' + MTG_OPTIONS.templateUrlKey + ' の URL を確かめてください。');
   }
-  return file;
+  const o = MTG_OPTIONS;
+  const props = PropertiesService.getScriptProperties();
+  const updated = file.getLastUpdated().getTime();
+  const saved = mtgReadJson_(props, o.templateConvertedKey);
+  if (saved && saved.source === id && saved.updated === updated) {
+    try {
+      const converted = DriveApp.getFileById(saved.id);
+      if (!converted.isTrashed()) return converted;
+    } catch (_) {}
+  }
+  const folder = mtgFolder_(SpreadsheetApp.getActiveSpreadsheet());
+  const response = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + id + '/copy?supportsAllDrives=true&fields=id', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {Authorization: 'Bearer ' + ScriptApp.getOAuthToken()},
+    payload: JSON.stringify({name: '会議サマリのひな形（' + file.getName() + ' から変換）', mimeType: MimeType.GOOGLE_SLIDES, parents: [folder.getId()]}),
+    muteHttpExceptions: true
+  });
+  const code = response.getResponseCode();
+  if (code !== 200) {
+    throw new Error('ひな形（' + file.getName() + '）を Google スライドに変換できませんでした（' + code + '：' + String(response.getContentText()).slice(0, 200) + '）。' +
+      'ドライブで開いて「ファイル」→「Google スライドとして保存」し、できた Google スライドの URL をスクリプトのプロパティ ' + o.templateUrlKey + ' に入れてください。');
+  }
+  const converted = DriveApp.getFileById(JSON.parse(response.getContentText()).id);
+  if (saved && saved.id && saved.id !== converted.getId()) {
+    try { DriveApp.getFileById(saved.id).setTrashed(true); } catch (_) {}   // 前に変換したもの（古い .pptx から）
+  }
+  props.setProperty(o.templateConvertedKey, JSON.stringify({source: id, updated, id: converted.getId()}));
+  console.log('ひな形（' + file.getName() + '）を Google スライドに変換しました：' + converted.getUrl());
+  return converted;
 }
 
 /** 資料のページの幅（pt）。Slides API の pageSize（EMU か PT） */
@@ -4345,7 +4405,7 @@ function mtgExportDeck_(name, slides, folder) {
   let file;
   let deck;
   if (templateId) {
-    file = mtgTemplateCheck_(templateId).makeCopy(name, folder);
+    file = DriveApp.getFileById(templateId).makeCopy(name, folder);
     deck = Slides.Presentations.get(file.getId());
   } else {
     deck = Slides.Presentations.create({title: name, pageSize: {width: mtgPt_(MTG_SLIDE.width), height: mtgPt_(MTG_SLIDE.height)}});

@@ -1588,26 +1588,42 @@ test('Google スライドを残さない（keepSlides: false。今の設定）�
 test('setMeetingTemplate・ひな形：登録した Google スライドをコピーして資料を作る（表紙は決まった文字の置き換え、扉はグレーの絵柄の背景に描く、ほかはページの大きさに合わせて拡大）', () => {
   const {gas, g} = setup();
   gas.get('MTG_OPTIONS').folderId = '';   // 保存先を決めていないとき：スプレッドシートと同じフォルダの中に作る
-  const props = g.PropertiesService.getDocumentProperties();
-  const id = '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
+  const props = g.PropertiesService.getScriptProperties();
+  const id = '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';   // .pptx を変換した Google スライド
   gas.slideTemplates[id] = pptxTemplate();
-  const pptx = '1PptxFileIdAbCdEfGhIjKlMnOpQrStUv';
-  gas.files[pptx] = {mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'};
-  gas.promptAnswers = ['https://docs.google.com/presentation/d/' + pptx + '/edit'];
-  assert.throws(() => g.setMeetingTemplate(), /ひな形が Google スライドではありません（\.pptx のままなど）。ドライブで開いて「ファイル」→「Google スライドとして保存」/);
+  const pptx = '1xnBht3M2bJRMtD3ptzYp1glYyhfXnxJN';
+  gas.files[pptx] = {mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', name: '表紙.pptx', updated: 1000};
   gas.promptAnswers = ['ひな形'];
-  assert.throws(() => g.setMeetingTemplate(), /「ひな形」から Google スライドの ID を読めません/);
-  assert.strictEqual(props.getProperty('MTG_TEMPLATE_ID'), null);
-  gas.promptAnswers = ['https://docs.google.com/presentation/d/' + id + '/edit#slide=id.p'];
+  assert.throws(() => g.setMeetingTemplate(), /「ひな形」から、ひな形のファイルの ID を読めません/);
+  gas.files['1SheetFileIdAbCdEfGhIjKlMnOpQrStUv'] = {mimeType: 'application/vnd.google-apps.spreadsheet', name: '表'};
+  gas.promptAnswers = ['https://docs.google.com/spreadsheets/d/1SheetFileIdAbCdEfGhIjKlMnOpQrStUv/edit'];
+  assert.throws(() => g.setMeetingTemplate(), /ひな形（表）が Google スライドでも \.pptx でもありません/);
+  // .pptx の変換に失敗したら、Google スライドとして保存する手順を案内する
+  gas.fetchStatuses = [403];
+  gas.fetchText = '{"error": "insufficient permissions"}';
+  gas.promptAnswers = ['https://docs.google.com/presentation/d/' + pptx + '/edit?rtpof=true'];
+  assert.throws(() => g.setMeetingTemplate(), /ひな形（表紙\.pptx）を Google スライドに変換できませんでした（403：.*）。ドライブで開いて「ファイル」→「Google スライドとして保存」/);
+  assert.strictEqual(props.getProperty('MTG_TEMPLATE_URL'), null);
+
+  // .pptx の URL（Google スライドで開いたときの ?rtpof=true つき）を、スクリプトのプロパティに入れる。Google スライドに変換して使う
+  gas.fetchText = JSON.stringify({id});
+  gas.promptAnswers = ['https://docs.google.com/presentation/d/' + pptx + '/edit?rtpof=true'];
   g.setMeetingTemplate();
-  assert.strictEqual(props.getProperty('MTG_TEMPLATE_ID'), id);
+  assert.strictEqual(props.getProperty('MTG_TEMPLATE_URL'), 'https://docs.google.com/presentation/d/' + pptx + '/edit?rtpof=true');
+  const convert = gas.fetches[gas.fetches.length - 1];
+  assert.strictEqual(convert.url, 'https://www.googleapis.com/drive/v3/files/' + pptx + '/copy?supportsAllDrives=true&fields=id');
+  assert.deepStrictEqual([convert.params.method, convert.params.headers.Authorization, JSON.parse(convert.params.payload)],
+    ['post', 'Bearer oauth-token', {name: '会議サマリのひな形（表紙.pptx から変換）', mimeType: 'application/vnd.google-apps.presentation', parents: ['folder-1']}]);
+  assert.deepStrictEqual(JSON.parse(props.getProperty('MTG_TEMPLATE_CONVERTED')), {source: pptx, updated: 1000, id});
   assert.match(gas.alerts[gas.alerts.length - 1].message,
-    /ひな形を登録しました（3枚。1枚目を表紙、2枚目を扉（Appendix）、3枚目を統合版（全サブインダストリー）の表紙に使います）/);
+    /ひな形を登録しました（3枚。1枚目を表紙、2枚目を扉（Appendix）、3枚目を統合版（全サブインダストリー）の表紙に使います）。[\s\S]*\.pptx を Google スライドに変換して使います/);
+  const fetched = gas.fetches.length;
 
   gas.layoutPlaceholders = ['SLIDE_NUMBER', 'FOOTER'];   // ひな形の白紙のレイアウトにはページ番号・フッターの枠がある
   gas.promptAnswers = ['1', '10/23'];
   g.createMeetingSummaries();
-  assert.deepStrictEqual(gas.driveCopies.map(cp => [cp.from, cp.folder]), [[id, 'folder-1']], 'ひな形を保存先のフォルダにコピーする');
+  assert.deepStrictEqual(gas.driveCopies.map(cp => [cp.from, cp.folder]), [[id, 'folder-1']], '変換したひな形を保存先のフォルダにコピーする');
+  assert.strictEqual(gas.fetches.length, fetched, '.pptx を更新していなければ、変換し直さない');
   const deck = gas.decks.find(d => d.template === id);
   const r = plain(deck.requests);
   assert.deepStrictEqual(r.filter(q => q.deleteObject && /_ph\d$/.test(q.deleteObject.objectId)).map(q => q.deleteObject.objectId),
@@ -1650,10 +1666,16 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   assert.strictEqual(gas.driveFiles[0].blob.from, deck.id, 'ひな形のコピーを PDF にする');
   assert.deepStrictEqual(gas.slideBackgrounds, [], 'ひな形があれば、表紙・扉はひな形のまま（背景の画像は付けない）');
 
-  // 1枚だけのひな形（前の版）：扉はグレーの絵柄で描く
-  gas.slideTemplates[id] = pptxTemplate(1);
+  // .pptx を更新したら変換し直す（前に変換したものはゴミ箱へ）。1枚だけのひな形なら、扉はグレーの絵柄で描く
+  const id2 = '1ConvertedAgainAbCdEfGhIjKlMnOpQrStUv';
+  gas.slideTemplates[id2] = pptxTemplate(1);
+  gas.files[pptx].updated = 2000;
+  gas.fetchText = JSON.stringify({id: id2});
   gas.promptAnswers = ['1', '10/23'];
   g.createMeetingSummaries();
+  assert.strictEqual(gas.fetches.length, fetched + 1);
+  assert.deepStrictEqual(JSON.parse(props.getProperty('MTG_TEMPLATE_CONVERTED')), {source: pptx, updated: 2000, id: id2});
+  assert.ok(gas.trashed.indexOf(id) >= 0, '前に変換したものはゴミ箱へ');
   const one = gas.decks[gas.decks.length - 1];
   assert.ok(one.requests.some(q => q.createSlide && q.createSlide.objectId === 'mtg_p6'));
   assert.deepStrictEqual(plain(gas.slideBackgrounds.map(b => [b.deck, b.page, b.blob.getName()])), [[one.id, 'mtg_p6', 'meeting-divider.png']]);
@@ -1661,10 +1683,18 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   // 空欄で登録を外すと、ひな形なしで作る
   gas.promptAnswers = [''];
   g.setMeetingTemplate();
-  assert.strictEqual(props.getProperty('MTG_TEMPLATE_ID'), null);
+  assert.strictEqual(props.getProperty('MTG_TEMPLATE_URL'), null);
   gas.promptAnswers = ['1', '10/23'];
   g.createMeetingSummaries();
   assert.strictEqual(gas.driveCopies.length, 2);
+
+  // スクリプトのプロパティに Google スライドの URL を直接入れてもよい（変換しない）。前の版の登録（ドキュメントのプロパティ）は、空のときだけ読む
+  props.setProperty('MTG_TEMPLATE_URL', 'https://docs.google.com/presentation/d/' + id + '/edit');
+  g.PropertiesService.getDocumentProperties().setProperty('MTG_TEMPLATE_ID', id2);
+  assert.strictEqual(g.mtgTemplateId_(), id);
+  props.deleteProperty('MTG_TEMPLATE_URL');
+  assert.strictEqual(g.mtgTemplateId_(), id2);
+  assert.strictEqual(gas.fetches.length, fetched + 1);
 });
 
 /**
@@ -2353,7 +2383,7 @@ test('統合版・ひな形：統合版の表紙はひな形の3枚目（紫）�
   const {gas, g} = setup();
   const id = '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
   gas.slideTemplates[id] = pptxTemplate();
-  g.PropertiesService.getDocumentProperties().setProperty('MTG_TEMPLATE_ID', id);
+  g.PropertiesService.getScriptProperties().setProperty('MTG_TEMPLATE_URL', 'https://docs.google.com/presentation/d/' + id + '/edit');
   const summaries = [summarize(g, '新FMT'), summarize(g, '新FMT2')];
   const slides = g.mtgCombinedSlides_(summaries, '2026/10/23', true);
   g.mtgExportDeck_('統合', slides, g.DriveApp.getFolderById('folder-x'));

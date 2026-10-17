@@ -1053,7 +1053,9 @@ function createGas(options) {
           return {hasNext: () => parents.length > 0, next: () => parents.shift()};
         },
         setTrashed(flag) { if (flag) gas.trashed.push(id); return this; },
-        getName: () => (gas.driveFiles.find(f => f.id === id) || {name: id}).name,
+        getName: () => (gas.driveFiles.find(f => f.id === id) || gas.files[id] || {name: id}).name || id,
+        getLastUpdated: () => new Date((gas.files[id] || {}).updated || 0),
+        isTrashed: () => gas.trashed.indexOf(id) >= 0,
         getMimeType: () => (gas.files[id] || {}).mimeType ||
           (gas.slideTemplates[id] ? 'application/vnd.google-apps.presentation' : 'application/vnd.google-apps.spreadsheet'),
         getUrl: () => (gas.driveFiles.some(f => f.id === id) ? 'https://drive.google.com/file/d/' + id + '/view'

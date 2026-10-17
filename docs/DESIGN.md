@@ -601,7 +601,7 @@ RX Business MTG（パイプライン会議）の **事前資料**（16:9 の Goo
 
 見出しは名詞で短く（「前回から変化のある案件」「期待値上位案件の状況・課題」「停滞案件」「入力内容の確認事項」）。表の見出しは「前回▶今回」「滞留日数」「該当事項」「更新項目」など。
 
-表紙：いただいたひな形（Google スライド。`setMeetingTemplate()` で登録。2026/10/17 の版は3枚：1枚目 緑＝表紙、2枚目 グレー＝扉、3枚目 紫＝統合版の表紙）の
+表紙：いただいたひな形（URL をスクリプトのプロパティ `MTG_TEMPLATE_URL` に入れる。.pptx なら Google スライドに変換して使う（`mtgTemplateSlides_`）。2026/10/17 の版は3枚：1枚目 緑＝表紙、2枚目 グレー＝扉、3枚目 紫＝統合版の表紙）の
 ページをそのまま使い、決まった文字を書き換えます（大きい `XXXXX` → サブインダストリー、小さい `XXXXX` → 会議の名前と「事前資料」（試作は【試作】）、
 `2026年 4月 17日` → 会議日（曜日つき）、`XXXX` → 空）。
 ひな形を登録していなければ、ひな形と同じ絵柄（グラデーションに大きな「RX」）の画像を背景にし、同じ位置に同じ文字を描きます
@@ -661,7 +661,10 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
 #### スライドの作り方
 
 - スライドは Slides API（拡張サービス「Google Slides API」。`appsscript.json` の `enabledAdvancedServices`）で作ります。
-  表紙・扉のひな形が登録してあれば（`mtgTemplateId_()`）、ひな形を保存先のフォルダにコピー（`makeCopy`）して、その中に作ります。
+  表紙・扉のひな形があれば（`mtgTemplateId_()`。`MTG_OPTIONS.templateId`・スクリプトのプロパティ `MTG_TEMPLATE_URL`・前の版のドキュメントのプロパティ `MTG_TEMPLATE_ID` の順）、
+  ひな形を保存先のフォルダにコピー（`makeCopy`）して、その中に作ります。ひな形が .pptx なら、Drive API v3 の `files.copy`（`mimeType` を Google スライドに。
+  `UrlFetchApp` と `ScriptApp.getOAuthToken()`。拡張サービスを足さないため）で保存先のフォルダに変換し、元の ID・更新日時と一緒にスクリプトのプロパティ
+  `MTG_TEMPLATE_CONVERTED` に覚えます（.pptx を更新したら変換し直し、前のものはゴミ箱へ）。
   表紙・扉・統合版の表紙には、ひな形のページ（`MTG_OPTIONS.templatePages`：1・2・3枚目）を使います（`mtgTemplatePlan_`。2回目からは `duplicateObject` で
   複製して `mtg_t{番号}`。使わないページは消す。扉のページが無ければ扉は描き、統合版の表紙のページが無ければ1枚目）。消す・複製するリクエストを先に送り、
   `Presentations.get` で読み直してから、ひな形のページの決まった文字（`MTG_OPTIONS.templateTexts`）を文字の枠ごとに書き換えます（`mtgTemplateTextRequests_`）。
