@@ -13,7 +13,7 @@
  *   使う言葉は docs/DESIGN.md（会議サマリの数え方）で決め、資料の中で同じ意味で使う。
  *
  * 資料の構成（16:9。緑を基調にしたトンマナ：黒の見出し・リード文・緑の見出しの表・区分のラベル・区切り線と出典・ページ番号。
- *   表紙・扉は、いただいたひな形（Google スライド。setMeetingTemplate() で登録。1枚目 緑＝表紙・2枚目 グレー＝扉・3枚目 紫＝統合版の表紙）を
+ *   表紙・扉は、いただいたひな形（Google スライド。URL はスクリプトのプロパティ MTG_TEMPLATE_URL。1枚目 緑＝表紙（統合版も）・2枚目 グレー＝扉）を
  *   そのまま使う。登録が無ければ、ひな形と同じ絵柄（グラデーションに大きな「RX」）の画像をスクリプトで描いて背景にし、同じ位置に文字を描く（mtgCoverPng_）
  *   表紙：会議の名前と「事前資料」・サブインダストリー・会議日・データの時点・期間
  *   1 サマリー：期待値と進行中案件の数・前回以降の動き（案件ごとに1回だけ数える区分の件数と案件）・現在の状態（受注月超過・停滞）
@@ -82,6 +82,7 @@ const MTG_OPTIONS = {
   combined: {
     enabled: true,
     name: '全サブインダストリー',     // 表紙の見出し・ファイル名の {name}・インデックスの列の見出し
+    coverTone: 'cover',               // ひな形が無いときの表紙の色（'cover' 緑・'combined' 紫。MTG_COVER）
     // 会議のフォルダを探す・作るフォルダ（URL か ID。各サブインダストリーの DIFF_RULES の meetingFolder と同じ形）。2026/10 はテストのフォルダ
     meetingFolder: 'https://drive.google.com/drive/folders/1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK',
   },
@@ -125,9 +126,10 @@ const MTG_OPTIONS = {
   templateUrlKey: 'MTG_TEMPLATE_URL',             // スクリプトのプロパティ：ひな形の URL（Google スライドか .pptx）
   templateConvertedKey: 'MTG_TEMPLATE_CONVERTED', // スクリプトのプロパティ：.pptx を変換した Google スライド {source, updated, id}
   templateKey: 'MTG_TEMPLATE_ID',                 // 前の版の登録（ドキュメントのプロパティ。スクリプトのプロパティが空のときだけ読む）
-  // ひな形の何枚目を使うか（2026/10/17 にいただいたひな形：1枚目 緑＝表紙、2枚目 グレー＝扉（Appendix）、3枚目 紫＝統合版の表紙）。
-  // 無いページは、扉なら描き（mtgTemplateFallback_ と、同じ絵柄のグレーの画像）、統合版の表紙なら1枚目を使う
-  templatePages: {cover: 1, divider: 2, combined: 3},
+  // ひな形の何枚目を使うか（2026/10/17 にいただいたひな形：1枚目 緑＝表紙、2枚目 グレー＝扉（Appendix）、3枚目 紫）。
+  // 0 か無いページは、扉なら描き（mtgTemplateFallback_ と、同じ絵柄のグレーの画像）、統合版の表紙なら1枚目（緑）を使う。
+  // 統合版の表紙は緑（1枚目。2026/10/17 から）。紫の3枚目にするときは combined を 3、MTG_OPTIONS.combined.coverTone を 'combined' にする
+  templatePages: {cover: 1, divider: 2, combined: 0},
   // ひな形のページの、置き換える文字。文字の枠ごとに書き換える（見出しとその下の文字が同じ「XXXXX」なので、文字の大きい順・上から順に
   // 見出し → その下の文字に当てる。5文字以上の X は同じとみなす。mtgTemplateTextRequests_）
   templateTexts: {title: 'XXXXX', subtitle: 'XXXXX', date: '2026年 4月 17日', name: 'XXXX'},
@@ -214,7 +216,7 @@ const MTG_OPTIONS = {
     gap: '#F2F2F2', gapLine: '#A6A6A6',   // データなし（作れなかったところ）の塗りと点線の枠
     cover: '#3A7D22',                // 表紙の背景（画像を付けるまで・付けられないとき）
     divider: '#7F7F7F',              // 扉（Appendix）の背景（同じ。扉はグレー）
-    combined: '#7030A0'              // 統合版の表紙の背景（同じ。紫）
+    combined: '#7030A0'              // 紫の表紙の背景（同じ。統合版の表紙を紫にするとき。MTG_OPTIONS.combined.coverTone）
   }
 };
 
@@ -250,7 +252,8 @@ const MTG_TITLES = {
   pipeline: 'パイプラインの変化',
   progress: '前回から変化のある案件',
   focus: '期待値上位案件の状況・課題',
-  overview: '全サブインダストリーの状況',   // 統合版の2枚目
+  contents: '目次',                         // 統合版の2枚目
+  overview: '全サブインダストリーの状況',   // 統合版の3枚目
   appendix: 'Appendix',
   changes: 'Appendix ①　前回から変化のある案件（一覧）',
   stalled: 'Appendix ②　停滞案件（一覧）',
@@ -2619,7 +2622,7 @@ function mtgSlides_(summary, start) {
 }
 
 /**
- * 統合版のスライドの並び：表紙（全サブインダストリー）・全サブインダストリーの状況（mtgOverviewSlide_）のあとに、各サブインダストリーの資料
+ * 統合版のスライドの並び：表紙（全サブインダストリー）・目次（mtgContentsSlide_）・全サブインダストリーの状況（mtgOverviewSlide_）のあとに、各サブインダストリーの資料
  * （mtgSlides_。表紙から Appendix まで。summaries の順）をそのまま続ける。ページ番号・扉の目次のページは資料全体の通し番号にする
  */
 function mtgCombinedSlides_(summaries, meeting, final) {
@@ -2628,7 +2631,7 @@ function mtgCombinedSlides_(summaries, meeting, final) {
   const S = MTG_SLIDE;
   const name = o.combined.name;
   const dummy = summaries.some(s => s.dummy);
-  let page = 2;   // 前に表紙・全サブインダストリーの状況
+  let page = 3;   // 前に表紙・目次・全サブインダストリーの状況
   const sections = summaries.map(s => {
     const slides = mtgSlides_(s, page);
     const section = {summary: s, start: page + 1, slides};
@@ -2640,7 +2643,7 @@ function mtgCombinedSlides_(summaries, meeting, final) {
   const cover = {
     title: MTG_TITLES.cover,
     cover: true,
-    combined: true,   // 統合版の表紙（紫。ひな形の3枚目）
+    combined: true,   // 統合版の表紙（緑。MTG_OPTIONS.combined.coverTone・templatePages.combined）
     template: {title: name, subtitle: o.meetingName + '　事前資料' + (final ? '' : '【試作】'), date: mtgDateLabel_(meeting), name: ''},
     elements: [
       line(350, '収録：' + summaries.map(s => s.name).join('・') + '（' + summaries.length + 'サブインダストリー）'),
@@ -2649,12 +2652,39 @@ function mtgCombinedSlides_(summaries, meeting, final) {
     ]
   };
   const frame = {source: (final ? '' : '【試作】') + (dummy ? '【ダミーデータを含む】' : '') + name + '（' + mtgShortDate_(meeting) + ' 会議資料）　金額の単位：百万円'};
-  const first = mtgNumberSlides_(frame, [cover, mtgOverviewSlide_(sections)]);
+  const first = mtgNumberSlides_(frame, [cover, mtgContentsSlide_(sections), mtgOverviewSlide_(sections)]);
   return first.concat.apply(first, sections.map(x => x.slides));
 }
 
 /**
- * 統合版の2枚目「全サブインダストリーの状況」：サブインダストリーごとの進行中案件・期待値合計・前回比・変化のある案件・停滞・確認事項と、
+ * 統合版の2枚目「目次」：全サブインダストリーの状況と、各サブインダストリーの資料（表紙）の、この資料の中のページ。名前とページは、そのページへのリンク
+ * （部品の link にスライドの番号（0 から）を入れ、mtgExportDeck_ がすべてのスライドを作ったあとにリンクにする）。9件以上なら2列
+ */
+function mtgContentsSlide_(sections) {
+  const c = MTG_OPTIONS.colors;
+  const S = MTG_SLIDE;
+  const entries = [{label: MTG_TITLES.overview, page: 3}].concat(sections.map(x => ({label: x.summary.name, page: x.start})));
+  const cols = entries.length > 8 ? 2 : 1;
+  const per = Math.ceil(entries.length / cols);
+  const gap = 16;
+  const colW = (S.w - gap * (cols - 1)) / cols;
+  const rowH = Math.min(34, Math.floor((S.bottom - S.top) / per));
+  const el = [];
+  entries.forEach((entry, i) => {
+    const x = S.x + Math.floor(i / per) * (colW + gap);
+    const y = S.top + (i % per) * rowH;
+    const h = rowH - 6;
+    const link = entry.page - 1;
+    el.push(mtgBox_(x, y, colW - 56, h, mtgWrap_((i ? i + '.　' : '') + entry.label, colW - 56, 12, 1)[0],
+      {size: 12, bold: true, color: c.ink, fill: c.greenSoft, shape: 'RECTANGLE', link, role: 'toc'}));
+    el.push(mtgBox_(x + colW - 56, y, 56, h, String(entry.page), {size: 12, bold: true, color: c.greenDark, fill: c.greenSoft, shape: 'RECTANGLE',
+      align: 'END', link, role: 'toc'}));
+  });
+  return {title: MTG_TITLES.contents, lead: '名前かページ番号を押すと、そのページに移ります。', elements: el};
+}
+
+/**
+ * 統合版の3枚目「全サブインダストリーの状況」：サブインダストリーごとの進行中案件・期待値合計・前回比・変化のある案件・停滞・確認事項と、
  * その資料の表紙のページ（この資料の中のページ。各資料のサマリーと同じ数え方。作れない値は灰色の「データなし」）。いちばん下に合計（作れたシートの分だけ）。
  * sections = [{summary, start: 始まりのページ}]
  */
@@ -4111,9 +4141,9 @@ function mtgSlideRequests_(slide, pageId, index, options) {
   return requests;
 }
 
-/** 表紙・扉の色（'cover' 表紙＝緑・'divider' 扉＝グレー・'combined' 統合版の表紙＝紫。MTG_COVER・MTG_OPTIONS.colors のキー） */
+/** 表紙・扉の色（'cover' 表紙＝緑・'divider' 扉＝グレー・統合版の表紙は MTG_OPTIONS.combined.coverTone（緑。'combined' なら紫）。MTG_COVER・MTG_OPTIONS.colors のキー） */
 function mtgCoverTone_(slide) {
-  return slide.divider ? 'divider' : slide.combined ? 'combined' : 'cover';
+  return slide.divider ? 'divider' : slide.combined ? MTG_OPTIONS.combined.coverTone || 'cover' : 'cover';
 }
 
 /**
@@ -4206,7 +4236,7 @@ const MTG_COVER = {
   to: '#8CD872',               // 右下の色
   stop: 0.26,
   ink: '#275316',              // RX の色
-  // 扉（Appendix）と統合版の表紙は、いただいたひな形の2枚目（グレー）・3枚目（紫）と同じ色で（from・to・ink・RX の位置を置き換える）。
+  // 扉（Appendix）は、いただいたひな形の2枚目（グレー）と同じ色で。紫（3枚目と同じ）は、統合版の表紙を紫にするとき（from・to・ink・RX の位置を置き換える）。
   // グレー：背景の 50%（#7F7F7F）→ 85%（#D9D9D9）、RX は 65%（#A6A6A6）。紫：#7030A0 → #A02B93、RX は #421C5E で、33pt（960pt の幅で）左
   divider: {from: '#7F7F7F', to: '#D9D9D9', ink: '#A6A6A6'},
   combined: {from: '#7030A0', to: '#A02B93', ink: '#421C5E', shift: -44.3},
@@ -4246,7 +4276,7 @@ const MTG_COVER_CACHE = {cover: null, divider: null, combined: null};
 
 /**
  * MTG_COVER の画像を描いて PNG のバイト列（Uint8Array）にする。RX は輪郭を横の線で塗る（1px を縦に4本・横は面積で数えて、縁をなめらかに）。
- * tone が 'divider' なら扉の色（MTG_COVER.divider。グレー）、'combined' なら統合版の表紙の色（紫。RX の位置も）
+ * tone が 'divider' なら扉の色（MTG_COVER.divider。グレー）、'combined' なら紫（RX の位置も。統合版の表紙を紫にするとき）
  */
 function mtgCoverPng_(tone) {
   const C = Object.assign({}, MTG_COVER, tone === 'divider' || tone === 'combined' ? MTG_COVER[tone] : {});
@@ -4473,7 +4503,7 @@ function mtgTemplateMessage_(slides, sourceId) {
   const use = [[P.cover, '表紙'], [P.divider, '扉（Appendix）'], [P.combined, '統合版（全サブインダストリー）の表紙']]
     .filter(([n]) => n && n <= count).map(([n, label]) => n + '枚目を' + label);
   return 'ひな形を登録しました（' + count + '枚。' + use.join('、') + 'に使います' +
-    (count < P.divider ? '。扉はグレーの絵柄で描きます' : '') + (count < P.combined ? '。統合版の表紙は表紙のページを使います' : '') + '）。次に作る会議サマリから使います。' +
+    (count < P.divider ? '。扉はグレーの絵柄で描きます' : '') + (P.combined && P.combined <= count ? '' : '。統合版の表紙も1枚目を使います') + '）。次に作る会議サマリから使います。' +
     (slides.getId() !== sourceId ? '\n.pptx を Google スライドに変換して使います（.pptx を更新したら、次に作るときに変換し直します）：' + slides.getUrl() : '');
 }
 
@@ -4593,10 +4623,16 @@ function mtgExportDeck_(name, slides, folder) {
     });
     flush();
     const extra = mtgPlaceholderRequests_(Slides.Presentations.get(deck.presentationId, {fields: F.placeholders}), slides.map((slide, i) => 'mtg_p' + (i + 1)));
+    // ページへのリンク（目次）：リンク先のスライドができてから付ける（部品の ID は「mtg_p{ページ}_{部品の番号}」）
+    const pageId = i => plan.pageOf[i] || 'mtg_p' + (i + 1);
+    slides.forEach((slide, i) => slide.elements.forEach((el, n) => {
+      if (el.link == null || !slides[el.link] || el.text == null || el.text === '') return;
+      extra.push({updateTextStyle: {objectId: 'mtg_p' + (i + 1) + '_' + n, textRange: {type: 'ALL'}, style: {link: {pageObjectId: pageId(el.link)}}, fields: 'link'}});
+    }));
     // ひな形のページ（複製は元のページのすぐ次に入る）と足したスライドを、1枚目から順に決まった位置に動かす（前のスライドの位置は決まっているので、順に動かせばそろう）
-    if (templateId) slides.forEach((slide, i) => extra.push({updateSlidesPosition: {slideObjectIds: [plan.pageOf[i] || 'mtg_p' + (i + 1)], insertionIndex: i}}));
+    if (templateId) slides.forEach((slide, i) => extra.push({updateSlidesPosition: {slideObjectIds: [pageId(i)], insertionIndex: i}}));
     if (extra.length) Slides.Presentations.batchUpdate({requests: extra}, deck.presentationId);
-    // ひな形のページを使わない表紙・扉の背景を、いただいたひな形と同じ絵柄（グラデーションと RX）の画像にする（表紙は緑・扉はグレー・統合版の表紙は紫）
+    // ひな形のページを使わない表紙・扉の背景を、いただいたひな形と同じ絵柄（グラデーションと RX）の画像にする（表紙は緑・扉はグレー。mtgCoverTone_）
     mtgCoverBackground_(deck.presentationId, slides.map((slide, i) => ((slide.cover || slide.divider) && !plan.pageOf[i]
       ? {id: 'mtg_p' + (i + 1), tone: mtgCoverTone_(slide)} : null)).filter(Boolean));
     if (!templateId && MTG_OPTIONS.keepSlides) file.moveTo(folder);   // 残さないときは動かさずにゴミ箱へ（呼び出しを減らす）
