@@ -2315,11 +2315,14 @@ test('統合版：createMeetingSummaries() では作らず、すべてのシー�
   assert.strictEqual(combined.title, file + '_全サブインダストリー_RX Business Meeting用資料');
   assert.strictEqual(combined.requests.filter(r => r.createSlide).length, 3 + 10 + 10, '表紙・目次・状況と、2つの資料（10枚ずつ）');
   // 目次のリンク：すべてのスライドを作ったあとに、リンク先のスライドの ID で付ける
-  const links = combined.requests.filter(r => r.updateTextStyle && r.updateTextStyle.fields === 'link').map(r => [r.updateTextStyle.objectId, r.updateTextStyle.style.link.pageObjectId]);
+  const links = combined.requests.filter(r => r.updateTextStyle && r.updateTextStyle.fields === 'link,underline,foregroundColor').map(r => [r.updateTextStyle.objectId, r.updateTextStyle.style.link.pageObjectId]);
   assert.deepStrictEqual(plain(links).map(l => l[1]), ['mtg_p3', 'mtg_p3', 'mtg_p4', 'mtg_p4', 'mtg_p14', 'mtg_p14']);
   assert.ok(plain(links).every(l => /^mtg_p2_\d+$/.test(l[0])), '目次（2枚目）の部品');
+  const linkStyle = combined.requests.find(r => r.updateTextStyle && r.updateTextStyle.style.link).updateTextStyle.style;
+  assert.deepStrictEqual(plain([linkStyle.underline, linkStyle.foregroundColor]), [false, {opaqueColor: {rgbColor: plain(g.mtgRgb_('#1A1A1A'))}}],
+    'リンクにしても、字の色はそのまま・下線なし');
   const lastCreate = combined.requests.map(r => !!r.createSlide).lastIndexOf(true);
-  assert.ok(combined.requests.findIndex(r => r.updateTextStyle && r.updateTextStyle.fields === 'link') > lastCreate, 'リンク先ができてから');
+  assert.ok(combined.requests.findIndex(r => r.updateTextStyle && r.updateTextStyle.fields === 'link,underline,foregroundColor') > lastCreate, 'リンク先ができてから');
   assert.ok(combined.batches.length >= 2, '何枚かずつまとめて送る');
   assert.strictEqual(gas.slideBackgrounds.filter(b => b.deck === combined.id).length, 5, '表紙と、各資料の表紙・扉（ひな形なし）');
   const pdf = gas.driveFiles.find(f => f.name === file + '_全サブインダストリー_RX Business Meeting用資料.pdf');
@@ -2417,7 +2420,7 @@ test('統合版・ひな形：統合版の表紙も各資料の表紙もひな�
     ['全サブインダストリー', '新FMT', '新FMT2', 'Appendix', 'Appendix']);
   assert.deepStrictEqual(gas.slideBackgrounds, [], '表紙・扉はどれもひな形のページ');
   // 目次のリンクは、ひな形のページ（複製）の ID に
-  const links = r.filter(q => q.updateTextStyle && q.updateTextStyle.fields === 'link').map(q => q.updateTextStyle.style.link.pageObjectId);
+  const links = r.filter(q => q.updateTextStyle && q.updateTextStyle.fields === 'link,underline,foregroundColor').map(q => q.updateTextStyle.style.link.pageObjectId);
   assert.deepStrictEqual(links, ['mtg_p3', 'mtg_p3', 'mtg_t' + (covers[1] + 1), 'mtg_t' + (covers[1] + 1), 'mtg_t' + (covers[2] + 1), 'mtg_t' + (covers[2] + 1)]);
   // 統合版は 130ページほどになるので、資料を丸ごと読まない（応答が大きすぎて 413 で失敗した）。どの読み方も項目を絞る
   assert.ok(gas.slidesGets.length >= 3 && gas.slidesGets.every(r => r.fields && /^(presentationId,pageSize,slides\/objectId|slides[(\/])/.test(r.fields)),
@@ -2505,4 +2508,26 @@ test('6分の上限：資料の途中でも区切る（作った資料は作り�
   assert.strictEqual(g.PropertiesService.getScriptProperties().getProperty('MTG_JOB'), null);
   g.showMeetingSummariesResult();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /途中で止まりました：Slides API の失敗\ncreateMeetingSummaries\(\)（試作なら previewMeetingSummaries\(\)）で、作り直してください。/);
+});
+
+test('mtgPdfFitLinks_：PDF のページへのリンクの飛び先「/XYZ null null 0」を、同じ長さの「/Fit」に置き換える（ほかの位置は変えない）。無ければそのまま', () => {
+  const {gas, g} = setup({edits: false});
+  const pdf = '%PDF-1.4\n23\n0\nobj\n[\n<<\n/Type\n/Annot\n/Subtype\n/Link\n/Dest\n[\n25\n0\nR\n/XYZ\nnull\nnull\n0\n]\n>>\n]\nendobj\nxref\n0000000009 00000 n \n\xe3\x81\x82%%EOF';
+  const bytes = Array.from(Buffer.from(pdf, 'latin1'), b => (b > 127 ? b - 256 : b));
+  const blob = {getBytes: () => bytes.slice(), getName: () => '統合.pdf'};
+  const out = g.mtgPdfFitLinks_(blob);
+  const text = Buffer.from(out.getBytes().map(b => b & 255)).toString('latin1');
+  assert.strictEqual(text.length, pdf.length, '長さは同じ');
+  assert.ok(text.indexOf('/Dest\n[\n25\n0\nR\n/Fit            \n]') > 0, JSON.stringify(text));
+  assert.strictEqual(text.replace('/Fit            ', '/XYZ\nnull\nnull\n0'), pdf, 'ほかは変えない（日本語のバイトも）');
+  assert.deepStrictEqual([out.getName(), out.getContentType()], ['統合.pdf', 'application/pdf']);
+  const plainPdf = {getBytes: () => Array.from(Buffer.from('%PDF-1.4\n%%EOF', 'latin1')), getName: () => 'x.pdf'};
+  assert.strictEqual(g.mtgPdfFitLinks_(plainPdf), plainPdf);
+  // 統合版を作るとき（リンクのある資料）だけ置き換える
+  gas.get('MTG_OPTIONS').combined.enabled = true;
+  gas.pdfBytes = bytes;
+  const slides = g.mtgCombinedSlides_([summarize(g, '新FMT'), summarize(g, '新FMT2')], '2026/10/23', true);
+  const file = g.mtgExportDeck_('統合', slides, g.DriveApp.getFolderById('folder-x')).pdf;
+  const saved = gas.driveFiles.find(f => f.id === file.getId()).blob;
+  assert.ok(Buffer.from(saved.getBytes().map(b => b & 255)).toString('latin1').indexOf('/Fit') > 0);
 });

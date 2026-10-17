@@ -1073,7 +1073,7 @@ function createGas(options) {
         /** PDF などに書き出した中身（名前を付けられる入れ物だけ） */
         getAs(mimeType) {
           return {name: '', from: id, setName(n) { this.name = String(n); return this; }, getName() { return this.name; },
-            getContentType: () => mimeType};
+            getContentType: () => mimeType, getBytes: () => (gas.pdfBytes || []).slice()};
         },
         makeCopy(name, folder) {
           const copyId = 'copy-' + (++copySeq);

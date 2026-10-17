@@ -4647,7 +4647,9 @@ function mtgExportDeck_(name, slides, folder) {
     const pageId = i => plan.pageOf[i] || 'mtg_p' + (i + 1);
     slides.forEach((slide, i) => slide.elements.forEach((el, n) => {
       if (el.link == null || !slides[el.link] || el.text == null || el.text === '') return;
-      extra.push({updateTextStyle: {objectId: 'mtg_p' + (i + 1) + '_' + n, textRange: {type: 'ALL'}, style: {link: {pageObjectId: pageId(el.link)}}, fields: 'link'}});
+      // リンクを付けると青の下線になるので、字の色を戻し、下線を付けない
+      extra.push({updateTextStyle: {objectId: 'mtg_p' + (i + 1) + '_' + n, textRange: {type: 'ALL'}, style: {link: {pageObjectId: pageId(el.link)},
+        underline: false, foregroundColor: {opaqueColor: {rgbColor: mtgRgb_(el.color || MTG_OPTIONS.colors.body)}}}, fields: 'link,underline,foregroundColor'}});
     }));
     // ひな形のページ（複製は元のページのすぐ次に入る）と足したスライドを、1枚目から順に決まった位置に動かす（前のスライドの位置は決まっているので、順に動かせばそろう）
     if (templateId) slides.forEach((slide, i) => extra.push({updateSlidesPosition: {slideObjectIds: [pageId(i)], insertionIndex: i}}));
@@ -4656,7 +4658,8 @@ function mtgExportDeck_(name, slides, folder) {
     mtgCoverBackground_(deck.presentationId, slides.map((slide, i) => ((slide.cover || slide.divider) && !plan.pageOf[i]
       ? {id: 'mtg_p' + (i + 1), tone: mtgCoverTone_(slide)} : null)).filter(Boolean));
     if (!templateId && MTG_OPTIONS.keepSlides) file.moveTo(folder);   // 残さないときは動かさずにゴミ箱へ（呼び出しを減らす）
-    const pdf = folder.createFile(file.getAs('application/pdf').setName(name + '.pdf'));
+    const blob = file.getAs('application/pdf').setName(name + '.pdf');
+    const pdf = folder.createFile(slides.some(slide => slide.elements.some(el => el.link != null)) ? mtgPdfFitLinks_(blob) : blob);
     mtgTrashOld_(folder, [name, name + '.pdf'], [file.getId(), pdf.getId()]);
     if (!MTG_OPTIONS.keepSlides) file.setTrashed(true);
     return {pdf, deck: MTG_OPTIONS.keepSlides ? file : null};
@@ -4677,6 +4680,29 @@ const MTG_SLIDES_FIELDS = {
   placeholders: 'slides(objectId,pageElements(objectId,shape/placeholder/type))',
   count: 'slides/objectId'
 };
+
+/**
+ * PDF のページへのリンク（目次）の飛び先を、ページ全体を出す形（/Fit）にする。Google スライドの PDF は「/XYZ null null 0」（縦の位置を変えない）で書き出し、
+ * 見る画面によってはページの頭に移らないため。同じ長さの文字に置き換える（後ろを空白で埋める）ので、ほかの場所（相互参照表の位置）は変わらない。
+ * 置き換えるものが無ければ blob をそのまま返す
+ */
+function mtgPdfFitLinks_(blob) {
+  const bytes = blob.getBytes();
+  let text = '';
+  for (let i = 0; i < bytes.length; i += 8192) text += String.fromCharCode.apply(null, bytes.slice(i, i + 8192).map(b => b & 255));
+  let count = 0;
+  const fixed = text.replace(/\/XYZ\s+null\s+null\s+0(?=[\s\]])/g, m => {
+    count++;
+    return '/Fit' + ' '.repeat(m.length - 4);
+  });
+  if (!count) return blob;
+  const out = new Array(fixed.length);
+  for (let i = 0; i < fixed.length; i++) {
+    const code = fixed.charCodeAt(i);
+    out[i] = code > 127 ? code - 256 : code;
+  }
+  return Utilities.newBlob(out, 'application/pdf', blob.getName());
+}
 
 /**
  * 足したスライド（pageIds）に付いたレイアウトのプレースホルダ（ページ番号・日付・フッターの枠）を消すリクエスト。
