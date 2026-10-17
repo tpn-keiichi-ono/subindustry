@@ -96,6 +96,32 @@ test('addServiceMtgSampleData：リクエスト・タスクのシートの最後
   assert.strictEqual(rowsOf(request, ['ID']).length, 14);
 });
 
+test('addServiceMtgSampleData：タスク管理にシートで足した列（進捗状況・開始日・終了日（予定・実績））にも書く。日付の列は日付で書き、知らない列は知らせる', () => {
+  const {gas, g, task} = setup();
+  const extra = ['進捗状況', '開始日（予定）', '終了日（予定）', '開始日（実績）', '終了日（実績）', '備考'];
+  gas.asUser(() => task.getRange(1, task.getLastColumn() + 1, 1, extra.length).setValues([extra]));
+  g.addServiceMtgSampleData();
+  const rows = rowsOf(task, ['状況', '進捗状況', 'メモ', '備考']);
+  assert.ok(rows.every(r => r[1] && r[2]), '進捗状況・メモはどのタスクにも入る');
+  assert.ok(rows.every(r => r[3] === ''), '知らない列には書かない');
+  assert.match(gas.alerts[gas.alerts.length - 1].message,
+    /タスク 7件（「進捗状況」「開始日（予定）」「終了日（予定）」「開始日（実績）」「終了日（実績）」の列にも）。\n「タスク管理」の「備考」の列には、サンプルを入れていません/);
+  // 日付：予定はどのタスクにも。実績は、完了なら開始・終了、対応中なら開始だけ、未着手は空
+  const headers = headersOf(task);
+  const at = (r, label) => task.getRange(r, headers.indexOf(label) + 1).getValue();
+  for (let r = 2; r <= task.getLastRow(); r++) {
+    const status = at(r, '状況');
+    assert.ok(at(r, '開始日（予定）') instanceof gas.Date && at(r, '終了日（予定）') instanceof gas.Date, r + '行目の予定');
+    assert.strictEqual(at(r, '開始日（実績）') instanceof gas.Date, status !== '未着手', r + '行目の開始日（実績）');
+    assert.strictEqual(at(r, '終了日（実績）') instanceof gas.Date, status === '完了', r + '行目の終了日（実績）');
+    assert.ok(at(r, '開始日（予定）') < at(r, '終了日（予定）'));
+  }
+  // リクエスト：架空の名前の得意先にも営業の列を入れる。判断待ち以外はフィードバックも入る
+  const requests = rowsOf(gas.ss.getSheetByName('リクエスト'), ['判断', 'アカウント責任者部署', 'BX部署', 'BX担当', 'サービス部門からのフィードバック']);
+  assert.ok(requests.every(r => r[1] && r[2] && r[3]));
+  assert.ok(requests.filter(r => r[0] !== '未判断').every(r => r[4]));
+});
+
 test('removeServiceMtgSampleData：【サンプル】の付いたリクエスト・タスクの行だけを消す', () => {
   const {gas, g, request, task} = setup();
   addRequest(gas, request, {'ID': 'SR-0001', '得意先': 'A社', '案件名': 'アプリ刷新', 'リクエスト': '本物のリクエスト'});
@@ -150,10 +176,51 @@ test('smtgCollect_：同じ名前のサービス案のリクエストをまと�
   assert.ok(!data.sample);
 });
 
+/* ---------------- サブインダストリーごと ---------------- */
+
+/** 新FMT2 もリクエストを読むシートにし、新FMT2 だけにある案件（D社）のリクエストを足す（fill のあとに呼ぶ） */
+function secondSheet(gas, request) {
+  gas.get('DIFF_RULES')['新FMT2'].requests = true;
+  const sheet = gas.ss.getSheetByName('新FMT2');
+  gas.asUser(() => sheet.getRange(6, 1, 1, WIDTH).setValues([row({sub: 'ドラッグストア', customer: 'D社', project: '物流改善', status: '提案中',
+    amount: '40', weighted: '20', owner: '伊藤'})]));
+  addRequest(gas, request, {'ID': 'SR-0005', 'サブインダストリー': 'ドラッグストア', '得意先': 'D社', '案件名': '物流改善', 'リクエスト': '在庫を見える化したい',
+    '判断': 'サービス化検討', 'サービス案': '購買分析'});
+}
+
+test('smtgView_：サブインダストリーの資料は、そのシートの案件のリクエストと、それを含むサービス案（タスクはサービス案全体）。全サブインダストリーはすべて', () => {
+  const {gas, g, request, task} = setup();
+  fill(gas, request, task);
+  secondSheet(gas, request);
+  const base = g.smtgRead_(gas.ss, new Date());
+  assert.deepStrictEqual(plain(base.requests.map(r => [r.id, r.sheet])),
+    [['SR-0001', '新FMT'], ['SR-0002', '新FMT'], ['SR-0003', '新FMT'], ['SR-0004', ''], ['SR-0005', '新FMT2']], '案件のあるシート（無ければ空）');
+  const view = name => g.smtgView_(base, name, '2026/10/30');
+  const a = view('新FMT');
+  assert.deepStrictEqual(plain([a.requests.map(r => r.id), a.services.map(s => [s.name, s.requests.length, s.allRequests.length]), a.tasks.map(t => t.task)]),
+    [['SR-0001', 'SR-0002', 'SR-0003'], [['購買分析', 2, 3]], ['指標を試算する', '要件を整理する']]);
+  assert.deepStrictEqual([a.services[0].weighted, plain(a.services[0].subIndustries)], [50, ['食品スーパー', 'ドラッグストア']],
+    '期待値はこの資料のリクエストの分、サブインダストリーはサービス案全体');
+  const b = view('新FMT2');
+  assert.deepStrictEqual(plain([b.requests.map(r => r.id), b.services.map(s => [s.requests.length, s.weighted]), b.tasks.map(t => t.task)]),
+    [['SR-0005'], [[1, 20]], ['指標を試算する', '要件を整理する']], 'タスクはサービス案全体');
+  assert.deepStrictEqual(plain([b.fit.columns, b.fit.rows.map(r => r.counts)]), [['ドラッグストア', '食品スーパー'], [[2, 1]]],
+    '顧客・業界の広がりはサービス案のすべてのリクエスト');
+  const all = view('全サブインダストリー');
+  assert.deepStrictEqual([all.requests.length, all.tasks.length, all.all], [5, 3, true], 'リクエストに結び付かないタスクは全サブインダストリーだけ');
+  // スライド：表紙の見出しと出典の行はサブインダストリー。一覧の件数は、ほかのサブインダストリーの分があれば全体も
+  const slides = plain(g.smtgSlides_(a, '2026/10/30', false));
+  assert.strictEqual(slides[0].template.title, '新FMT');
+  assert.strictEqual(slides[1].elements.find(el => el.role === 'footer').text, '【試作】新FMT（10/30 RX Service MTG 資料）　金額の単位：百万円');
+  assert.strictEqual(slides[2].elements.find(el => el.type === 'table').rows[1].cells[1].text, '2件\n全体3');
+  assert.match(slides.find(sl => sl.title === 'サービス案：購買分析').elements.find(el => el.role === 'lead').text,
+    /^リクエスト 2件（ほかのサブインダストリーに 1件）・得意先 2社、元の案件の期待値 50百万円（進行中 2案件）。$/);
+});
+
 /* ---------------- スライド ---------------- */
 
 test('スライド：紫の表紙（ひな形の3枚目）・サマリー・一覧・広がり・サービス案・判断待ち・扉・Appendix ①〜③。表の見出しは紫、Appendix はグレー。どの部品もページに入る', () => {
-  const {gas, g, request, task} = setup();
+  const {gas, g} = setup();
   g.addServiceMtgSampleData();
   const data = g.smtgCollect_(gas.ss, new Date(), '2026/10/30');
   const slides = plain(g.smtgSlides_(data, '2026/10/30', false));
@@ -165,9 +232,9 @@ test('スライド：紫の表紙（ひな形の3枚目）・サマリー・一�
   assert.strictEqual(titles[divider - 1], '判断待ちのリクエスト');
   assert.deepStrictEqual(Array.from(new Set(titles.slice(divider + 1))),
     ['Appendix ①　リクエスト（一覧）', 'Appendix ②　タスク（一覧）', 'Appendix ③　入力内容の確認事項（一覧）']);
-  // 表紙：紫（service）。ひな形の決まった文字
+  // 表紙：紫（service）。ひな形の決まった文字（全サブインダストリーの資料）
   assert.deepStrictEqual([slides[0].cover, slides[0].service, slides[0].template.title, slides[0].template.subtitle],
-    [true, true, 'サービス案の検討状況', 'RX Service MTG　事前資料【試作】']);
+    [true, true, '全サブインダストリー', 'RX Service MTG　事前資料【試作】']);
   assert.strictEqual(g.mtgCoverTone_(slides[0]), 'combined', '絵柄は紫');
   // 色：本編の表の見出しは紫、Appendix はグレー。判断のラベル（サービス化検討）は Appendix でも紫
   const head = sl => sl.elements.find(el => el.type === 'table').rows[0].cells[0].fill;
@@ -178,7 +245,7 @@ test('スライド：紫の表紙（ひな形の3枚目）・サマリー・一�
   assert.strictEqual(gas.get('MTG_OPTIONS').colors.green, '#70AD47', '作り終えたら会議サマリの色に戻す');
   // 出典の行・ページ番号
   const footer = slides[1].elements.find(el => el.role === 'footer').text;
-  assert.strictEqual(footer, '【試作】【サンプルデータを含む】RX Service MTG（10/30 会議資料）　金額の単位：百万円');
+  assert.strictEqual(footer, '【試作】【サンプルデータを含む】全サブインダストリー（10/30 RX Service MTG 資料）　金額の単位：百万円');
   assert.deepStrictEqual(slides.slice(1).filter(sl => !sl.divider).map(sl => Number(sl.elements.find(el => el.role === 'page').text)),
     slides.map((_, i) => i + 1).slice(1).filter(i => i !== divider + 1));
   // サービス案の一覧のページの列は、そのサービス案のページ
@@ -220,40 +287,54 @@ test('スライド：データが無いときも同じ型（表の見出しの�
 
 /* ---------------- 作る（試作・本番） ---------------- */
 
-test('previewServiceMtgSummary：試作は PDF を保存し（ファイル名に「試作」）、会議日は記録しない', () => {
+test('previewServiceMtgSummaries：空欄ならリクエストのあるサブインダストリーごとと全サブインダストリーの資料を作る（ファイル名に「試作」）。会議日は記録しない', () => {
   const {gas, g, request, task} = setup();
   fill(gas, request, task);
+  secondSheet(gas, request);
+  gas.addSheet('新FMT3', [[''], ['得意先', '案件名', '案件ステータス']]);   // リクエストの無いシート
+  gas.get('DIFF_RULES')['新FMT3'] = {headerRow: 2, ranges: ['A3:C'], requests: true};
   gas.writes.length = 0;
-  gas.promptAnswers = ['10/30'];
-  g.previewServiceMtgSummary();
+  gas.promptAnswers = ['', '10/30'];
+  g.previewServiceMtgSummaries();
+  assert.match(gas.prompts[0].message, /1\. 新FMT（リクエスト 3件）\n2\. 新FMT2（リクエスト 1件）\n3\. 新FMT3（リクエスト 0件）\n4\. 全サブインダストリー（リクエスト 5件）/);
   const year = g.mtgParseDate_('10/30', new Date()).slice(0, 4);
-  assert.deepStrictEqual(gas.decks.map(d => d.title), [year + '1030_RX Service Meeting用資料_試作']);
-  assert.ok(gas.driveFiles.some(f => f.name === year + '1030_RX Service Meeting用資料_試作.pdf'));
+  assert.deepStrictEqual(gas.decks.map(d => d.title), ['新FMT', '新FMT2', '全サブインダストリー'].map(n => year + '1030_' + n + '_RX Service Meeting用資料_試作'));
+  assert.ok(gas.driveFiles.some(f => f.name === year + '1030_新FMT_RX Service Meeting用資料_試作.pdf'));
   const done = gas.alerts[gas.alerts.length - 1];
   assert.strictEqual(done.title, '🟪RXサービスMTG用');
-  assert.match(done.message, /RX Service MTG の事前資料を作りました（試作）：[\s\S]*リクエスト 4件（判断待ち 1件）・サービス案 1件・タスク 3件・確認事項 4件[\s\S]*試作のため、会議日は記録していません。/);
+  assert.match(done.message, /「新FMT」：\d+_新FMT_RX Service Meeting用資料_試作\.pdf（リクエスト 3・判断待ち 0・サービス案 1・確認事項 2。\d+ページ）/);
+  assert.match(done.message, /「全サブインダストリー」：[^\n]*（リクエスト 5・判断待ち 1・サービス案 1・確認事項 4。/);
+  assert.match(done.message, /リクエストが無いため作らなかったサブインダストリー：新FMT3[\s\S]*試作のため、会議日は記録していません。/);
   assert.strictEqual(g.PropertiesService.getDocumentProperties().getProperty('SMTG_MEETINGS'), null);
   assert.strictEqual(gas.ss.getSheetByName('INDEX_会議資料'), null, '試作はインデックスに書かない');
   assert.ok(!gas.writes.some(w => ['リクエスト', 'タスク管理', '新FMT'].indexOf(w.sheet) >= 0), 'シートには書かない');
+
+  // 番号で選ぶ（リクエストの無いシートも、選べば作る）
+  gas.promptAnswers = ['2,3', '10/30'];
+  g.previewServiceMtgSummaries();
+  assert.deepStrictEqual(gas.decks.slice(3).map(d => d.title.replace(/^\d+_/, '')), ['新FMT2_RX Service Meeting用資料_試作', '新FMT3_RX Service Meeting用資料_試作']);
 });
 
-test('createServiceMtgSummary：本番は会議日と判断・状況を記録し、インデックスの「RX Service MTG」の行に書く。次の会議の資料に前回以降の動きと前回比を出す', () => {
+test('createServiceMtgSummaries：本番は会議日と判断・状況・資料ごとの件数を記録し、インデックスの「RX Service MTG」の行に書く。次の会議の資料に前回以降の動きと前回比を出す', () => {
   const {gas, g, request, task} = setup();
   fill(gas, request, task);
   const meeting = g.mtgParseDate_('10/09', new Date());
-  gas.promptAnswers = ['10/09'];
-  g.createServiceMtgSummary();
-  assert.match(gas.alerts[gas.alerts.length - 2].message, /本番の資料を作り、会議日を記録します。[\s\S]*前回の会議：記録なし/);
+  gas.promptAnswers = ['', '10/09'];
+  g.createServiceMtgSummaries();
+  assert.match(gas.alerts[gas.alerts.length - 2].message, /本番の資料を作り、会議日を記録します。[\s\S]*前回の会議：記録なし[\s\S]*作る資料：新FMT・全サブインダストリー（2件）/);
   const props = g.PropertiesService.getDocumentProperties();
   const list = JSON.parse(props.getProperty('SMTG_MEETINGS'));
-  assert.deepStrictEqual(list.map(m => [m.date, m.lastId, m.counts.services]), [[meeting, 4, 1]]);
+  assert.deepStrictEqual(list.map(m => [m.date, m.lastId]), [[meeting, 4]]);
   const detail = JSON.parse(props.getProperty('SMTG_MEETING_' + meeting.replace(/\//g, '')));
   assert.strictEqual(detail.decisions, '1:1,2:1,3:2,4:0');
-  // インデックス：種別 RX Service MTG の行の「全サブインダストリー」の列
+  assert.deepStrictEqual([detail.counts['新FMT'].requests, detail.counts['全サブインダストリー'].requests], [3, 4]);
+  // インデックス：種別 RX Service MTG の行の、サブインダストリー・全サブインダストリーの列
   const index = gas.ss.getSheetByName('INDEX_会議資料');
   const day = d => d.replace(/\/0?/g, '/');
-  assert.deepStrictEqual(plain(index.getRange(1, 1, 2, 3).getDisplayValues()),
-    [['日付', '種別', '全サブインダストリー'], [day(meeting), 'RX Service MTG', meeting.replace(/\//g, '') + '_RX Service Meeting用資料.pdf']]);
+  const ymd = meeting.replace(/\//g, '');
+  assert.deepStrictEqual(plain(index.getRange(1, 1, 2, 4).getDisplayValues()),
+    [['日付', '種別', '全サブインダストリー', '新FMT'],
+      [day(meeting), 'RX Service MTG', ymd + '_全サブインダストリー_RX Service Meeting用資料.pdf', ymd + '_新FMT_RX Service Meeting用資料.pdf']]);
   // 同じ日付でも、RX Business MTG の資料は別の行
   const at = url => ({file: {getUrl: () => url, getName: () => url}});
   g.mtgWriteIndex_('新FMT', meeting, at('business'));
@@ -283,6 +364,46 @@ test('createServiceMtgSummary：本番は会議日と判断・状況を記録し
   // 判断待ちのページ：前回以降に登録したリクエストは ID の下に「新規」
   const pending = slides.find(sl => sl.title === '判断待ちのリクエスト').elements.find(el => el.type === 'table');
   assert.deepStrictEqual(pending.rows.slice(1).map(r => r.cells[0].text), ['SR-0005\n新規']);
+  // サブインダストリーの資料の前回比は、そのサブインダストリーの前回の件数と比べる（SR-0004 は新FMT の案件ではない）
+  const sub = g.smtgCollect_(gas.ss, new Date(), g.mtgParseDate_('11/13', new Date()), '新FMT');
+  const subTiles = plain(g.smtgSlides_(sub, sub.meeting, true))[1].elements.filter(el => el.role === 'tile-value').map(el => el.text);
+  assert.deepStrictEqual(subTiles.slice(0, 2), ['4件　前回比 +1', '1件　前回比 +1']);
+});
+
+/** 資料1つに 150秒かかる時計（mtgNow_ を差し替える） */
+function slowClock(g) {
+  const clock = {t: 0};
+  g.mtgNow_ = () => clock.t;
+  const exportDeck = g.mtgExportDeck_;
+  g.mtgExportDeck_ = function () {
+    clock.t += 150000;
+    return exportDeck.apply(this, arguments);
+  };
+  return clock;
+}
+
+test('6分の上限：資料の途中で区切り、1回きりのトリガーで続ける（作った資料は作り直さない）。本番の会議日は、すべて作ってから記録する', () => {
+  const {gas, g, request, task} = setup();
+  fill(gas, request, task);
+  secondSheet(gas, request);
+  const clock = slowClock(g);
+  gas.promptAnswers = ['', '10/09'];
+  g.createServiceMtgSummaries();
+  assert.deepStrictEqual(gas.decks.map(d => d.title.replace(/^\d+_/, '')), ['新FMT_RX Service Meeting用資料', '新FMT2_RX Service Meeting用資料'],
+    '320秒に収まる2つまで作る');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /ここで区切りました[\s\S]*残りの資料 1件（全サブインダストリー）/);
+  const triggers = () => g.ScriptApp.getProjectTriggers().map(t => t.getHandlerFunction());
+  assert.deepStrictEqual(plain(triggers()), ['continueServiceMtgSummaries']);
+  const props = g.PropertiesService.getDocumentProperties();
+  assert.strictEqual(props.getProperty('SMTG_MEETINGS'), null, 'まだ会議日を記録しない');
+
+  clock.t = 0;
+  g.continueServiceMtgSummaries();
+  assert.deepStrictEqual(gas.decks.map(d => d.title.replace(/^\d+_/, '')).slice(2), ['全サブインダストリー_RX Service Meeting用資料']);
+  assert.deepStrictEqual(plain(triggers()), [], '続きのトリガーは消す');
+  assert.strictEqual(JSON.parse(props.getProperty('SMTG_MEETINGS')).length, 1);
+  g.showServiceMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /に終わりました。[\s\S]*「新FMT」：[\s\S]*「新FMT2」：[\s\S]*「全サブインダストリー」：[\s\S]*会議日（\d{4}\/10\/09）を記録しました。/);
 });
 
 test('ひな形：RX Service MTG の表紙はひな形の3枚目（紫）を使い、1枚目（緑）は使わない。3枚目が無ければ紫の絵柄で描く', () => {
@@ -293,16 +414,16 @@ test('ひな形：RX Service MTG の表紙はひな形の3枚目（紫）を使�
   const id = '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
   gas.slideTemplates[id] = {pageSize: {width: {magnitude: 12192000, unit: 'EMU'}}, slides: ['g_cover', 'g_divider', 'g_purple'].map(page)};
   g.PropertiesService.getScriptProperties().setProperty('MTG_TEMPLATE_URL', 'https://docs.google.com/presentation/d/' + id + '/edit');
-  gas.promptAnswers = ['10/30'];
-  g.previewServiceMtgSummary();
+  gas.promptAnswers = ['1', '10/30'];
+  g.previewServiceMtgSummaries();
   const r = plain(gas.decks[gas.decks.length - 1].requests);
   assert.deepStrictEqual(r.filter(q => q.deleteObject && /^g_/.test(q.deleteObject.objectId)).map(q => q.deleteObject.objectId), ['g_cover'], '緑の表紙は使わない');
-  assert.deepStrictEqual(r.filter(q => q.insertText && q.insertText.objectId === 'g_purple_title').map(q => q.insertText.text), ['サービス案の検討状況']);
+  assert.deepStrictEqual(r.filter(q => q.insertText && q.insertText.objectId === 'g_purple_title').map(q => q.insertText.text), ['新FMT']);
   assert.deepStrictEqual(gas.slideBackgrounds, [], '表紙・扉はどちらもひな形のページ');
 
   // 2枚しかないひな形：表紙は紫の絵柄の画像を背景に描く（緑の1枚目は使わない）
   gas.slideTemplates[id] = {pageSize: {width: {magnitude: 12192000, unit: 'EMU'}}, slides: ['g_cover', 'g_divider'].map(page)};
-  gas.promptAnswers = ['10/30'];
-  g.previewServiceMtgSummary();
+  gas.promptAnswers = ['1', '10/30'];
+  g.previewServiceMtgSummaries();
   assert.deepStrictEqual(gas.slideBackgrounds.map(b => b.page), ['mtg_p1']);
 });

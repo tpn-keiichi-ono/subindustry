@@ -6,7 +6,9 @@
  * - RX Service MTG（サービス改善。月1回・第二週の金曜 9:00〜9:30）の事前資料。会議の目的（顧客課題と提供価値の仮説をすり合わせ、
  *   提案・実行のシナリオを具体化する）と議題（シナリオの有効性検証・顧客・業界との適合・マネタイズの検討・サービスの磨き込み）に向けて、
  *   サービス案ごとの状況を事前に共有する。
- * - 資料はサブインダストリーごとに分けず、1つにする（サービス案は複数のサブインダストリーのリクエストから生まれるため）。
+ * - 資料はサブインダストリー（リクエストを読むシート）ごとに作る（2026/10/17 から。RX Business MTG と同じ）。そのサブインダストリーのリクエストと、
+ *   それを含むサービス案を載せる（サービス案のタスク・サブインダストリーの広がりは、サービス案全体）。すべてのリクエストをまとめた資料
+ *   （全サブインダストリー。MTG_OPTIONS.combined.name）も作れる。
  * - RX Business MTG の資料と同じく、シートから分かる事実だけを書く（サービス案の良し悪し・決めてほしいことなどの判断は書かない）。
  *
  * 資料の構成（RX Business MTG の資料と同じ形・同じ部品（MeetingSummary.gs の mtg*）で、色を紫（SMTG_OPTIONS.colors）にする）
@@ -23,24 +25,25 @@
  * - サービスリクエスト（SVC_OPTIONS.requestSheet）：登録したリクエスト。「サービス案」に同じ名前を入れたリクエストを1つのサービス案にまとめる
  *   （判断が「棄却」のリクエストは、サービス案に数えない）
  * - サービス案タスク管理（TASK_OPTIONS.sheet）：「サービス案」（「SR-0001 …」）の ID で、リクエスト → サービス案に結び付ける
- * - リクエストを読むシート（DIFF_RULES の requests: true）：得意先＋案件名の案件のステータス・期待値（案件全体の値。サービスの売上ではない）
+ * - リクエストを読むシート（DIFF_RULES の requests: true）：得意先＋案件名の案件のステータス・期待値（案件全体の値。サービスの売上ではない）。
+ *   リクエストがどのサブインダストリーのものかは、案件のあるシート（案件が無ければ、リクエストの「サブインダストリー」と同じ名前のシート）で決める
  *
  * 仕組み
- * - 管理者がエディタで createServiceMtgSummary() を実行し、会議日を入力する（試すときは previewServiceMtgSummary()。会議日は記録しない）。
- *   Google スライドで作り、PDF を会議サマリの保存先（MTG_OPTIONS.folderId）に保存する。配る（共有する）のは手動。
- * - 本番は、会議日とその時点のリクエストの判断・タスクの状況をドキュメントのプロパティ（SMTG_OPTIONS.meetingsKey）に残し、
+ * - 管理者がエディタで createServiceMtgSummaries() を実行し、作るサブインダストリーと会議日を入力する（試すときは previewServiceMtgSummaries()。
+ *   会議日は記録しない）。Google スライドで作り、PDF を会議サマリの保存先（MTG_OPTIONS.folderId）に保存する。配る（共有する）のは手動。
+ *   1回の実行の6分に収まらなければ区切り、1回きりのトリガー（continueServiceMtgSummaries）で続ける（結果は showServiceMtgSummariesResult()）。
+ * - 本番は、会議日とその時点のリクエストの判断・タスクの状況・サブインダストリーごとの件数をドキュメントのプロパティ（SMTG_OPTIONS.meetingsKey）に残し、
  *   次の会議の資料に「前回以降の動き」（新規リクエスト・判断の変更・完了したタスク・新しいタスク）と前回比を出す。
- *   本番の PDF は会議資料のインデックス（MTG_OPTIONS.index.sheet）の、種別が SMTG_OPTIONS.index.kind の行の「全サブインダストリー」の列に書く。
+ *   本番の PDF は会議資料のインデックス（MTG_OPTIONS.index.sheet）の、種別が SMTG_OPTIONS.index.kind の行の、そのサブインダストリーの列に書く。
  * - データが無いうちは、サンプルデータ.gs の addServiceMtgSampleData() でサンプルのリクエスト・タスクを入れて試す
  *   （removeServiceMtgSampleData() で消す。サンプルを含む資料には【サンプルデータを含む】と出す）。
  */
 
 const SMTG_OPTIONS = {
   meetingName: 'RX Service MTG',          // 表紙・出典の行に出す会議の名前
-  title: 'サービス案の検討状況',            // 表紙の見出し
-  // ファイル名（スライド・PDF）。{date} は会議日（yyyyMMdd）。試作は末尾に「_試作」
-  fileName: '{date}_RX Service Meeting用資料',
-  // 会議の記録（ドキュメントのプロパティ）：会議日の一覧と、会議日ごとのリクエストの判断・タスクの状況（後ろに yyyyMMdd）
+  // ファイル名（スライド・PDF）。{date} は会議日（yyyyMMdd）、{name} はサブインダストリー（全体は MTG_OPTIONS.combined.name）。試作は末尾に「_試作」
+  fileName: '{date}_{name}_RX Service Meeting用資料',
+  // 会議の記録（ドキュメントのプロパティ）：会議日の一覧と、会議日ごとのリクエストの判断・タスクの状況・件数（後ろに yyyyMMdd）
   meetingsKey: 'SMTG_MEETINGS',
   meetingDetailPrefix: 'SMTG_MEETING_',
   keepMeetings: 24,
@@ -48,8 +51,12 @@ const SMTG_OPTIONS = {
   // 会議のフォルダへの格納（本番だけ）：このフォルダ（URL か ID）の中の「yyMMdd_第N回会議」（MTG_OPTIONS.meetingFolderDate・meetingFolderName）に
   // PDF を移す。空なら格納しない（会議サマリの保存先に残す）。RX Business MTG とは別のフォルダにする（第N回の数え方が混ざるため）
   meetingFolder: '',
-  // 会議資料のインデックス（MTG_OPTIONS.index）の種別の列に書く値（その行の「全サブインダストリー」の列に PDF を書く）
+  // 会議資料のインデックス（MTG_OPTIONS.index）の種別の列に書く値（その行の、サブインダストリー・全サブインダストリーの列に PDF を書く）
   index: {kind: 'RX Service MTG'},
+  // Apps Script の1回の実行は6分まで。作り始めてから limitMs を過ぎそうなら区切り、continueAfterMs あとに続ける（トリガー handler。1回きり）。
+  // 見積もり：readMs シートを読む・deckMs 資料1つ・storeMs 格納とインデックス1つ
+  run: {limitMs: 320000, readMs: 20000, deckMs: 40000, storeMs: 10000, continueAfterMs: 60000,
+    handler: 'continueServiceMtgSummaries', jobKey: 'SMTG_JOB', resultKey: 'SMTG_JOB_RESULT'},
   // 議題と、それを話すときに見るページ（サマリーの「議題と資料のページ」。pages は SMTG_TITLES のキー）
   agenda: [
     // note は改行で行を分けられる（2行まで）
@@ -86,36 +93,75 @@ const SMTG_CHECKS = ['サービス案未設定', '判断とサービス案の不
 
 /* ---------------- エディタから実行する ---------------- */
 
-/** RX Service MTG の事前資料（Google スライドと PDF）を作る（今回の会議日を聞く）。会議日とその時点の状況を記録し、次の資料は今からの変化を出す。 */
-function createServiceMtgSummary() {
+/**
+ * RX Service MTG の事前資料（Google スライドと PDF）を作る（作るサブインダストリーと今回の会議日を聞く）。
+ * 会議日とその時点の状況を記録し、次の資料は今からの変化を出す。
+ */
+function createServiceMtgSummaries() {
   smtgRun_(true);
 }
 
 /** 試しに RX Service MTG の事前資料を作る（保存するが、会議日は記録しない。ファイル名に「試作」が付く）。 */
-function previewServiceMtgSummary() {
+function previewServiceMtgSummaries() {
   smtgRun_(false);
 }
 
 function smtgRun_(final) {
+  const started = mtgNow_();   // 6分の上限は、実行を始めたときから（入力の画面の時間も含む）
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = mtgUi_();
   mtgRequireSlides_();
+  if (!smtgJobStartCheck_(ui)) return;
   const now = new Date();
-  const meeting = smtgAskMeeting_(ui, now, final);
+  const base = smtgRead_(ss, now);
+  const names = smtgAskNames_(ui, base, final);
+  if (!names) return;
+  const meeting = smtgAskMeeting_(ui, now);
   if (!meeting) return;
-  const data = smtgCollect_(ss, now, meeting);
-  if (final && !smtgConfirmFinal_(ui, data, meeting)) return;
-  const result = smtgCreate_(ss, data, meeting, final);
-  const message = smtgMessage_(data, result, meeting, final);
+  if (final && !smtgConfirmFinal_(ui, base, names, meeting)) return;
+  const job = {final, meeting, now: now.getTime(), names: names.names, skipped: names.skipped, items: [], recorded: false, folderUrl: ''};
+  const done = smtgJobRun_(ss, job, started, base);
+  const message = smtgJobMessage_(job, done);
   console.log(message);
   ui.alert(SVC_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
 }
 
-/** 今回の会議日を聞く（「10/30」「2026/10/30」）。「yyyy/MM/dd」を返す。やめたら null。 */
-function smtgAskMeeting_(ui, now, final) {
-  const last = smtgMeetings_().pop();
+/** リクエストを読むシート（サブインダストリー）ごとのリクエストの件数 [{name, count}]（DIFF_RULES の順） */
+function smtgSheetCounts_(base) {
+  return base.sources.map(name => ({name, count: base.requests.filter(r => r.sheet === name).length}));
+}
+
+/**
+ * 作る資料を聞く（サブインダストリーの番号。「1,3」のように複数も。最後の番号は全サブインダストリー）。
+ * 空欄なら、リクエストのあるサブインダストリーすべてと全サブインダストリー（リクエストの無いサブインダストリーは作らずに skipped に）。
+ * {names, skipped}。やめたら null
+ */
+function smtgAskNames_(ui, base, final) {
+  const all = MTG_OPTIONS.combined.name;
+  const sheets = smtgSheetCounts_(base);
+  const choices = sheets.concat([{name: all, count: base.requests.length}]);
   const response = ui.prompt(SVC_OPTIONS.menuTitle,
     SMTG_OPTIONS.meetingName + ' の事前資料を' + (final ? '作ります。' : '試しに作ります（会議日は記録しません）。') + '\n' +
+    '作るサブインダストリーの番号を入力してください（空欄なら、リクエストのあるサブインダストリーすべてと' + all + '。複数は「1,3」のように）。\n\n' +
+    choices.map((c, i) => (i + 1) + '. ' + c.name + '（リクエスト ' + c.count + '件）').join('\n'), ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return null;
+  const text = credNormalize_(response.getResponseText());
+  if (!text) {
+    return {names: sheets.filter(c => c.count).map(c => c.name).concat([all]), skipped: sheets.filter(c => !c.count).map(c => c.name)};
+  }
+  const picked = [];
+  text.split(/[,、・]/).filter(Boolean).forEach(part => {
+    const index = Number(part) - 1;
+    if (!(index >= 0 && index < choices.length)) throw new Error('「' + part + '」に当たる番号がありません。1〜' + choices.length + ' の番号で入力してください。');
+    if (picked.indexOf(choices[index].name) < 0) picked.push(choices[index].name);
+  });
+  return {names: picked, skipped: []};
+}
+
+/** 今回の会議日を聞く（「10/30」「2026/10/30」）。「yyyy/MM/dd」を返す。やめたら null。 */
+function smtgAskMeeting_(ui, now) {
+  const last = smtgMeetings_().pop();
+  const response = ui.prompt(SVC_OPTIONS.menuTitle,
     '今回の会議日を入力してください（例：10/30）。前回の会議（今回より前で、いちばん新しい会議日）の資料を作った時点からの変化を出します。\n\n' +
     '記録してある最後の会議日：' + (last ? last.date : '記録なし'), ui.ButtonSet.OK_CANCEL);
   if (response.getSelectedButton() !== ui.Button.OK) return null;
@@ -126,69 +172,190 @@ function smtgAskMeeting_(ui, now, final) {
   return date;
 }
 
-/** 本番：会議日（曜日）・前回の会議・数・サンプルの有無を出して確かめる。はいのときだけ true */
-function smtgConfirmFinal_(ui, data, meeting) {
-  const k = data.kpi;
-  const prev = data.previous;
+/** 本番：会議日（曜日）・前回の会議・作る資料・サンプルの有無を出して確かめる。はいのときだけ true */
+function smtgConfirmFinal_(ui, base, names, meeting) {
+  const prev = smtgPrevious_(base.list, meeting);
   const answer = ui.alert(SVC_OPTIONS.menuTitle,
     '本番の資料を作り、会議日を記録します。\n\n会議日：' + mtgDateLabel_(meeting) + '\n' +
     '前回の会議：' + (prev ? mtgDateLabel_(prev.date) + '（その時点からの変化を出します）' : '記録なし（前回からの変化は出しません）') + '\n' +
-    'リクエスト ' + k.requests + '件・サービス案 ' + k.services + '件・タスク ' + k.tasks + '件' +
-    (data.sample ? '\n\n※ サンプルデータ（' + SMP_OPTIONS.namePrefix + '）が入っています。資料に【サンプルデータを含む】と出ます。' +
+    '作る資料：' + names.names.join('・') + '（' + names.names.length + '件）' +
+    (names.skipped.length ? '\nリクエストが無いため作らない：' + names.skipped.join('・') : '') +
+    (base.sample ? '\n\n※ サンプルデータ（' + SMP_OPTIONS.namePrefix + '）が入っています。資料に【サンプルデータを含む】と出ます。' +
       '配る資料なら、先に removeServiceMtgSampleData() で消してください。' : '') +
-    (data.list.some(m => m.date === meeting) ? '\n\n※ この会議日の資料は作成済みです。作り直すと、次の会議の起点が今になります。' : '') +
+    (base.list.some(m => m.date === meeting) ? '\n\n※ この会議日の資料は作成済みです。作り直すと、次の会議の起点が今になります。' : '') +
     '\n\n記録した会議日は、次の会議の資料の起点になります。配布したあとは作り直さないでください。\n作成してよろしいですか？', ui.ButtonSet.YES_NO);
   return answer === ui.Button.YES;
 }
 
+/* ---------------- 作る仕事（6分の上限に掛からないよう、区切って続ける） ---------------- */
+
 /**
- * 資料を作って保存する。本番なら会議日を記録し、会議のフォルダ（SMTG_OPTIONS.meetingFolder）に格納し、インデックスに書く。
- * {pdf, folder, slides: ページの数, stored: 格納した先 {folder}, storeError, index: mtgWriteIndex_ の結果}
+ * 資料を作る仕事を、時間の許す限り進める。job = {final, meeting, now: 作り始めた時刻（ms）, names: 作る資料（サブインダストリー・全サブインダストリー）,
+ * skipped: リクエストが無いため作らないサブインダストリー, items: 作った資料 [{name, line}], recorded: 会議日を記録したか, folderUrl}。
+ * 資料を1つずつ作り（本番は格納とインデックスも）、すべて作ったら本番は会議日を記録する。base は読んだシート（無ければ読む）。
+ * 次の資料が SMTG_OPTIONS.run の見積もりで上限を越えそうなら、仕事を保存して続きを予約し、false を返す。全部済んだら true
  */
-function smtgCreate_(ss, data, meeting, final) {
-  const slides = smtgSlides_(data, meeting, final);
+function smtgJobRun_(ss, job, started, base) {
+  const R = SMTG_OPTIONS.run;
+  const fits = ms => mtgNow_() - started + ms <= R.limitMs;
   const folder = mtgFolder_(ss);
-  const name = smtgFileName_(meeting, final);
-  const out = smtgWithPalette_(() => mtgExportDeck_(name, slides, folder));
-  const result = {pdf: out.pdf, folder, slides: slides.length, stored: null, storeError: '', index: null};
-  if (!final) return result;
-  smtgRecordMeeting_(data, meeting);
-  let stored = {file: out.pdf, folder};
-  if (SMTG_OPTIONS.meetingFolder) {
-    const moved = mtgStoreToMeetingFolder_(SMTG_OPTIONS.meetingName, meeting, out.pdf,
-      {value: SMTG_OPTIONS.meetingFolder, where: 'ServiceMeeting.gs の SMTG_OPTIONS.meetingFolder'});
-    if (moved.error) result.storeError = moved.error;
-    else stored = result.stored = moved;
+  job.folderUrl = folder.getUrl();
+  const now = new Date(job.now);
+  let data = base || null;
+  let made = 0;   // この実行で作った資料の数（1つ目は見積もりにかかわらず作る。止まらずに進むように）
+  while (job.items.length < job.names.length) {
+    const need = (data ? 0 : R.readMs) + R.deckMs + (job.final ? R.storeMs : 0);
+    if (made && !fits(need)) return smtgJobPause_(job);
+    if (!data) data = smtgRead_(ss, now);
+    job.sample = job.sample || data.sample;
+    job.items.push(smtgCreateOne_(data, job, job.names[job.items.length], folder));
+    made++;
   }
-  result.index = mtgWriteIndex_(MTG_OPTIONS.combined.name, meeting, stored, SMTG_OPTIONS.index.kind);
-  return result;
+  if (job.final && !job.recorded) {
+    smtgRecordMeeting_(data || smtgRead_(ss, now), job.meeting);
+    job.recorded = true;
+  }
+  return true;
 }
 
-/** 終わりの知らせ */
-function smtgMessage_(data, result, meeting, final) {
+/**
+ * 1つの資料（name：サブインダストリーか全サブインダストリー）を作って保存する。本番は会議のフォルダ（SMTG_OPTIONS.meetingFolder）に格納し、
+ * インデックスの種別「RX Service MTG」の行の name の列に書く。戻り値 {name, line: 知らせる文}
+ */
+function smtgCreateOne_(base, job, name, folder) {
+  const data = smtgView_(base, name, job.meeting);
+  const slides = smtgSlides_(data, job.meeting, job.final);
+  const out = smtgWithPalette_(() => mtgExportDeck_(smtgFileName_(job.meeting, name, job.final), slides, folder));
   const k = data.kpi;
-  const lines = [SMTG_OPTIONS.meetingName + ' の事前資料を作りました' + (final ? '' : '（試作）') + '：' + result.pdf.getName(),
-    '　' + result.pdf.getUrl(),
-    'リクエスト ' + k.requests + '件（判断待ち ' + k.undecided + '件）・サービス案 ' + k.services + '件・タスク ' + k.tasks + '件・確認事項 ' +
-      data.checks.length + '件（' + result.slides + 'ページ）'];
-  if (data.sample) {
-    lines.push('', '※ サンプルデータ（' + SMP_OPTIONS.namePrefix + '）を含みます。配る資料なら、removeServiceMtgSampleData() で消してから作り直してください。');
+  const lines = ['「' + name + '」：' + out.pdf.getName() + '（リクエスト ' + k.requests + '・判断待ち ' + k.undecided + '・サービス案 ' + k.services +
+    '・確認事項 ' + data.checks.length + '。' + slides.length + 'ページ）', '　' + out.pdf.getUrl()];
+  if (!job.final) return {name, line: lines.join('\n')};
+  let stored = {file: out.pdf, folder};
+  if (SMTG_OPTIONS.meetingFolder) {
+    const moved = mtgStoreToMeetingFolder_(SMTG_OPTIONS.meetingName, job.meeting, out.pdf,
+      {value: SMTG_OPTIONS.meetingFolder, where: 'ServiceMeeting.gs の SMTG_OPTIONS.meetingFolder'});
+    if (moved.error) lines.push('　会議のフォルダに格納できませんでした（' + moved.error + '）。PDF は保存先に残しています。');
+    else {
+      stored = moved;
+      lines.push('　会議のフォルダ「' + moved.folder.getName() + '」に格納しました。');
+    }
   }
-  lines.push('', '保存先：' + result.folder.getUrl());
-  if (result.stored) lines.push('会議のフォルダ「' + result.stored.folder.getName() + '」に格納しました：' + result.stored.folder.getUrl());
-  if (result.storeError) lines.push('会議のフォルダに格納できませんでした（' + result.storeError + '）。PDF は保存先に残しています。');
-  if (result.index && result.index.error) lines.push(result.index.error);
-  else if (result.index) lines.push('「' + result.index.title + '」シートの「' + SMTG_OPTIONS.index.kind + '」の行に、資料のファイルを書きました：' + result.index.url);
-  lines.push(final
-    ? '会議日（' + meeting + '）を記録しました。次の会議の資料は、今からの変化（新規リクエスト・判断の変更・タスクの完了など）を出します。' +
+  const index = mtgWriteIndex_(name, job.meeting, stored, SMTG_OPTIONS.index.kind);
+  lines.push('　' + (index.error || '「' + index.title + '」シートの「' + SMTG_OPTIONS.index.kind + '」の行に書きました。'));
+  return {name, line: lines.join('\n')};
+}
+
+/** 終わり（区切ったとき）の知らせ */
+function smtgJobMessage_(job, done) {
+  const lines = job.items.map(item => item.line);
+  if (!done) {
+    const rest = job.names.slice(job.items.length);
+    return ['時間がかかるため、ここで区切りました（Apps Script の1回の実行は6分まで）。残りの資料 ' + rest.length + '件（' + rest.join('・') + '）は、約' +
+      Math.round(SMTG_OPTIONS.run.continueAfterMs / 60000) + '分後に自動で続けます。',
+    '続きが終わったら、エディタで showServiceMtgSummariesResult() を実行すると結果が出ます（実行ログにも出ます）。終わるまで、RX Service MTG の資料の関数は実行しないでください。',
+    ''].concat(lines, ['', '保存先：' + job.folderUrl]).join('\n');
+  }
+  if (job.skipped && job.skipped.length) lines.push('', 'リクエストが無いため作らなかったサブインダストリー：' + job.skipped.join('・'));
+  if (job.sample) lines.push('', '※ サンプルデータ（' + SMP_OPTIONS.namePrefix + '）を含みます。配る資料なら、removeServiceMtgSampleData() で消してから作り直してください。');
+  lines.push('', '保存先：' + job.folderUrl);
+  lines.push(job.final
+    ? '会議日（' + job.meeting + '）を記録しました。次の会議の資料は、今からの変化（新規リクエスト・判断の変更・タスクの完了など）を出します。' +
       '配るときは、PDF を参加者に共有してください（保存先のフォルダは共有しない）。'
     : '試作のため、会議日は記録していません。');
   return lines.join('\n');
 }
 
-/** ファイル名（20261030_RX Service Meeting用資料。試作は「_試作」つき） */
-function smtgFileName_(meeting, final) {
-  return SMTG_OPTIONS.fileName.replace('{date}', meeting.replace(/\//g, '')) + (final ? '' : '_試作');
+/** 仕事を保存し（スクリプトのプロパティ）、続きのトリガーを1つだけ作る。false を返す */
+function smtgJobPause_(job) {
+  const R = SMTG_OPTIONS.run;
+  PropertiesService.getScriptProperties().setProperty(R.jobKey, JSON.stringify(Object.assign({}, job, {savedAt: Date.now()})));
+  smtgJobDeleteTriggers_();
+  ScriptApp.newTrigger(R.handler).timeBased().after(R.continueAfterMs).create();
+  console.log('RX Service MTG の資料：時間がかかるため区切りました（資料 ' + job.items.length + '/' + job.names.length + '）。続きを予約しました。');
+  return false;
+}
+
+/** 保存した仕事（無ければ null） */
+function smtgJobLoad_() {
+  return mtgReadJson_(PropertiesService.getScriptProperties(), SMTG_OPTIONS.run.jobKey);
+}
+
+function smtgJobClear_() {
+  PropertiesService.getScriptProperties().deleteProperty(SMTG_OPTIONS.run.jobKey);
+}
+
+function smtgJobDeleteTriggers_() {
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === SMTG_OPTIONS.run.handler).forEach(t => ScriptApp.deleteTrigger(t));
+}
+
+/** 結果の知らせを保存する（スクリプトのプロパティ。2,000文字ずつ分ける） */
+function smtgJobSaveResult_(message) {
+  const R = SMTG_OPTIONS.run;
+  const props = PropertiesService.getScriptProperties();
+  props.getKeys().filter(key => key.indexOf(R.resultKey + '_') === 0).forEach(key => props.deleteProperty(key));
+  const text = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm') + ' に終わりました。\n\n' + message;
+  for (let i = 0; i * 2000 < text.length; i++) props.setProperty(R.resultKey + '_' + i, text.slice(i * 2000, (i + 1) * 2000));
+}
+
+/**
+ * 区切った RX Service MTG の資料の続き（時間主導のトリガーから。1回きり）。保存した仕事を続け、まだ残れば、また区切って次を予約する。
+ * 終わったら（止まったら）知らせを保存する（showServiceMtgSummariesResult() で出す。実行ログにも出す）
+ */
+function continueServiceMtgSummaries() {
+  const started = mtgNow_();
+  smtgJobDeleteTriggers_();
+  const job = smtgJobLoad_();
+  if (!job) return;
+  let message;
+  try {
+    if (!smtgJobRun_(SpreadsheetApp.getActiveSpreadsheet(), job, started, null)) return;   // また区切った（次を予約した）
+    message = smtgJobMessage_(job, true);
+  } catch (error) {
+    console.error(error && error.stack || error);
+    message = '途中で止まりました：' + (error && error.message || error) +
+      '\ncreateServiceMtgSummaries()（試作なら previewServiceMtgSummaries()）で、作り直してください。\n\n' + smtgJobMessage_(job, true);
+  }
+  smtgJobClear_();
+  smtgJobSaveResult_(message);
+  console.log(message);
+}
+
+/** 自動で続けた RX Service MTG の資料の結果・進み具合を出す（エディタから実行） */
+function showServiceMtgSummariesResult() {
+  const R = SMTG_OPTIONS.run;
+  const ui = mtgUi_();
+  const job = smtgJobLoad_();
+  let message;
+  if (job) {
+    const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === R.handler).length;
+    message = 'RX Service MTG の資料を作っている途中です（会議日 ' + job.meeting + '。資料 ' + job.items.length + '/' + job.names.length + '件）。' +
+      (triggers ? '自動で続けています。少し待ってから、もう一度実行してください。'
+        : '続きの予約がありません。createServiceMtgSummaries()（試作なら previewServiceMtgSummaries()）で作り直してください。');
+  } else {
+    const props = PropertiesService.getScriptProperties();
+    const keys = props.getKeys().filter(key => key.indexOf(R.resultKey + '_') === 0).sort((a, b) => Number(a.split('_').pop()) - Number(b.split('_').pop()));
+    message = keys.length ? keys.map(key => props.getProperty(key)).join('') : '自動で続けた RX Service MTG の資料の結果はありません。';
+  }
+  console.log(message);
+  ui.alert(SVC_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+}
+
+/** 作っている途中の仕事があれば、やめて新しく作るかを聞く（やめるなら仕事と続きの予約を消す）。続けてよければ true */
+function smtgJobStartCheck_(ui) {
+  const job = smtgJobLoad_();
+  if (!job) return true;
+  const answer = ui.alert(SVC_OPTIONS.menuTitle, '前に始めた RX Service MTG の資料（会議日 ' + job.meeting + '・' + (job.final ? '本番' : '試作') + '。資料 ' +
+    job.items.length + '/' + job.names.length + '件）を、自動で続けている途中です。\n\n' +
+    'それをやめて、新しく作りますか？（「いいえ」なら何もしません。続きが終わったら showServiceMtgSummariesResult() で結果を見られます）', ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return false;
+  smtgJobClear_();
+  smtgJobDeleteTriggers_();
+  return true;
+}
+
+/** ファイル名（20261113_スーパー・GMS_RX Service Meeting用資料。試作は「_試作」つき） */
+function smtgFileName_(meeting, name, final) {
+  return SMTG_OPTIONS.fileName.replace('{date}', meeting.replace(/\//g, '')).replace('{name}', name) + (final ? '' : '_試作');
 }
 
 /**
@@ -235,11 +402,17 @@ function smtgDistinct_(list) {
   });
 }
 
+/** 1つの資料の中身（name はサブインダストリーか全サブインダストリー。省けば全サブインダストリー）。smtgRead_ と smtgView_ をまとめたもの */
+function smtgCollect_(ss, now, meeting, name) {
+  return smtgView_(smtgRead_(ss, now), name || MTG_OPTIONS.combined.name, meeting);
+}
+
 /**
- * 資料の中身。サービスリクエスト・タスク管理・リクエストを読むシート（案件）を読み、サービス案ごとにまとめ、前回の会議からの変化と確認事項を出す。
- * 戻り値 {now, meeting, list: 会議の記録, previous, requests, tasks, services, kpi, moves, checks, fit, hasWeighted, dealGaps, sources, sample}
+ * シートを読む（すべてのリクエスト・タスク・案件。どの資料にも使う）。リクエストには、どのサブインダストリー（リクエストを読むシート）のものか（sheet）を付ける：
+ * 案件のあるシート。案件が無ければ、リクエストの「サブインダストリー」と同じ名前（前の名前も）のシート。どちらも無ければ空（全サブインダストリーの資料だけに出す）。
+ * 戻り値 {now, list: 会議の記録, requests, tasks, services: [{key, name, requests, tasks}], hasWeighted, dealGaps, sources, sample}
  */
-function smtgCollect_(ss, now, meeting) {
+function smtgRead_(ss, now) {
   const sheet = ss.getSheetByName(SVC_OPTIONS.requestSheet);
   if (!sheet) {
     throw new Error('「' + SVC_OPTIONS.requestSheet + '」シートがありません。setupRequestSheet() を実行してから、リクエストを登録してください' +
@@ -247,13 +420,19 @@ function smtgCollect_(ss, now, meeting) {
   }
   const marker = SMP_OPTIONS.namePrefix;
   const undecided = smtgDecisionOptions_()[0];
+  const sources = svcSourceSheets_().filter(name => ss.getSheetByName(name));
+  const resolve = diffSheetNameResolver_();
+  const sheetOf = text => {
+    const name = resolve(String(text || '').trim());
+    return sources.indexOf(name) >= 0 ? name : (sources.find(s => credNormalize_(s) === credNormalize_(name)) || '');
+  };
   const requests = svcRegistered_(sheet).rows.map(r => {
     const v = r.values;
     const decision = v.decision || undecided;
     return {row: r.row, id: v.id || '', number: svcIdNumber_(v.id), subIndustry: v.subIndustry, customer: v.customer, project: v.project,
       accountDept: v.accountDept, accountOwner: v.accountOwner, bxDept: v.bxDept, bxOwner: v.bxOwner, request: v.request,
       decision, kind: smtgDecisionKind_(decision), feedback: v.feedback || '', service: v.service || '', department: v.department || '',
-      owner: v.owner || '', sample: v.request.indexOf(marker) === 0, deal: null, serviceKey: ''};
+      owner: v.owner || '', sample: v.request.indexOf(marker) === 0, deal: null, serviceKey: '', sheet: ''};
   });
   const byNumber = new Map();
   requests.forEach(r => { if (r.number && !byNumber.has(r.number)) byNumber.set(r.number, r); });
@@ -261,7 +440,6 @@ function smtgCollect_(ss, now, meeting) {
   // 案件（得意先＋案件名）：リクエストを読むシートから。読めないシートは飛ばして知らせる
   const deals = new Map();
   const dealGaps = [];
-  const sources = svcSourceSheets_().filter(name => ss.getSheetByName(name));
   let hasWeighted = false;
   sources.forEach(name => {
     try {
@@ -272,7 +450,10 @@ function smtgCollect_(ss, now, meeting) {
       dealGaps.push(name + '：' + svcErrorText_(e));
     }
   });
-  requests.forEach(r => { r.deal = deals.get(mtgDealKey_(r.customer, r.project)) || null; });
+  requests.forEach(r => {
+    r.deal = deals.get(mtgDealKey_(r.customer, r.project)) || null;
+    r.sheet = r.deal ? r.deal.sheet : sheetOf(r.subIndustry);
+  });
 
   const tasks = smtgReadTasks_(ss, byNumber, marker);
 
@@ -296,23 +477,38 @@ function smtgCollect_(ss, now, meeting) {
     t.serviceName = s ? s.name : '';
     if (s) s.tasks.push(t);
   });
-  services.forEach(s => {
-    s.customers = smtgDistinct_(s.requests.map(r => r.customer));
-    s.subIndustries = smtgDistinct_(s.requests.map(r => r.subIndustry));
-    s.owners = smtgDistinct_(s.requests.map(r => [r.department, r.owner].filter(Boolean).join(' ')));
+  return {now, list: smtgMeetings_(), requests, tasks, services, hasWeighted, dealGaps, sources,
+    sample: requests.some(r => r.sample) || tasks.some(t => t.sample)};
+}
+
+/**
+ * 1つの資料の中身。name がサブインダストリーなら、そのサブインダストリーのリクエストと、それを含むサービス案（タスクはサービス案全体）にする。
+ * 全サブインダストリー（MTG_OPTIONS.combined.name）ならすべて。サービス案の得意先・期待値・件数はこの資料のリクエストの分、
+ * サブインダストリー・主管本部と担当者・タスク・顧客・業界の広がりはサービス案全体。
+ * 戻り値 {name, all, now, meeting, list, previous, previousCounts, requests, tasks, services, kpi, moves, checks, fit, hasWeighted, dealGaps, sources, sample}
+ */
+function smtgView_(base, name, meeting) {
+  const all = name === MTG_OPTIONS.combined.name;
+  const requests = all ? base.requests : base.requests.filter(r => r.sheet === name);
+  const inView = new Set(requests);
+  const services = base.services.filter(s => s.requests.some(r => inView.has(r))).map(s => {
+    const own = s.requests.filter(r => inView.has(r));
     const dealsOf = new Map();
-    s.requests.forEach(r => { if (r.deal) dealsOf.set(r.deal.key, r.deal); });
-    s.deals = Array.from(dealsOf.values());
-    s.active = s.deals.filter(d => d.kind === 'active');
-    s.weighted = s.active.reduce((sum, d) => sum + (d.weighted || 0), 0);
-    s.counts = smtgStatusCounts_(s.tasks);
-    s.firstNumber = Math.min.apply(null, s.requests.map(r => r.number || Infinity));
+    own.forEach(r => { if (r.deal) dealsOf.set(r.deal.key, r.deal); });
+    const deals = Array.from(dealsOf.values());
+    const active = deals.filter(d => d.kind === 'active');
+    return {key: s.key, name: s.name, requests: own, allRequests: s.requests, tasks: s.tasks,
+      customers: smtgDistinct_(own.map(r => r.customer)),
+      subIndustries: smtgDistinct_(s.requests.map(r => r.subIndustry)),
+      owners: smtgDistinct_(s.requests.map(r => [r.department, r.owner].filter(Boolean).join(' '))),
+      deals, active, weighted: active.reduce((sum, d) => sum + (d.weighted || 0), 0), counts: smtgStatusCounts_(s.tasks),
+      firstNumber: Math.min.apply(null, own.map(r => r.number || Infinity))};
   });
   // リクエストの多い順 → 元になった案件の期待値の大きい順 → 最初のリクエストの ID の順
   services.sort((a, b) => (b.requests.length - a.requests.length) || (b.weighted - a.weighted) || (a.firstNumber - b.firstNumber));
-
-  const list = smtgMeetings_();
-  const previous = smtgPrevious_(list, meeting);
+  const keys = new Set(services.map(s => s.key));
+  // タスク：この資料のリクエストか、この資料のサービス案のタスク（全サブインダストリーは、リクエストに結び付かないタスクも）
+  const tasks = base.tasks.filter(t => (t.request ? inView.has(t.request) || keys.has(t.request.serviceKey) : all));
   const counts = smtgStatusCounts_(tasks);
   const kpi = {
     requests: requests.length,
@@ -325,7 +521,10 @@ function smtgCollect_(ss, now, meeting) {
     tasks: tasks.length,
     done: counts.done
   };
-  const data = {now, meeting, list, previous, requests, tasks, services, kpi, hasWeighted, dealGaps, sources,
+  const previous = smtgPrevious_(base.list, meeting);
+  const data = {name, all, now: base.now, meeting, list: base.list, previous,
+    previousCounts: previous && previous.counts ? previous.counts[name] || null : null,
+    requests, tasks, services, kpi, hasWeighted: base.hasWeighted, dealGaps: base.dealGaps, sources: base.sources,
     sample: requests.some(r => r.sample) || tasks.some(t => t.sample)};
   data.moves = smtgMoves_(data);
   data.checks = smtgChecks_(data);
@@ -436,12 +635,12 @@ function smtgChecks_(data) {
 }
 
 /**
- * 顧客・業界の広がり {columns: サブインダストリー（リクエストの多い順。fitColumns を越えた分は「その他」）, rows: [{service, counts: 列ごとの件数, total}]}
+ * 顧客・業界の広がり（サービス案のすべてのリクエスト。サブインダストリーの資料でも、ほかのサブインダストリーの分を数える）{columns: サブインダストリー（リクエストの多い順。fitColumns を越えた分は「その他」）, rows: [{service, counts: 列ごとの件数, total}]}
  */
 function smtgFit_(services) {
   const totals = new Map();
   const names = new Map();
-  services.forEach(s => s.requests.forEach(r => {
+  services.forEach(s => (s.allRequests || s.requests).forEach(r => {
     const key = credNormalize_(r.subIndustry) || '';
     if (!names.has(key)) names.set(key, r.subIndustry || '（未入力）');
     totals.set(key, (totals.get(key) || 0) + 1);
@@ -452,52 +651,57 @@ function smtgFit_(services) {
   const columns = shown.map(k => names.get(k)).concat(keys.length > shown.length ? ['その他'] : []);
   const rows = services.map(s => {
     const counts = columns.map(() => 0);
-    s.requests.forEach(r => {
+    const list = s.allRequests || s.requests;
+    list.forEach(r => {
       const i = shown.indexOf(credNormalize_(r.subIndustry) || '');
       counts[i >= 0 ? i : columns.length - 1]++;
     });
-    return {service: s, counts, total: s.requests.length};
+    return {service: s, counts, total: list.length};
   });
   return {columns, rows};
 }
 
 /* ---------------- 会議の記録 ---------------- */
 
-/** 記録した会議 [{date, at, lastId, counts}]（会議日の順） */
+/** 記録した会議 [{date, at, lastId}]（会議日の順） */
 function smtgMeetings_() {
   const list = mtgReadJson_(PropertiesService.getDocumentProperties(), SMTG_OPTIONS.meetingsKey);
   return (Array.isArray(list) ? list : []).filter(m => m && /^\d{4}\/\d{2}\/\d{2}$/.test(m.date))
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
-/** 前回の会議（meeting より前で、いちばん新しい会議日）の記録と、その時点の判断・状況 {…, decisions, tasks}。無ければ null */
+/**
+ * 前回の会議（meeting より前で、いちばん新しい会議日）の記録と、その時点の判断・状況・資料ごとの件数 {…, decisions, tasks, counts: {資料の名前: 件数}}。無ければ null
+ */
 function smtgPrevious_(list, meeting) {
   const prev = list.filter(m => m.date < meeting).pop();
   if (!prev) return null;
-  const detail = mtgReadJson_(PropertiesService.getDocumentProperties(), SMTG_OPTIONS.meetingDetailPrefix + prev.date.replace(/\//g, ''));
-  return Object.assign({}, prev, detail ? {decisions: detail.decisions || '', tasks: detail.tasks || ''} : {});
+  const detail = mtgReadJson_(PropertiesService.getDocumentProperties(), SMTG_OPTIONS.meetingDetailPrefix + prev.date.replace(/\//g, '')) || {};
+  return Object.assign({}, prev, {decisions: detail.decisions || '', tasks: detail.tasks || '', counts: detail.counts || null});
 }
 
 /**
- * 本番の会議日と、その時点の状況を記録する（同じ会議日は置き換える）。一覧は keepMeetings まで、判断・状況は会議日ごとの別のキー
- * （長すぎれば件数だけ残し、次の資料の判断の変更・タスクの完了は出さない）
+ * 本番の会議日と、その時点の状況を記録する（同じ会議日は置き換える）。一覧は keepMeetings まで。判断・状況と、資料（サブインダストリー・全サブインダストリー）
+ * ごとの件数は会議日ごとの別のキー（長すぎれば件数だけ残し、次の資料の判断の変更・タスクの完了は出さない）。base は smtgRead_ の戻り値
  */
-function smtgRecordMeeting_(data, meeting) {
+function smtgRecordMeeting_(base, meeting) {
   const props = PropertiesService.getDocumentProperties();
   const o = SMTG_OPTIONS;
-  const entry = {date: meeting, at: data.now.getTime(), lastId: Math.max.apply(null, [0].concat(data.requests.map(r => r.number))),
-    counts: Object.assign({}, data.kpi)};
+  const data = base;
+  const entry = {date: meeting, at: data.now.getTime(), lastId: Math.max.apply(null, [0].concat(data.requests.map(r => r.number)))};
+  const counts = {};
+  base.sources.concat([MTG_OPTIONS.combined.name]).forEach(name => { counts[name] = smtgView_(base, name, meeting).kpi; });
   const all = smtgMeetings_().filter(m => m.date !== meeting).concat([entry])
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const keep = all.slice(-o.keepMeetings);
   all.slice(0, all.length - keep.length).forEach(m => props.deleteProperty(o.meetingDetailPrefix + m.date.replace(/\//g, '')));
-  const detail = JSON.stringify({
+  let detail = JSON.stringify({
     decisions: data.requests.filter(r => r.number).map(r => r.number + ':' + smtgDecisionCode_(r.decision)).join(','),
-    tasks: data.tasks.map(t => t.key + ':' + smtgStatusCode_(t.status)).join(',')
+    tasks: data.tasks.map(t => t.key + ':' + smtgStatusCode_(t.status)).join(','),
+    counts
   });
-  const key = o.meetingDetailPrefix + meeting.replace(/\//g, '');
-  if (detail.length <= o.detailMaxLength) props.setProperty(key, detail);
-  else props.deleteProperty(key);
+  if (detail.length > o.detailMaxLength) detail = JSON.stringify({counts});
+  props.setProperty(o.meetingDetailPrefix + meeting.replace(/\//g, ''), detail);
   props.setProperty(o.meetingsKey, JSON.stringify(keep));
 }
 
@@ -569,13 +773,13 @@ function smtgSlides_(data, meeting, final) {
   });
 }
 
-/** いちばん下の行（試作は【試作】、サンプルを含めば【サンプルデータを含む】）{source} */
+/** いちばん下の行（「スーパー・GMS（11/13 RX Service MTG 資料）」。試作は【試作】、サンプルを含めば【サンプルデータを含む】）{source} */
 function smtgFrame_(data, meeting, final) {
-  return {source: (final ? '' : '【試作】') + (data.sample ? '【サンプルデータを含む】' : '') + SMTG_OPTIONS.meetingName + '（' +
-    mtgShortDate_(meeting) + ' 会議資料）　金額の単位：百万円'};
+  return {source: (final ? '' : '【試作】') + (data.sample ? '【サンプルデータを含む】' : '') + data.name + '（' + mtgShortDate_(meeting) + ' ' +
+    SMTG_OPTIONS.meetingName + ' 資料）　金額の単位：百万円'};
 }
 
-/** 表紙（ひな形の3枚目＝紫）：見出しに SMTG_OPTIONS.title、その下に会議の名前と「事前資料」、日付に会議日。その下に出典と対象を小さく */
+/** 表紙（ひな形の3枚目＝紫）：見出しにサブインダストリー（全サブインダストリー）、その下に会議の名前と「事前資料」、日付に会議日。その下に出典と対象を小さく */
 function smtgCoverSlide_(data, meeting, final) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
@@ -585,10 +789,11 @@ function smtgCoverSlide_(data, meeting, final) {
     title: SMTG_TITLES.cover,
     cover: true,
     service: true,
-    template: {title: SMTG_OPTIONS.title, subtitle: SMTG_OPTIONS.meetingName + '　事前資料' + (final ? '' : '【試作】'),
+    template: {title: data.name, subtitle: SMTG_OPTIONS.meetingName + '　事前資料' + (final ? '' : '【試作】'),
       date: mtgDateLabel_(meeting), name: ''},
     elements: [
-      line(350, '出典：「' + SVC_OPTIONS.requestSheet + '」「' + TASK_OPTIONS.sheet + '」シートおよび' + svcSourceLabel_() + 'の案件（' +
+      line(350, '出典：「' + SVC_OPTIONS.requestSheet + '」「' + TASK_OPTIONS.sheet + '」シートおよび' + (data.all ? svcSourceLabel_() : '「' + data.name + '」') +
+        'の案件（' +
         (data.sample ? 'サンプルデータを含む。' : '') + Utilities.formatDate(data.now, Session.getScriptTimeZone(), 'yyyy/M/d HH:mm') + ' 時点）'),
       line(365, '対象：登録リクエスト ' + k.requests + '件・サービス案 ' + k.services + '件・タスク ' + k.tasks + '件' +
         (data.previous ? '（前回の会議 ' + mtgShortDate_(data.previous.date) + ' からの変化）' : ''))
@@ -615,7 +820,7 @@ function smtgSummarySlide_(data, ranges) {
   const k = data.kpi;
   const m = data.moves;
   const prev = data.previous;
-  const pc = prev && prev.counts;
+  const pc = data.previousCounts;   // 前回の会議の時点の、この資料の件数
   const lead = 'サービス案 ' + k.services + '件（リクエスト ' + k.serviceRequests + '件・得意先 ' + k.customers + '社）、タスク ' + k.tasks + '件（完了 ' +
     k.done + '件）。登録リクエスト ' + k.requests + '件のうち、判断待ち ' + k.undecided + '件。\n' +
     (!prev ? '前回の会議の記録が無いため、前回からの変化は出していません（本番の資料を作ると、次の会議の資料から出ます）。'
@@ -845,7 +1050,11 @@ function smtgServicesSlides_(data, starts) {
     const n = s.counts;
     return [
       {text: s.name, lines: 3, bold: true, color: c.ink, fill: c.greenSoft},
-      {text: s.requests.length + '件', size: 10, bold: true, color: c.greenDark, fill: c.white, align: 'CENTER'},
+      // 件数：この資料のリクエスト（サブインダストリーの資料で、ほかのサブインダストリーにもあれば、下に全体の件数）
+      s.allRequests.length > s.requests.length
+        ? {text: s.requests.length + '件\n全体' + s.allRequests.length, lines: 2, color: c.greenDark, fill: c.white, align: 'CENTER',
+          parts: [{bold: true, size: 10}, {size: 7.5, color: c.muted}]}
+        : {text: s.requests.length + '件', size: 10, bold: true, color: c.greenDark, fill: c.white, align: 'CENTER'},
       {text: s.customers.length + '社\n' + s.customers.join('・'), lines: 3, fill: c.white, parts: [{bold: true}, {}]},
       smtgTextCell_(s.subIndustries.join('・'), {lines: 3}),
       data.hasWeighted ? {text: s.active.length ? mtgAmount_(s.weighted) + '\n（' + s.active.length + '案件）' : '進行中の\n案件なし', lines: 2,
@@ -856,8 +1065,9 @@ function smtgServicesSlides_(data, starts) {
       {text: starts[i] ? String(starts[i]) : '', bold: true, color: c.greenDark, fill: c.white, align: 'CENTER'}
     ];
   });
-  const lead = 'サービス案 ' + data.services.length + '件。リクエストの多い順（同じなら、元になった案件の期待値の大きい順）。\n' +
-    '期待値は、元になった案件（進行中）の期待値調整済の想定売上の合計（案件全体の値で、サービスの売上ではありません）。';
+  const lead = (data.all ? 'サービス案 ' + data.services.length + '件。'
+    : 'このサブインダストリーのリクエストがあるサービス案 ' + data.services.length + '件（件数・得意先・期待値はこのサブインダストリーの分）。') +
+    'リクエストの多い順。\n期待値は、元になった案件（進行中）の期待値調整済の想定売上の合計（案件全体の値で、サービスの売上ではありません）。';
   return smtgPages_({title: SMTG_TITLES.services, lead, sections: [{columns, rows,
     head: ['サービス案', '件数', '得意先', 'サブインダストリー', '元の案件の\n期待値', '主管本部・担当者', 'タスク', 'ページ'],
     empty: {kind: 'none', text: '「' + SVC_OPTIONS.requestSheet + '」の「サービス案」に名前を入れたリクエストがありません（同じ名前のリクエストが1つのサービス案になります）。'}}]});
@@ -915,8 +1125,10 @@ function smtgDetailSlides_(data, s) {
     {text: '', fill: c.white},
     smtgTextCell_(t.note, {lines: 3, fit: true, grow: true})
   ]);
-  const amount = data.hasWeighted ? '元になった案件の期待値 ' + mtgAmount_(s.weighted) + '百万円（進行中 ' + s.active.length + '案件）' : '';
-  const lead = 'リクエスト ' + s.requests.length + '件（得意先 ' + s.customers.length + '社・' + (s.subIndustries.join('・') || 'サブインダストリー未入力') + '）' +
+  const amount = data.hasWeighted ? '元の案件の期待値 ' + mtgAmount_(s.weighted) + '百万円（進行中 ' + s.active.length + '案件）' : '';
+  const others = s.allRequests.length - s.requests.length;
+  const lead = (data.all ? 'リクエスト ' + s.requests.length + '件（得意先 ' + s.customers.length + '社・' + (s.subIndustries.join('・') || 'サブインダストリー未入力') + '）'
+    : 'リクエスト ' + s.requests.length + '件' + (others ? '（ほかのサブインダストリーに ' + others + '件）' : '') + '・得意先 ' + s.customers.length + '社') +
     (amount ? '、' + amount : '') + '。\nタスク ' + n.total + '件（完了 ' + n.done + '・対応中 ' + n.doing + '・未着手 ' + n.todo + '）。主管本部・担当者：' +
     (s.owners.join('、') || MTG_OPTIONS.blankText) + '。';
   return smtgPages_({title: SMTG_TITLES.detail + '：' + s.name, lead, shrink: true, sections: [

@@ -80,23 +80,28 @@ const SMP_OPTIONS = {
         decision: 'サービス化検討', service: '購買データ分析', department: 'DX事業本部', owner: '山本',
         feedback: '共有の範囲（個店・エリア）で、必要な加工が変わる'},
       {sheet: '化粧品・トイレタリー', customer: 'サンプル化粧品', project: 'EC連携', request: 'EC と店舗の購買をつないで、顧客ごとに提案したい',
-        decision: 'サービス化検討', service: '購買データ分析', department: 'DX事業本部', owner: '山本', feedback: ''},
+        decision: 'サービス化検討', service: '購買データ分析', department: 'DX事業本部', owner: '山本',
+        feedback: '会員 ID で EC と店舗の購買をつなげるかを、先方の情報システム部門と確かめる'},
       {sheet: 'スーパー・GMS', customer: 'サンプルスーパー', project: '店舗DX', request: '紙の POP の差し替えの手間を減らしたい（電子棚札）',
         decision: 'サービス化検討', service: 'デジタル販促（電子棚札・サイネージ）', department: '情報コミュニケーション事業本部', owner: '田中',
         feedback: '電源・通信の工事の要否で、費用が大きく変わる'},
       {sheet: '百貨店', customer: 'サンプル百貨店', project: '売場サイネージ', request: '売場のサイネージの内容を、本部からまとめて配信したい',
-        decision: 'サービス化検討', service: 'デジタル販促（電子棚札・サイネージ）', department: '情報コミュニケーション事業本部', owner: '田中', feedback: ''},
+        decision: 'サービス化検討', service: 'デジタル販促（電子棚札・サイネージ）', department: '情報コミュニケーション事業本部', owner: '田中',
+        feedback: '既存の配信の仕組みで、売場ごとの出し分けまでできる見込み'},
       {sheet: '生協', customer: 'サンプル生協', project: '宅配チラシ', request: '宅配のチラシを、アプリでも見られるようにしたい',
-        decision: 'サービス化検討', service: 'デジタル販促（電子棚札・サイネージ）', department: '', owner: '', feedback: ''},
+        decision: 'サービス化検討', service: 'デジタル販促（電子棚札・サイネージ）', department: '', owner: '',   // 主管本部・担当者未設定の確認用
+        feedback: '紙とアプリの両方に出す運用の手間を、先方と確かめる'},
       {sheet: '飲料・食品', customer: 'サンプル飲料', project: '店頭販促', request: '店頭什器を季節ごとに入れ替えたいが、買い切りは負担が大きい',
         decision: 'サービス化検討', service: '店頭什器のサブスクリプション', department: '生活・産業事業本部', owner: '中村',
         feedback: '回収・再利用の物流の設計が課題'},
       {sheet: '住設', customer: 'サンプル住設', project: 'ショールーム改装', request: 'ショールームの展示什器を、短いサイクルで変えたい',
-        decision: 'サービス化検討', service: '店頭什器のサブスクリプション', department: '生活・産業事業本部', owner: '中村', feedback: ''},
+        decision: 'サービス化検討', service: '店頭什器のサブスクリプション', department: '生活・産業事業本部', owner: '中村',
+        feedback: 'ショールームは入れ替えの頻度が高く、月額にしやすい'},
       {sheet: '自動車販売', customer: 'サンプル自動車販売', project: '来店予約', request: '来店予約から商談までを、アプリで完結させたい',
         decision: 'サービス化検討', service: '来店予約アプリ', department: 'DX事業本部', owner: '小林', feedback: '既存のアプリの型で作れるか確かめる'},
       {sheet: 'コンビニ', customer: 'サンプルマート', project: '会員施策', request: 'カード会員のアンケートを、店頭の端末で取りたい',
-        decision: 'サービス化検討', service: '', department: '', owner: '', feedback: ''},
+        decision: 'サービス化検討', service: '', department: '', owner: '',   // サービス案未設定の確認用
+        feedback: '店頭端末の改修が要るため、先方の端末の更新時期を確かめる'},
       {sheet: '地方銀行', customer: 'サンプル銀行', project: 'アプリ利用促進', request: 'アプリの利用を店頭で案内する販促物を作りたい',
         decision: '', service: '', department: '', owner: '', feedback: ''},
       {sheet: '電鉄・不動産', customer: 'サンプル電鉄', project: '駅ナカ活性化', request: '駅ナカ店舗の購買データを、テナントと共有したい',
@@ -104,17 +109,41 @@ const SMP_OPTIONS = {
       {sheet: 'エネルギー', customer: 'サンプルエネルギー', project: '検針票', request: '検針票の紙をなくしたいが、高齢の顧客への案内が課題',
         decision: '棄却', service: '', department: '', owner: '', feedback: 'ほかの部署の通知サービスで対応済みのため、ここでは扱わない'}
     ],
-    // タスク（request は上の requests の番号（0 から））
+    // 案件が無い（架空の名前の）リクエストの営業の列
+    sales: {accountDept: '第一営業本部', accountOwner: 'サンプル 担当', bxDept: 'BX推進部', bxOwner: 'サンプル BX'},
+    // タスク（request は上の requests の番号（0 から））。owner が空のタスクは、資料の確認事項（タスクの担当者未入力）の確認用。
+    // progress は進捗状況、planStart・planEnd・actualStart・actualEnd は開始日・終了日（予定・実績）の今日からの日数（負は前。null は空欄）
     tasks: [
       {request: 0, task: '既存の ID-POS 分析基盤で、離反の兆しの指標を試算する', department: 'DX事業本部', owner: '山本', status: '対応中',
+        progress: '60%：指標案3つのうち2つを試算済み', planStart: -21, planEnd: 14, actualStart: -18, actualEnd: null,
         note: '1社のデータで試算中。11月上旬に結果を出す'},
-      {request: 1, task: 'メーカーへの共有の範囲（個店・エリア）の要件を整理する', department: 'DX事業本部', owner: '山本', status: '未着手', note: ''},
-      {request: 0, task: '料金の考え方（分析の回数・データ量）の案を作る', department: '事業企画部', owner: '佐々木', status: '未着手', note: ''},
+      {request: 1, task: 'メーカーへの共有の範囲（個店・エリア）の要件を整理する', department: 'DX事業本部', owner: '山本', status: '未着手',
+        progress: '0%：先方の窓口を確認中', planStart: 7, planEnd: 35, actualStart: null, actualEnd: null,
+        note: '先方のマーチャンダイジング部門と打ち合わせを設定する'},
+      {request: 0, task: '料金の考え方（分析の回数・データ量）の案を作る', department: '事業企画部', owner: '佐々木', status: '未着手',
+        progress: '0%：試算の結果を待って着手', planStart: 14, planEnd: 42, actualStart: null, actualEnd: null,
+        note: '他社の分析サービスの料金を調べておく'},
       {request: 3, task: '電子棚札の工事の要否を、店舗の型ごとに整理する', department: '情報コミュニケーション事業本部', owner: '田中', status: '完了',
-        note: '3つの型に分けた'},
-      {request: 4, task: 'サイネージの配信を、既存の CMS で動かせるか確かめる', department: '情報コミュニケーション事業本部', owner: '田中', status: '対応中', note: ''},
-      {request: 3, task: '導入事例の資料をまとめる', department: '情報コミュニケーション事業本部', owner: '', status: '未着手', note: ''},
-      {request: 6, task: '什器の回収・再利用の物流の費用を試算する', department: '生活・産業事業本部', owner: '中村', status: '未着手', note: ''}
+        progress: '100%：3つの型に分類済み', planStart: -45, planEnd: -14, actualStart: -42, actualEnd: -10,
+        note: '型ごとの概算費用は別紙にまとめた'},
+      {request: 4, task: 'サイネージの配信を、既存の CMS で動かせるか確かめる', department: '情報コミュニケーション事業本部', owner: '田中', status: '対応中',
+        progress: '40%：検証環境を準備済み', planStart: -14, planEnd: 21, actualStart: -10, actualEnd: null,
+        note: '売場ごとの出し分けの動作を確かめる'},
+      {request: 3, task: '導入事例の資料をまとめる', department: '情報コミュニケーション事業本部', owner: '', status: '未着手',
+        progress: '0%：担当者を決める', planStart: 7, planEnd: 28, actualStart: null, actualEnd: null,
+        note: '社内の導入事例を3件集める'},
+      {request: 6, task: '什器の回収・再利用の物流の費用を試算する', department: '生活・産業事業本部', owner: '中村', status: '未着手',
+        progress: '0%：物流会社に見積を依頼する', planStart: 10, planEnd: 40, actualStart: null, actualEnd: null,
+        note: '回収の頻度は季節ごと（年4回）で試算する'}
+    ],
+    // タスク管理の、TASK_OPTIONS.columns に無い列（シートに足した列）に書くサンプル：見出し → 上のタスクの項目。見出しが無ければ書かない。
+    // date は日付の列（今日からの日数を日付にして書く）
+    taskExtraColumns: [
+      {label: '進捗状況', key: 'progress'},
+      {label: '開始日（予定）', key: 'planStart', date: true},
+      {label: '終了日（予定）', key: 'planEnd', date: true},
+      {label: '開始日（実績）', key: 'actualStart', date: true},
+      {label: '終了日（実績）', key: 'actualEnd', date: true}
     ]
   }
 };
@@ -751,7 +780,9 @@ function addServiceMtgSampleData() {
   }
   const result = taskWithLock_(() => smpAddServiceSample_(ss, sheets, plan), SVC_OPTIONS.lockWaitMs, 'addServiceMtgSampleData()');
   const message = 'サンプルを書きました：リクエスト ' + result.requests + '件（' + result.ids[0] + '〜' + result.ids[result.ids.length - 1] + '）・タスク ' +
-    result.tasks + '件。\npreviewServiceMtgSummary() で資料を作って確かめてください（資料に【サンプルデータを含む】と出ます）。';
+    result.tasks + '件' + (result.extras.length ? '（「' + result.extras.join('」「') + '」の列にも）' : '') + '。' +
+    (result.skipped.length ? '\n「' + TASK_OPTIONS.sheet + '」の「' + result.skipped.join('」「') + '」の列には、サンプルを入れていません（SMP_OPTIONS.service.taskExtraColumns に足すと入ります）。' : '') +
+    '\npreviewServiceMtgSummaries() で資料を作って確かめてください（資料に【サンプルデータを含む】と出ます）。';
   console.log(message);
   if (ui) ui.alert(title, message, ui.ButtonSet.OK);
 }
@@ -865,10 +896,11 @@ function smpAddServiceSample_(ss, sheets, plan) {
     put('subIndustry', cell('サブインダストリー') || p.sheet);
     put('customer', d ? d.customer : p.spec.customer);
     put('project', d ? d.project : p.spec.project);
-    put('accountDept', cell('アカウント責任者部署'));
-    put('accountOwner', d ? d.owner : 'サンプル 担当');
-    put('bxDept', cell('BX部署'));
-    put('bxOwner', cell('BX担当'));
+    // 営業の列：案件の値（案件が無い・空なら SMP_OPTIONS.service.sales）
+    put('accountDept', cell('アカウント責任者部署') || S.sales.accountDept);
+    put('accountOwner', (d && d.owner) || S.sales.accountOwner);
+    put('bxDept', cell('BX部署') || S.sales.bxDept);
+    put('bxOwner', cell('BX担当') || S.sales.bxOwner);
     put('request', marker + p.spec.request);
     put('decision', p.spec.decision || SVC_OPTIONS.defaultDecision);
     put('feedback', p.spec.feedback);
@@ -883,8 +915,14 @@ function smpAddServiceSample_(ss, sheets, plan) {
   svcLinkTaskServiceColumn_(ss, true);
   const task = sheets.task;
   const tcols = taskColumnMap_(task, TASK_OPTIONS.columns, TASK_OPTIONS.headerRow);
+  // シートに足した列（進捗状況・開始日・終了日など。SMP_OPTIONS.service.taskExtraColumns の見出しがある列）
+  const theaders = task.getRange(TASK_OPTIONS.headerRow, 1, 1, Math.max(task.getLastColumn(), 1)).getDisplayValues()[0];
+  const extras = S.taskExtraColumns.map(x => Object.assign({col: taskFindColumn_(theaders, x.label, '', false)}, x)).filter(x => x.col);
   const tlast = task.getLastRow();
-  const twidth = Math.max.apply(null, Object.keys(tcols).map(k => tcols[k]));
+  const twidth = Math.max.apply(null, Object.keys(tcols).map(k => tcols[k]).concat(extras.map(x => x.col)));
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dayOf = days => new Date(today.getTime() + days * 86400000);
   diffEnsureGrid_(task, tlast + S.tasks.length, twidth);
   const tvalues = S.tasks.map(t => {
     const row = new Array(twidth).fill('');
@@ -895,10 +933,19 @@ function smpAddServiceSample_(ss, sheets, plan) {
     put('owner', t.owner);
     put('status', t.status);
     put('note', t.note);
+    extras.forEach(x => {
+      const value = t[x.key];
+      if (value == null || value === '') return;
+      row[x.col - 1] = x.date ? dayOf(Number(value)) : credText_(value);
+    });
     return row;
   });
   task.getRange(tlast + 1, 1, tvalues.length, twidth).setValues(tvalues);
-  return {requests: values.length, tasks: tvalues.length, ids};
+  // 日付の列は、日付の表示形式にそろえる（書いた行だけ）
+  extras.filter(x => x.date).forEach(x => task.getRange(tlast + 1, x.col, tvalues.length, 1).setNumberFormat('yyyy/MM/dd'));
+  const filled = Object.keys(tcols).map(k => tcols[k]).concat(extras.map(x => x.col));
+  const skipped = theaders.filter((h, i) => String(h).trim() && filled.indexOf(i + 1) < 0);
+  return {requests: values.length, tasks: tvalues.length, ids, extras: extras.map(x => x.label), skipped};
 }
 
 /* ---------------- 共通 ---------------- */
