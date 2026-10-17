@@ -2708,7 +2708,7 @@ function mtgContentsSlide_(sections, urls) {
     el.push(mtgBox_(x + colW - 56, y, 56, h, String(entry.page), {size: 12, bold: true, color: c.greenDark, fill: c.greenSoft, shape: 'RECTANGLE',
       align: 'END', link, role: 'toc'}));
   });
-  const lead = urls ? '名前を押すと各サブインダストリーの資料（PDF）が開き、ページ番号を押すとこの資料のそのページに移ります（ダウンロードして開いたとき）。'
+  const lead = urls ? '名前を押すと、各サブインダストリーの資料（PDF）が開きます。\nページ番号を押すと、この資料のそのページに移ります（ダウンロードして開いたとき）。'
     : '名前かページ番号を押すと、そのページに移ります。';
   return {title: MTG_TITLES.contents, lead, elements: el};
 }

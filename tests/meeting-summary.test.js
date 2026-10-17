@@ -2321,7 +2321,7 @@ test('統合版：createMeetingSummaries() では作らず、すべてのシー�
   const pdfUrl = sheet => 'https://drive.google.com/file/d/' + gas.driveFiles.find(f => f.name === file + '_' + sheet + '_RX Business Meeting用資料.pdf').id + '/view';
   assert.deepStrictEqual(plain(links).map(l => l[1]), ['mtg_p3', 'mtg_p3', pdfUrl('新FMT'), 'mtg_p4', pdfUrl('新FMT2'), 'mtg_p14']);
   assert.match(plain(g.mtgContentsSlide_([{summary: {name: '新FMT'}, start: 4}], {'新FMT': 'u'})).lead,
-    /^名前を押すと各サブインダストリーの資料（PDF）が開き、ページ番号を押すとこの資料のそのページに移ります（ダウンロードして開いたとき）。$/);
+    /^名前を押すと、各サブインダストリーの資料（PDF）が開きます。\nページ番号を押すと、この資料のそのページに移ります（ダウンロードして開いたとき）。$/);
   assert.ok(plain(links).every(l => /^mtg_p2_\d+$/.test(l[0])), '目次（2枚目）の部品');
   const linkStyle = combined.requests.find(r => r.updateTextStyle && r.updateTextStyle.style.link).updateTextStyle.style;
   assert.deepStrictEqual(plain([linkStyle.underline, linkStyle.foregroundColor]), [false, {opaqueColor: {rgbColor: plain(g.mtgRgb_('#1A1A1A'))}}],
