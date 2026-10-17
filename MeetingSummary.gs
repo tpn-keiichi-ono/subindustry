@@ -493,7 +493,7 @@ function mtgRun_(final) {
   if (!meeting) return;
   if (final && !mtgConfirmFinal_(ui, names, meeting)) return;
   const job = {final, meeting, now: now.getTime(), names, items: [], stored: 0, copy: null, index: null, folderUrl: '',
-    combined: !!MTG_OPTIONS.combined.enabled && mtgCombinedWanted_(ss, names)};
+    combined: !!MTG_OPTIONS.combined.enabled};
   const done = mtgJobRun_(ss, job, started);
   const message = mtgJobMessage_(job, done);
   console.log(message);
@@ -603,9 +603,13 @@ function mtgJobMessage_(job, done) {
     '続きが終わったら、エディタで showMeetingSummariesResult() を実行すると結果が出ます（実行ログにも出ます）。終わるまで、会議サマリの関数は実行しないでください。',
     ''].concat(lines, ['', '保存先：' + job.folderUrl]).join('\n');
   }
-  if (job.combined) {
-    lines.push('', '統合版（' + o.combined.name + '）は、エディタで createCombinedMeetingSummary() を実行して作ってください（会議日を入力します。' +
-      (job.final ? 'すべてのサブインダストリーの本番の資料を作ったあとに）。' : '試作なら試作として作ります）。'));
+  // 本番：この会議日の本番の資料がそろったか（サブインダストリーごとに作ってもよい）。そろったら統合版の作り方、まだなら残りのサブインダストリー
+  if (job.final && job.combined) {
+    const rest = mtgMeetingPending_(SpreadsheetApp.getActiveSpreadsheet(), job.meeting);
+    lines.push('', rest.length
+      ? 'この会議日の本番の資料が、まだできていないサブインダストリー（' + rest.length + '件）：' + rest.join('・') + '。' +
+        'すべてできたら、createMeetingSummaries() の終わりにこの画面で知らせます（統合版（' + o.combined.name + '）は、そのあと createCombinedMeetingSummary() で作る）。'
+      : 'この会議日の本番の資料が、すべてのサブインダストリーでそろいました。統合版（' + o.combined.name + '）は、エディタで createCombinedMeetingSummary() を実行して作ってください（会議日を入力します）。');
   }
   lines.push('', '保存先：' + job.folderUrl);
   if (job.index) {
@@ -994,10 +998,14 @@ function mtgCountsText_(summary) {
   return '変化のある案件 ' + summary.kpi.changed + '・停滞 ' + summary.stalled.length + '・確認事項 ' + summary.alerts.length;
 }
 
-/** すべての追跡シート（このスプレッドシートにあるもの。2つ以上）を作るか（終わりに統合版の作り方を案内する） */
-function mtgCombinedWanted_(ss, names) {
-  const all = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
-  return !!MTG_OPTIONS.combined.enabled && all.length > 1 && all.every(name => names.indexOf(name) >= 0);
+/**
+ * 会議日（meeting）の本番の資料（本番の記録と PDF）が、まだできていないサブインダストリー（追跡シートの順）。サブインダストリーごとに作るときの残り。
+ * 空なら、すべてそろった（統合版を作れる）
+ */
+function mtgMeetingPending_(ss, meeting) {
+  const props = PropertiesService.getDocumentProperties();
+  return Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name))
+    .filter(name => !mtgMeetings_(props, name).some(m => !m.baseline && m.date === meeting) || !mtgStoredPdf_(ss, name, meeting));
 }
 
 /**
@@ -1088,8 +1096,7 @@ function createCombinedMeetingSummary() {
   const meeting = mtgAskMeeting_(ui, names, now);
   if (!meeting) return;
   // 実行の条件：すべてのサブインダストリーの、この会議日の本番の資料（PDF）ができている（インデックスのその会議日の行に空のセルが無い）。満たさなければ作らずに終える
-  const props = PropertiesService.getDocumentProperties();
-  const missing = names.filter(name => !mtgMeetings_(props, name).some(m => !m.baseline && m.date === meeting) || !mtgStoredPdf_(ss, name, meeting));
+  const missing = mtgMeetingPending_(ss, meeting);
   if (missing.length) {
     return stop('統合版を作れません。会議日 ' + meeting + ' の本番の資料が、まだできていないサブインダストリーがあります（' + missing.length + '件）：\n' +
       missing.map(name => '・' + name).join('\n') + '\n\n' +

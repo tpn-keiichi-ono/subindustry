@@ -2301,14 +2301,14 @@ test('統合版：createMeetingSummaries() では作らず、すべてのシー�
   Object.assign(o.combined, {enabled: true, meetingFolder: parent});
   gas.promptAnswers = ['1', '10/23'];
   g.previewMeetingSummaries();
-  assert.doesNotMatch(gas.alerts[gas.alerts.length - 1].message, /統合版/, '一部のシートだけなら案内しない');
+  assert.doesNotMatch(gas.alerts[gas.alerts.length - 1].message, /統合版/, '試作では案内しない');
   gas.promptAnswers = ['', '10/23'];
   g.createMeetingSummaries();
   const file = meeting.replace(/\//g, '');
   assert.deepStrictEqual(gas.decks.slice(1).map(d => d.title), [file + '_新FMT_RX Business Meeting用資料', file + '_新FMT2_RX Business Meeting用資料'],
     '統合版は作らない（関数を分ける）');
   const run = gas.alerts[gas.alerts.length - 1].message;
-  assert.match(run, /統合版（全サブインダストリー）は、エディタで createCombinedMeetingSummary\(\) を実行して作ってください（会議日を入力します。すべてのサブインダストリーの本番の資料を作ったあとに）。/);
+  assert.match(run, /この会議日の本番の資料が、すべてのサブインダストリーでそろいました。統合版（全サブインダストリー）は、エディタで createCombinedMeetingSummary\(\) を実行して作ってください（会議日を入力します）。/);
   assert.ok(run.indexOf('統合版') < run.indexOf('保存先：'));
 
   gas.promptAnswers = ['10/23'];
@@ -2560,4 +2560,26 @@ test('Appendix のページはグレー（扉に合わせる）：表の見出�
   gas.get('MTG_OPTIONS').appendixColors = null;
   const green = plain(g.mtgSlides_(summarize(g, '新FMT'))).find(sl => sl.title === T.changes);
   assert.ok(fills(green).indexOf(c.green) >= 0);
+});
+
+test('サブインダストリーごとに作る：本番を1つずつ作ると、終わりの画面に、この会議日の本番の資料がまだできていないサブインダストリーを出し、そろったら統合版を案内する', () => {
+  const {gas, g} = setup();
+  const o = gas.get('MTG_OPTIONS');
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  const parent = meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
+  Object.assign(o.combined, {enabled: true, meetingFolder: parent});
+  gas.promptAnswers = ['2', '10/23'];
+  g.createMeetingSummaries();
+  const first = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(first, /^「新FMT2」：/);
+  assert.doesNotMatch(first, /「新FMT」：/, '選んだシートだけ作る');
+  assert.match(first, /この会議日の本番の資料が、まだできていないサブインダストリー（1件）：新FMT。すべてできたら、createMeetingSummaries\(\) の終わりにこの画面で知らせます/);
+  assert.deepStrictEqual(JSON.parse(g.PropertiesService.getDocumentProperties().getProperty('MTG_MEETINGS_新FMT2')).map(m => m.date), [meeting]);
+  assert.strictEqual(g.PropertiesService.getDocumentProperties().getProperty('MTG_MEETINGS_新FMT'), null, '選ばなかったシートは記録しない');
+  gas.promptAnswers = ['1', '10/23'];
+  g.createMeetingSummaries();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /この会議日の本番の資料が、すべてのサブインダストリーでそろいました。統合版（全サブインダストリー）は、エディタで createCombinedMeetingSummary\(\) を実行して作ってください/);
+  gas.promptAnswers = ['10/23'];
+  g.createCombinedMeetingSummary();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「全サブインダストリー」（統合版）：/);
 });
