@@ -484,28 +484,116 @@ function mtgScheduledPrevious_(meeting) {
   return {date: prev.date, cutoff: Utilities.parseDate(prev.date, Session.getScriptTimeZone(), 'yyyy/MM/dd').getTime(), scheduled: true};
 }
 
-/** 作る前の確かめの文（会議日（曜日）・シートごとの対象期間・同じ会議日の資料を作成済みか・ダミーの記録）。本番なら記録の注意も */
-function mtgRunCheckText_(final, names, meeting) {
+/**
+ * 比べる時点の候補（画面のプルダウン。新しい順）。会議時点のコピー（本番の資料・基準を記録したときに保存した、その時点のシートの値。
+ * シートの会議の記録から）と、会議日程の一覧（インデックスの RX Business Meeting）の会議日（その日の 0時から。変更の記録で比べる）。
+ * [{key: 'copy:<ID>' | 'date:yyyy/MM/dd', label, day: その時点の会議日（画面では、選んだ会議日より前のものだけ出す）, at, date, baseline, copyId, sheets}]
+ */
+function mtgComparePoints_(ss) {
+  const props = PropertiesService.getDocumentProperties();
+  const tz = Session.getScriptTimeZone();
+  const fmt = at => Utilities.formatDate(new Date(at), tz, 'M/d HH:mm');
+  const copies = new Map();
+  Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name)).forEach(name => {
+    mtgMeetings_(props, name).forEach(m => {
+      if (!m.copy || !m.copy.id) return;
+      const c = copies.get(m.copy.id) || {copyId: m.copy.id, at: m.cutoff, date: m.date, baseline: !!m.baseline, sheets: []};
+      c.sheets.push(name);
+      copies.set(m.copy.id, c);
+    });
+  });
+  const points = Array.from(copies.values()).map(c => Object.assign(c, {key: 'copy:' + c.copyId, day: c.date,
+    label: (c.baseline ? '基準' : mtgDateLabel_(c.date) + ' の会議時点') + 'のコピー（' + fmt(c.at) + ' 保存・' + c.sheets.length + 'シート）'}));
+  mtgIndexMeetings_(MTG_OPTIONS.index.kind).forEach(m => {
+    points.push({key: 'date:' + m.date, day: m.date, date: m.date, at: Utilities.parseDate(m.date, tz, 'yyyy/MM/dd').getTime(),
+      label: mtgDateLabel_(m.date) + ' の会議日（0時）から（変更の記録で比べる）'});
+  });
+  return points.sort((a, b) => b.at - a.at);
+}
+
+/**
+ * 画面で選んだ比べる時点（key）を、資料の「前回」の形にする。空なら null（シートごとに前回の会議から。mtgPreviousOf_）。
+ * 'copy:<ID>'：その会議時点のコピーと比べる {date, cutoff, copy: {id}, sheets, baseline, chosen}
+ * 'date:yyyy/MM/dd'：その日の 0時から、変更の記録で比べる {date, cutoff, scheduled, chosen}
+ * 'at:yyyy/MM/dd HH:mm'：その日時から、変更の記録で比べる {date, cutoff, at, chosen}
+ * 分からない・今より後なら止める
+ */
+function mtgResolvePoint_(key) {
+  const text = String(key || '').trim();
+  if (!text) return null;
+  const tz = Session.getScriptTimeZone();
+  let point = null;
+  if (text.indexOf('copy:') === 0) {
+    const c = mtgComparePoints_(SpreadsheetApp.getActiveSpreadsheet()).find(p => p.key === text);
+    if (!c) throw new Error('比べる時点（会議時点のコピー）の記録が見つかりません。画面を開き直して、選び直してください。');
+    point = {date: c.date, cutoff: c.at, copy: {id: c.copyId}, sheets: c.sheets, baseline: c.baseline, chosen: true};
+  } else {
+    const m = /^(date|at):(\d{4}\/\d{2}\/\d{2})(?: (\d{2}:\d{2}))?$/.exec(text);
+    if (!m || (m[1] === 'at') !== !!m[3]) throw new Error('比べる時点「' + text + '」が分かりません。画面を開き直して、選び直してください。');
+    const cutoff = Utilities.parseDate(m[2] + ' ' + (m[3] || '00:00'), tz, 'yyyy/MM/dd HH:mm').getTime();
+    point = m[1] === 'at' ? {date: m[2], cutoff, at: true, chosen: true} : {date: m[2], cutoff, scheduled: true, chosen: true};
+  }
+  if (point.cutoff >= Date.now()) throw new Error('比べる時点は、今より前を選んでください。');
+  return point;
+}
+
+/**
+ * シートごとの「前回」（mtgPreviousOf_）を、選んだ比べる時点（point。mtgResolvePoint_ の戻り値）に置き換える。point が無い・前回と同じなら前回のまま。
+ * 会議時点のコピーにこのシートが無ければ、その時刻から変更の記録で比べる（noCopy）
+ */
+function mtgPreviousWith_(props, name, meeting, scheduled, point) {
+  const p = mtgPreviousOf_(props, name, meeting, scheduled);
+  if (!point) return p;
+  const auto = p.previous;
+  if (auto && (point.copy ? auto.copy && auto.copy.id === point.copy.id : !auto.copy && auto.cutoff === point.cutoff)) return p;
+  const previous = {date: point.date, cutoff: point.cutoff, chosen: true};
+  if (point.baseline) previous.baseline = true;
+  if (point.scheduled) previous.scheduled = true;
+  if (point.at) previous.at = true;
+  if (point.copy) {
+    if (point.sheets.indexOf(name) >= 0) previous.copy = {id: point.copy.id, sheet: name};
+    else previous.noCopy = true;
+  }
+  return Object.assign({}, p, {previous, legacy: 0});
+}
+
+/** 選んだ比べる時点の文（確かめの文・資料の対象期間）：「10/9 の会議時点（10/8 18:20）以降」「10/9 の会議日（0時）以降」「10/1 09:00 以降」 */
+function mtgChosenText_(prev) {
+  const fmt = at => Utilities.formatDate(new Date(at), Session.getScriptTimeZone(), 'M/d HH:mm');
+  if (prev.baseline) return '基準時点（' + fmt(prev.cutoff) + '）以降';
+  if (prev.scheduled) return mtgShortDate_(prev.date) + ' の会議日（0時）以降';
+  if (prev.at) return fmt(prev.cutoff) + ' 以降';
+  return mtgShortDate_(prev.date) + ' の会議時点（' + fmt(prev.cutoff) + '）以降';
+}
+
+/** 作る前の確かめの文（会議日（曜日）・シートごとの対象期間・同じ会議日の資料を作成済みか・ダミーの記録）。本番なら記録の注意も。point は選んだ比べる時点 */
+function mtgRunCheckText_(final, names, meeting, point) {
   const props = PropertiesService.getDocumentProperties();
   const tz = Session.getScriptTimeZone();
   const fmt = at => Utilities.formatDate(new Date(at), tz, 'M/d HH:mm');
   const scheduled = mtgScheduledPrevious_(meeting);
+  const logStart = point && !point.copy ? mtgLogStart_(SpreadsheetApp.getActiveSpreadsheet()) : null;
   const lines = names.map(name => {
-    const p = mtgPreviousOf_(props, name, meeting, scheduled);
+    const p = mtgPreviousWith_(props, name, meeting, scheduled, point);
     const prev = p.previous;
-    const from = prev && prev.baseline ? '基準（' + fmt(prev.cutoff) + '）以降'
+    const from = prev && prev.chosen ? '選んだ時点：' + mtgChosenText_(prev) +
+      (prev.noCopy ? '（その時点のコピーにこのシートが無いため、変更の記録から）' : prev.copy ? '' : '（変更の記録から）')
+      : prev && prev.baseline ? '基準（' + fmt(prev.cutoff) + '）以降'
       : prev && prev.scheduled ? '前回会議（' + mtgShortDate_(prev.date) + '）以降（前回の資料の記録が無いため、会議日から）'
         : prev ? '前回会議（' + mtgShortDate_(prev.date) + '）の資料作成時（' + fmt(prev.cutoff) + '）以降'
           : p.legacy ? '前回の資料作成時（' + fmt(p.legacy) + '）以降'
             : '直近' + MTG_OPTIONS.firstDays + '日間（前回の会議が無い）';
     const dummy = smpCountEvents_(SpreadsheetApp.getActiveSpreadsheet(), SMP_OPTIONS.dummy.eventPrefix + '-', name).changes;
     return '・' + name + '：' + from + (prev && prev.copy ? '（その時点のコピーと比べる）' : '') +
+      (prev && prev.chosen && !prev.copy && logStart && prev.cutoff < logStart ?
+        '\n　※ 変更の記録は ' + fmt(logStart) + ' からです。それより前の変化は出ません。' : '') +
       (final && p.same ? '\n　※ この会議日の資料は ' + fmt(p.same.cutoff) + ' に作成済み。作り直すと、次の会議の起点が今になります。' : '') +
       (dummy ? '\n　※ ダミーの変更の記録（' + dummy + '件）があります。資料に【ダミーデータを含む】と出ます。' +
         (final ? '配る資料なら、先に removeBusinessMtgDummyHistory() で消してください。' : '') : '');
   });
   return (final ? '本番の資料を作り、会議日を記録します。' : '試しに資料を作ります（会議日は記録しません。ファイル名に「試作」が付きます）。') +
-    '\n\n会議日：' + mtgDateLabel_(meeting) + '\n対象期間\n' + lines.join('\n') +
+    '\n\n会議日：' + mtgDateLabel_(meeting) + '\n比べる時点：' + (point ? '選んだ時点（全シート共通）' : '前回の会議（シートごと）') +
+    '\n対象期間\n' + lines.join('\n') +
     (final ? '\n\n今の値は「' + MTG_OPTIONS.copyName + '」（別のスプレッドシート。タイトルは今の日時）に保存し、次の会議の資料はそれと比べます。' +
       '\n記録した会議日は、次の会議の資料の起点になります。配布したあとは作り直さないでください。' : '');
 }
@@ -514,7 +602,7 @@ function mtgRunCheckText_(final, names, meeting) {
  * 会議サマリを作り始める（画面の「作成する」から。MeetingSchedule.gs の runMeetingMaterials）。作っている途中の仕事があれば、cancelJob ならやめて作り、
  * そうでなければ止める。時間がかかれば区切って続ける（mtgJobRun_）。戻り値は終わり（区切ったとき）の知らせ
  */
-function mtgRunStart_(final, meeting, names, cancelJob) {
+function mtgRunStart_(final, meeting, names, cancelJob, point) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   if (mtgJobLoad_()) {
@@ -524,7 +612,7 @@ function mtgRunStart_(final, meeting, names, cancelJob) {
   }
   const now = new Date();
   const job = {final, meeting, now: now.getTime(), names, items: [], stored: 0, copy: null, index: null, folderUrl: '',
-    combined: !!MTG_OPTIONS.combined.enabled};
+    combined: !!MTG_OPTIONS.combined.enabled, point: point || null};
   const done = mtgJobRun_(ss, job, started);
   const message = mtgJobMessage_(job, done);
   console.log(message);
@@ -536,7 +624,8 @@ function mtgRunStart_(final, meeting, names, cancelJob) {
 
 /**
  * 会議サマリを作る仕事を、時間の許す限り進める。job = {final, meeting, now: 作り始めた時刻（ms）, names, items: 作った資料 [{name, pdf: ID, line: 知らせる文}],
- * stored: 格納した数, copy: 会議時点のコピー, index: 書いたインデックス, folderUrl, combined: すべてのシートを作るか（統合版の案内を出す）}。
+ * stored: 格納した数, copy: 会議時点のコピー, index: 書いたインデックス, folderUrl, combined: すべてのシートを作るか（統合版の案内を出す）,
+ * point: 選んだ比べる時点（mtgResolvePoint_。無ければ null）}。
  * 順に、資料（シートごと）→ 本番なら会議時点のコピーと会議日の記録 → 会議のフォルダへの格納とインデックス（シートごと）。
  * 統合版は作らない（すべてのサブインダストリーの資料を作ったあとに、createBusinessMtgCombinedSummary() で作る）。
  * 次の仕事が MTG_OPTIONS.run の見積もりで上限（limitMs）を越えそうなら、仕事を保存して1回きりのトリガーで続きを予約し、false を返す。全部済んだら true
@@ -552,7 +641,7 @@ function mtgJobRun_(ss, job, started) {
   if (job.items.length < job.names.length) {
     if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const props = PropertiesService.getDocumentProperties();
-    const {plans, summaries} = mtgSummaries_(ss, job.names.slice(job.items.length), new Date(job.now), job.final, job.meeting);
+    const {plans, summaries} = mtgSummaries_(ss, job.names.slice(job.items.length), new Date(job.now), job.final, job.meeting, job.point);
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
       const summary = summaries[i];
@@ -601,7 +690,7 @@ function mtgResultLine_(ss, summary, file) {
   // 変化が無く、サンプル（addSampleHistory()。会議サマリは数えない）の記録だけがあるときは、資料の確認用の関数を案内する
   const samples = !summary.kpi.changed && !summary.dummy ? smpCountEvents_(ss, SMP_OPTIONS.eventPrefix + '-', summary.name).changes : 0;
   return '「' + summary.name + '」：' + file.getName() + '（' + mtgCountsText_(summary) + '）\n　' + file.getUrl() +
-    (summary.copy ? '\n　前回からの変化は「' + summary.copy.title + '」と比べました。' : '') +
+    (summary.copy ? '\n　' + (summary.previous && summary.previous.chosen ? '' : '前回からの') + '変化は「' + summary.copy.title + '」と比べました。' : '') +
     (summary.copyError ? '\n　※ ' + summary.copyError : '') +
     (summary.unlogged ? '\n　※ 変更の記録が無い変更 ' + summary.unlogged + '件（差分追跡が止まっていた間などの変更。資料には出しています）。' +
       'diagnoseDiffState() で差分追跡が動いているか確かめてください。' : '') +
@@ -1020,14 +1109,15 @@ function mtgMeetingPending_(ss, meeting) {
  * names のシートの会議サマリの中身（mtgSummarize_）を、前回の会議（今回より前でいちばん新しい会議。そのあとに基準があれば基準）からの変化で作る。
  * 戻り値 {plans: [{name, meetings, previous, legacy, since, baseline, draft}], summaries}（読むだけ。記録しない）
  */
-function mtgSummaries_(ss, names, now, final, meeting) {
+function mtgSummaries_(ss, names, now, final, meeting, point) {
   const o = MTG_OPTIONS;
   const props = PropertiesService.getDocumentProperties();
   const scheduled = mtgScheduledPrevious_(meeting);
   const plans = names.map(name => {
     const meetings = mtgMeetings_(props, name);
-    // 前回：今回より前でいちばん新しい会議。そのあとに基準を記録していれば（今回の会議日まで）基準。どちらも無ければ会議日程の一覧の前の会議日
-    const {previous, legacy} = mtgPreviousOf_(props, name, meeting, scheduled);
+    // 前回：今回より前でいちばん新しい会議。そのあとに基準を記録していれば（今回の会議日まで）基準。どちらも無ければ会議日程の一覧の前の会議日。
+    // 比べる時点を選んだ（point）なら、その時点
+    const {previous, legacy} = mtgPreviousWith_(props, name, meeting, scheduled, point);
     const since = previous ? previous.cutoff : (legacy || now.getTime() - o.firstDays * 86400000);
     const draft = mtgReadJson_(props, o.draftKeyPrefix + name);
     const baseline = meetings.filter(m => m.baseline && m.cutoff <= now.getTime()).pop();
@@ -1089,7 +1179,7 @@ function createBusinessMtgCombinedSummary() {
 }
 
 /** 統合版を作れるか（作れなければ {error: 理由}、作れれば {text: 確かめの文}） */
-function mtgCombinedCheck_(meeting) {
+function mtgCombinedCheck_(meeting, point) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const o = MTG_OPTIONS.combined;
   if (!o.enabled) return {error: '統合版を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.combined.enabled）。'};
@@ -1107,16 +1197,17 @@ function mtgCombinedCheck_(meeting) {
       'もう一度実行してください。'};
   }
   return {text: '「' + o.name + '」の資料（' + names.length + 'サブインダストリーを1つにまとめた統合版）を、今のシートの値で作ります。\n\n' +
-    '会議日 ' + mtgDateLabel_(meeting) + ' の本番の資料として作り、会議のフォルダに格納します（会議日の記録・会議時点のコピーは変えません）。'};
+    '会議日 ' + mtgDateLabel_(meeting) + ' の本番の資料として作り、会議のフォルダに格納します（会議日の記録・会議時点のコピーは変えません）。\n' +
+    '比べる時点：' + (point ? mtgChosenText_(point) + '（全シート共通）' : '前回の会議（シートごと）')};
 }
 
 /** 統合版を作る（画面の「作成する」から。作れるかは先に mtgCombinedCheck_ で確かめる）。戻り値は終わりの知らせ */
-function mtgCombinedStart_(meeting) {
-  const check = mtgCombinedCheck_(meeting);
+function mtgCombinedStart_(meeting, point) {
+  const check = mtgCombinedCheck_(meeting, point);
   if (check.error) throw new Error(check.error);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const names = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
-  const {summaries} = mtgSummaries_(ss, names, new Date(), true, meeting);
+  const {summaries} = mtgSummaries_(ss, names, new Date(), true, meeting, point);
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
   const message = mtgCombinedLines_(mtgCombinedPlain_(mtgCreateCombined_(summaries, meeting, true, folder))).concat(['', '保存先：' + folder.getUrl()]).join('\n');
@@ -2947,7 +3038,7 @@ function mtgCoverSlide_(s) {
     template: {title: s.name, subtitle: o.meetingName + '　事前資料' + (s.final ? '' : '【試作】'),
       date: mtgDateLabel_(s.meeting), name: ''},
     elements: [
-      line(350, '出典：「' + s.name + '」シート' + (s.copy ? '・前回の会議時点のコピー' : '') + 'および変更履歴（' + (s.dummy ? 'ダミーデータを含む。' : '') +
+      line(350, '出典：「' + s.name + '」シート' + (s.copy ? '・' + mtgCopyWord_(s) : '') + 'および変更履歴（' + (s.dummy ? 'ダミーデータを含む。' : '') +
         Utilities.formatDate(s.now, Session.getScriptTimeZone(), 'yyyy/M/d HH:mm') + ' 時点）'),
       line(365, '対象期間：' + mtgPeriodText_(s))
     ]
@@ -3036,10 +3127,22 @@ function mtgLead_(text) {
   return el;
 }
 
-/** 「前回以降」「基準以降」「直近14日間」（数字の見出し・リード文の期間） */
+/** 比べる時点の短い名前：「前回」、選んだ時点なら「10/9」（基準は呼ぶ側で「基準」） */
+function mtgFromWord_(s) {
+  return s.previous && s.previous.chosen && !s.previous.baseline ? mtgShortDate_(s.previous.date) : '前回';
+}
+
+/** 「前回の会議時点のコピー」「10/9 の会議時点のコピー」「基準のコピー」（比べたコピーの呼び方） */
+function mtgCopyWord_(s) {
+  const prev = s.previous;
+  if (!prev || !prev.chosen) return '前回の会議時点のコピー';
+  return prev.baseline ? '基準のコピー' : mtgShortDate_(prev.date) + ' の会議時点のコピー';
+}
+
+/** 「前回以降」「基準以降」「10/9以降」（選んだ時点）「直近14日間」（数字の見出し・リード文の期間） */
 function mtgPeriodShort_(s) {
   if (s.first) return '直近' + MTG_OPTIONS.firstDays + '日間';
-  return s.previous && s.previous.baseline ? '基準以降' : '前回以降';
+  return s.previous && s.previous.baseline ? '基準以降' : mtgFromWord_(s) + '以降';
 }
 
 /** 「うち前回以降の更新なし」「うち基準以降の更新なし」「うち直近14日間の更新なし」（停滞のうち、対象期間に変化の無い案件） */
@@ -3047,10 +3150,10 @@ function mtgQuietLabel_(s) {
   return 'うち' + mtgPeriodShort_(s) + 'の更新なし';
 }
 
-/** 「前回比 」「基準比 」「直近14日間で 」（前回比の書き出し） */
+/** 「前回比 」「基準比 」「10/9比 」（選んだ時点）「直近14日間で 」（前回比の書き出し） */
 function mtgVersus_(s) {
   if (s.first) return mtgPeriodShort_(s) + 'で ';
-  return s.previous && s.previous.baseline ? '基準比 ' : '前回比 ';
+  return s.previous && s.previous.baseline ? '基準比 ' : mtgFromWord_(s) + '比 ';
 }
 
 /** 「（ほかに、その他の項目のみの更新 N件）」（その他更新は「変化のある案件」に数えないので、別に書く。無ければ空） */
@@ -3058,10 +3161,11 @@ function mtgUpdatedNote_(s) {
   return s.kpi.updated ? '（ほかに、その他の項目のみの更新 ' + s.kpi.updated + '件）' : '';
 }
 
-/** 「前回から変化のある案件」「直近14日間に変化のある案件」 */
+/** 「前回から変化のある案件」「10/9以降に変化のある案件」（選んだ時点）「直近14日間に変化のある案件」 */
 function mtgChangedLabel_(s) {
   if (s.first) return '直近' + MTG_OPTIONS.firstDays + '日間に変化のある案件';
-  return (s.previous && s.previous.baseline ? '基準以降に' : '前回から') + '変化のある案件';
+  if (s.previous && s.previous.baseline) return '基準以降に変化のある案件';
+  return s.previous && s.previous.chosen ? mtgFromWord_(s) + '以降に変化のある案件' : '前回から変化のある案件';
 }
 
 /**
@@ -3330,7 +3434,7 @@ function mtgWaterfall_(s, x, y, w, h) {
     el.push(mtgBox_(lx + 6, y - 1, item.bw, 18, item.label, {size: 8.5, color: c.sub, role: 'legend'}));
     lx += 6 + item.bw + 8 - 7.2 - 1.6;   // 名前の箱の右の余白（7.2）と、文字のあとの少し（1.6）の分を詰めて、文字の終わりから 8pt
   });
-  const startLabel = s.first ? MTG_OPTIONS.firstDays + '日前' : s.previous && s.previous.baseline ? '基準' : '前回';
+  const startLabel = s.first ? MTG_OPTIONS.firstDays + '日前' : s.previous && s.previous.baseline ? '基準' : mtgFromWord_(s);
   const bars = [{label: startLabel, value: b.start, count: b.startCount, total: true}]
     .concat(b.steps.filter(st => st.count))
     .concat([{label: '今回', value: b.end, count: b.endCount, total: true}]);
@@ -3420,7 +3524,7 @@ function mtgMovesSlide_(s) {
   const lack = s.gaps || {};
   const moves = s.changes.filter(ch => ch.category !== 'updated');
   const columns = mtgColumns_([126, 66, 126, 60, 76, 148, 58], 5);   // ステータスの列は「C-稟議対応中(50%) ▶」「B-クロージング中(70%)」が1行ずつ入る幅。活動状況は広く
-  const rows = [mtgHeadRow_(columns, ['得意先／案件名', '区分', 'ステータス\n前回▶今回', '期待値\n前回▶今回', '受注月\n前回▶今回', '活動状況（最新）', '責任者'])];
+  const rows = [mtgHeadRow_(columns, ['得意先／案件名', '区分', 'ステータス\n' + mtgFromWord_(s) + '▶今回', '期待値\n' + mtgFromWord_(s) + '▶今回', '受注月\n' + mtgFromWord_(s) + '▶今回', '活動状況（最新）', '責任者'])];
   // 上から mainRows.changes 件まで、ページに入る分だけ（行の高さは中身で変わる）
   const top = [];
   moves.slice(0, MTG_OPTIONS.mainRows.changes).some(ch => {
@@ -3583,10 +3687,10 @@ function mtgAppendixChanges_(s) {
     lead: lack.changes ? mtgChangedLabel_(s) + 'は' + MTG_OPTIONS.gapText + '（' + lack.changes + '）。'
       : mtgChangedLabel_(s) + 'は ' + s.kpi.changed + '件' + mtgUpdatedNote_(s) + '。' +
         (s.unmatched ? '\n案件と照合できなかった変更記録 ' + s.unmatched + '件は集計対象外。' : '') +
-        (s.unlogged ? '\nうち ' + s.unlogged + '件は変更の記録が無い（前回の会議時点のコピーとの比較で検出）。' : '') +
-        (s.copyError ? '\n前回の会議時点のコピーを開けないため、変更の記録から集計。' : ''),
+        (s.unlogged ? '\nうち ' + s.unlogged + '件は変更の記録が無い（' + mtgCopyWord_(s) + 'との比較で検出）。' : '') +
+        (s.copyError ? '\n' + mtgCopyWord_(s) + 'を開けないため、変更の記録から集計。' : ''),
     columns,
-    head: ['得意先／案件名', '区分', 'ステータス\n前回▶今回', '期待値\n前回▶今回', '受注月\n前回▶今回', '活動状況（最新）', '更新項目', '責任者'],
+    head: ['得意先／案件名', '区分', 'ステータス\n' + mtgFromWord_(s) + '▶今回', '期待値\n' + mtgFromWord_(s) + '▶今回', '受注月\n' + mtgFromWord_(s) + '▶今回', '活動状況（最新）', '更新項目', '責任者'],
     rows: s.changes.map(ch => [
       mtgDealCell_(ch, columns[0], MTG_SLIDE.appendixSize),
       {text: '', fill: c.white},
@@ -3854,6 +3958,7 @@ function mtgShortHeader_(header) {
 /** 「前回会議（10/9）の資料作成時（10/07 18:00）以降」「直近14日間（09/30〜。初回のため）」 */
 function mtgPeriodText_(s) {
   const tz = Session.getScriptTimeZone();
+  if (s.previous && s.previous.chosen) return mtgChosenText_(s.previous) + '（選んだ時点）';
   if (s.previous && s.previous.baseline) {
     return '基準時点（' + Utilities.formatDate(new Date(s.previous.cutoff), tz, 'M/d HH:mm') + '）以降';
   }

@@ -481,3 +481,42 @@ test('前の名前（RX Business MTG・RX Service MTG）：その名前の会議
   assert.strictEqual(index.getLastRow(), 2);
   assert.deepStrictEqual(plain(index.getRange(2, 2, 1, 3).getDisplayValues()[0]), ['RX Service Meeting', 'second', 'first']);
 });
+
+test('比べる会議を選ぶ：本番で記録した会議（新しい順）から選び、その時点の判断・状況・件数と比べる（前回と同じなら前回のまま。記録に無ければ止める）', () => {
+  const {gas, g, request, task} = setup();
+  fill(gas, request, task);
+  const first = g.mtgParseDate_('10/09', new Date());
+  const second = g.mtgParseDate_('10/23', new Date());
+  gas.confirmAnswer = 'YES';
+  gas.promptAnswers = ['', '10/09'];
+  g.createServiceMtgSummaries();
+  addRequest(gas, request, {'ID': 'SR-0005', '得意先': 'A社', '案件名': 'アプリ刷新', 'リクエスト': '新しいリクエスト'});
+  gas.promptAnswers = ['', '10/23'];
+  g.createServiceMtgSummaries();
+  const data = plain(g.getMeetingRunData('service', false));
+  assert.deepStrictEqual(data.points.map(p => p.key), [second, first], '新しい順');
+  assert.match(data.points[1].label, /^\d{4}年10月9日（.） の会議の記録（\d+\/\d+ \d{2}:\d{2} 作成）$/);
+  assert.strictEqual(data.canPickTime, false);
+
+  const later = g.mtgParseDate_('11/13', new Date());
+  const view = point => g.smtgView_(g.smtgRead_(gas.ss, new Date()), '全サブインダストリー', later, point);
+  const auto = view('');
+  assert.deepStrictEqual([auto.previous.date, !!auto.previous.chosen, auto.moves.newRequests.length], [second, false, 0]);
+  assert.ok(!view(second).previous.chosen, '前回と同じ会議を選んでも前回のまま');
+  const picked = view(first);
+  assert.deepStrictEqual(plain([picked.previous.date, picked.previous.chosen, picked.moves.newRequests.map(r => r.id)]), [first, true, ['SR-0005']]);
+  const slides = plain(g.smtgSlides_(picked, later, false));
+  const lead = slides[1].elements.filter(el => el.role === 'lead').map(el => el.text).join('');
+  assert.match(lead, /選んだ会議（10\/9）以降：新規リクエスト 1件/);
+  assert.strictEqual(slides[1].elements.filter(el => el.role === 'tile-value')[0].text, '5件　10/9比 +1');
+
+  const check = g.checkMeetingRun('service', false, later, ['全サブインダストリー'], first).text;
+  assert.match(check, /比べる会議（選んだ会議）：\d{4}年10月9日（.）（その時点からの変化を出します）/);
+  assert.throws(() => g.checkMeetingRun('service', false, later, ['全サブインダストリー'], '2026/01/01'), /比べる会議（2026\/01\/01）の記録が見つかりません/);
+  // 画面から作る：選んだ会議と比べる
+  gas.runPoint = first;
+  gas.promptAnswers = [String(data.sheets.length), '11/13'];   // 全サブインダストリー（候補の最後）
+  g.previewServiceMtgSummaries();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「全サブインダストリー」：/);
+  assert.match(JSON.stringify(gas.decks[gas.decks.length - 1].requests), /選んだ会議（10\/9）以降：新規リクエスト 1件/);
+});

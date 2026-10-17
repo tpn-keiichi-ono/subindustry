@@ -55,11 +55,11 @@
     .label { font-size: 12.5px; font-weight: 700; color: var(--body); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .hint { font-size: 11px; color: var(--faint); font-weight: 400; }
     .row { display: flex; align-items: center; gap: 8px; }
-    select, input[type="date"] {
+    select, input[type="date"], input[type="datetime-local"] {
       height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13.5px; color: var(--ink); background: #ffffff;
     }
     select { flex: 1; min-width: 0; }
-    select:focus, input[type="date"]:focus { border-color: var(--teal); }
+    select:focus, input[type="date"]:focus, input[type="datetime-local"]:focus { border-color: var(--teal); }
     .notice { font-size: 12.5px; line-height: 1.6; padding: 10px 12px; border-radius: 8px; background: var(--soft); color: var(--body); white-space: pre-wrap; }
     .notice.warn { background: var(--warn-bg); border: 1px solid var(--warn-line); }
     .notice.error { background: var(--del-bg); color: var(--danger); }
@@ -129,7 +129,15 @@
         </div>
         <div class="notice" id="noMeetings" hidden>「INDEX_会議資料」に、この会議の日程がありません。「カレンダーから読み込む」で Google カレンダーの日程を読み込んでください（一覧に無い日は「一覧に無い日を入力」で選べます）。</div>
         <div class="notice" id="importResult" hidden></div>
-        <span class="hint">「INDEX_会議資料」にある会議日程です。前回の会議からの変化を出します。</span>
+        <span class="hint">「INDEX_会議資料」にある会議日程です。</span>
+      </section>
+      <section class="field" id="pointField">
+        <div class="label">比べる時点</div>
+        <div class="row">
+          <select id="point" aria-label="比べる時点"></select>
+          <input type="datetime-local" id="pointTime" aria-label="比べる日時" hidden>
+        </div>
+        <span class="hint" id="pointHint"></span>
       </section>
       <section class="field" id="sheetsField">
         <div class="label">作る資料<span><button type="button" class="link-btn" id="all">すべて選ぶ</button>　<button type="button" class="link-btn" id="none">すべて外す</button></span></div>
@@ -163,6 +171,7 @@
     const KIND = document.body.dataset.kind;
     const FINAL = document.body.dataset.final === 'true';
     const MANUAL = '__manual__';
+    const TIME = '__time__';
     let data = null;
 
     /* ---------- くるくる（JavaScript で動かす。OS の「動きを減らす」設定でも止まらない） ---------- */
@@ -235,6 +244,9 @@
       select.value = keep && Array.from(select.options).some(o => o.value === keep) ? keep : (d.selected || (d.meetings.length ? '' : MANUAL));
       if (!select.value) select.selectedIndex = 0;
       $('noMeetings').hidden = d.meetings.length > 0;
+      $('pointHint').textContent = KIND === 'service'
+        ? '本番の資料を作ったときの記録（判断・タスクの状況・件数）と今を比べます。'
+        : 'その時点のシートの値（会議時点のコピー）と今を比べます。会議日・日時を選んだときは、変更の記録から変化を出します。';
       onMeetingChange();
       // 作る資料（統合版は選ばない）
       $('sheetsField').hidden = KIND === 'combined';
@@ -264,7 +276,39 @@
     function onMeetingChange() {
       const manual = $('meeting').value === MANUAL;
       $('manual').hidden = !manual;
+      renderPoints();
       updateNext();
+    }
+
+    // 比べる時点（初めは前回の会議。候補は、選んだ会議日より前のもの。新しい順）
+    function renderPoints() {
+      if (!data) return;
+      const select = $('point');
+      const keep = select.value;
+      const meeting = meetingValue();
+      select.textContent = '';
+      const add = (value, text) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = text;
+        select.appendChild(option);
+      };
+      add('', KIND === 'service' ? '前回の会議（自動）' : '前回の会議（自動。シートごとに、前回の資料を作った時点）');
+      (data.points || []).filter(p => !meeting || p.day < meeting).forEach(p => add(p.key, p.label));
+      if (data.canPickTime) add(TIME, '日時を指定…');
+      select.value = Array.from(select.options).some(o => o.value === keep) ? keep : '';
+      onPointChange();
+    }
+
+    function onPointChange() {
+      $('pointTime').hidden = $('point').value !== TIME;
+      updateNext();
+    }
+
+    function pointValue() {
+      if ($('point').value !== TIME) return $('point').value;
+      const v = $('pointTime').value;   // yyyy-mm-ddThh:mm
+      return v ? 'at:' + v.slice(0, 10).replace(/-/g, '/') + ' ' + v.slice(11, 16) : '';
     }
 
     function meetingValue() {
@@ -278,7 +322,8 @@
     }
 
     function updateNext() {
-      const ok = !!meetingValue() && (KIND === 'combined' || pickedSheets().length > 0) && (!data || !data.job || $('cancelJob').checked);
+      const ok = !!meetingValue() && (KIND === 'combined' || pickedSheets().length > 0) && (!data || !data.job || $('cancelJob').checked) &&
+        ($('point').value !== TIME || !!pointValue());
       $('next').disabled = !ok;
     }
 
@@ -324,7 +369,7 @@
           show('confirm');
         })
         .withFailureHandler(e => { idle(); showError('error', e); })
-        .checkMeetingRun(KIND, FINAL, meetingValue(), pickedSheets());
+        .checkMeetingRun(KIND, FINAL, meetingValue(), pickedSheets(), pointValue());
     }
 
     function run() {
@@ -336,7 +381,7 @@
           show('done');
         })
         .withFailureHandler(e => { idle(); showError('confirmError', e); })
-        .runMeetingMaterials(KIND, FINAL, meetingValue(), pickedSheets(), $('cancelJob').checked);
+        .runMeetingMaterials(KIND, FINAL, meetingValue(), pickedSheets(), $('cancelJob').checked, pointValue());
     }
 
     // 知らせの文の URL をリンクにする（文字は textContent で入れる）
@@ -358,7 +403,9 @@
 
     /* ---------- 操作 ---------- */
     $('meeting').addEventListener('change', onMeetingChange);
-    $('manual').addEventListener('input', updateNext);
+    $('manual').addEventListener('input', () => { renderPoints(); updateNext(); });
+    $('point').addEventListener('change', onPointChange);
+    $('pointTime').addEventListener('input', updateNext);
     $('sheets').addEventListener('change', updateNext);
     $('cancelJob').addEventListener('change', updateNext);
     $('all').addEventListener('click', () => { $('sheets').querySelectorAll('input').forEach(i => { i.checked = true; }); updateNext(); });

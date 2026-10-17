@@ -107,23 +107,36 @@ function previewServiceMtgSummaries() {
 
 /**
  * 画面（MeetingRunDialog）に出す、作る資料の候補：サブインダストリー（リクエストの件数。0件は選ばない）と全サブインダストリー。
- * {sheets: [{name, checked, note}], job: 作っている途中の仕事の知らせ（無ければ空）}
+ * 比べる時点の候補は、本番の資料を作って記録した会議（新しい順。その時点の判断・タスクの状況・件数と比べる）。
+ * {sheets: [{name, checked, note}], points: [{key: 会議日, label, day}], job: 作っている途中の仕事の知らせ（無ければ空）}
  */
 function smtgRunData_() {
   const base = smtgRead_(SpreadsheetApp.getActiveSpreadsheet(), new Date());
   const all = MTG_OPTIONS.combined.name;
   const sheets = smtgSheetCounts_(base).map(c => ({name: c.name, checked: c.count > 0, note: 'リクエスト ' + c.count + '件'}))
     .concat([{name: all, checked: true, note: 'リクエスト ' + base.requests.length + '件'}]);
-  return {sheets, job: smtgJobPendingText_()};
+  const fmt = at => Utilities.formatDate(new Date(at), Session.getScriptTimeZone(), 'M/d HH:mm');
+  const points = base.list.slice().reverse().map(m => ({key: m.date, day: m.date,
+    label: mtgDateLabel_(m.date) + ' の会議の記録' + (m.at ? '（' + fmt(m.at) + ' 作成）' : '')}));
+  return {sheets, points, job: smtgJobPendingText_()};
 }
 
-/** 作る前の確かめの文（会議日・前回の会議・作る資料・サンプルの有無・作成済み）。本番なら記録の注意も */
-function smtgRunCheckText_(final, meeting, names) {
+/** 画面で選んだ比べる時点（記録した会議の会議日 yyyy/MM/dd）。空なら空（前回の会議と比べる）。記録に無ければ止める */
+function smtgCheckPoint_(point) {
+  const date = String(point || '').trim();
+  if (!date) return '';
+  if (!smtgMeetings_().some(m => m.date === date)) throw new Error('比べる会議（' + date + '）の記録が見つかりません。画面を開き直して、選び直してください。');
+  return date;
+}
+
+/** 作る前の確かめの文（会議日・前回（選んだ）の会議・作る資料・サンプルの有無・作成済み）。本番なら記録の注意も。point は選んだ比べる会議の会議日 */
+function smtgRunCheckText_(final, meeting, names, point) {
   const base = smtgRead_(SpreadsheetApp.getActiveSpreadsheet(), new Date());
-  const prev = smtgPrevious_(base.list, meeting);
+  const prev = smtgPrevious_(base.list, meeting, point);
   return (final ? '本番の資料を作り、会議日を記録します。' : '試しに資料を作ります（会議日は記録しません。ファイル名に「試作」が付きます）。') +
     '\n\n会議日：' + mtgDateLabel_(meeting) + '\n' +
-    '前回の会議：' + (prev ? mtgDateLabel_(prev.date) + '（その時点からの変化を出します）' : '記録なし（前回からの変化は出しません）') + '\n' +
+    (prev && prev.chosen ? '比べる会議（選んだ会議）：' + mtgDateLabel_(prev.date) + '（その時点からの変化を出します）'
+      : '前回の会議：' + (prev ? mtgDateLabel_(prev.date) + '（その時点からの変化を出します）' : '記録なし（前回からの変化は出しません）')) + '\n' +
     '作る資料：' + names.join('・') + '（' + names.length + '件）' +
     (base.sample ? '\n\n※ サンプルデータ（' + SMP_OPTIONS.namePrefix + '）が入っています。資料に【サンプルデータを含む】と出ます。' +
       (final ? '配る資料なら、先に removeServiceMtgSampleData() で消してください。' : '') : '') +
@@ -135,7 +148,7 @@ function smtgRunCheckText_(final, meeting, names) {
  * 資料を作り始める（画面の「作成する」から。MeetingSchedule.gs の runMeetingMaterials）。作っている途中の仕事があれば、cancelJob ならやめて作り、
  * そうでなければ止める。リクエストの無いサブインダストリーは作らない（選んだときを除く）。戻り値は終わり（区切ったとき）の知らせ
  */
-function smtgRunStart_(final, meeting, names, cancelJob) {
+function smtgRunStart_(final, meeting, names, cancelJob, point) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   mtgRequireSlides_();
@@ -146,7 +159,7 @@ function smtgRunStart_(final, meeting, names, cancelJob) {
   }
   const now = new Date();
   const base = smtgRead_(ss, now);
-  const job = {final, meeting, now: now.getTime(), names, skipped: [], items: [], recorded: false, folderUrl: '', sample: base.sample};
+  const job = {final, meeting, now: now.getTime(), names, skipped: [], items: [], recorded: false, folderUrl: '', sample: base.sample, point: point || ''};
   const done = smtgJobRun_(ss, job, started, base);
   const message = smtgJobMessage_(job, done);
   console.log(message);
@@ -165,7 +178,8 @@ function smtgSheetCounts_(base) {
 
 /**
  * 資料を作る仕事を、時間の許す限り進める。job = {final, meeting, now: 作り始めた時刻（ms）, names: 作る資料（サブインダストリー・全サブインダストリー）,
- * skipped: リクエストが無いため作らないサブインダストリー, items: 作った資料 [{name, line}], recorded: 会議日を記録したか, folderUrl}。
+ * skipped: リクエストが無いため作らないサブインダストリー, items: 作った資料 [{name, line}], recorded: 会議日を記録したか, folderUrl,
+ * point: 選んだ比べる会議の会議日（空なら前回の会議）}。
  * 資料を1つずつ作り（本番は格納とインデックスも）、すべて作ったら本番は会議日を記録する。base は読んだシート（無ければ読む）。
  * 次の資料が SMTG_OPTIONS.run の見積もりで上限を越えそうなら、仕事を保存して続きを予約し、false を返す。全部済んだら true
  */
@@ -197,7 +211,7 @@ function smtgJobRun_(ss, job, started, base) {
  * インデックスの種別「RX Service Meeting」の行の name の列に書く。戻り値 {name, line: 知らせる文}
  */
 function smtgCreateOne_(base, job, name, folder) {
-  const data = smtgView_(base, name, job.meeting);
+  const data = smtgView_(base, name, job.meeting, job.point);
   const slides = smtgSlides_(data, job.meeting, job.final);
   const out = smtgWithPalette_(() => mtgExportDeck_(smtgFileName_(job.meeting, name, job.final), slides, folder));
   const k = data.kpi;
@@ -456,7 +470,7 @@ function smtgRead_(ss, now) {
  * サブインダストリー・主管本部と担当者・タスク・顧客・業界の広がりはサービス案全体。
  * 戻り値 {name, all, now, meeting, list, previous, previousCounts, requests, tasks, services, kpi, moves, checks, fit, hasWeighted, dealGaps, sources, sample}
  */
-function smtgView_(base, name, meeting) {
+function smtgView_(base, name, meeting, point) {
   const all = name === MTG_OPTIONS.combined.name;
   const requests = all ? base.requests : base.requests.filter(r => r.sheet === name);
   const inView = new Set(requests);
@@ -490,7 +504,7 @@ function smtgView_(base, name, meeting) {
     tasks: tasks.length,
     done: counts.done
   };
-  const previous = smtgPrevious_(base.list, meeting);
+  const previous = smtgPrevious_(base.list, meeting, point);
   const data = {name, all, now: base.now, meeting, list: base.list, previous,
     previousCounts: previous && previous.counts ? previous.counts[name] || null : null,
     requests, tasks, services, kpi, hasWeighted: base.hasWeighted, dealGaps: base.dealGaps, sources: base.sources,
@@ -640,10 +654,13 @@ function smtgMeetings_() {
 }
 
 /**
- * 前回の会議（meeting より前で、いちばん新しい会議日）の記録と、その時点の判断・状況・資料ごとの件数 {…, decisions, tasks, counts: {資料の名前: 件数}}。無ければ null
+ * 前回の会議（meeting より前で、いちばん新しい会議日）の記録と、その時点の判断・状況・資料ごとの件数 {…, decisions, tasks, counts: {資料の名前: 件数}}。無ければ null。
+ * point（会議日）を選んだら、その会議の記録（前回の会議と違えば chosen: true）
  */
-function smtgPrevious_(list, meeting) {
-  const prev = list.filter(m => m.date < meeting).pop();
+function smtgPrevious_(list, meeting, point) {
+  const auto = list.filter(m => m.date < meeting).pop();
+  const picked = point ? list.find(m => m.date === point) : null;
+  const prev = picked ? Object.assign({}, picked, auto && auto.date === picked.date ? {} : {chosen: true}) : auto;
   if (!prev) return null;
   const detail = mtgReadJson_(PropertiesService.getDocumentProperties(), SMTG_OPTIONS.meetingDetailPrefix + prev.date.replace(/\//g, '')) || {};
   return Object.assign({}, prev, {decisions: detail.decisions || '', tasks: detail.tasks || '', counts: detail.counts || null});
@@ -672,6 +689,11 @@ function smtgRecordMeeting_(base, meeting) {
   if (detail.length > o.detailMaxLength) detail = JSON.stringify({counts});
   props.setProperty(o.meetingDetailPrefix + meeting.replace(/\//g, ''), detail);
   props.setProperty(o.meetingsKey, JSON.stringify(keep));
+}
+
+/** 比べる会議の呼び方：「前回の会議」、画面で選んだ会議なら「選んだ会議」 */
+function smtgPrevWord_(prev) {
+  return prev && prev.chosen ? '選んだ会議' : '前回の会議';
 }
 
 /** 「12:1,13:0」→ {12: '1', 13: '0'} */
@@ -765,7 +787,7 @@ function smtgCoverSlide_(data, meeting, final) {
         'の案件（' +
         (data.sample ? 'サンプルデータを含む。' : '') + Utilities.formatDate(data.now, Session.getScriptTimeZone(), 'yyyy/M/d HH:mm') + ' 時点）'),
       line(365, '対象：登録リクエスト ' + k.requests + '件・サービス案 ' + k.services + '件・タスク ' + k.tasks + '件' +
-        (data.previous ? '（前回の会議 ' + mtgShortDate_(data.previous.date) + ' からの変化）' : ''))
+        (data.previous ? '（' + smtgPrevWord_(data.previous) + ' ' + mtgShortDate_(data.previous.date) + ' からの変化）' : ''))
     ]
   };
 }
@@ -793,20 +815,21 @@ function smtgSummarySlide_(data, ranges) {
   const lead = 'サービス案 ' + k.services + '件（リクエスト ' + k.serviceRequests + '件・得意先 ' + k.customers + '社）、タスク ' + k.tasks + '件（完了 ' +
     k.done + '件）。登録リクエスト ' + k.requests + '件のうち、判断待ち ' + k.undecided + '件。\n' +
     (!prev ? '前回の会議の記録が無いため、前回からの変化は出していません（本番の資料を作ると、次の会議の資料から出ます）。'
-      : '前回の会議（' + mtgShortDate_(prev.date) + '）以降：新規リクエスト ' + m.newRequests.length + '件' +
+      : smtgPrevWord_(prev) + '（' + mtgShortDate_(prev.date) + '）以降：新規リクエスト ' + m.newRequests.length + '件' +
         (m.partial ? '（判断の変更・タスクの完了は、前回の記録が無いため出していません）。'
           : '・判断の変更 ' + m.decided.length + '件・完了したタスク ' + m.completed.length + '件・新しいタスク ' + m.newTasks.length + '件。'));
   const top = Math.max(S.summaryTop, Math.max.apply(null, mtgLead_(lead).map(e => e.y + e.h)) + 2);
   const el = [];
 
   // 数字：紫の帯の見出しと、大きな数字・小さな前回比
-  const versus = (key, value) => (pc && pc[key] != null ? '前回比 ' + mtgSigned_(value - pc[key]) : '');
+  const vs = prev && prev.chosen ? mtgShortDate_(prev.date) + '比 ' : '前回比 ';
+  const versus = (key, value) => (pc && pc[key] != null ? vs + mtgSigned_(value - pc[key]) : '');
   const tiles = [
     {label: '登録リクエスト', value: k.requests + '件', sub: versus('requests', k.requests)},
     {label: '判断待ち（未判断）', value: k.undecided + '件', sub: versus('undecided', k.undecided)},
     {label: 'サービス化検討', value: k.considering + '件', sub: versus('considering', k.considering)},
     {label: 'サービス案', value: k.services + '件', sub: versus('services', k.services)},
-    {label: 'タスク（完了／全体）', value: k.done + '／' + k.tasks + '件', sub: pc && pc.done != null ? '完了 前回比 ' + mtgSigned_(k.done - pc.done) : ''}
+    {label: 'タスク（完了／全体）', value: k.done + '／' + k.tasks + '件', sub: pc && pc.done != null ? '完了 ' + vs + mtgSigned_(k.done - pc.done) : ''}
   ];
   const th = 34;
   const tw = (S.w - (tiles.length - 1) * 8) / tiles.length;
@@ -870,7 +893,7 @@ function smtgSummarySlide_(data, ranges) {
   }));
   let rows = build(2);
   if (rows.reduce((h, r) => h + r.h, 0) > room) rows = build(1);
-  el.push(heading(tableY - 16, prev ? '前回の会議（' + mtgShortDate_(prev.date) + '）以降の動き' : '前回以降の動き'),
+  el.push(heading(tableY - 16, prev ? smtgPrevWord_(prev) + '（' + mtgShortDate_(prev.date) + '）以降の動き' : '前回以降の動き'),
     {type: 'table', x: S.x, y: tableY, columns, rows});
   return {title: SMTG_TITLES.summary, lead, elements: el};
 }
@@ -1124,7 +1147,8 @@ function smtgPendingSlides_(data) {
     smtgDealCell_(data, r, columns[4])
   ]);
   const lead = '判断が「' + smtgDecisionOptions_()[0] + '」のリクエスト ' + list.length + '件' +
-    (data.previous ? '（うち前回以降に登録 ' + list.filter(r => fresh.has(r)).length + '件）' : '') + '。ID の順。';
+    (data.previous ? '（うち' + (data.previous.chosen ? mtgShortDate_(data.previous.date) : '前回') + '以降に登録 ' +
+      list.filter(r => fresh.has(r)).length + '件）' : '') + '。ID の順。';
   return smtgPages_({title: SMTG_TITLES.pending, lead, sections: [{columns, rows,
     head: ['ID', '得意先・案件名\n（サブインダストリー）', 'リクエスト', '営業', '案件のステータス・期待値'],
     empty: {kind: 'none', text: 'すべてのリクエストに判断が入っています。'}}]});

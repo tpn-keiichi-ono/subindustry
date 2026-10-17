@@ -9,7 +9,8 @@
  * - 資料を作る関数（createBusinessMtgSummaries()・previewBusinessMtgSummaries()・createBusinessMtgCombinedSummary()・
  *   createServiceMtgSummaries()・previewServiceMtgSummaries()）は、画面（MeetingRunDialog）を開く。画面で、インデックスにある会議日程を
  *   プルダウンで選び、作るシート（サブインダストリー）を選んで、確かめてから作る。前回の会議からの変化を出す（前回の資料の記録が無ければ、
- *   一覧の前の会議日から。RX Business Meeting）。画面の「カレンダーから読み込む」でも importMeetingSchedules() と同じことをする。
+ *   一覧の前の会議日から。RX Business Meeting）。比べる時点（会議時点のコピー・会議日・日時。RX Service Meeting は記録した会議）も選べる。
+ *   画面の「カレンダーから読み込む」でも importMeetingSchedules() と同じことをする。
  * - 画面から呼ぶ関数（getMeetingRunData など）は末尾に _ を付けない（google.script.run から呼ぶため）。
  */
 
@@ -137,7 +138,9 @@ function mschOpenRunDialog_(kind, final) {
 
 /**
  * 画面が読む内容（google.script.run から呼ぶ）。
- * {kind, final, title, meetingName, color, meetings: [{date, label, filled, past}], selected: 初めに選ぶ会議日, sheets: [{name, checked, note}], job: 途中の仕事の知らせ}
+ * {kind, final, title, meetingName, color, meetings: [{date, label, filled, past}], selected: 初めに選ぶ会議日, sheets: [{name, checked, note}],
+ *  points: 比べる時点の候補 [{key, label, day}]（空の key は前回の会議。画面で、選んだ会議日より前の day のものだけ出す）, canPickTime: 日時を指定できるか,
+ *  job: 途中の仕事の知らせ}
  */
 function getMeetingRunData(kind, final) {
   mschCheckKind_(kind);
@@ -149,6 +152,7 @@ function getMeetingRunData(kind, final) {
   const upcoming = meetings.filter(m => !m.past)[0];
   const selected = upcoming ? upcoming.date : meetings.length ? meetings[meetings.length - 1].date : '';
   let sheets = [];
+  let points = [];
   let job = '';
   if (kind === 'business') {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -161,11 +165,13 @@ function getMeetingRunData(kind, final) {
   } else if (service) {
     const data = smtgRunData_();
     sheets = data.sheets;
+    points = data.points;
     job = data.job;
   }
+  if (!service) points = mtgComparePoints_(SpreadsheetApp.getActiveSpreadsheet()).map(p => ({key: p.key, label: p.label, day: p.day}));
   const titles = {business: '会議サマリ（' + meetingName + '）', combined: '統合版（' + MTG_OPTIONS.combined.name + '）', service: meetingName + ' の事前資料'};
   return {kind, final: !!final, title: titles[kind] + (final ? 'を作る' : 'を試しに作る'), meetingName,
-    color: service ? SMTG_OPTIONS.colors.green : MTG_OPTIONS.colors.cover, meetings, selected, sheets, job};
+    color: service ? SMTG_OPTIONS.colors.green : MTG_OPTIONS.colors.cover, meetings, selected, sheets, points, canPickTime: !service, job};
 }
 
 /** 画面の「カレンダーから読み込む」（google.script.run から呼ぶ）。{message, data: getMeetingRunData と同じ形} */
@@ -187,20 +193,25 @@ function mschCheckInput_(kind, meeting, names) {
   return date;
 }
 
-/** 作る前の確かめ（google.script.run から呼ぶ）。{text: 確かめの文} か {error: 作れない理由} */
-function checkMeetingRun(kind, final, meeting, names) {
+/**
+ * 作る前の確かめ（google.script.run から呼ぶ）。point は比べる時点（画面のプルダウンの key。空なら前回の会議）。
+ * {text: 確かめの文} か {error: 作れない理由}
+ */
+function checkMeetingRun(kind, final, meeting, names, point) {
   mschCheckKind_(kind);
   const date = mschCheckInput_(kind, meeting, names);
-  if (kind === 'combined') return mtgCombinedCheck_(date);
-  if (kind === 'service') return {text: smtgRunCheckText_(!!final, date, names)};
-  return {text: mtgRunCheckText_(!!final, names, date)};
+  if (kind === 'service') return {text: smtgRunCheckText_(!!final, date, names, smtgCheckPoint_(point))};
+  const resolved = mtgResolvePoint_(point);
+  if (kind === 'combined') return mtgCombinedCheck_(date, resolved);
+  return {text: mtgRunCheckText_(!!final, names, date, resolved)};
 }
 
 /** 資料を作る（google.script.run から呼ぶ。画面の「作成する」）。cancelJob なら作っている途中の仕事をやめて作る。{message: 終わりの知らせ} */
-function runMeetingMaterials(kind, final, meeting, names, cancelJob) {
+function runMeetingMaterials(kind, final, meeting, names, cancelJob, point) {
   mschCheckKind_(kind);
   const date = mschCheckInput_(kind, meeting, names);
-  if (kind === 'combined') return {message: mtgCombinedStart_(date)};
-  if (kind === 'service') return {message: smtgRunStart_(!!final, date, names, !!cancelJob)};
-  return {message: mtgRunStart_(!!final, date, names, !!cancelJob)};
+  if (kind === 'service') return {message: smtgRunStart_(!!final, date, names, !!cancelJob, smtgCheckPoint_(point))};
+  const resolved = mtgResolvePoint_(point);
+  if (kind === 'combined') return {message: mtgCombinedStart_(date, resolved)};
+  return {message: mtgRunStart_(!!final, date, names, !!cancelJob, resolved)};
 }

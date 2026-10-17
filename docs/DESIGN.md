@@ -874,6 +874,12 @@ Appendix は扉に合わせてグレー（ラベルは紫のまま）。
   会議日程をプルダウンで選び（初めは今日以降でいちばん近い会議日。一覧に無い日は日付を入力）、「次へ（確かめる）」で `checkMeetingRun`（確かめの文。統合版は作れない理由も）、
   「作成する」で `runMeetingMaterials` を呼びます（`mtgRunStart_`・`mtgCombinedStart_`・`smtgRunStart_`）。作っている途中の仕事があれば知らせを出し、「やめて新しく作る」に
   チェックを入れたときだけ作ります。結果の文は画面に出します（URL はリンク）。
+- **比べる時点**（画面のプルダウン。`getMeetingRunData` の `points`）：空は前回の会議（シートごとに `mtgPreviousOf_`）。会議サマリは `mtgComparePoints_` の候補
+  （シートの会議の記録にある会議時点のコピー（`copy:<ID>`。同じコピーのシートをまとめる）と、インデックスの会議日（`date:yyyy/MM/dd`。その日の 0時））と、
+  日時の指定（`at:yyyy/MM/dd HH:mm`）。`mtgResolvePoint_` で「前回」の形（`chosen: true`）にし、`mtgPreviousWith_` で全シートの前回を置き換えます
+  （前回と同じ時点なら前回のまま。コピーに無いシートは `noCopy` で変更の記録から）。区切って続けても使えるよう、仕事（`job.point`）に残します。
+  資料の言葉は `mtgFromWord_`（「前回」→「10/9」）・`mtgCopyWord_`・`mtgChosenText_`。RX Service Meeting は記録した会議の会議日（`smtgCheckPoint_`・
+  `smtgPrevious_(list, meeting, point)`。前回と違えば `chosen`。言葉は `smtgPrevWord_`「選んだ会議」・「10/9比」）。
 - **前回の会議**：前回の資料の記録（本番の会議日の記録・基準）が無ければ、会議日程の一覧の前の会議日（その日の 0時）からの変化を出します（RX Business Meeting。
   `mtgScheduledPrevious_`・`mtgPreviousOf_`。資料の期間は「前回会議（10/9）以降」。会議時点のコピーは無いので、変更の記録から出す）。
 - テストでは、画面の操作を `tests/lib/meeting-run.js` でまねます（`gas.promptAnswers` の [シートの番号, 会議日] で選び、`gas.confirmAnswer` で「作成する」）。
