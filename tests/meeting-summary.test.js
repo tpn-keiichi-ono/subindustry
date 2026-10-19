@@ -282,13 +282,16 @@ test('停滞：ステータスが最後に変わってからの日数（変わ�
   ], '想定売上の大きい順（D社は想定売上が空）');
 
   // 期待値の大きい進行中の案件（5件まで）。判断（決めること・支援の要否など）は持たず、当てはまる状況だけ
-  assert.deepStrictEqual(s.focus.map(d => [label(d), d.weighted, g.mtgFlags_(d).join('・')]), [
-    ['E社／販促DX', 40, '停滞'],
-    ['A社／アプリ刷新', 10, '停滞・受注月超過'],
-    ['C社／店舗什器', 5, '停滞'],
-    ['F社／ブランド刷新', 3, ''],
-    ['D社／物流改善', null, '停滞']
+  // 当てはまる状況は、判定の中身ごと文で（単語のラベルだけにしない）
+  const stall = d => 'ステータスが ' + d.days + '日' + (d.atLeast ? '以上' : '') + ' 変わっていない（45日以上で停滞）';
+  assert.deepStrictEqual(plain(s.focus.map(d => [label(d), d.weighted, g.mtgFlagTexts_(d)])), [
+    ['E社／販促DX', 40, [stall(s.focus[0])]],
+    ['A社／アプリ刷新', 10, [stall(s.focus[1]), '受注月 ' + month(-1).y + '/' + month(-1).m + ' を過ぎても受注になっていない']],
+    ['C社／店舗什器', 5, [stall(s.focus[2])]],
+    ['F社／ブランド刷新', 3, []],
+    ['D社／物流改善', null, [stall(s.focus[4])]]
   ]);
+  assert.match(plain(g.mtgFlagTexts_(Object.assign({}, s.focus[3], {slips: 2})))[0], /^受注月を後ろにずらした記録 2回（過去180日）$/);
   assert.deepStrictEqual([s.focus[3].days, s.focus[3].atLeast], [0, false], '今日ステータスが変わった');
   assert.ok(s.focus.every(d => !('decide' in d) && !('star' in d) && !('support' in d)));
   assert.deepStrictEqual(s.overdue.map(label), ['A社／アプリ刷新']);
@@ -626,9 +629,10 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
   const focus = slides[5].elements.find(el => el.type === 'table');
   assert.deepStrictEqual(focus.rows[0].cells.map(cell => cell.text.replace(/\n/g, '')),
     ['得意先／案件名', '期待値／想定売上', 'ステータス（滞留日数）', '受注月', '活動状況', '活動における課題', '該当事項']);
-  assert.deepStrictEqual(roleOf(slides[5], 'pill').map(el => [el.text, el.fill, el.line || null]),
-    [['停滞', c.greenSoft, null], ['受注月超過', c.graySoft, null], ['停滞', c.greenSoft, null]], '当てはまる状況のラベル（E社・A社・D社の順。停滞は薄い緑、ほかは薄いグレー）');
-  assert.strictEqual(new Set(roleOf(slides[5], 'pill').map(el => el.w)).size, 1, '当てはまる状況のラベルの幅は同じ');
+  assert.strictEqual(roleOf(slides[5], 'pill').length, 0, '当てはまる状況はラベルではなく文');
+  assert.match(focus.rows[2].cells[6].text.replace(/\n/g, ''), /^受注月 \d{4}\/\d+ を過ぎても受注になっていない$/,
+    'A社（今日ステータスが変わったので停滞ではない）：受注月超過を、判定の中身ごと');
+  assert.match(focus.rows[1].cells[6].text.replace(/\n/g, ''), /^ステータスが \d+日以上 変わっていない（45日以上で停滞）$/, 'E社：停滞');
   assert.match(focus.rows[2].cells.map(cell => cell.text).join(' | '), /^A社\nアプリ刷新 \| 10\n30 \| 提案中\n0日 \| \d{4}\/\d+ \|/);
   assert.deepStrictEqual([focus.rows[2].cells[1].spans, focus.rows[2].cells[2].spans],
     [[{start: 0, end: 2, bold: true, color: c.greenDark, size: 11}], [{start: 4, end: 6, color: c.muted}]], '期待値は大きく緑、日数はグレー');
@@ -950,22 +954,17 @@ test('サマリーの内訳：案件の名前は入る件数まで並べ、残�
   assert.strictEqual(g.mtgNames_([], note, 300, 2), '該当なし');
 });
 
-test('ラベル：当てはまる状況が3つでも、行を高くしてセルに余白をあけて入れる（幅は列の中で同じ）', () => {
+test('該当事項：当てはまる状況が3つでも、判定の中身の文を全文入れる（行を伸ばす。入らなければ続きのページ）', () => {
   const {gas, g} = setup();
   const S = gas.get('MTG_SLIDE');
   const s = summarize(g, '新FMT');
-  const focus = s.focus.map((d, i) => (i === 0 ? Object.assign({}, d, {stalled: true, overdue: true, slips: 2}) : d));
+  const focus = s.focus.map((d, i) => (i === 0 ? Object.assign({}, d, {stalled: true, days: 60, atLeast: true, overdue: true, slips: 2}) : d));
   const slide = plain(g.mtgSlides_(Object.assign({}, s, {focus})))[5];
   const table = slide.elements.find(el => el.type === 'table');
-  const pills = roleOf(slide, 'pill');
-  const row1 = pills.filter(el => el.y < table.y + table.rows[0].h + table.rows[1].h);
-  assert.deepStrictEqual(row1.map(el => el.text), ['停滞', '受注月超過', '延期2回']);
-  assert.ok(table.rows[1].h >= g.mtgPillsHeight_(3), '3つ並べても行に入る');
-  const y0 = table.y + table.rows[0].h;
-  assert.ok(row1[0].y >= y0 + S.pill.margin - 0.01 && row1[2].y + row1[2].h <= y0 + table.rows[1].h - S.pill.margin + 0.01, '上下に余白');
-  assert.ok(row1.every((el, i) => !i || el.y - (row1[i - 1].y + row1[i - 1].h) === S.pill.gap), '間は同じ');
-  assert.strictEqual(new Set(pills.map(el => el.w)).size, 1, '幅は列の中で同じ');
-  assert.strictEqual(new Set(pills.map(el => el.x)).size, 1, '左右の中央にそろえる');
+  const cell = table.rows[1].cells[6];
+  assert.deepStrictEqual(cell.text.replace(/\n/g, ''), plain(g.mtgFlagTexts_(focus[0])).join(''), '「…」で切らない');
+  assert.ok(/^ステータスが 60日以上 変わっていない/.test(cell.text.replace(/\n/g, '')));
+  assert.ok(table.rows[1].h >= g.mtgTextHeight_(cell.text.split('\n'), cell.size), '行は中身の高さ');
   assert.ok(table.y + table.rows.reduce((sum, r) => sum + r.h, 0) <= S.bottom, '表が下にはみ出さない');
 });
 

@@ -4076,13 +4076,14 @@ function mtgMovesSlide_(s) {
   };
 }
 
-/** 4 期待値上位案件の状況・課題：進行中の案件の期待値の大きい順（summary.focus）。当てはまる状況（停滞・受注月超過・延期）は事実だけをラベルで */
+/** 4 期待値上位案件の状況・課題：進行中の案件の期待値の大きい順（summary.focus）。当てはまる状況（停滞・受注月超過・延期）は判定の中身ごと文で（mtgFlagTexts_） */
 function mtgFocusSlide_(s) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
   const k = s.kpi;
   // 活動状況の列を広く（長い文は小さくし、それでも入らなければ行を伸ばして次のページへ。全文を載せる）
-  const columns = mtgColumns_([120, 62, 96, 62, 146, 110, 64], 4);
+  // 該当事項は判定の中身を文で書く（単語のラベルだけでは何を見て判定したか分からないため。2026/10/19 から）ので広く
+  const columns = mtgColumns_([106, 62, 96, 62, 120, 104, 120], 4);
   const head = mtgHeadRow_(columns, ['得意先／案件名', '期待値／\n想定売上', 'ステータス\n（滞留日数）', '受注月', '活動状況', '活動における課題',
     '該当事項']);
   const rows = [head];
@@ -4101,8 +4102,9 @@ function mtgFocusSlide_(s) {
     mtgFieldCell_(s, 'orderMonth', mtgMonthLabel_(d.orderMonthText), {fill: c.white, align: 'CENTER'}),
     mtgFieldCell_(s, 'activity', d.activity, {lines: 3, fill: c.white, fit: true, grow: true}),
     mtgFieldCell_(s, 'issue', d.issue, {lines: 3, fill: c.white, fit: true, grow: true}),
-    {text: mtgFlags_(d).length ? '' : MTG_OPTIONS.noneText, fill: c.white, align: 'CENTER'}
-  ], Math.max(44, mtgPillsHeight_(mtgFlags_(d).length)))));
+    mtgFlagTexts_(d).length ? {text: mtgFlagTexts_(d).join('\n'), size: 8, lines: 99, fill: c.white}
+      : {text: MTG_OPTIONS.noneText, fill: c.white, align: 'CENTER'}
+  ], 44)));
   const share = k.weighted > 0 ? Math.round(mtgSum_(s.focus, 'weighted') / k.weighted * 100) : 0;
   // 期待値の列が無ければ、想定売上の大きい順（並べ方と、期待値はデータなしであることを書く）
   const lead = !s.focus.length ? '進行中案件なし。'
@@ -4110,12 +4112,9 @@ function mtgFocusSlide_(s) {
       : '進行中案件のうち期待値上位 ' + s.focus.length + '件（進行中案件の期待値合計の ' + share + '%）。';
   if (!s.focus.length) return [{title: MTG_TITLES.focus, lead, elements: mtgEmptyTable_(columns, head, 'none', '')}];
   const pages = mtgTablePages_(head, rows.slice(1));
-  const width = mtgPillWidth_(['停滞', '受注月超過', '延期9回'], columns[6]);
   return pages.map((p, n) => {
     const table = {type: 'table', x: S.x, y: S.top, columns, rows: p.rows};
     const el = [table];
-    p.index.forEach((i, r) => el.push.apply(el, mtgPills_(table, r + 1, 6,
-      mtgFlags_(s.focus[i]).map(flag => ({text: flag, tone: flag === '停滞' ? 'stall' : 'note'})), width)));
     return {title: MTG_TITLES.focus + (n ? '（続き）' : ''), lead, elements: el};
   });
 }
@@ -4194,9 +4193,18 @@ function mtgColumns_(columns, flex) {
   return out;
 }
 
-/** 案件に当てはまる状況（停滞・受注月超過・延期n回） */
-function mtgFlags_(d) {
-  return [d.stalled && '停滞', d.overdue && '受注月超過', d.slips && '延期' + d.slips + '回'].filter(Boolean);
+/**
+ * 当てはまる状況を、判定の中身ごと文で書く（期待値上位案件の「該当事項」。単語のラベルだけでは、入力した人に何を見て判定したかが分からないため）：
+ * 停滞「ステータスが 52日 変わっていない（45日以上で停滞）」・受注月超過「受注月 2026/9 を過ぎても受注になっていない」・
+ * 延期「受注月を後ろにずらした記録 2回（過去180日）」
+ */
+function mtgFlagTexts_(d) {
+  const o = MTG_OPTIONS;
+  return [
+    d.stalled && 'ステータスが ' + d.days + '日' + (d.atLeast ? '以上' : '') + ' 変わっていない（' + o.stallDays + '日以上で停滞）',
+    d.overdue && '受注月 ' + mtgMonthLabel_(d.orderMonthText) + ' を過ぎても受注になっていない',
+    d.slips && '受注月を後ろにずらした記録 ' + d.slips + '回（過去' + o.lookbackDays + '日）'
+  ].filter(Boolean);
 }
 
 /**
