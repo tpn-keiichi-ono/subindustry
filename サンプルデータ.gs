@@ -14,6 +14,7 @@
  *   ダミーの変更の記録（変更履歴_差分・変更時点スナップショット）を足す。シートのセルの値は変えず、今の値になるまでの記録
  *   （前回の資料・基準の時点の値と、そのあとの変更）を足すので、資料の「前回から変化のある案件」（前進・後退・延期・増額・減額・活動更新・新規・削除）
  *   と停滞に出る。サンプル（SMP-）は会議サマリが数えないので、イベントIDは「DMY-」にする（会議サマリは数え、資料の出典の行に【ダミーデータを含む】と出す）。
+ *   期待値上位の案件には、前回より前の動き（SMP_OPTIONS.dummy.history）も足す（資料の「期待値上位案件の状況・課題（直近2か月の動き）」に出る）。
  * - removeBusinessMtgDummyHistory()（エディタから実行）：イベントIDが「DMY-」の行だけを削除する（サンプルと同じく、ダミーの行に限って削除する）。
  * - addServiceMtgSampleData()（エディタから実行）：RX Service Meeting の事前資料（ServiceMeeting.gs）の確認用に、サービスリクエスト・
  *   サービス案タスク管理のシートの最後の行の下に、サンプルのリクエスト・タスクを書く（SMP_OPTIONS.service）。リクエストの先頭に「【サンプル】」を付ける
@@ -67,7 +68,18 @@ const SMP_OPTIONS = {
     roles: ['forward', 'stall', 'slipped', 'activity', 'new', 'stallActivity', 'up', 'backward', 'down'],
     stallDays: {stall: 100, stallActivity: 70},
     // 削除した案件（シートに無い架空の案件）の、削除前の行の内容（ステータスは進行中のいちばん前のもの、期待値は想定売上 × その率、受注月は来月）
-    removed: {customer: 'ダミー商事', project: '（ダミー）削除した案件', amount: 20, owner: 'ダミー 担当'}
+    removed: {customer: 'ダミー商事', project: '（ダミー）削除した案件', amount: 20, owner: 'ダミー 担当'},
+    // 期待値上位案件の直近の動き（会議サマリの「直近2か月の動き」）の確認用：期待値上位の案件（新規を除く）に、前回より前の動きを足す（何日前か）。
+    // 活動状況の書き足し（2回。前回の時点の活動状況の記録が無い案件は、3回目で今の活動状況に）・次回アクション（今の値が空なら付けない）・
+    // ステータスの前進（停滞の案件には付けない）・受注月の前倒し。前回より後の日付になるものは付けない（前回からの変化を変えない）
+    history: {
+      activity: [{daysAgo: 56, text: '（ダミー）初回訪問。課題をヒアリング'}, {daysAgo: 35, text: '（ダミー）提案書を提出'}],
+      activityNow: 17,
+      nextAction: {daysAgo: 49, text: '（ダミー）提案書の方向性を先方と確認する'},
+      nextActionNow: 21,
+      status: 42,
+      orderMonth: 28
+    }
   },
   // RX Service Meeting の確認用のサンプル（addServiceMtgSampleData()）。sheet はリクエストを読むシート（その案件を使う。無ければ順に別のシート。
   // 案件が無ければ customer・project の架空の名前）。decision は判断（空なら未判断）。リクエストの先頭に namePrefix を付けて書く
@@ -411,6 +423,7 @@ function smpDeleteRows_(sheet, rows) {
  * - 前回の時点の値：前回の資料（または基準）を作った時刻の1秒前に、前回の値のスナップショットと活動状況の記録
  * - 前回より後の変更：前回の値 → 今の値の記録（今の行のスナップショット）。新規は行の追加、削除は架空の案件の行の削除
  * - 停滞：ステータスを stallDays 日前に変えた記録（それより新しいステータスの変更・案件ができた記録が無い案件だけ。あると停滞にならないため）
+ * - 期待値上位の案件（新規を除く）：前回より前の動き（活動状況の書き足し・次回アクション・ステータスの前進・受注月の前倒し。SMP_OPTIONS.dummy.history）
  * 同じシートに前に足したダミーは、消してから入れ直す。消すときは removeBusinessMtgDummyHistory()
  */
 function addBusinessMtgDummyHistory() {
@@ -428,6 +441,8 @@ function addBusinessMtgDummyHistory() {
     return '・' + p.name + '（' + p.since.label + ' ' + Utilities.formatDate(new Date(p.since.at), tz, 'M/d HH:mm') + ' 以降の変化として）\n　' +
       (roles ? roles + '、' : '') + '削除（架空の案件「' + D.removed.customer + '」）' +
       (p.skippedStall ? '\n　停滞は付けません（' + p.skippedStall + '）' : '') +
+      (p.focus.length ? '\n　期待値上位の ' + p.focus.map(d => d.customer).join('・') + ' に、直近' + MTG_OPTIONS.recentMonths +
+        'か月の動き（前回より前の活動状況・次回アクション・ステータス・受注月の変更）' : '') +
       (p.since.copy ? '\n　※ ' + p.since.label + 'の「' + MTG_OPTIONS.copyName + '」があるため、前回からの変化はコピーと比べます。' +
         'ダミーの記録は前回からの変化には出ません（停滞の日数などにだけ使われます）' : '') +
       (p.existing ? '\n　前に足したダミーの記録 ' + p.existing + '件は消して入れ直します' : '');
@@ -529,7 +544,12 @@ function smpDummyPlan_(ss, name, now) {
   const skippedStall = deals.some(d => /^stall/.test(d.role)) || !stallRoles.length ? ''
     : 'どの案件にも、ステータスの変更か案件ができた記録があり、それより前の日付にしても停滞にならないため';
   const existing = smpCountEvents_(ss, D.eventPrefix + '-', name).changes;
-  return {name, sheet, rule, table, statusTable, step, lowest: choices[0] || '', since, deals, skippedStall, existing, baseOf};
+  // 期待値上位の案件（会議サマリの期待値上位案件と同じ並び）。区分を付けた案件は区分つき。新規の案件は前回より前の動きが無いので除く
+  const roleOf = new Map(deals.map(d => [d.row, d.role]));
+  const focus = table.deals.filter(d => d.kind === 'active')
+    .sort((a, b) => ((b.weighted || 0) - (a.weighted || 0)) || ((b.amount || 0) - (a.amount || 0))).slice(0, o.mainRows.focus)
+    .map(d => Object.assign({}, d, {role: roleOf.get(d.row) || ''})).filter(d => d.role !== 'new');
+  return {name, sheet, rule, table, statusTable, step, lowest: choices[0] || '', since, deals, focus, skippedStall, existing, baseOf};
 }
 
 /**
@@ -652,6 +672,46 @@ function smpAddDummy_(ss, plan, now) {
   let k = 0;
   const nextAt = () => lo + (hi - lo) * (++k) / (recent + 1);
 
+  // 期待値上位案件の直近の動き（前回より前）。最後の値は前回の時点の値（区分の案件は前回の値、ほかは今の値）にそろえる。
+  // 前回の時点の活動状況の記録がある案件は、その記録の変更前を、ここで書いた活動状況にする（lastActivity）
+  const H = D.history;
+  const daysAgo = n => now.getTime() - n * 86400000;
+  const before = at => at < plan.since.at - 60000;
+  const lastActivity = new Map();
+  plan.focus.forEach(d => {
+    const row = d.row;
+    const prev = prevOf(d);
+    const base = d.role ? pastOf(d, prev) : {};
+    const records = [];   // [{at, record}]
+    if (table.has.activity && H.activity.length) {
+      let text = '';
+      H.activity.forEach(a => {
+        const next = text ? text + '\n' + a.text : a.text;
+        if (before(daysAgo(a.daysAgo))) {
+          records.push({at: daysAgo(a.daysAgo), record: edit(row, 'activity', text, next)});
+          text = next;
+        }
+      });
+      if (text && prev.activity != null) lastActivity.set(row, text);
+      else if (text && d.activity && before(daysAgo(H.activityNow))) records.push({at: daysAgo(H.activityNow), record: edit(row, 'activity', text, valueOf(row, 'activity'))});
+    }
+    if (columnOf('nextAction') && d.nextAction) {
+      if (before(daysAgo(H.nextAction.daysAgo))) records.push({at: daysAgo(H.nextAction.daysAgo), record: edit(row, 'nextAction', '', H.nextAction.text)});
+      if (before(daysAgo(H.nextActionNow))) records.push({at: daysAgo(H.nextActionNow), record: edit(row, 'nextAction', H.nextAction.text, valueOf(row, 'nextAction'))});
+    }
+    const status = base.status != null ? base.status : d.status;
+    if (!/^stall/.test(d.role) && plan.step(status, -1) && before(daysAgo(H.status))) {
+      records.push({at: daysAgo(H.status), record: edit(row, 'status', plan.step(status, -1), status)});
+    }
+    if (table.has.orderMonth && d.orderMonth && before(daysAgo(H.orderMonth))) {
+      const cur = valueOf(row, 'orderMonth');
+      const at = base.orderMonth != null ? typedPrev(row, 'orderMonth', base.orderMonth) : cur;
+      const later = at && typeof at.getTime === 'function' ? addMonths(at, 1) : shiftMonth(String(at), 1);
+      if (later) records.push({at: daysAgo(H.orderMonth), record: edit(row, 'orderMonth', later, at)});
+    }
+    records.forEach(r => event(r.at, [r.record], row, base));
+  });
+
   plan.deals.forEach(d => {
     const row = d.row;
     if (d.role === 'new') {
@@ -669,7 +729,8 @@ function smpAddDummy_(ss, plan, now) {
     // 前回の時点（前回の1秒前。前回より前でいちばん新しいスナップショットになる）：前回の値の行。
     // 記録は、そのときの活動状況の書き込み（列が無ければ、最初に変わる項目。ステータスの記録にしないのは、停滞の日数を変えないため）
     const first = prev.activity != null ? 'activity' : keys.find(key => prev[key] != null && columnOf(key));
-    event(plan.since.at - 1000, [edit(row, first, '', typedPrev(row, first, prev[first]))], row, pastOf(d, prev));
+    event(plan.since.at - 1000, [edit(row, first, first === 'activity' ? lastActivity.get(row) || '' : '', typedPrev(row, first, prev[first]))], row,
+      pastOf(d, prev));
     // 前回より後：前回の値 → 今の値（期待値の列が数式なら、期待値の記録は無い。スナップショットに出る）
     const records = keys.filter(key => prev[key] != null && columnOf(key) && !(key === 'weighted' && table.weightedFormula))
       .map(key => edit(row, key, typedPrev(row, key, prev[key]), valueOf(row, key)));

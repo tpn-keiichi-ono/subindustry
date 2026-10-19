@@ -1127,10 +1127,11 @@ test('表紙・扉の背景の画像を付けられなくても、資料は作�
 
 test('期待値上位案件の直近2か月の動き：変更の記録から、ステータス・受注月・期待値・活動状況・次回アクションの変更を日ごとにまとめて新しい順に出す', () => {
   const {gas, g, sheet} = setup();
-  // 文の変更は、書き足した・書き換えた部分だけ（同じ頭・おしりを除く）。改行は「／」
-  assert.deepStrictEqual(['10/1 訪問。', '', 'abc', 'abcd', '提案書を送付'].map((before, i) =>
-    g.mtgAddedText_(before, ['10/1 訪問。10/8 提案。', '要件確認\n見積提出', '', 'abd', '提案書を送付（再）'][i])),
-  ['10/8 提案。', '要件確認／見積提出', '（削除）', '（一部を削除）', '（再）']);
+  // 文の変更は、書き足した・書き換えた部分だけ（同じ頭・おしりを、文の切れ目で除く。語の途中では切らない）。改行は「／」
+  assert.deepStrictEqual(['10/1 訪問。', '', 'abc', 'abcd', '提案中', '9/1 訪問。\n9/8 提案。\n次回は未定', '（ダミー）初回訪問'].map((before, i) =>
+    g.mtgAddedText_(before, ['10/1 訪問。10/8 提案。', '要件確認\n見積提出', '', 'abd', '提案書を提出', '9/1 訪問。\n9/8 提案。\n9/20 見積提出。\n次回は未定',
+      '（ダミー）前回までの活動状況'][i])),
+  ['10/8 提案。', '要件確認／見積提出', '（削除）', '（一部を削除）', '提案書を提出', '9/20 見積提出。', '（ダミー）前回までの活動状況']);
   // 2か月前の同じ日の 0時（無ければ月末）
   const jst = t => new Date(t + 9 * 3600000).toISOString().slice(0, 16);
   assert.deepStrictEqual([new Date('2026-10-19T12:00:00+09:00'), new Date('2026-12-31T09:00:00+09:00'), new Date('2026-04-30T09:00:00+09:00')]
@@ -2149,11 +2150,13 @@ test('addBusinessMtgDummyHistory：シートの値は変えずに、ダミーの
   g.addBusinessMtgDummyHistory();
   assert.strictEqual(JSON.stringify(sheet.getDataRange().getValues()), values, 'シートのセルの値は変えない');
   assert.match(gas.alerts[0].message, /・新FMT（直近14日間の始まり \d{1,2}\/\d{1,2} \d{2}:\d{2} 以降の変化として）\n　E社：前進、A社：停滞、C社：延期、F社：新規、D社：停滞＋活動更新、削除（架空の案件「ダミー商事」）/);
-  assert.match(gas.alerts[1].message, /・新FMT：変更の記録 12件・スナップショット 9件/);
+  assert.match(gas.alerts[0].message, /\n　期待値上位の E社・A社・C社・D社 に、直近2か月の動き（前回より前の活動状況・次回アクション・ステータス・受注月の変更）\n/,
+    '新規の案件（F社）には付けない');
+  assert.match(gas.alerts[1].message, /・新FMT：変更の記録 25件・スナップショット 22件/);
 
   const dummyRows = name => gas.ss.getSheetByName(name).getDataRange().getDisplayValues().slice(1).filter(r => /^DMY-/.test(r[1]));
   assert.ok(dummyRows('変更履歴_差分').every(r => r[2] === 'ダミーデータ' && r[3] === '新FMT'), '編集者は「ダミーデータ」');
-  assert.strictEqual(dummyRows('変更時点スナップショット').length, 9);
+  assert.strictEqual(dummyRows('変更時点スナップショット').length, 22);
 
   // 会議サマリはダミーを数える（サンプル SMP- は数えない）：前回より後の変化・停滞
   const s = plain(summarize(g, '新FMT'));
@@ -2163,7 +2166,15 @@ test('addBusinessMtgDummyHistory：シートの値は変えずに、ダミーの
   assert.deepStrictEqual(s.stalled.map(d => [label(d), d.days, d.touched]), [['A社／アプリ刷新', 100, false], ['D社／物流改善', 70, true]],
     'ステータスを最後に変えた日を 100日・70日前に（D社は前回以降に活動を更新した）');
   assert.strictEqual(s.unmatched, 0, 'どの記録にもスナップショットがある（案件と照合できる）');
-  assert.strictEqual(s.dummy, 12);
+  assert.strictEqual(s.dummy, 25);
+  // 期待値上位案件の直近2か月の動き：前回より前の活動状況の書き足し・ステータスの前進・受注月の前倒しが出る（前回からの変化・停滞は上のまま）
+  const moves = s.recent.moves.map(list => list.map(m => m.text.replace(/^\d+\/\d+　/, '')));
+  assert.deepStrictEqual(plain(s.focus.map(d => d.customer)), ['E社', 'A社', 'C社', 'F社', 'D社']);
+  assert.deepStrictEqual(moves[1], ['活動状況：初回訪問', '受注月：' + month(0).y + '/' + month(0).m + ' ▶ ' + month(-1).y + '/' + month(-1).m,
+    '活動状況：（ダミー）提案書を提出', '活動状況：（ダミー）初回訪問。課題をヒアリング'], 'A社（停滞）：最後は今の活動状況。ステータスは変えない');
+  assert.ok(moves[2].indexOf('ステータス：初回訪問 ▶ 提案中') >= 0 && moves[2].indexOf('活動状況：（ダミー）前回までの活動状況') >= 0, 'C社：前進・前回の時点の活動状況');
+  assert.ok(moves[0].some(m => /^ステータス：初回訪問 ▶ 提案中$/.test(m)), 'E社：前回より後の前進');
+  assert.deepStrictEqual(moves[3], ['案件を登録'], 'F社（新規）には前回より前の動きを付けない');
   const slides = plain(g.mtgSlides_(summarize(g, '新FMT')));
   assert.strictEqual(roleOf(slides[1], 'footer')[0].text, '【ダミーデータを含む】新FMT（10/23 会議資料）　金額の単位：百万円');
   assert.match(slides[0].elements[0].text, /^出典：「新FMT」シートおよび変更履歴（ダミーデータを含む。/);
@@ -2171,20 +2182,20 @@ test('addBusinessMtgDummyHistory：シートの値は変えずに、ダミーの
   // 入れ直し：前に足した分を消してから足す（増えない）
   gas.promptAnswers = ['1'];
   g.addBusinessMtgDummyHistory();
-  assert.match(gas.alerts[2].message, /前に足したダミーの記録 12件は消して入れ直します/);
-  assert.strictEqual(dummyRows('変更履歴_差分').length, 12);
+  assert.match(gas.alerts[2].message, /前に足したダミーの記録 25件は消して入れ直します/);
+  assert.strictEqual(dummyRows('変更履歴_差分').length, 25);
 
   // 本番の確かめの画面で知らせる（配る資料に入れないように）
   gas.confirmAnswer = 'NO';
   gas.promptAnswers = ['1', '10/23'];
   g.createBusinessMtgSummaries();
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /※ ダミーの変更の記録（12件）があります。資料に【ダミーデータを含む】と出ます。配る資料なら、先に removeBusinessMtgDummyHistory\(\) で消してください。/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /※ ダミーの変更の記録（25件）があります。資料に【ダミーデータを含む】と出ます。配る資料なら、先に removeBusinessMtgDummyHistory\(\) で消してください。/);
 
   // 消す：ダミーの行だけ（ほかの記録は残す）
   gas.confirmAnswer = 'YES';
   g.recordDiffEdit(gas.edit(sheet, 'J5', '10/14 見積を再提出'));   // 本物の変更
   g.removeBusinessMtgDummyHistory();
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /^ダミーの変更の記録を削除しました：変更の記録 12件・スナップショット 9件。$/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^ダミーの変更の記録を削除しました：変更の記録 25件・スナップショット 22件。$/);
   assert.deepStrictEqual([dummyRows('変更履歴_差分').length, dummyRows('変更時点スナップショット').length], [0, 0]);
   const after = plain(summarize(g, '新FMT'));
   assert.deepStrictEqual([after.dummy, after.changes.map(c => [label(c), c.category])], [0, [['C社／店舗什器', 'activity']]]);
@@ -2223,7 +2234,8 @@ test('addBusinessMtgDummyHistory：記録は差分追跡と同じ形（受注月
   gas.promptAnswers = ['1'];
   g.addBusinessMtgDummyHistory();
   const log = gas.ss.getSheetByName('変更履歴_差分').getDataRange().getDisplayValues().slice(1).filter(r => /^DMY-/.test(r[1]));
-  const slip = log.find(r => r[5] === '受注月');
+  // 延期の記録（C社の5行目。その前に、直近2か月の動きの受注月の前倒しの記録がある）
+  const slip = log.filter(r => r[5] === '受注月' && r[4] === 'I5').pop();
   const c = month(2);
   const p = month(1);
   assert.deepStrictEqual(slip.slice(3, 9), ['新FMT', 'I5', '受注月', '日時 -> 日時 / ダミー',
@@ -2239,7 +2251,8 @@ test('addBusinessMtgDummyHistory：記録は差分追跡と同じ形（受注月
   const snaps = gas.ss.getSheetByName('変更時点スナップショット').getDataRange().getDisplayValues().slice(1)
     .filter(r => /^DMY-/.test(r[1]) && r[4] === '5');
   const months = snaps.map(r => JSON.parse(r[7]).find(([k]) => k === '受注月')[1]);
-  assert.deepStrictEqual(months, [p.y + '/' + p.m, c.y + '/' + c.m], '前回の時点（1か月前）→ 今');
+  assert.deepStrictEqual(months.slice(-2), [p.y + '/' + p.m, c.y + '/' + c.m], '前回の時点（1か月前）→ 今');
+  assert.ok(months.slice(0, -2).every(m => m === p.y + '/' + p.m), '前回より前の動き（直近2か月）のスナップショットは、前回の時点の値');
   const s = plain(summarize(g, '新FMT'));
   assert.deepStrictEqual(s.changes.filter(ch => label(ch) === 'C社／店舗什器').map(ch => [ch.category, ch.monthFrom, ch.monthTo]),
     [['slipped', p.y + '/' + p.m, c.y + '/' + c.m]]);

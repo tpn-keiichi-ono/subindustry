@@ -4145,6 +4145,9 @@ function mtgRecentSlide_(s) {
   const columns = mtgColumns_([130, 360, 170], 1);
   const head = mtgHeadRow_(columns, ['得意先／案件名', months + 'の動き（' + day(recent.from) + '〜。新しい順）', '次回アクション／受注月']);
   const noLog = recent.logFrom == null;
+  // 記録の始まり：記録のシートの最初の行の時刻。それより前の日時の記録（ダミー）を出すときは、その日から
+  const earliest = Math.min.apply(null, [Infinity].concat([].concat.apply([], recent.moves).map(m => m.at)));
+  const logFrom = noLog ? null : Math.min(recent.logFrom, earliest);
   const rows = s.focus.map((d, i) => {
     const moves = recent.moves[i] || [];
     // 動きは同じ大きさの字で全文（案件ごとに字の大きさが変わると読みにくい）。多ければ新しいほうから recentMax 件と「ほか N件」
@@ -4165,7 +4168,7 @@ function mtgRecentSlide_(s) {
   });
   const lead = noLog ? months + 'の動きは' + G + '（「' + DIFF_OPTIONS.logSheet + '」シートに変更の記録が無い）。次のアクションは今のシートから。'
     : '期待値上位 ' + s.focus.length + '件の、' + months + '（' + day(recent.from) + '〜）に記録された動き（ステータス・受注月・期待値・活動状況・次回アクション）。' +
-      (recent.logFrom > recent.from ? '\n変更の記録は ' + day(recent.logFrom) + ' からのため、それより前の動きは出ない。' : '');
+      (logFrom > recent.from ? '\n変更の記録は ' + day(logFrom) + ' からのため、それより前の動きは出ない。' : '');
   return mtgTablePages_(head, rows).map((p, n) => ({title: title + (n ? '（続き）' : ''), lead,
     elements: [{type: 'table', x: MTG_SLIDE.x, y: MTG_SLIDE.top, columns, rows: p.rows}]}));
 }
@@ -4203,7 +4206,8 @@ function mtgRecentMoves_(events, from) {
   const keys = ['status', 'orderMonth', 'weighted', 'activity', 'nextAction'];
   const tz = Session.getScriptTimeZone();
   const groups = new Map();
-  events.forEach(e => {
+  // 記録のシートの行の順は時刻の順とは限らない（ダミーの記録は過去の日時で足す）ので、時刻の順に並べてからまとめる
+  events.slice().sort((a, b) => a.at - b.at).forEach(e => {
     if (e.at < from) return;
     const key = e.born ? 'born' : keys.find(k => labels[k] && labels[k] === e.label);
     if (!key) return;
@@ -4240,6 +4244,7 @@ function mtgRecentMoves_(events, from) {
 
 /**
  * 文の変更のうち、書き足した・書き換えた部分（前と後で同じ頭・おしりを除いた、後の文）。改行は「／」に。
+ * 頭・おしりは文の切れ目（改行・句読点・空白など）でだけ除く（「提案中」→「提案書を提出」を「書を提出」にしない。切れ目が無ければ後の文の全文）。
  * 消しただけなら「（一部を削除）」、全部消したなら「（削除）」
  */
 function mtgAddedText_(before, after) {
@@ -4250,7 +4255,14 @@ function mtgAddedText_(before, after) {
   while (head < a.length && head < b.length && a[head] === b[head]) head++;
   let tail = 0;
   while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
-  const added = b.slice(head, b.length - tail).replace(/\s*\n\s*/g, '／').replace(/^[／\s]+|[／\s]+$/g, '');
+  if (!b.slice(head, b.length - tail).trim()) return '（一部を削除）';
+  const cut = ch => /[\n。．.！!？?、，,；;／\s]/.test(ch);
+  // 切れ目：その位置の前か後ろの字が区切り（「…ヒアリング」＋「\n提案書」のように、書き足しが改行から始まるときも）
+  const at = i => i <= 0 || i >= b.length || cut(b[i - 1]) || cut(b[i]);
+  while (!at(head)) head--;
+  let end = b.length - tail;
+  while (!at(end)) end++;
+  const added = b.slice(head, end).replace(/\s*\n\s*/g, '／').replace(/^[／\s]+|[／\s]+$/g, '');
   return added || '（一部を削除）';
 }
 
