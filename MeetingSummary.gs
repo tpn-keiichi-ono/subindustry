@@ -3098,8 +3098,8 @@ function mtgOverviewSlide_(sections) {
   const S = MTG_SLIDE;
   const G = o.gapText;
   const columns = mtgColumns_([142, 70, 84, 84, 92, 68, 70, 50], 0);
-  // 増減の列の見出しは、いちばん多い比べ方（前回比・26/10比（基準）・直近14日間の増減）。ほかの比べ方のシートは、セルの1行目に何との比かを書く
-  const versus = s => mtgVersus_(s).trim().replace(/で$/, '');   // 前回比・26/10比（基準）・直近14日間
+  // 増減の列の見出しは、いちばん多い比べ方（前回比・10/17比（基準）・直近14日間の増減）。ほかの比べ方のシートは、セルの1行目に何との比かを書く
+  const versus = s => mtgVersus_(s).trim().replace(/で$/, '');   // 前回比・10/17比（基準）・直近14日間
   const counts = {};
   sections.forEach(x => { counts[versus(x.summary)] = (counts[versus(x.summary)] || 0) + 1; });
   const common = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || '前回比';
@@ -3282,11 +3282,12 @@ function mtgLead_(text) {
 }
 
 /**
- * 比べる時点の短い名前：「前回」、選んだ時点なら「10/9」、基準なら基準を記録した年月「26/10」（「基準比」では前回比と見分けにくいため。2026/10/19 から）
+ * 比べる時点の短い名前：「前回」、選んだ時点なら「10/9」、基準なら基準を記録した月日「10/17」（「基準比」では前回比と見分けにくいため。2026/10/19 から。
+ * 年月（26/10）だったのを、ほかの日付の書き方（M/d）にそろえた）
  */
 function mtgFromWord_(s) {
   const prev = s.previous;
-  if (prev && prev.baseline) return Utilities.formatDate(new Date(prev.cutoff), Session.getScriptTimeZone(), 'yy/MM');
+  if (prev && prev.baseline) return Utilities.formatDate(new Date(prev.cutoff), Session.getScriptTimeZone(), 'M/d');
   return prev && prev.chosen ? mtgShortDate_(prev.date) : '前回';
 }
 
@@ -3298,18 +3299,18 @@ function mtgCopyWord_(s) {
   return prev.baseline ? '基準の' + name : Utilities.formatDate(new Date(prev.cutoff), Session.getScriptTimeZone(), 'M/d HH:mm') + ' の' + name;
 }
 
-/** 「前回以降」「26/10以降」（基準）「10/9以降」（選んだ時点）「直近14日間」（数字の見出し・リード文の期間） */
+/** 「前回以降」「10/17以降」（基準）「10/9以降」（選んだ時点）「直近14日間」（数字の見出し・リード文の期間） */
 function mtgPeriodShort_(s) {
   if (s.first) return '直近' + MTG_OPTIONS.firstDays + '日間';
   return mtgFromWord_(s) + '以降';
 }
 
-/** 「うち前回以降の更新なし」「うち26/10以降の更新なし」「うち直近14日間の更新なし」（停滞のうち、対象期間に変化の無い案件） */
+/** 「うち前回以降の更新なし」「うち10/17以降の更新なし」「うち直近14日間の更新なし」（停滞のうち、対象期間に変化の無い案件） */
 function mtgQuietLabel_(s) {
   return 'うち' + mtgPeriodShort_(s) + 'の更新なし';
 }
 
-/** 「前回比 」「26/10比 」（基準）「10/9比 」（選んだ時点）「直近14日間で 」（前回比の書き出し） */
+/** 「前回比 」「10/17比 」（基準）「10/9比 」（選んだ時点）「直近14日間で 」（前回比の書き出し） */
 function mtgVersus_(s) {
   if (s.first) return mtgPeriodShort_(s) + 'で ';
   return mtgFromWord_(s) + '比 ';
@@ -3320,7 +3321,7 @@ function mtgUpdatedNote_(s) {
   return s.kpi.updated ? '（ほかに、その他の項目のみの更新 ' + s.kpi.updated + '件）' : '';
 }
 
-/** 「前回から変化のある案件」「26/10以降に変化のある案件」（基準）「10/9以降に…」（選んだ時点）「直近14日間に変化のある案件」 */
+/** 「前回から変化のある案件」「10/17以降に変化のある案件」（基準）「10/9以降に…」（選んだ時点）「直近14日間に変化のある案件」 */
 function mtgChangedLabel_(s) {
   if (s.first) return '直近' + MTG_OPTIONS.firstDays + '日間に変化のある案件';
   return s.previous && (s.previous.chosen || s.previous.baseline) ? mtgFromWord_(s) + '以降に変化のある案件' : '前回から変化のある案件';
