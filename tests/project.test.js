@@ -130,7 +130,7 @@ test('本物のシートの見出し（2026/10/16 のスーパー・GMS の2行�
     '提案を勝ち取るための戦略・差異化要素', 'サービスのリクエスト'];
   const at = label => headers.findIndex(h => g.credNormalize_(h) === g.credNormalize_(label));
   Object.keys(mtg.columns).filter(key => key !== 'delivery').forEach(key => assert.ok(at(mtg.columns[key]) >= 0, '見出し：' + mtg.columns[key]));
-  assert.strictEqual(at(mtg.columns.delivery), -1, 'デリバリー担当の列は無い（入力内容のチェック「デリバリー担当なし」は出さない）');
+  assert.ok(at('デリバリー担当') < 0 && mtg.columns.delivery === '', 'デリバリー担当の列は無いので使わない設定（入力内容のチェック「デリバリー担当なし」は出さない）');
   mtg.required.forEach(label => assert.ok(at(label) >= 0, '必須項目：' + label));
   assert.strictEqual(at(mtg.columns.owner), headers.indexOf('アカウント責任者'), '「アカウント責任者部署」と取り違えない');
   const stamp = g.diffNormalizeStampHeader_(gas.get('DIFF_OPTIONS').stampHeader);

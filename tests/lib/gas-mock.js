@@ -1296,6 +1296,9 @@ function createGas(options) {
       if (typeof CRED_OPTIONS !== 'undefined') CRED_OPTIONS.enabled = true;
       // 会議サマリの統合版は、統合版のテストだけで使う（ほかのテストの資料の数・ファイルを変えないように）。格納先も本物のフォルダにしない
       if (typeof MTG_OPTIONS !== 'undefined') Object.assign(MTG_OPTIONS.combined, {enabled: false, meetingFolder: ''});
+      // デリバリー担当の列は、本物（新FMT）には無いので使わない設定（空）。チェック「デリバリー担当なし」のテストのため、テストでは使う状態にする
+      // （使わない状態は gas.get('MTG_OPTIONS').columns.delivery = '' で確かめる）
+      if (typeof MTG_OPTIONS !== 'undefined') MTG_OPTIONS.columns.delivery = 'デリバリー担当';
     } + ')(' + JSON.stringify(TEST_DIFF_RULES) + ')', context);
   }
 

@@ -1122,6 +1122,20 @@ test('表紙・扉の背景の画像を付けられなくても、資料は作�
   assert.ok(gas.decks[0].requests.some(r => r.updatePageProperties), '背景は緑一色');
 });
 
+test('デリバリー担当の列を使わない設定（MTG_OPTIONS.columns.delivery が空。本物の新FMT）なら、チェック「デリバリー担当なし」を出さず、「データなし」にもしない', () => {
+  const {gas, g} = setup();
+  gas.get('MTG_OPTIONS').columns.delivery = '';
+  const s = summarize(g, '新FMT');
+  assert.ok(!s.alerts.some(a => a.type === 'デリバリー担当なし'), '受注してデリバリー担当が空の E社も出さない');
+  assert.ok(!('デリバリー担当なし' in s.alertGaps));
+  assert.ok(!g.mtgGapList_(s).some(line => /デリバリー/.test(line)), '作り終えた画面の「データなし」にも出さない');
+  assert.deepStrictEqual(plain(g.mtgAlertTypes_()), plain(gas.get('MTG_ALERT_TYPES').filter(t => t !== 'デリバリー担当なし')));
+  const table = g.mtgAppendixOwners_(s)[0].elements.find(el => el.type === 'table');
+  assert.ok(!table.rows[0].cells.some(cell => /デリバリー/.test(cell.text)), '責任者別の表にも列を作らない');
+  // 空の見出しを、シートの空の見出しのセルと取り違えない
+  assert.strictEqual(g.mtgReadDeals_(gas.ss.getSheetByName('新FMT'), {headerRow: 2}).has.delivery, false);
+});
+
 test('クレデンシャル・オファリング履歴を使っていない間（CRED_OPTIONS.enabled: false）は、入力内容のチェックに「予定日超過」を出さない（列も作らない）', () => {
   const {gas, g} = setup({edits: false});
   const cred = gas.get('CRED_OPTIONS');
