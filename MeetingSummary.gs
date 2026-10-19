@@ -3008,11 +3008,14 @@ function mtgDealLabel_(item) {
  * 見出しは MTG_TITLES（どのシートでも同じ）。書くのはシートと変更の記録から分かる事実だけ（論点・決めてほしいことなどの判断は、会議でリーダーが話す）。
  * 戻り値 [{title, elements}]（elements は mtgSlideRequests_ の部品。タイトル・リード文・出典・ページ番号も含む）
  */
-function mtgSlides_(summary, start) {
+function mtgSlides_(summary, start, options) {
   const offset = start || 0;   // 前に入るページの数（統合版。ページ番号と扉の目次のページを通しにする）
+  // 統合版は Appendix（扉と ①〜③）を入れない（options.appendix: false。2026/10/19 から。全件の一覧は各サブインダストリーの資料にある）
+  const withAppendix = !(options && options.appendix === false);
   const cover = mtgCoverSlide_(summary);
   const main = [mtgSummarySlide_(summary)].concat(MTG_OPTIONS.plan.enabled ? [mtgPlanSlide_(summary.plan, summary.now)] : [],
-    [mtgBridgeSlide_(summary), mtgMovesSlide_(summary)], mtgFocusSlide_(summary), mtgRecentSlide_(summary));
+    [mtgBridgeSlide_(summary), mtgMovesSlide_(summary, withAppendix)], mtgFocusSlide_(summary), mtgRecentSlide_(summary));
+  if (!withAppendix) return mtgNumberSlides_(mtgSheetFrame_(summary), [cover].concat(main), offset);
   // Appendix はいつも ①〜③ を出す（中身が無ければ、表の見出しの行の下に「データなし」と理由・「該当なし」）。色は appendixColors（グレー）
   const appendix = mtgWithColors_(MTG_OPTIONS.appendixColors, () => [].concat(mtgAppendixChanges_(summary), mtgAppendixStalled_(summary),
     mtgAppendixOwners_(summary), mtgAppendixAlerts_(summary)));
@@ -3021,7 +3024,7 @@ function mtgSlides_(summary, start) {
 
 /**
  * 統合版のスライドの並び：表紙（全サブインダストリー）・目次（mtgContentsSlide_）・全サブインダストリーの状況（mtgOverviewSlide_）のあとに、各サブインダストリーの資料
- * （mtgSlides_。表紙から Appendix まで。summaries の順）をそのまま続ける。ページ番号・扉の目次のページは資料全体の通し番号にする
+ * （mtgSlides_。表紙から本編まで。Appendix は入れない。summaries の順）をそのまま続ける。ページ番号は資料全体の通し番号にする
  */
 function mtgCombinedSlides_(summaries, meeting, final) {
   const o = MTG_OPTIONS;
@@ -3032,7 +3035,7 @@ function mtgCombinedSlides_(summaries, meeting, final) {
   const planOn = !!o.plan.enabled;
   let page = planOn ? 5 : 3;   // 前に表紙・目次・全サブインダストリーの状況（・計画に対する積み上げの全体とサブインダストリー別）
   const sections = summaries.map(s => {
-    const slides = mtgSlides_(s, page);
+    const slides = mtgSlides_(s, page, {appendix: false});
     const section = {summary: s, start: page + 1, slides};
     page += slides.length;
     return section;
@@ -4033,7 +4036,9 @@ function mtgBarChart_(title, rows, x, y, w, max, rowH, empty, labelW, gap) {
 }
 
 /** 3 前回から変化のある案件：ステータス・期待値・受注月・活動状況が変わった案件（今のステータスの順（mtgStatusGroups_）、その中は想定売上の大きい順） */
-function mtgMovesSlide_(s) {
+function mtgMovesSlide_(s, withAppendix) {
+  // 全件の一覧の場所：この資料の Appendix ①（統合版は Appendix を入れないので、各サブインダストリーの資料の Appendix ①）
+  const all = withAppendix === false ? '全件は各サブインダストリーの資料の Appendix ① を参照。' : '全件は Appendix ① を参照。';
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
   const k = s.kpi;
@@ -4070,8 +4075,8 @@ function mtgMovesSlide_(s) {
     lead: lack.changes ? mtgChangedLabel_(s) + 'は' + MTG_OPTIONS.gapText + '（' + lack.changes + '）。'
       : (moves.length ? mtgChangedLabel_(s) + 'は ' + moves.length + '件' + mtgUpdatedNote_(s) + '。'
       : mtgPeriodShort_(s) + '、ステータス・期待値・受注月・活動状況に変化のある案件なし' + mtgUpdatedNote_(s) + '。') +
-      (moves.length > top.length ? '\n今回のステータスの順（確度 A → 創注 → 失注・保留・削除）に ' + top.length + '件を掲載。全件は Appendix ① を参照。'
-        : k.updated ? '\n全件は Appendix ① を参照。' : ''),
+      (moves.length > top.length ? '\n今回のステータスの順（確度 A → 創注 → 失注・保留・削除）に ' + top.length + '件を掲載。' + all
+        : k.updated ? '\n' + all : ''),
     elements: el
   };
 }
