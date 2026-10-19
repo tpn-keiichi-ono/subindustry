@@ -449,6 +449,12 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   資料のファイルは消しません。
 - **古い版の片付け**（`mtgTrashOld_`）：作ったあと、保存先のフォルダの同じ名前のファイル（作り直す前の Google スライドと PDF）をゴミ箱に移します（古い版を配らないように）。
   ファイル名に会議日（試作は「試作」も）が入るので、ほかの会議日・本番と試作の資料は消しません。終わりの画面にはシートごとの PDF の URL を出します。
+- **サブインダストリーごとの Google チャットへの通知**（webhook。2026/10/19 に足した）：`setBusinessMtgSubChats()` でシートごとの webhook を
+  スクリプトのプロパティ（`MTG_OPTIONS.subChat.webhookKeyPrefix` ＋ シート名）に残し、独立した2つの関数で送る（どちらも確かめてから送る。`mtgSubChatSend_`）。
+  `remindBusinessMtgUpdate()`：管理フォーマットの更新のお願い（`subChat.remind`。締め切りは会議日の `deadlineDays` 日前の `deadlineTime`、
+  今の入力状況は `mtgUpdateStats_`（読むだけ：進行中・必須項目が未入力・受注月超過・最終更新から `noUpdateDays` 日以上）、シートのリンクは `#gid=`）。
+  `notifySubBusinessMtgSummaries()`：その会議日の本番の PDF（`mtgStoredPdf_`）のリンク（`subChat.summary`）。PDF が無いシートには送らない。
+  会議日は聞く（空欄なら会議日程の一覧の今日以降でいちばん近い会議。`mtgSubChatMeeting_`）。送れないスペースがあってもほかは送る（`mtgSubChatPost_`）。
 - **Google チャットへの通知**（webhook）：`setBusinessMtgChat()`（エディタから実行）で、webhook の URL と資料の格納先の URL をスクリプトのプロパティ
   （`MTG_OPTIONS.chat` の `webhookKey`・`urlKey`）に残します。`notifyBusinessMtgSummaries()`（エディタから実行）は、確かめの画面（送る文をそのまま見せる。
   「はい」のときだけ）のあと、事前資料のご案内の文（`MTG_OPTIONS.chat.message`。目的・議題を含む。`{meeting}`・`{date}`・`{file}`・`{url}` を置き換える）を

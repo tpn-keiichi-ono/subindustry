@@ -1884,7 +1884,8 @@ test('スプレッドシートの画面に出せないとき（エディタを�
   assert.deepStrictEqual(['新FMT', '新FMT2'].map(name => JSON.parse(props.getProperty('MTG_MEETINGS_' + name)).map(m => !!m.baseline)), [[true], [true]]);
   assert.ok(gas.logs.some(l => /「新FMT」「新FMT2」に、基準（.*）を記録しました。[\s\S]*確かめずにすべての追跡シートに記録しました/.test(l.line)), '実行ログに書く');
   assert.deepStrictEqual([gas.prompts.length, gas.alerts.length], [0, 0]);
-  ['createBusinessMtgSummaries', 'previewBusinessMtgSummaries', 'removeBusinessMtgRecord', 'setBusinessMtgChat', 'notifyBusinessMtgSummaries', 'setMeetingTemplate'].forEach(fn => {
+  ['createBusinessMtgSummaries', 'previewBusinessMtgSummaries', 'removeBusinessMtgRecord', 'setBusinessMtgChat', 'notifyBusinessMtgSummaries', 'setMeetingTemplate',
+    'setBusinessMtgSubChats', 'remindBusinessMtgUpdate', 'notifySubBusinessMtgSummaries'].forEach(fn => {
     if (fn === 'notifyBusinessMtgSummaries') {
       g.PropertiesService.getScriptProperties().setProperty('MTG_CHAT_WEBHOOK', 'https://chat.googleapis.com/v1/spaces/A/messages?key=k&token=t');
       g.PropertiesService.getScriptProperties().setProperty('MTG_CHAT_URL', 'https://drive.google.com/file/d/abcdefghijk/view');
@@ -2005,6 +2006,81 @@ test('setBusinessMtgChat：webhook の URL と資料の格納先の URL を登�
   g.setBusinessMtgChat();
   assert.deepStrictEqual([props.getProperty('MTG_CHAT_WEBHOOK'), props.getProperty('MTG_CHAT_URL')], [null, null]);
   assert.match(gas.alerts[gas.alerts.length - 1].message, /通知の設定を外しました。/);
+});
+
+test('サブインダストリーごとのチャット：setBusinessMtgSubChats でシートごとに webhook を登録し（スクリプトのプロパティ。空欄は今のまま・「削除」で外す）、確かめのメッセージを送れる', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getScriptProperties();
+  const hook = id => 'https://chat.googleapis.com/v1/spaces/' + id + '/messages?key=KEY' + id + '&token=TOKEN' + id;
+  gas.promptAnswers = ['', hook('SPACE1'), hook('SPACE2')];   // シート：すべて → 新FMT・新FMT2 の webhook
+  g.setBusinessMtgSubChats();
+  assert.match(gas.prompts[0].message, /今の設定：\n・新FMT：未登録\n・新FMT2：未登録/);
+  assert.deepStrictEqual([props.getProperty('MTG_SUBCHAT_新FMT'), props.getProperty('MTG_SUBCHAT_新FMT2')], [hook('SPACE1'), hook('SPACE2')]);
+  assert.deepStrictEqual(gas.fetches.map(f => f.url), [hook('SPACE1'), hook('SPACE2')], '確かめのメッセージ（「はい」のとき）');
+  assert.match(sentText(gas.fetches[0]), /^【テスト送信】新FMT の RX Business Meeting/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /・新FMT：スペース SPACE1 に送ります\n・新FMT2：スペース SPACE2 に送ります[\s\S]*確かめのメッセージ：\n・新FMT：送りました\n・新FMT2：送りました/);
+  // 空欄は今のまま、「削除」で外す。webhook でない URL は止める
+  gas.promptAnswers = ['', '', '削除'];
+  g.setBusinessMtgSubChats();
+  assert.deepStrictEqual([props.getProperty('MTG_SUBCHAT_新FMT'), props.getProperty('MTG_SUBCHAT_新FMT2')], [hook('SPACE1'), null]);
+  gas.promptAnswers = ['1', 'https://example.com/hook'];
+  assert.throws(() => g.setBusinessMtgSubChats(), /「新FMT」：Google チャットの webhook の URL ではありません。/);
+  assert.ok(gas.alerts.concat(gas.prompts).every(a => !/KEY|TOKEN/.test(a.message)) && gas.logs.every(l => !/KEY|TOKEN/.test(l.line)), '鍵・トークンは画面・ログに出さない');
+});
+
+test('remindBusinessMtgUpdate：管理フォーマットの更新のお願いを、サブインダストリーごとのスペースに送る（会議日・締め切り・今の入力状況・シートのリンク）。未登録のシートには送らない', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getScriptProperties();
+  assert.throws(() => g.remindBusinessMtgUpdate(), /先に setBusinessMtgSubChats\(\) で webhook の URL を登録してください。/);
+  const hook = 'https://chat.googleapis.com/v1/spaces/SPACE1/messages?key=K&token=T';
+  props.setProperty('MTG_SUBCHAT_新FMT', hook);
+  gas.promptAnswers = [''];   // 会議日を入れずに、会議日程の一覧にも無ければ止める
+  assert.throws(() => g.remindBusinessMtgUpdate(), /会議日を入力してください（会議日程の一覧に、今日以降の会議がありません）。/);
+  gas.confirmAnswer = 'NO';
+  gas.promptAnswers = ['2026/10/23', ''];
+  g.remindBusinessMtgUpdate();
+  assert.strictEqual(gas.fetches.length, 0, '「いいえ」なら送らない');
+  const confirm = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(confirm, /・新FMT：スペース SPACE1\n\n送らないシート：\n・新FMT2：webhook が未登録/);
+  gas.confirmAnswer = 'YES';
+  gas.promptAnswers = ['2026/10/23', ''];
+  g.remindBusinessMtgUpdate();
+  assert.deepStrictEqual(gas.fetches.map(f => f.url), [hook]);
+  const text = sentText(gas.fetches[0]);
+  const lines = text.split('\n');
+  assert.deepStrictEqual(lines.slice(0, 3), ['*【RX Business Meeting】管理フォーマットの更新のお願い（新FMT）*',
+    '2026年10月23日（金）9:00〜10:30 の RX Business Meeting に向けて、事前資料を作成します。',
+    'お手数ですが、*10月21日（水） 17:00* までに、管理フォーマットの案件の情報を最新にしてください。']);
+  // 今の入力状況：進行中は A社・C社・D社・E社・F社。必須項目が空は D社・F社（活動状況）、受注月を過ぎているのは A社、最終更新から30日以上は E社
+  assert.ok(lines.indexOf('・進行中の案件 5件') > 0 && lines.some(l => /^・必須項目（案件ステータス・.*・活動状況・アカウント責任者）が未入力の案件 2件$/.test(l)) &&
+    lines.indexOf('・受注月を過ぎている案件 1件') > 0 && lines.indexOf('・最終更新から 30日以上たっている案件 1件') > 0, text);
+  assert.match(text, /▼ 管理フォーマット\n<https:\/\/docs\.google\.com\/spreadsheets\/d\/spreadsheet-id\/edit#gid=\d+\|「新FMT」シート>$/, 'シートを開くリンク');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^管理フォーマットの更新のお願いを送りました（1\/1スペース）。\n・新FMT：送りました/);
+  // 送れなかったスペースがあっても、ほかは送る（理由を出す）
+  props.setProperty('MTG_SUBCHAT_新FMT2', hook.replace('SPACE1', 'SPACE2'));
+  gas.fetchStatuses = [403];
+  gas.promptAnswers = ['10/23', ''];
+  g.remindBusinessMtgUpdate();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /（1\/2スペース）。\n・新FMT：送れませんでした（Google チャットに送れませんでした（HTTP 403）[\s\S]*・新FMT2：送りました/);
+});
+
+test('notifySubBusinessMtgSummaries：その会議日の本番の事前資料（PDF）のリンクを、サブインダストリーごとのスペースに送る。PDF が無いシートには送らない', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getScriptProperties();
+  props.setProperty('MTG_SUBCHAT_新FMT', 'https://chat.googleapis.com/v1/spaces/SPACE1/messages?key=K&token=T');
+  props.setProperty('MTG_SUBCHAT_新FMT2', 'https://chat.googleapis.com/v1/spaces/SPACE2/messages?key=K&token=T');
+  gas.promptAnswers = ['1', '10/23'];
+  g.createBusinessMtgSummaries();   // 新FMT だけ本番の資料を作る
+  const fetched = gas.fetches.length;
+  gas.promptAnswers = ['10/23', ''];
+  g.notifySubBusinessMtgSummaries();
+  const sent = gas.fetches.slice(fetched);
+  assert.deepStrictEqual(sent.map(f => f.url.replace(/\?.*/, '')), ['https://chat.googleapis.com/v1/spaces/SPACE1/messages']);
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  const pdf = meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料.pdf';
+  assert.match(sentText(sent[0]), new RegExp('^\\*【RX Business Meeting】事前資料のご案内（新FMT）\\*\\n[\\s\\S]*▼ 事前資料\\n<https://drive\\.google\\.com/file/d/[^|]+\\|' +
+    pdf.replace(/[.()]/g, '\\$&') + '>$'));
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /送らなかったシート：\n・新FMT2：会議日 \d{4}\/10\/23 の本番の事前資料（PDF）が無い/);
 });
 
 test('notifyBusinessMtgSummaries：会議日程を聞き、格納先のフォルダの、いちばん新しい PDF のリンク（ファイル名で表示）と一緒に、確かめのあとすぐに送る。失敗は1回だけやり直し、だめなら止める', () => {

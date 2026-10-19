@@ -184,6 +184,42 @@ const MTG_OPTIONS = {
     ],
     legacyHandler: 'mtgNotifyScheduled' // 前の版の自動通知（2日前）のトリガーの関数。残っていれば setBusinessMtgChat()・notifyBusinessMtgSummaries() で外す
   },
+  // サブインダストリーごとの Google チャットのスペースへの通知（webhook）。setBusinessMtgSubChats() でシートごとに webhook を登録し、
+  // remindBusinessMtgUpdate()（管理フォーマットの更新のお願い）・notifySubBusinessMtgSummaries()（そのサブインダストリーの事前資料のご案内）で送る
+  // （どちらもエディタから実行。確かめてから送る。自動では送らない）。
+  // 文の {meeting} は会議の名前、{name} はサブインダストリー（シート名）、{date} は会議日程、{deadline} は更新の締め切り、{now} は送る日時、
+  // {stats} は今の入力状況（行ごと）、{sheet} は管理フォーマットのシートのリンク、{file} は事前資料のリンク。*〜* は太字
+  subChat: {
+    webhookKeyPrefix: 'MTG_SUBCHAT_',  // スクリプトのプロパティ：後ろにシート名。webhook の URL（鍵を含むので、コードやシートに書かない）
+    deadlineDays: 2,                   // 更新の締め切り：会議日の何日前か（事前資料を作る前）
+    deadlineTime: '17:00',             // 更新の締め切りの時刻（空なら日付だけ）
+    remind: [
+      '*【{meeting}】管理フォーマットの更新のお願い（{name}）*',
+      '{date} の {meeting} に向けて、事前資料を作成します。',
+      'お手数ですが、*{deadline}* までに、管理フォーマットの案件の情報を最新にしてください。',
+      '',
+      '▼ 更新していただきたい項目',
+      '・案件ステータス・想定売上・期待値・受注月・売上開始月',
+      '・活動状況・活動における課題・次回アクション',
+      '',
+      '▼ 今の入力状況（{now} 時点）',
+      '{stats}',
+      '',
+      '▼ 管理フォーマット',
+      '{sheet}'
+    ],
+    summary: [
+      '*【{meeting}】事前資料のご案内（{name}）*',
+      '{date} の {meeting} の事前資料（{name}）を作成しました。',
+      'お手数ですが、会議の前にご一読いただけますと幸いです。',
+      '',
+      '▼ 会議日程',
+      '{date}',
+      '',
+      '▼ 事前資料',
+      '{file}'
+    ]
+  },
   firstDays: 14,                     // 初回（前回の会議の記録が無い）は、何日前からの変化を出すか
   lookbackDays: 180,                 // ステータスの滞留・受注月の延期の回数を数えるために、何日前までの記録を読むか
   stallDays: 45,                     // 停滞：ステータスがこの日数以上同じ進行中の案件
@@ -1069,6 +1105,210 @@ function mtgChatSettings_() {
 function mtgChatSpace_(webhook) {
   const m = /\/spaces\/([^/?]+)/.exec(webhook);
   return 'スペース ' + (m ? m[1] : '（不明）');
+}
+
+/* ---------------- サブインダストリーごとの Google チャットへの通知 ---------------- */
+
+/**
+ * サブインダストリーごとの Google チャットのスペースの webhook を登録する（エディタから実行する。管理者が1回。スペースが変わったときも）。
+ * シートを選び、シートごとに webhook の URL を聞いてスクリプトのプロパティに残す（空欄なら今のまま、「削除」と入力すると外す）。
+ * 登録したスペースには、確かめのメッセージを送れる
+ */
+function setBusinessMtgSubChats() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = mtgUi_();
+  const title = CRED_OPTIONS.menuTitle;
+  const props = PropertiesService.getScriptProperties();
+  const names = mtgAskSheets_(ss, ui, 'サブインダストリーごとの Google チャットのスペースの webhook を登録します。\n今の設定：\n' +
+    Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name)).map(name => '・' + name + '：' + mtgSubChatState_(name)).join('\n'));
+  if (!names) return;
+  const changed = [];
+  const lines = [];
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    const response = ui.prompt(title, '「' + name + '」の Google チャットのスペースの webhook の URL を貼り付けてください' +
+      '（スペースの「アプリと統合」→「Webhook」で作ったもの）。\n空欄なら今のまま、「削除」と入力すると外します。\n\n今の設定：' + mtgSubChatState_(name),
+      ui.ButtonSet.OK_CANCEL);
+    if (response.getSelectedButton() !== ui.Button.OK) break;
+    const text = String(response.getResponseText() || '').trim();
+    if (!text) {
+      lines.push('・' + name + '：変えていません（' + mtgSubChatState_(name) + '）');
+      continue;
+    }
+    if (text === '削除') {
+      props.deleteProperty(MTG_OPTIONS.subChat.webhookKeyPrefix + name);
+      lines.push('・' + name + '：外しました');
+      continue;
+    }
+    if (!/^https:\/\/chat\.googleapis\.com\/v1\/spaces\/[^/?]+\/messages\?\S*key=\S+&token=\S+$/.test(text)) {
+      throw new Error('「' + name + '」：Google チャットの webhook の URL ではありません。https://chat.googleapis.com/v1/spaces/…/messages?key=…&token=… の形の URL を貼り付けてください。' +
+        (lines.length ? '\n（ここまでの登録は済んでいます：' + lines.join(' ') + '）' : ''));
+    }
+    props.setProperty(MTG_OPTIONS.subChat.webhookKeyPrefix + name, text);
+    changed.push(name);
+    lines.push('・' + name + '：' + mtgChatSpace_(text) + ' に送ります');
+  }
+  if (!lines.length) return;
+  const message = 'サブインダストリーごとの Google チャットの設定：\n' + lines.join('\n') +
+    '\n\nremindBusinessMtgUpdate() で管理フォーマットの更新のお願いを、notifySubBusinessMtgSummaries() で事前資料のご案内を送れます。';
+  if (changed.length && ui.alert(title, message + '\n\n登録したスペース（' + changed.length + '件）に、確かめのメッセージをいま送りますか？', ui.ButtonSet.YES_NO) === ui.Button.YES) {
+    const results = changed.map(name => mtgSubChatPost_(name, '【テスト送信】' + name + ' の ' + MTG_OPTIONS.meetingName +
+      'の通知の設定を確認するためのメッセージです。\n今後、管理フォーマットの更新のお願いと事前資料のご案内をこちらにお送りいたします。'));
+    const done = message + '\n\n確かめのメッセージ：\n' + results.map(r => '・' + r.name + '：' + (r.error ? '送れませんでした（' + r.error + '）' : '送りました')).join('\n');
+    console.log(done);
+    ui.alert(title, done, ui.ButtonSet.OK);
+    return;
+  }
+  console.log(message);
+  ui.alert(title, message, ui.ButtonSet.OK);
+}
+
+/**
+ * 管理フォーマットの更新のお願いを、サブインダストリーごとの Google チャットのスペースに送る（エディタから実行する。確かめてから送る）。
+ * 会議日（空欄なら会議日程の一覧の次の会議）とシートを選ぶ。文は MTG_OPTIONS.subChat.remind（締め切りは会議日の deadlineDays 日前）。
+ * 今の入力状況（進行中の案件・必須項目が未入力・受注月を過ぎている・最終更新から noUpdateDays 日以上）をシートごとに数えて付ける
+ */
+function remindBusinessMtgUpdate() {
+  mtgSubChatSend_('remind');
+}
+
+/**
+ * サブインダストリーの事前資料（その会議日の本番の PDF）のご案内を、サブインダストリーごとの Google チャットのスペースに送る
+ * （エディタから実行する。確かめてから送る）。会議日（空欄なら会議日程の一覧の、今日以降でいちばん近い会議）とシートを選ぶ。
+ * PDF は会議のフォルダ（無ければ保存先のフォルダ）の「yyyyMMdd_シート名_…用資料.pdf」。無いシートには送らない
+ */
+function notifySubBusinessMtgSummaries() {
+  mtgSubChatSend_('summary');
+}
+
+/** remind・summary の共通：会議日とシートを聞き、送る文を作って確かめ、シートごとに送る（送れないシートがあっても、ほかは送る） */
+function mtgSubChatSend_(kind) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = mtgUi_();
+  const title = CRED_OPTIONS.menuTitle;
+  const what = kind === 'remind' ? '管理フォーマットの更新のお願い' : '事前資料のご案内';
+  const registered = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name) && mtgSubChatWebhook_(name));
+  if (!registered.length) {
+    throw new Error('サブインダストリーごとの Google チャットのスペースが登録されていません。先に setBusinessMtgSubChats() で webhook の URL を登録してください。');
+  }
+  const meeting = mtgSubChatMeeting_(ui, what);
+  if (!meeting) return;
+  const names = mtgAskSheets_(ss, ui, what + 'を送ります（会議日 ' + meeting.label + '）。\nwebhook を登録したシート：' + registered.join('・'));
+  if (!names) return;
+  const now = new Date();
+  const plans = names.map(name => {
+    if (!mtgSubChatWebhook_(name)) return {name, skip: 'webhook が未登録（setBusinessMtgSubChats() で登録）'};
+    if (kind === 'remind') return {name, text: mtgSubChatText_('remind', name, meeting, {now, sheet: mtgSheetLink_(ss, name), stats: mtgUpdateStats_(ss, name, now)})};
+    const pdf = mtgStoredPdf_(ss, name, meeting.date);
+    if (!pdf) return {name, skip: '会議日 ' + meeting.date + ' の本番の事前資料（PDF）が無い（createBusinessMtgSummaries() で作る）'};
+    return {name, text: mtgSubChatText_('summary', name, meeting, {file: {name: pdf.getName(), url: pdf.getUrl()}})};
+  });
+  const sending = plans.filter(p => p.text);
+  const skipped = plans.filter(p => p.skip);
+  const list = sending.map(p => '・' + p.name + '：' + mtgChatSpace_(mtgSubChatWebhook_(p.name))).join('\n') +
+    (skipped.length ? '\n\n送らないシート：\n' + skipped.map(p => '・' + p.name + '：' + p.skip).join('\n') : '');
+  if (!sending.length) {
+    ui.alert(title, what + 'を送れるシートがありません。\n' + list, ui.ButtonSet.OK);
+    return;
+  }
+  const preview = mtgSubChatPlain_(sending[0].text);
+  const answer = ui.alert(title, what + 'を、次のスペースにすぐに送ります。よろしいですか？\n' + list + '\n\n（例：' + sending[0].name + ' に送る文）\n' + preview,
+    ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+  const results = sending.map(p => mtgSubChatPost_(p.name, p.text));
+  const message = what + 'を送りました（' + results.filter(r => !r.error).length + '/' + results.length + 'スペース）。\n' +
+    results.map(r => '・' + r.name + '：' + (r.error ? '送れませんでした（' + r.error + '）' : '送りました')).join('\n') +
+    (skipped.length ? '\n\n送らなかったシート：\n' + skipped.map(p => '・' + p.name + '：' + p.skip).join('\n') : '');
+  console.log(message);
+  ui.alert(title, message, ui.ButtonSet.OK);
+}
+
+/**
+ * 送る会議日を聞く。空欄なら会議日程の一覧（インデックスの RX Business Meeting）の、今日以降でいちばん近い会議日。
+ * {date: 'yyyy/MM/dd', label: 会議日程（「2026年10月23日（金）9:00〜10:30」）}。キャンセルなら null
+ */
+function mtgSubChatMeeting_(ui, what) {
+  const now = new Date();
+  const today = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/MM/dd');
+  const next = mtgIndexMeetings_(MTG_OPTIONS.index.kind).map(m => m.date).filter(date => date >= today)[0] || '';
+  const time = MTG_OPTIONS.chat.meetingTime;
+  const response = ui.prompt(CRED_OPTIONS.menuTitle, what + 'の会議日を入力してください（例：10/23）。' +
+    (next ? '\n空欄なら、会議日程の次の会議（' + mtgShortDate_(next) + '）。' : '') +
+    (time ? '\n時刻を省くと「' + time + '」にします。ほかの時刻のときは「10/23 13:00〜14:30」のように入力してください。' : ''), ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return null;
+  const text = String(response.getResponseText() || '').normalize('NFKC').trim() || (next ? mtgShortDate_(next) : '');
+  if (!text) throw new Error('会議日を入力してください（会議日程の一覧に、今日以降の会議がありません）。');
+  const label = mtgChatSchedule_(text, now);
+  const at = /\s*(\d{1,2}:\d{2}.*)$/.exec(text);
+  return {date: mtgParseDate_(at ? text.slice(0, at.index) : text, now), label};
+}
+
+/**
+ * 送る文（MTG_OPTIONS.subChat の kind の行の、{meeting}・{name}・{date}・{deadline}・{now}・{stats}・{sheet}・{file} を置き換える）。
+ * リンクは <URL|名前>（チャットでは名前で出る）
+ */
+function mtgSubChatText_(kind, name, meeting, values) {
+  const o = MTG_OPTIONS.subChat;
+  const tz = Session.getScriptTimeZone();
+  const link = item => (item ? '<' + item.url + '|' + String(item.name).replace(/[|<>]/g, ' ') + '>' : '');
+  const p = meeting.date.split('/').map(Number);
+  const due = new Date(Date.UTC(p[0], p[1] - 1, p[2] - o.deadlineDays));
+  const dueDate = due.getUTCFullYear() + '/' + String(due.getUTCMonth() + 1).padStart(2, '0') + '/' + String(due.getUTCDate()).padStart(2, '0');
+  const deadline = mtgDateLabel_(dueDate).replace(/^\d+年/, '') + (o.deadlineTime ? ' ' + o.deadlineTime : '');
+  const map = {meeting: MTG_OPTIONS.meetingName, name, date: meeting.label, deadline,
+    now: values.now ? Utilities.formatDate(values.now, tz, 'M/d HH:mm') : '', stats: (values.stats || []).join('\n'),
+    sheet: link(values.sheet), file: link(values.file)};
+  return o[kind].join('\n').replace(/\{(\w+)\}/g, (all, key) => (key in map ? map[key] : all));
+}
+
+/** 確かめの画面に出す形（リンク <URL|名前> を「名前（URL）」に） */
+function mtgSubChatPlain_(text) {
+  return text.replace(/<([^|>]+)\|([^>]*)>/g, '$2（$1）');
+}
+
+/** 管理フォーマットのシートのリンク {name: シート名, url: そのシートを開く URL} */
+function mtgSheetLink_(ss, name) {
+  return {name: '「' + name + '」シート', url: ss.getUrl() + '#gid=' + ss.getSheetByName(name).getSheetId()};
+}
+
+/**
+ * 今の入力状況（更新のお願いに付ける。読むだけ）：進行中の案件・必須項目が未入力・受注月を過ぎている・最終更新から noUpdateDays 日以上（最終更新日時の列があるとき）。
+ * ['・進行中の案件 34件', '・必須項目が未入力の案件 5件', …]
+ */
+function mtgUpdateStats_(ss, name, now) {
+  const o = MTG_OPTIONS;
+  const table = mtgReadDeals_(ss.getSheetByName(name), DIFF_RULES[name]);
+  const active = table.deals.filter(d => d.kind === 'active');
+  const month = mtgMonthIndex_(mtgMonth_(Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/MM')));
+  const lines = ['・進行中の案件 ' + active.length + '件', '・必須項目（' + o.required.map(label => String(label).replace(/\s+/g, '')).join('・') + '）が未入力の案件 ' +
+    active.filter(d => d.missing.length).length + '件'];
+  if (table.has.orderMonth) lines.push('・受注月を過ぎている案件 ' + active.filter(d => d.orderMonth && mtgMonthIndex_(d.orderMonth) < month).length + '件');
+  if (table.hasStamp) {
+    lines.push('・最終更新から ' + o.noUpdateDays + '日以上たっている案件 ' +
+      active.filter(d => d.updatedAt != null && now.getTime() - d.updatedAt >= o.noUpdateDays * 86400000).length + '件');
+  }
+  return lines;
+}
+
+/** シートの webhook の URL（スクリプトのプロパティ。無ければ null） */
+function mtgSubChatWebhook_(name) {
+  return PropertiesService.getScriptProperties().getProperty(MTG_OPTIONS.subChat.webhookKeyPrefix + name);
+}
+
+/** 設定の見せ方（「スペース AAAA… に送る」「未登録」。鍵・トークンは出さない） */
+function mtgSubChatState_(name) {
+  const webhook = mtgSubChatWebhook_(name);
+  return webhook ? mtgChatSpace_(webhook) + ' に送る' : '未登録';
+}
+
+/** シートのスペースに送る。{name, error}（送れなければ error に理由。止めない。URL は鍵を含むので出さない） */
+function mtgSubChatPost_(name, text) {
+  try {
+    mtgPostChat_(mtgSubChatWebhook_(name), text);
+    return {name, error: ''};
+  } catch (error) {
+    return {name, error: String(error && error.message || error).split('\n')[0]};
+  }
 }
 
 /**
