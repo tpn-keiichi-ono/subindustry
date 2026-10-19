@@ -2798,7 +2798,13 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
   assert.ok(axis.every(v => Math.abs(v - axis[0]) < 0.01), '参考の棒は 0 から');
   assert.strictEqual(roles('plan-aside-title')[0].text, '積み上げに含まない（参考）');
   assert.deepStrictEqual(roles('legend').filter(el => el.text).map(el => el.text), ['A', 'B', 'C', 'D', '創注', '未設定', '計画']);
-  assert.strictEqual(roles('plan-line').length, 1, '計画の高さの横線');
+  assert.deepStrictEqual(roles('plan-line').map(el => [el.type, el.dash, el.h]), [['line', true, 0]], '計画の高さの横線（点線）');
+  // 直線は Slides の createLine と点線（DASH）の線の書式で作る
+  const lineRequests = plain(g.mtgSlideRequests_({title: 'x', elements: roles('plan-line')}, 'page_plan', 0));
+  const created = lineRequests.find(r => r.createLine).createLine;
+  assert.deepStrictEqual([created.lineCategory, created.elementProperties.size.height.magnitude > 0], ['STRAIGHT', true]);
+  const lineProps = lineRequests.find(r => r.updateLineProperties).updateLineProperties;
+  assert.deepStrictEqual([lineProps.objectId, lineProps.lineProperties.dashStyle, lineProps.fields], [created.objectId, 'DASH', 'lineFill,weight,dashStyle']);
   const S = gas.get('MTG_SLIDE');
   slide.elements.forEach(el => assert.ok(el.x >= 0 && el.x + el.w <= S.width + 0.01 && el.y + el.h <= S.bottom + 0.01, 'ページに入る：' + (el.text || el.role)));
   // 計画を超えたら「超過」

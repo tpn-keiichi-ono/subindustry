@@ -3663,7 +3663,7 @@ function mtgMergePlans_(plans) {
 /**
  * 計画に対する積み上げ（本編2枚目。統合版は全サブインダストリーの状況の次）：今年度の売上開始月ごとの期待値を左から積み上げる滝の図。
  * 月の段は確度（濃い緑 A → 淡い緑 創注・灰色 未設定）で塗り分け、最後に 合計（確度別）・計画（白地に枠）・差（計画に届かない分 ▲／超えた分 +）。
- * 計画の高さに横線を引く（どの月で計画に届くかが分かる）。右に区切って、積み上げに含まない案件（時期未定・今年度より前・来年度以降・失注・保留）を
+ * 計画の高さに点線の横線を引く（どの月で計画に届くかが分かる）。右に区切って、積み上げに含まない案件（時期未定・今年度より前・来年度以降・失注・保留）を
  * 参考として 0 からの確度別の棒で出す（期待値と件数）。p は mtgPlanOf_（統合版は mtgMergePlans_）の戻り値。name は統合版のときだけ（見出しに付ける）
  */
 function mtgPlanSlide_(p, now, name) {
@@ -3761,8 +3761,8 @@ function mtgPlanSlide_(p, now, name) {
     });
   };
   el.push({type: 'box', x, y: axis, w, h: 0.75, fill: c.faint, shape: 'RECTANGLE'});
-  // 計画の高さの横線（12か月と合計の上に重ねる。どの月で計画に届くかが分かる）
-  el.push({type: 'box', x, y: ypos(p.plan), w: unit * 13, h: 0.75, fill: c.dark, shape: 'RECTANGLE', role: 'plan-line'});
+  // 計画の高さの横線（点線。12か月と合計の上に重ねる。どの月で計画に届くかが分かる）
+  el.push({type: 'line', x, y: ypos(p.plan), w: unit * 13, h: 0, color: c.dark, weight: 1, dash: true, role: 'plan-line'});
   let level = 0;
   p.months.forEach((mo, i) => {
     stack(i, level, mo.values, 'plan-month');
@@ -4714,6 +4714,7 @@ function mtgParagraphStyle_(item) {
 /**
  * 1枚のスライドを作る Slides API のリクエスト（batchUpdate に渡す）。pageId はスライドの ID（5文字以上）、index は何枚目か（0 から）。
  * 表の空のセルにも空白を1つ入れて文字の大きさをそろえる（空のままだと既定の大きな文字の高さで行が伸びる）。
+ * 部品（slide.elements）は type：'box'（四角・文字）・'table'（表）・'line'（直線。{x, y, w, h, color, weight, dash}）。
  * options = {scale: 位置・大きさ・文字の倍率（ひな形のページの大きさ ÷ MTG_SLIDE.width。既定 1）, existing: true ならスライドは作らない（ひな形のページ）,
  *            idPrefix: 部品の ID の先頭（既定は pageId）}。
  * slide.template（表紙・扉）は、ひな形のページなら何もしない（決まった文字の置き換えは mtgTemplateTextRequests_）。ひな形が無ければ同じ位置に描く（mtgTemplateFallback_）
@@ -4786,6 +4787,14 @@ function mtgSlideRequests_(slide, pageId, index, options) {
       }))).forEach(b => requests.push({updateTableBorderProperties: {objectId: id, tableRange: b.range, borderPosition: b.position,
         tableBorderProperties: {tableBorderFill: {solidFill: {color: {rgbColor: mtgRgb_(b.color)}}}, weight: pt(b.weight), dashStyle: 'SOLID'},
         fields: 'tableBorderFill,weight,dashStyle'}}));
+      return;
+    }
+    if (el.type === 'line') {
+      // 直線（color・weight・dash で点線）。高さ 0 の線は作れないことがあるので、ごくわずかな高さにする（見た目は水平）
+      elementProperties.size.height = pt(Math.max(height, 0.01));
+      requests.push({createLine: {objectId: id, lineCategory: 'STRAIGHT', elementProperties}});
+      requests.push({updateLineProperties: {objectId: id, lineProperties: {lineFill: {solidFill: {color: {rgbColor: mtgRgb_(el.color)}}},
+        weight: pt(el.weight || 0.75), dashStyle: el.dash ? 'DASH' : 'SOLID'}, fields: 'lineFill,weight,dashStyle'}});
       return;
     }
     requests.push({createShape: {objectId: id, shapeType: el.shape || 'TEXT_BOX', elementProperties}});
