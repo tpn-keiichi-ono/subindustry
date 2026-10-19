@@ -2204,7 +2204,7 @@ test('setBusinessMtgBaseline：今を基準として記録し（はいのとき�
   assert.match(inserted, /\n対象期間：基準時点（\d{2}\/\d{2} \d{2}:\d{2}）以降\n/, '表紙の期間');
   assert.match(gas.alerts.filter(a => /本番の資料を作り/.test(a.message)).pop().message, /・新FMT：基準（\d{1,2}\/\d{1,2} \d{2}:\d{2}）以降/,
     '本番の確認：基準からの変化を出すこと');
-  assert.match(inserted, /期待値合計 \d+百万円（基準比 /, '前回比ではなく基準比');
+  assert.match(inserted, /期待値合計 \d+百万円（\d{2}\/\d{2}比 /, '前回比ではなく、基準を記録した年月との比（26/10比）');
   assert.doesNotMatch(inserted, /前回比|前回以降/, '前回の会議の記録が無いので「前回」とは書かない');
   assert.match(inserted, /\n停滞（同一ステータス45日以上）\n—\n—\nデータなし：基準（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない（\d{1,2}\/\d{1,2} から数える）\n/,
     '基準から45日たつまでは、停滞を数えられないことを書く（0件を「停滞なし」と読ませない）');

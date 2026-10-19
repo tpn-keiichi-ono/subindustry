@@ -3080,8 +3080,8 @@ function mtgOverviewSlide_(sections) {
   const S = MTG_SLIDE;
   const G = o.gapText;
   const columns = mtgColumns_([142, 70, 84, 84, 92, 68, 70, 50], 0);
-  // 増減の列の見出しは、いちばん多い比べ方（前回比・基準比・直近14日間の増減）。ほかの比べ方のシートは、セルの1行目に何との比かを書く
-  const versus = s => mtgVersus_(s).trim().replace(/で$/, '');   // 前回比・基準比・直近14日間
+  // 増減の列の見出しは、いちばん多い比べ方（前回比・26/10比（基準）・直近14日間の増減）。ほかの比べ方のシートは、セルの1行目に何との比かを書く
+  const versus = s => mtgVersus_(s).trim().replace(/で$/, '');   // 前回比・26/10比（基準）・直近14日間
   const counts = {};
   sections.forEach(x => { counts[versus(x.summary)] = (counts[versus(x.summary)] || 0) + 1; });
   const common = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || '前回比';
@@ -3263,9 +3263,13 @@ function mtgLead_(text) {
   return el;
 }
 
-/** 比べる時点の短い名前：「前回」、選んだ時点なら「10/9」（基準は呼ぶ側で「基準」） */
+/**
+ * 比べる時点の短い名前：「前回」、選んだ時点なら「10/9」、基準なら基準を記録した年月「26/10」（「基準比」では前回比と見分けにくいため。2026/10/19 から）
+ */
 function mtgFromWord_(s) {
-  return s.previous && s.previous.chosen && !s.previous.baseline ? mtgShortDate_(s.previous.date) : '前回';
+  const prev = s.previous;
+  if (prev && prev.baseline) return Utilities.formatDate(new Date(prev.cutoff), Session.getScriptTimeZone(), 'yy/MM');
+  return prev && prev.chosen ? mtgShortDate_(prev.date) : '前回';
 }
 
 /** 「前回の時点コピー」「10/8 18:20 の時点コピー」（選んだ時点）「基準の時点コピー」（比べたコピーの呼び方） */
@@ -3276,21 +3280,21 @@ function mtgCopyWord_(s) {
   return prev.baseline ? '基準の' + name : Utilities.formatDate(new Date(prev.cutoff), Session.getScriptTimeZone(), 'M/d HH:mm') + ' の' + name;
 }
 
-/** 「前回以降」「基準以降」「10/9以降」（選んだ時点）「直近14日間」（数字の見出し・リード文の期間） */
+/** 「前回以降」「26/10以降」（基準）「10/9以降」（選んだ時点）「直近14日間」（数字の見出し・リード文の期間） */
 function mtgPeriodShort_(s) {
   if (s.first) return '直近' + MTG_OPTIONS.firstDays + '日間';
-  return s.previous && s.previous.baseline ? '基準以降' : mtgFromWord_(s) + '以降';
+  return mtgFromWord_(s) + '以降';
 }
 
-/** 「うち前回以降の更新なし」「うち基準以降の更新なし」「うち直近14日間の更新なし」（停滞のうち、対象期間に変化の無い案件） */
+/** 「うち前回以降の更新なし」「うち26/10以降の更新なし」「うち直近14日間の更新なし」（停滞のうち、対象期間に変化の無い案件） */
 function mtgQuietLabel_(s) {
   return 'うち' + mtgPeriodShort_(s) + 'の更新なし';
 }
 
-/** 「前回比 」「基準比 」「10/9比 」（選んだ時点）「直近14日間で 」（前回比の書き出し） */
+/** 「前回比 」「26/10比 」（基準）「10/9比 」（選んだ時点）「直近14日間で 」（前回比の書き出し） */
 function mtgVersus_(s) {
   if (s.first) return mtgPeriodShort_(s) + 'で ';
-  return s.previous && s.previous.baseline ? '基準比 ' : mtgFromWord_(s) + '比 ';
+  return mtgFromWord_(s) + '比 ';
 }
 
 /** 「（ほかに、その他の項目のみの更新 N件）」（その他更新は「変化のある案件」に数えないので、別に書く。無ければ空） */
@@ -3298,11 +3302,10 @@ function mtgUpdatedNote_(s) {
   return s.kpi.updated ? '（ほかに、その他の項目のみの更新 ' + s.kpi.updated + '件）' : '';
 }
 
-/** 「前回から変化のある案件」「10/9以降に変化のある案件」（選んだ時点）「直近14日間に変化のある案件」 */
+/** 「前回から変化のある案件」「26/10以降に変化のある案件」（基準）「10/9以降に…」（選んだ時点）「直近14日間に変化のある案件」 */
 function mtgChangedLabel_(s) {
   if (s.first) return '直近' + MTG_OPTIONS.firstDays + '日間に変化のある案件';
-  if (s.previous && s.previous.baseline) return '基準以降に変化のある案件';
-  return s.previous && s.previous.chosen ? mtgFromWord_(s) + '以降に変化のある案件' : '前回から変化のある案件';
+  return s.previous && (s.previous.chosen || s.previous.baseline) ? mtgFromWord_(s) + '以降に変化のある案件' : '前回から変化のある案件';
 }
 
 /**
@@ -3768,7 +3771,7 @@ function mtgWaterfall_(s, x, y, w, h) {
     el.push(mtgBox_(lx + 6, y - 1, item.bw, 18, item.label, {size: 8.5, color: c.sub, role: 'legend'}));
     lx += 6 + item.bw + 8 - 7.2 - 1.6;   // 名前の箱の右の余白（7.2）と、文字のあとの少し（1.6）の分を詰めて、文字の終わりから 8pt
   });
-  const startLabel = s.first ? MTG_OPTIONS.firstDays + '日前' : s.previous && s.previous.baseline ? '基準' : mtgFromWord_(s);
+  const startLabel = s.first ? MTG_OPTIONS.firstDays + '日前' : mtgFromWord_(s);
   const bars = [{label: startLabel, value: b.start, count: b.startCount, total: true}]
     .concat(b.steps.filter(st => st.count))
     .concat([{label: '今回', value: b.end, count: b.endCount, total: true}]);
