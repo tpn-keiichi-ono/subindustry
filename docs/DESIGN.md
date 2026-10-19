@@ -21,7 +21,7 @@
 | サンプルデータ | `サンプルデータ.gs` | 画面の確認用に、選んだ行の得意先へサンプルの履歴を追加する・まとめて削除する |
 | サービス管理 | `ServiceManagement.gs`・`RequestPickerView.html`・`RequestListDialog.html` | 新FMT のリクエストを選択パネル（サイドバー）で選んで「リクエスト」シートに登録し、リクエストをもとにサービス案を考えて名前でまとめる・棄却する |
 | タスク管理 | `TaskManagement.gs` | 別のシート「タスク管理」で、サービス案ごとの検討の進捗をタスクで管理する |
-| 会議サマリ（RX Business Meeting） | `MeetingSummary.gs` | RX Business Meeting（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ってドライブに保存する（サマリー・計画に対する積み上げ・パイプラインの変化・前回から変化のある案件・期待値上位案件の状況・課題、扉、Appendix。書くのは事実だけ）。資料の格納先の URL を Google チャットにすぐ送る（webhook。`notifyBusinessMtgSummaries()`） |
+| 会議サマリ（RX Business Meeting） | `MeetingSummary.gs` | RX Business Meeting（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ってドライブに保存する（サマリー・計画に対する積み上げ・パイプラインの変化・前回から変化のある案件・期待値上位案件の状況・課題、扉、Appendix。書くのは事実だけ）。サブインダストリーごとの Google チャットに、管理フォーマットの更新のお願いと事前資料のご案内を送る（webhook。`remindBusinessMtgUpdate()`・`notifySubBusinessMtgSummaries()`） |
 | 会議の日程と資料を作る画面 | `MeetingSchedule.gs`・`MeetingRunDialog.html` | Google カレンダーから RX Business Meeting・RX Service Meeting の日程を読み、`INDEX_会議資料` に会議日と会議名の行を先に出す。資料を作る関数は画面を開き、その一覧から会議日程をプルダウンで選んで作る |
 | RX Service Meeting の事前資料 | `ServiceMeeting.gs` | RX Service Meeting（サービス改善）の事前資料（16:9 の Google スライドと PDF。紫）を、リクエスト・タスク管理のシートから、サブインダストリーごと（と全サブインダストリー）に作る。スライドの部品・ひな形・保存・インデックスは会議サマリと共通 |
 
@@ -455,14 +455,9 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   今の入力状況は `mtgUpdateStats_`（読むだけ：進行中・必須項目が未入力・受注月超過・最終更新から `noUpdateDays` 日以上）、シートのリンクは `#gid=`）。
   `notifySubBusinessMtgSummaries()`：その会議日の本番の PDF（`mtgStoredPdf_`）のリンク（`subChat.summary`）。PDF が無いシートには送らない。
   会議日は聞く（空欄なら会議日程の一覧の今日以降でいちばん近い会議。`mtgSubChatMeeting_`）。送れないスペースがあってもほかは送る（`mtgSubChatPost_`）。
-- **Google チャットへの通知**（webhook）：`setBusinessMtgChat()`（エディタから実行）で、webhook の URL と資料の格納先の URL をスクリプトのプロパティ
-  （`MTG_OPTIONS.chat` の `webhookKey`・`urlKey`）に残します。`notifyBusinessMtgSummaries()`（エディタから実行）は、確かめの画面（送る文をそのまま見せる。
-  「はい」のときだけ）のあと、事前資料のご案内の文（`MTG_OPTIONS.chat.message`。目的・議題を含む。`{meeting}`・`{date}`・`{file}`・`{url}` を置き換える）を
-  **すぐに**送ります（`mtgChatText_`）。会議日程は送るときに聞き（`mtgChatSchedule_`。時刻を省けば `MTG_OPTIONS.chat.meetingTime`）、「2026年10月23日（金）9:00〜10:30」と書きます。
-  送るのは資料のファイルのリンク（`<URL|ファイル名>`。ファイル名で表示）です（`mtgChatFile_`）：格納先がドライブのフォルダなら、その中でいちばん新しく更新した PDF
-  （PDF が無ければいちばん新しいファイル。ゴミ箱のものは除く）、ファイルの URL ならそのファイル、ドライブ以外の URL ならそのまま。自動では送りません
-  （格納先と資料は人が用意する。前の版は、会議日の2日前に時間主導のトリガーで、作った PDF をコピーして送っていたが、まずは知らせるだけのシンプルな形にした。
-  残ったトリガー `mtgNotifyScheduled` は、その関数が動いたとき・`setBusinessMtgChat()`・`notifyBusinessMtgSummaries()` を実行したときに外す（`mtgRemoveLegacyTrigger_`））。
+- 全体のスペースへの通知（`setBusinessMtgChat()`・`notifyBusinessMtgSummaries()`。格納先のフォルダの新しい PDF を送っていた）は 2026/10/19 にやめた
+  （通知はサブインダストリーごとの2つだけ）。前の版の設定（`MTG_OPTIONS.chat.oldKeys`）と自動通知のトリガー（`mtgNotifyScheduled`。関数は名前だけ残す）は
+  `setBusinessMtgSubChats()` で消す（`mtgRemoveLegacyTrigger_`）。会議の時刻の決まり（`chat.meetingTime`）と、会議日程の読み方（`mtgChatSchedule_`）は共通で使う。
   - 送るのは `UrlFetchApp`（`application/json` の `{text}`）。429・5xx は2秒待って1回だけやり直し、だめならエラーにします。
     webhook の URL は鍵を含むので、コード・画面・ログに出しません（`mtgChatSpace_` はスペースの ID だけを出す）。
 - **画面**：入力・確かめの画面は `mtgUi_()`（`SpreadsheetApp.getUi()`）でスプレッドシートに出します。エディタがスプレッドシートにつながっていないと

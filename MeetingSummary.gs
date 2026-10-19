@@ -153,36 +153,11 @@ const MTG_OPTIONS = {
   lastKeyPrefix: 'MTG_LAST_',         // 前の版の「前回の作成日時」（会議日の記録が無いときだけ使う）
   keepMeetings: 24,                  // 会議日の記録をいくつ残すか
   keepSlides: false,                 // Google スライドもフォルダに残すか（true なら推進リーダーが書き足せる。false なら PDF だけ。2026/10 から PDF だけ）
-  // Google チャットへの通知（webhook）。setBusinessMtgChat() で webhook の URL と資料の格納先の URL を登録し、
-  // notifyBusinessMtgSummaries() を実行すると、その場で格納先の URL をチャットに送る（自動では送らない）
+  // Google チャットへの通知は、サブインダストリーごとのスペースへの2つだけ（下の subChat。2026/10/19 に全体のスペースへの通知はやめた）
   chat: {
-    webhookKey: 'MTG_CHAT_WEBHOOK',  // スクリプトのプロパティ：webhook の URL（鍵を含むので、コードやシートに書かない）
-    urlKey: 'MTG_CHAT_URL',          // スクリプトのプロパティ：送る資料の格納先の URL（ドライブのフォルダかファイル）
     meetingTime: '9:00〜10:30',      // 会議の時刻（会議日程の日付のあとに書く。送るときに時刻を入力すれば、そちら。空なら日付だけ）
-    // 送る文（1行ずつ。目的・議題もここで変える）。{meeting} は会議の名前（meetingName）、{date} は会議日程（2026年10月23日（金）9:00〜10:30）、
-    // {file} は資料のファイルのリンク（ファイル名で表示）、{url} はファイルの URL に置き換える。
-    // 格納先がフォルダなら、送るときにその中でいちばん新しく更新した PDF（PDF が無ければいちばん新しいファイル）を送る。*〜* は太字
-    message: [
-      '*【{meeting}】事前資料のご案内*',
-      '{meeting} の事前資料を、下記に格納いたしました。',
-      'お手数ですが、会議の前にご一読いただけますと幸いです。',
-      '',
-      '▼ 会議日程',
-      '{date}',
-      '',
-      '▼ 目的',
-      '案件の進捗・受注見込みを確認し、優先順位と次のアクションを決める',
-      '',
-      '▼ 議題',
-      '・更新シートで進捗報告',
-      '・重点案件の状況・課題',
-      '・質疑・フィードバック',
-      '・サービス連携テーマ',
-      '',
-      '▼ 事前資料',
-      '{file}'
-    ],
-    legacyHandler: 'mtgNotifyScheduled' // 前の版の自動通知（2日前）のトリガーの関数。残っていれば setBusinessMtgChat()・notifyBusinessMtgSummaries() で外す
+    oldKeys: ['MTG_CHAT_WEBHOOK', 'MTG_CHAT_URL'],   // 前の版の全体のスペースの設定（スクリプトのプロパティ）。setBusinessMtgSubChats() で消す
+    legacyHandler: 'mtgNotifyScheduled' // 前の版の自動通知（2日前）のトリガーの関数。残っていれば setBusinessMtgSubChats() で外す
   },
   // サブインダストリーごとの Google チャットのスペースへの通知（webhook）。setBusinessMtgSubChats() でシートごとに webhook を登録し、
   // remindBusinessMtgUpdate()（管理フォーマットの更新のお願い）・notifySubBusinessMtgSummaries()（そのサブインダストリーの事前資料のご案内）で送る
@@ -944,121 +919,7 @@ function mtgJobPendingText_() {
     '（続きが終わったら showBusinessMtgSummariesResult() で結果を見られます）。';
 }
 
-/* ---------------- Google チャットへの通知（webhook） ---------------- */
-
-/**
- * Google チャットへの通知を設定する（エディタから実行する。管理者が1回）。webhook の URL と、送る資料の格納先の URL を聞き、スクリプトのプロパティに残す。
- * webhook の URL を空欄で OK にすると、設定を外す。前の版の自動通知のトリガーが残っていれば外す
- */
-function setBusinessMtgChat() {
-  const ui = mtgUi_();
-  const o = MTG_OPTIONS.chat;
-  const props = PropertiesService.getScriptProperties();
-  const current = mtgChatSettings_();
-  const response = ui.prompt(CRED_OPTIONS.menuTitle,
-    'Google チャットの webhook の URL を貼り付けてください（スペースの「アプリと統合」→「Webhook」で作ったもの）。\n' +
-    '空欄で OK を押すと、設定を外します。\n\n今の設定：' + (current ? mtgChatSpace_(current.webhook) + ' に送る' : '未設定'),
-    ui.ButtonSet.OK_CANCEL);
-  if (response.getSelectedButton() !== ui.Button.OK) return;
-  const webhook = String(response.getResponseText() || '').trim();
-  if (!webhook) {
-    props.deleteProperty(o.webhookKey);
-    props.deleteProperty(o.urlKey);
-    mtgRemoveLegacyTrigger_();
-    const message = 'Google チャットへの通知の設定を外しました。';
-    console.log(message);
-    ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
-    return;
-  }
-  if (!/^https:\/\/chat\.googleapis\.com\/v1\/spaces\/[^/?]+\/messages\?\S*key=\S+&token=\S+$/.test(webhook)) {
-    throw new Error('Google チャットの webhook の URL ではありません。https://chat.googleapis.com/v1/spaces/…/messages?key=…&token=… の形の URL を貼り付けてください。');
-  }
-  const answer = ui.prompt(CRED_OPTIONS.menuTitle,
-    '送る資料の格納先の URL を貼り付けてください（ドライブのフォルダかファイル。参加者が開けるように共有しておく）。\n' +
-    'フォルダなら、送るときに、その中でいちばん新しく更新した PDF のリンクを送ります。' +
-    (current && current.url ? '\n空欄なら今の URL のまま：' + current.url : ''), ui.ButtonSet.OK_CANCEL);
-  if (answer.getSelectedButton() !== ui.Button.OK) return;
-  const url = String(answer.getResponseText() || '').trim() || (current && current.url) || '';
-  if (!/^https:\/\/\S+$/.test(url)) throw new Error('資料の格納先の URL を読めません。https:// で始まる URL を貼り付けてください。');
-  props.setProperty(o.webhookKey, webhook);
-  props.setProperty(o.urlKey, url);
-  const removed = mtgRemoveLegacyTrigger_();
-  const lines = ['Google チャットへの通知を設定しました。', '・送り先：' + mtgChatSpace_(webhook), '・送る URL：' + url,
-    '・notifyBusinessMtgSummaries() を実行すると、資料のファイルのリンクをすぐに送ります（フォルダなら、その中でいちばん新しい PDF）。']
-    .concat(removed ? ['・前の版の自動通知（2日前）のトリガーを外しました。'] : []);
-  const test = ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n') + '\n\n確かめのメッセージを、いまチャットに送りますか？', ui.ButtonSet.YES_NO);
-  if (test === ui.Button.YES) {
-    mtgPostChat_(webhook, '【テスト送信】会議サマリの通知の設定を確認するためのメッセージです。\n今後、' + MTG_OPTIONS.meetingName +
-      ' の事前資料のご案内をこちらにお送りいたします。');
-    lines.push('確かめのメッセージを送りました。チャットに届いたか確かめてください。');
-  }
-  console.log(lines.join('\n'));
-  ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
-}
-
-/**
- * 会議日程と、資料のファイルのリンクを、すぐに Google チャットに送る（エディタから実行する。「はい」のときだけ）。
- * 会議日程（日付。時刻は省けば MTG_OPTIONS.chat.meetingTime）を聞く。格納先がフォルダなら、その中でいちばん新しく更新した PDF（mtgChatFile_）
- */
-function notifyBusinessMtgSummaries() {
-  const chat = mtgChatSettings_();
-  if (!chat || !chat.url) throw new Error('Google チャットへの通知が設定されていません。先に setBusinessMtgChat() で webhook の URL と資料の格納先の URL を登録してください。');
-  mtgRemoveLegacyTrigger_();
-  const ui = mtgUi_();
-  const file = mtgChatFile_(chat.url);   // 先に確かめる（資料が無ければ、会議日程を聞かずに知らせる）
-  const time = MTG_OPTIONS.chat.meetingTime;
-  const response = ui.prompt(CRED_OPTIONS.menuTitle,
-    '会議日程を入力してください（例：10/23）。\n' +
-    (time ? '時刻を省くと「' + time + '」にします。ほかの時刻のときは「10/23 13:00〜14:30」のように入力してください。' : '時刻を書くときは「10/23 13:00〜14:30」のように入力してください。'),
-    ui.ButtonSet.OK_CANCEL);
-  if (response.getSelectedButton() !== ui.Button.OK) return;
-  const schedule = mtgChatSchedule_(response.getResponseText(), new Date());
-  const answer = ui.alert(CRED_OPTIONS.menuTitle,
-    'Google チャット（' + mtgChatSpace_(chat.webhook) + '）に、次のメッセージをすぐに送ります。よろしいですか？\n\n' + mtgChatText_(file, schedule, true),
-    ui.ButtonSet.YES_NO);
-  if (answer !== ui.Button.YES) return;
-  mtgPostChat_(chat.webhook, mtgChatText_(file, schedule));
-  const message = 'Google チャットに送りました：' + file.name + '\n' + file.url;
-  console.log(message);
-  ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
-}
-
-/**
- * 送る資料のファイル {name, url}。格納先がドライブのフォルダなら、その中でいちばん新しく更新した PDF（PDF が無ければいちばん新しいファイル。ゴミ箱のものは除く）。
- * ドライブのファイルの URL ならそのファイル。ドライブ以外の URL なら、名前は URL のまま
- */
-function mtgChatFile_(url) {
-  const folderId = /\/folders\/([\w-]{10,})/.exec(url);
-  if (folderId) {
-    let folder;
-    try {
-      folder = DriveApp.getFolderById(folderId[1]);
-    } catch (error) {
-      throw new Error('資料の格納先のフォルダ（ID：' + folderId[1] + '）を開けません。このアカウントで開けるか確かめ、setBusinessMtgChat() で登録し直してください。');
-    }
-    const newest = files => {
-      let best = null;
-      while (files.hasNext()) {
-        const f = files.next();
-        if (!f.isTrashed() && (!best || f.getLastUpdated().getTime() > best.getLastUpdated().getTime())) best = f;
-      }
-      return best;
-    };
-    const file = newest(folder.getFilesByType(MimeType.PDF)) || newest(folder.getFiles());
-    if (!file) throw new Error('資料の格納先のフォルダ（' + folder.getName() + '）にファイルがありません。資料を置いてから送ってください。');
-    return {name: file.getName(), url: file.getUrl()};
-  }
-  const fileId = /\/d\/([\w-]{10,})/.exec(url) || /[?&]id=([\w-]{10,})/.exec(url);
-  if (fileId) {
-    try {
-      const file = DriveApp.getFileById(fileId[1]);
-      return {name: file.getName(), url: file.getUrl()};
-    } catch (error) {
-      throw new Error('資料のファイル（ID：' + fileId[1] + '）を開けません。このアカウントで開けるか確かめ、setBusinessMtgChat() で登録し直してください。');
-    }
-  }
-  return {name: url, url};
-}
+/* ---------------- Google チャットへの通知（webhook）の共通 ---------------- */
 
 /**
  * 入力した会議日程（「10/23」「2026/10/23」、時刻つきなら「10/23 13:00〜14:30」）を「2026年10月23日（金）9:00〜10:30」にする。
@@ -1080,17 +941,6 @@ function mtgDateLabel_(date) {
   return p[0] + '年' + p[1] + '月' + p[2] + '日（' + '日月火水木金土'.charAt(new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay()) + '）';
 }
 
-/**
- * チャットに送る文（MTG_OPTIONS.chat.message の {meeting} を会議の名前に、{date} を会議日程に、{file} をファイルのリンク（<URL|ファイル名>）に、
- * {url} をファイルの URL に置き換える）。plain なら、確かめの画面に出す形（リンクは「ファイル名」と URL の2行）
- */
-function mtgChatText_(file, schedule, plain) {
-  const name = String(file.name).replace(/[|<>]/g, ' ');
-  const link = plain ? name + '\n' + file.url : '<' + file.url + '|' + name + '>';
-  return MTG_OPTIONS.chat.message.join('\n').replace(/\{meeting\}/g, MTG_OPTIONS.meetingName).replace(/\{date\}/g, schedule)
-    .replace(/\{file\}/g, link).replace(/\{url\}/g, file.url);
-}
-
 /** webhook にメッセージを送る（混んでいる・一時的な失敗は1回だけやり直す）。失敗したら止める（URL は鍵を含むので出さない） */
 function mtgPostChat_(webhook, text) {
   const params = {method: 'post', contentType: 'application/json; charset=UTF-8', payload: JSON.stringify({text}), muteHttpExceptions: true};
@@ -1102,15 +952,8 @@ function mtgPostChat_(webhook, text) {
   const code = res.getResponseCode();
   if (code !== 200) {
     throw new Error('Google チャットに送れませんでした（HTTP ' + code + '）：' + String(res.getContentText() || '').slice(0, 200) +
-      '\nwebhook の URL が消されていないか、setBusinessMtgChat() で登録し直してください。');
+      '\nwebhook の URL が消されていないか、setBusinessMtgSubChats() で登録し直してください。');
   }
-}
-
-/** 通知の設定 {webhook, url（資料の格納先。無ければ null）}（スクリプトのプロパティ）。webhook が無ければ null */
-function mtgChatSettings_() {
-  const props = PropertiesService.getScriptProperties();
-  const webhook = props.getProperty(MTG_OPTIONS.chat.webhookKey);
-  return webhook ? {webhook, url: props.getProperty(MTG_OPTIONS.chat.urlKey) || null} : null;
 }
 
 /** 送り先の見せ方（「スペース AAAA…」。鍵・トークンは出さない） */
@@ -1131,6 +974,9 @@ function setBusinessMtgSubChats() {
   const ui = mtgUi_();
   const title = CRED_OPTIONS.menuTitle;
   const props = PropertiesService.getScriptProperties();
+  // 前の版の全体のスペースへの通知の設定（webhook。鍵を含む）と、自動通知のトリガーは、使わないので消す
+  MTG_OPTIONS.chat.oldKeys.forEach(key => props.deleteProperty(key));
+  mtgRemoveLegacyTrigger_();
   const names = mtgAskSheets_(ss, ui, 'サブインダストリーごとの Google チャットのスペースの webhook を登録します。\n今の設定：\n' +
     Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name)).map(name => '・' + name + '：' + mtgSubChatState_(name)).join('\n'));
   if (!names) return;
@@ -1284,22 +1130,22 @@ function mtgSheetLink_(ss, name) {
 }
 
 /**
- * 今の入力状況（更新のお願いに付ける。読むだけ）：進行中の案件・必須項目が未入力・受注月を過ぎている・最終更新から noUpdateDays 日以上（最終更新日時の列があるとき）。
- * ['・進行中の案件 34件', '・必須項目が未入力の案件 5件', …]
+ * 今の入力状況（更新のお願いに付ける。読むだけ）：進行中の案件の数と、必須項目が未入力・受注月を過ぎている・最終更新から noUpdateDays 日以上
+ * （最終更新日時の列があるとき）の案件の数。0件のものは書かない（どれも0件なら、そう書く）。['・進行中の案件 34件', '・必須項目（…）が未入力の案件 5件', …]
  */
 function mtgUpdateStats_(ss, name, now) {
   const o = MTG_OPTIONS;
   const table = mtgReadDeals_(ss.getSheetByName(name), DIFF_RULES[name]);
   const active = table.deals.filter(d => d.kind === 'active');
   const month = mtgMonthIndex_(mtgMonth_(Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/MM')));
-  const lines = ['・進行中の案件 ' + active.length + '件', '・必須項目（' + o.required.map(label => String(label).replace(/\s+/g, '')).join('・') + '）が未入力の案件 ' +
-    active.filter(d => d.missing.length).length + '件'];
-  if (table.has.orderMonth) lines.push('・受注月を過ぎている案件 ' + active.filter(d => d.orderMonth && mtgMonthIndex_(d.orderMonth) < month).length + '件');
-  if (table.hasStamp) {
-    lines.push('・最終更新から ' + o.noUpdateDays + '日以上たっている案件 ' +
-      active.filter(d => d.updatedAt != null && now.getTime() - d.updatedAt >= o.noUpdateDays * 86400000).length + '件');
-  }
-  return lines;
+  const checks = [
+    ['必須項目（' + o.required.map(label => String(label).replace(/\s+/g, '')).join('・') + '）が未入力の案件', active.filter(d => d.missing.length).length],
+    ['受注月を過ぎている案件', table.has.orderMonth ? active.filter(d => d.orderMonth && mtgMonthIndex_(d.orderMonth) < month).length : 0],
+    ['最終更新から ' + o.noUpdateDays + '日以上たっている案件',
+      table.hasStamp ? active.filter(d => d.updatedAt != null && now.getTime() - d.updatedAt >= o.noUpdateDays * 86400000).length : 0]
+  ].filter(([, count]) => count > 0);
+  return ['・進行中の案件 ' + active.length + '件'].concat(checks.length ? checks.map(([label, count]) => '・' + label + ' ' + count + '件')
+    : ['・必須項目の未入力・受注月を過ぎている・長く更新の無い案件はありません']);
 }
 
 /** シートの webhook の URL（スクリプトのプロパティ。無ければ null） */
@@ -1324,7 +1170,7 @@ function mtgSubChatPost_(name, text) {
 }
 
 /**
- * 前の版で、会議日の2日前に自動で送っていた時間主導のトリガーの関数。今は自動では送らない（notifyBusinessMtgSummaries() ですぐ送る）。
+ * 前の版で、会議日の2日前に自動で送っていた時間主導のトリガーの関数。今は自動では送らない。
  * トリガーが残っていても「関数が見つからない」エラーにならないよう名前だけを残し、動いたらそのトリガーを外す（何も送らない）。
  */
 function mtgNotifyScheduled() {
@@ -1337,7 +1183,7 @@ function mtgNotifyScheduled() {
 
 /**
  * 前の版の自動通知のトリガー（mtgNotifyScheduled）を外す。外した数を返す。
- * トリガーは持ち主にしか見えないので、前の版で setBusinessMtgChat() を実行した人が実行したとき（またはトリガーが動いたとき）に外れる
+ * トリガーは持ち主にしか見えないので、前の版で通知を設定した人が setBusinessMtgSubChats() を実行したとき（またはトリガーが動いたとき）に外れる
  */
 function mtgRemoveLegacyTrigger_() {
   const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === MTG_OPTIONS.chat.legacyHandler);

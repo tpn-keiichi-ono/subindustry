@@ -349,7 +349,7 @@ RX Business Meeting（パイプライン会議）の事前資料（16:9 の Goog
 |---|---|---|
 | 会議の週の月曜（締切の前） | 管理者 | `previewBusinessMtgSummaries()` で試作し、Appendix ③ の入力内容の確認事項を各営業リーダーに伝える |
 | 火曜 17:00（3日前） | 各営業リーダー | 入力の締切。確認事項を直す（ステータス・期待値・受注月・活動状況は締切までに） |
-| 水曜の午前（2日前） | 管理者 | `createBusinessMtgSummaries()` で本番を作り、中身を確かめて PDF を格納先に置き、`notifyBusinessMtgSummaries()` で Google チャットに知らせる |
+| 水曜の午前（2日前） | 管理者 | `createBusinessMtgSummaries()` で本番を作り、中身を確かめて、`notifySubBusinessMtgSummaries()` でサブインダストリーごとの Google チャットに知らせる |
 | 金曜 9:00 | 参加者 | 通読してから会議に臨む |
 
 - **配ったあとは作り直さないでください**。本番を作ると、その時刻が次の会議の資料の起点になります。作り直すと起点が動き、配った版と作り直した時の間の変化は、どの資料にも出なくなります
@@ -402,7 +402,7 @@ RX Business Meeting（パイプライン会議）の事前資料（16:9 の Goog
    次の会議の資料の「前回からの変化」は、このコピーと比べて出します（差分追跡が止まっていた間の変更も出る）。コピーは消さないでください。
    終わると、シートごとの PDF の URL と件数（変化のある案件・停滞・確認事項）、保存先のフォルダの URL、コピーの URL が出ます。
    中身を確かめてから配ってください。文は数から決まった言い回しです。
-6. 中身を確かめたら、PDF を参加者が開ける格納先に置き、`notifyBusinessMtgSummaries()` で Google チャットに知らせます（下の「Google チャットへの通知」）。
+6. 中身を確かめたら、`notifySubBusinessMtgSummaries()` でサブインダストリーごとの Google チャットに知らせます（下の「サブインダストリーごとの Google チャットへの通知」）。
 
 - 前回の時点コピーと比べたときは、終わりの画面に「前回からの変化は「時点コピー_…」と比べました。」と出ます。
 
@@ -531,52 +531,6 @@ RX Service Meeting の資料も、同じフォルダの中の `261113_RX Service
 - 「保留」などパイプラインから外すステータスがプルダウンにあるときは、ことば（`holdWords`）に入っているか確かめてください
   （パイプラインの変化の「ステータス別の期待値」に出るのは進行中のステータスだけなので、外したいステータスが出ていれば、ことばに足す）。
 
-**Google チャットへの通知（webhook）**：
-
-`notifyBusinessMtgSummaries()` を実行すると、資料のファイルのリンクを、その場で Google チャットのスペースへ送ります（webhook。自動では送りません）。
-格納先にフォルダを登録したときは、送るときに、その中でいちばん新しく更新した PDF（PDF が無ければいちばん新しいファイル）のリンクを送ります。
-ファイルを登録したときは、そのファイルのリンクです。リンクはファイル名で表示されます（ファイルは添付しません。参加者が開けるように、格納先を共有しておいてください）。
-文（目的・議題も）は `MTG_OPTIONS.chat.message` で変えられます（`{meeting}` は会議の名前、`{date}` は会議日程、`{file}` はファイルのリンク（ファイル名で表示）、
-`{url}` はファイルの URL に置き換わります。`*〜*` は太字）。会議の時刻の決まりは `MTG_OPTIONS.chat.meetingTime`（9:00〜10:30）です。
-
-```
-*【RX Business Meeting】事前資料のご案内*
-RX Business Meeting の事前資料を、下記に格納いたしました。
-お手数ですが、会議の前にご一読いただけますと幸いです。
-
-▼ 会議日程
-2026年10月23日（金）9:00〜10:30
-
-▼ 目的
-案件の進捗・受注見込みを確認し、優先順位と次のアクションを決める
-
-▼ 議題
-・更新シートで進捗報告
-・重点案件の状況・課題
-・質疑・フィードバック
-・サービス連携テーマ
-
-▼ 事前資料
-20261023_スーパー・GMS_RX Business Meeting用資料.pdf（ファイルのリンク）
-```
-
-最初の1回（管理者）：
-
-1. Google チャットのスペースで、スペース名の横の ▼ →「アプリと統合」→「Webhook を追加」を選び、名前（例：会議サマリ）を付けて保存し、URL をコピーします。
-2. エディタで `setBusinessMtgChat()` を実行し、webhook の URL と、資料の格納先の URL（ドライブのフォルダかファイル）を貼り付けます。
-   「確かめのメッセージを送りますか？」で「はい」を押し、チャットに届くか確かめます。
-3. 初めて設定したときは、外部への送信の権限を承認します。権限が変わったので、続けて `reinstallDiffTriggers()` を実行してください。
-   利用者も、次にメニューを開いたときに1回だけ承認し直します。
-
-送るとき：資料を格納先に置いてから、エディタで `notifyBusinessMtgSummaries()` を実行し、会議日程を入力します（`10/23`。時刻が違うときは `10/23 13:00〜14:30`）。
-確かめの画面（送る文と、ファイル名・URL が出る）で「はい」を押すと、すぐに送ります。
-
-- 格納先を変えるときは、`setBusinessMtgChat()` をもう一度実行します（格納先の URL を空欄にすると、今の URL のまま）。webhook の URL を空欄で OK にすると、設定を外します。
-- webhook の URL は鍵を含むので、コードやシートに書かず、スクリプトのプロパティ（`MTG_CHAT_WEBHOOK`）に残します（スクリプトを編集できる人には見えます）。
-  漏れたときは、チャットでその webhook を削除して作り直し、`setBusinessMtgChat()` で登録し直してください。
-- 前の版（会議日の2日前に自動で送る版）の時間主導のトリガー（`mtgNotifyScheduled`）が残っていれば、`setBusinessMtgChat()`・`notifyBusinessMtgSummaries()` を実行したとき、
-  またはそのトリガーが動いたときに外れます（何も送りません）。
-
 **サブインダストリーごとの Google チャットへの通知（webhook）**：
 
 サブインダストリーごとのスペースに、次の2つを別々に送れます（どちらもエディタから実行。確かめの画面（送り先と、1つ目のシートに送る文）で「はい」を押すと、すぐに送ります。自動では送りません）。
@@ -585,7 +539,7 @@ RX Business Meeting の事前資料を、下記に格納いたしました。
    （空欄なら今のまま、「削除」と入力すると外す）。最後に、登録したスペースへ確かめのメッセージを送れます。
 2. `remindBusinessMtgUpdate()`：**管理フォーマットの更新のお願い**。会議日（空欄なら会議日程の一覧の次の会議）とシートを選びます。
    文には、会議日程・更新の締め切り（会議日の2日前の 17:00。`MTG_OPTIONS.subChat.deadlineDays`・`deadlineTime`）・更新していただきたい項目・
-   今の入力状況（進行中の案件・必須項目が未入力の案件・受注月を過ぎている案件・最終更新から30日以上たっている案件の数）・管理フォーマットのシートのリンクが入ります。
+   今の入力状況（進行中の案件の数と、必須項目が未入力・受注月を過ぎている・最終更新から30日以上たっている案件の数。0件のものは書かない）・管理フォーマットのシートのリンクが入ります。
 3. `notifySubBusinessMtgSummaries()`：**事前資料のご案内**。会議日とシートを選ぶと、その会議日の本番の事前資料（会議のフォルダの PDF）のリンクを、
    そのサブインダストリーのスペースに送ります。本番の資料がまだ無いシートには送らず、終わりの画面に出します。
 
@@ -595,7 +549,11 @@ RX Business Meeting の事前資料を、下記に格納いたしました。
 - 文は `MTG_OPTIONS.subChat.remind`・`summary` で変えられます（`{meeting}`・`{name}`（サブインダストリー）・`{date}`・`{deadline}`・`{now}`・`{stats}`・`{sheet}`・`{file}`）。
 - webhook の URL はスクリプトのプロパティ（`MTG_SUBCHAT_` ＋ シート名）に残します（コードやシートに書かない。画面・ログにも鍵は出しません）。
 - 送れなかったスペースがあっても、ほかのスペースには送り、終わりの画面に理由を出します。
-- 全体のスペースへの事前資料のご案内は、これまでどおり `notifyBusinessMtgSummaries()` です。
+- Google チャットへの通知は、この2つ（`remindBusinessMtgUpdate()`・`notifySubBusinessMtgSummaries()`）だけです（2026/10/19 に、全体のスペースへの通知
+  `notifyBusinessMtgSummaries()`・`setBusinessMtgChat()` はやめました。前の版の設定（スクリプトのプロパティ `MTG_CHAT_WEBHOOK`・`MTG_CHAT_URL`）と
+  自動通知のトリガー（`mtgNotifyScheduled`）は、`setBusinessMtgSubChats()` を実行したときに消えます）。
+- 初めて設定したときは、外部への送信の権限を承認します。権限が変わったので、続けて `reinstallDiffTriggers()` を実行してください。
+- 会議の時刻の決まりは `MTG_OPTIONS.chat.meetingTime`（9:00〜10:30）です。送るときに「10/23 13:00〜14:30」のように時刻を入力すれば、そちらになります。
 
 **案件の行を足す（`addDealRows()`）**：
 
@@ -815,7 +773,7 @@ clasp を使わない場合は、変更したファイルの中身をエディ�
 
 `onOpen`（メニュー）は単純トリガーなので設置は要りません（単純トリガーの `onEdit` は使っていません）。どの関数も「1つだけ存在する」ように作るので、何度実行しても増えません。
 前の版の `autoOpenHistorySidebar`（起動時。開いたときにサイドバーを自動表示）は使いません。残っていれば `removeHistorySidebarAutoOpen()` で外します。
-前の版の `mtgNotifyScheduled`（時間主導。会議サマリを2日前に自動で Google チャットに送る）も使いません。残っていれば `setBusinessMtgChat()` か `notifyBusinessMtgSummaries()` で外れます。
+前の版の `mtgNotifyScheduled`（時間主導。会議サマリを2日前に自動で Google チャットに送る）も使いません。残っていれば `setBusinessMtgSubChats()` で外れます。
 
 ## トラブル対応
 
@@ -837,8 +795,6 @@ clasp を使わない場合は、変更したファイルの中身をエディ�
 - `storeBusinessMtgSummaries()`：本番の資料を作ったときに会議のフォルダに格納できなかったとき、フォルダを用意してから。シートと会議日を入力すると、保存先の PDF を会議のフォルダに格納します
 - `setMeetingTemplate()`：会議サマリの表紙・扉のひな形（Google スライドか .pptx）の URL を、スクリプトのプロパティ `MTG_TEMPLATE_URL` に入れる・外すときに（空欄なら外す。プロジェクトの設定で直接入れてもよい）
 - `previewBusinessMtgSummaries()`：会議サマリの形・中身を確かめるときに。スライドと PDF を作りますが、会議日は記録しません（同じ会議日の本番で、試作から解消した入力内容の確認事項の数を出します）
-- `setBusinessMtgChat()`：会議サマリを Google チャットで知らせるときに（webhook の URL と資料の格納先の URL の登録）。空欄で OK なら設定を外す
-- `notifyBusinessMtgSummaries()`：資料のファイルのリンク（格納先のフォルダなら、その中でいちばん新しい PDF）を、すぐに Google チャットに送るときに
 - `setBusinessMtgSubChats()`：サブインダストリーごとの Google チャットのスペースの webhook を登録する・変える・外すときに（「削除」で外す）
 - `remindBusinessMtgUpdate()`：管理フォーマットの更新のお願いを、サブインダストリーごとのスペースに送るときに（会議日・締め切り・今の入力状況・シートのリンク）
 - `notifySubBusinessMtgSummaries()`：その会議日の本番の事前資料のリンクを、サブインダストリーごとのスペースに送るときに
@@ -901,11 +857,10 @@ clasp を使わない場合は、変更したファイルの中身をエディ�
 | `addBusinessMtgDummyHistory()` のあとの資料に、ダミーの変化が出ない | 会議日が、ダミーを足す前の会議日（作成済みの本番）になっている・前回の資料をダミーのあとに作った。試作の会議日を新しい日にするか、もう一度 `addBusinessMtgDummyHistory()` を実行する |
 | 会議サマリの入力内容の確認事項に「【サンプル】…」の予定日超過が出る | `MeetingSummary.gs` が前の版。最新に貼り替える（サンプルは数えない）。サンプルの履歴は `removeSampleHistory()` で消せる |
 | 会議サマリの表紙に「XXXXX」などが残る・会議日が入らない | ひな形の決まった文字（`XXXXX`（見出しとその下）・`2026年 4月 17日`・`XXXX`）が変わっている・1つの枠に2つの文字が入っている。ひな形を元の文字に戻すか、`MTG_OPTIONS.templateTexts` をひな形の文字に合わせる |
-| 会議サマリが Google チャットに届かない | 自動では送りません。`notifyBusinessMtgSummaries()` を実行する。実行してもエラーが出るときは、下の行を見る |
-| 「資料の格納先のフォルダ（…）にファイルがありません」 | 格納先のフォルダに資料が無い（ゴミ箱のものは数えない）。資料を置いてから送る |
-| チャットに古い資料のリンクが届いた | フォルダの中で、いちばん新しく更新した PDF を送る。新しい資料を置いたか、古い PDF のほうを後から更新していないか確かめる（ファイルの URL を登録すれば、そのファイルを送る） |
-| 「Google チャットに送れませんでした（HTTP 404）」など | webhook が削除された・スペースが無くなった（404）、URL が違う（400・403）。チャットで webhook を作り直して `setBusinessMtgChat()` で登録し直す |
-| チャットのリンクを開くと「アクセス権が必要です」 | 資料の格納先が参加者に共有されていない。格納先を参加者（スペースのメンバー・グループ）に閲覧者として共有する |
+| 事前資料のご案内・更新のお願いが Google チャットに届かない | 自動では送りません。`notifySubBusinessMtgSummaries()`・`remindBusinessMtgUpdate()` を実行する。終わりの画面に「送らないシート」「送れませんでした」と理由が出る |
+| 「…の本番の事前資料（PDF）が無い」 | その会議日の本番の資料を、そのシートで作っていない。`createBusinessMtgSummaries()` で作ってから送る |
+| 「Google チャットに送れませんでした（HTTP 404）」など | webhook が削除された・スペースが無くなった（404）、URL が違う（400・403）。チャットで webhook を作り直して `setBusinessMtgSubChats()` で登録し直す |
+| チャットのリンクを開くと「アクセス権が必要です」 | 会議のフォルダが参加者に共有されていない。会議のフォルダを参加者（スペースのメンバー・グループ）に閲覧者として共有する |
 | 会議サマリの会議日を打ち間違えて本番を作った | `removeBusinessMtgRecord()` で間違えた会議日の記録を取り消し、正しい会議日で作り直す。間違えた会議日の資料はドライブで消す |
 | 会議サマリの確かめの画面に「この会議日の資料は … に作成済み」と出る | 同じ会議日の本番を作り直そうとしている。配ったあとなら「いいえ」（作り直すと次の会議の起点が今になる）。配る前なら「はい」で作り直す（古い版はゴミ箱に移る） |
 | 会議サマリで、変えたはずのステータス・受注月が「前回からの変化」に出ない | その列が数式になっている（数式の値の変化は記録に残らない）、または前回の会議の資料を作る前に変えた。数式をやめて値を入れる（期待値の列は数式でよい） |
@@ -947,7 +902,7 @@ clasp を使わない場合は、変更したファイルの中身をエディ�
 | `storeMeetingSummaries()`・`rebuildMeetingIndex()` | `storeBusinessMtgSummaries()`・`rebuildBusinessMtgIndex()` |
 | `setMeetingBaseline()`・`removeMeetingRecord()` | `setBusinessMtgBaseline()`・`removeBusinessMtgRecord()` |
 | `showMeetingSummariesResult()`・`continueMeetingSummaries()`（トリガー） | `showBusinessMtgSummariesResult()`・`continueBusinessMtgSummaries()` |
-| `setMeetingChat()`・`notifyMeetingSummaries()` | `setBusinessMtgChat()`・`notifyBusinessMtgSummaries()` |
+| `setMeetingChat()`・`notifyMeetingSummaries()`・`setBusinessMtgChat()`・`notifyBusinessMtgSummaries()` | （2026/10/19 にやめた）`setBusinessMtgSubChats()`・`notifySubBusinessMtgSummaries()`・`remindBusinessMtgUpdate()` |
 | `addMeetingDummyHistory()`・`removeMeetingDummyHistory()` | `addBusinessMtgDummyHistory()`・`removeBusinessMtgDummyHistory()` |
 
 `setMeetingTemplate()`（表紙・扉のひな形）は RX Business Meeting と RX Service Meeting で共通なので、名前は変えていません。
