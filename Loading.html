@@ -33,7 +33,7 @@
         google.script.run
           .withSuccessHandler(function(count) {
             if (count === 0) {
-              alert("処理対象（E列入力済かつH列空欄）の行はありませんでした。");
+              alert("処理対象（E列入力済かつM列空欄）の行はありませんでした。");
               google.script.host.close();
               return;
             }

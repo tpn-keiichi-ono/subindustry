@@ -1,9 +1,9 @@
 /**
  * クレデンシャル / オファリング履歴（得意先別）
- * 差分追跡スクリプト（v4）と同じ Apps Script プロジェクトに置くファイル。
+ * 差分追跡スクリプト（v5、test.gs）と同じ Apps Script プロジェクトに置くファイル。
  *
  * 仕組み
- * - 追跡シートの「クレデンシャル履歴」列は各行の起動ボタン（チェックボックス）
+ * - 追跡シートの「クレデンシャル（改行）オファリング登録」列は各行の起動ボタン（チェックボックス）
  * - チェックすると onCredentialLauncherEdit()（インストール型 onEdit）が動き、
  *   その行の「得意先」に合致する履歴をモーダルで表示する
  * - 履歴は専用シート「クレデンシャル履歴_記録」に1件1行で蓄積する
@@ -14,7 +14,7 @@
  * 足りない列（ID・宛先・更新者 など）は、次に開いたとき右端に自動で追加される。
  *
  * セットアップ（トリガー所有者のアカウントで）
- * 1. DIFF_RULES の ranges から「クレデンシャル履歴」列を外し、setupDiffTracking() を実行
+ * 1. DIFF_RULES の ranges から「クレデンシャル（改行）オファリング登録」列を外し、setupDiffTracking() を実行
  * 2. setupCredentialLauncher() を実行
  * 行を増やしたら setupCredentialLauncher() を再実行すると、ボタンが最終行まで補充される。
  *
@@ -24,12 +24,18 @@
  */
 
 const CRED_OPTIONS = {
+  // クレデンシャル・オファリング履歴の管理・登録を使うか（2026/10 から一旦使わない）。false の間は、履歴サイドバーのクレデンシャルのタブ・
+  // 登録のモーダル・ボタン列・会議サマリの「予定日超過」のチェック・サンプルのクレデンシャルを出さない。記録のシートとコードは残すので、true に戻せば元どおり
+  enabled: false,
   // ボタン列の見出し。セル内の改行・空白は照合時に無視する
   // （「クレデンシャル」改行「オファリング登録」と入力したセルに一致する）
   launcherHeader: 'クレデンシャル\nオファリング登録',
   customerHeader: '得意先',               // 照合に使う列の見出し
   logSheet: 'クレデンシャル履歴_記録',
-  menuTitle: 'クレデンシャル',
+  // メニューの名前（画面の案内・管理者向けの確認画面のタイトルにもこの名前を出す）。項目は「履歴サイドバーを開く」「権限を承認する（初回のみ）」だけ
+  menuTitle: '🟩RXビジネスMTG用',
+  // アカウントプランシート作成（コード.gs）のメニューを出すか。出さないときは、エディタから showLoadingDialog() を実行する
+  accountPlanMenu: false,
   dialogTitle: 'クレデンシャル・オファリング履歴',   // モーダル上部に「タイトル：得意先名」で表示
   dialogWidth: 1280,        // 開いた直後の大きさ（表示後、ブラウザの広さに合わせて自動で広がる）
   dialogHeight: 760,
@@ -84,30 +90,50 @@ const CRED_OPTIONS = {
 /* ---------------- メニュー ---------------- */
 
 /**
- * 単純トリガー。プロジェクト内に別の onOpen() がある場合は、
- * この関数を削除し、既存の onOpen() から credAddMenu_() を呼ぶこと。
+ * 単純トリガー。onOpen() はプロジェクト全体でこの1つだけにすること
+ * （同じ名前の関数が2つあると、どちらか一方しか動かない）。
+ * 別のメニューを増やすときは、そのメニューを作る関数をここから呼ぶ。
  */
 function onOpen() {
+  // メニューは追加した順に左から並ぶ：🟩RXビジネスMTG用 → 🟪RXサービスMTG用（→ アカウントプランシート作成）
   credAddMenu_();
+  if (typeof svcAddMenu_ === 'function') svcAddMenu_();   // ServiceManagement.gs（サービスリクエストの選択パネル）
+  // コード.gs（アカウントプランシート作成）。CRED_OPTIONS.accountPlanMenu が true のときだけ出す
+  if (CRED_OPTIONS.accountPlanMenu && typeof apAddMenu_ === 'function') apAddMenu_();
 }
 
+/**
+ * 利用者向けのメニューは、履歴サイドバーを開く・権限の承認の2つだけにする。
+ * 管理者の作業（ボタン列の設定・サンプル履歴など）や、選んだ行のモーダルを開く処理は、
+ * Apps Script エディタから関数を直接実行する（docs/OPERATIONS.md）。
+ */
 function credAddMenu_() {
   SpreadsheetApp.getUi()
     .createMenu(CRED_OPTIONS.menuTitle)
     .addItem('履歴サイドバーを開く', 'openHistorySidebar')
-    .addSeparator()
-    .addItem('選択行の得意先の履歴を開く…', 'openCredentialDialog')
-    .addItem('選択行の変更履歴を開く…', 'openChangeHistoryDialog')
-    .addSeparator()
-    .addItem('（管理者）ボタン列を設定・補充', 'setupCredentialLauncher')
-    .addItem('（管理者）変更履歴ボタン列を設定・補充', 'setupChangeHistoryLauncher')
-    .addItem('（管理者）開いたときにサイドバーを自動表示', 'setupHistorySidebarAutoOpen')
-    .addSeparator()
-    .addItem('自分のサイドバー自動表示をオン／オフ', 'toggleHistorySidebarAutoOpen')
+    .addItem('権限を承認する（初回のみ）', 'authorizeHistoryFeatures')
     .addToUi();
 }
 
-/** メニューから開く場合（ボタンが使えないときの代替・初回の権限承認用）。 */
+/**
+ * メニュー「権限を承認する（初回のみ）」。
+ * まだ承認していない人がメニューから実行すると、Apps Script が承認の画面を出す。
+ * サイドバーからは承認の画面を出せないため、ここ（とメニューの「履歴サイドバーを開く」）が入口になる。
+ * 承認が済んだら、対象のシートならサイドバーを開き直して履歴を読み込ませる（対象外のシートでは開かない）。
+ */
+function authorizeHistoryFeatures() {
+  // 承認の画面で一部の権限のチェックを外した人には、足りない権限の承認の画面をもう一度出す
+  ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (hsIsTargetSheet_(ss.getActiveSheet())) {
+    hsShowSidebar_();
+    ss.toast('権限は承認済みです。履歴サイドバーを開きました。', CRED_OPTIONS.menuTitle, 8);
+  } else {
+    ss.toast('権限は承認済みです。履歴サイドバーは' + hsTargetSheetsLabel_() + 'のシートで開いてください。', CRED_OPTIONS.menuTitle, 8);
+  }
+}
+
+/** エディタから実行して、選んでいる行のモーダルを開く（ボタンが使えないときの代替）。 */
 function openCredentialDialog() {
   const ui = SpreadsheetApp.getUi();
   try {
@@ -118,6 +144,18 @@ function openCredentialDialog() {
     credShowDialog_(sheet, range.getRow(), credActiveEmail_());
   } catch (error) {
     ui.alert(CRED_OPTIONS.dialogTitle, error.message, ui.ButtonSet.OK);
+  }
+}
+
+/** クレデンシャル・オファリング履歴の管理・登録を使っているか（CRED_OPTIONS.enabled）。 */
+function credEnabled_() {
+  return CRED_OPTIONS.enabled !== false;
+}
+
+/** 使っていなければ、開く・登録する前に止める（画面・トーストにそのまま出る文）。 */
+function credRequireEnabled_() {
+  if (!credEnabled_()) {
+    throw new Error('クレデンシャル・オファリング履歴の管理・登録は、今は使っていません（CredentialHistory.gs の CRED_OPTIONS.enabled）。');
   }
 }
 
@@ -166,6 +204,7 @@ function credLauncherKind_(sheet, rule, column) {
 
 /** ボタンから開くときの最短の処理（読み込みはモーダル側）。 */
 function credOpenLauncherDialog_(kind, sheetName, row, email) {
+  if (kind !== 'change') credRequireEnabled_();
   const size = credDialogSize_(email);
   const template = HtmlService.createTemplateFromFile(
     kind === 'change' ? CHG_OPTIONS.dialogTemplate : 'CredentialDialog');
@@ -196,6 +235,7 @@ function credIsLauncherEdit_(e, rule) {
 
 /** options.focusId を渡すと、その履歴を選んだ状態（編集パネルを開いた状態）で開く。 */
 function credShowDialog_(sheet, row, email, options) {
+  credRequireEnabled_();
   const target = credResolveTarget_(sheet, row);
 
   // 前回その人のブラウザで測った大きさ（幅の95%）で開く。初回は既定の大きさ
@@ -222,17 +262,23 @@ function credShowDialog_(sheet, row, email, options) {
 /* ---------------- 管理者用セットアップ ---------------- */
 
 function setupCredentialLauncher() {
+  credRequireEnabled_();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const lock = LockService.getDocumentLock();
   lock.waitLock(CRED_OPTIONS.lockWaitMs);
 
   try {
-    // 先に全シートを検証してから変更する
+    // 先に全シートを検証してから変更する。ボタン列の無いシートは飛ばす（ボタン列は使うシートだけに置く）
+    const skipped = [];
     const plans = Object.entries(DIFF_RULES).map(([name, rule]) => {
       const sheet = ss.getSheetByName(name);
       if (!sheet) throw new Error('シートが見つかりません: ' + name);
 
-      const launcher = credColumnByHeader_(sheet, rule, CRED_OPTIONS.launcherHeader);
+      const launcher = credColumnByHeader_(sheet, rule, CRED_OPTIONS.launcherHeader, true);
+      if (!launcher) {
+        skipped.push(name);
+        return null;
+      }
       const customer = credColumnByHeader_(sheet, rule, CRED_OPTIONS.customerHeader);
       const stamp = diffStampColumn_(sheet, rule);
       const firstRow = rule.headerRow + 1;
@@ -248,7 +294,14 @@ function setupCredentialLauncher() {
         );
       }
       return {sheet, launcher, customer, firstRow};
-    });
+    }).filter(Boolean);
+
+    const header = '「' + credHeaderText_(CRED_OPTIONS.launcherHeader) + '」';
+    if (!plans.length) {
+      const message = 'ボタン列（' + header + '）のあるシートが無いので、ボタンは付けていません。';
+      ss.toast(message, CRED_OPTIONS.menuTitle, 10);
+      return message;
+    }
 
     const {log, cols} = credLogSheet_(ss, true);
     const timezone = ss.getSpreadsheetTimeZone();
@@ -293,12 +346,11 @@ function setupCredentialLauncher() {
 
     credInstallTrigger_(ss);
     SpreadsheetApp.flush();
-    ss.toast(
-      'ボタンを ' + buttons + ' 行に設定しました。' +
-      (migrated ? '既存の履歴 ' + migrated + ' 件を「' + CRED_OPTIONS.logSheet + '」へ移しました。' : ''),
-      CRED_OPTIONS.dialogTitle,
-      10
-    );
+    const message = header + 'のボタンを ' + buttons + ' 行に設定しました。' +
+      (migrated ? '既存の履歴 ' + migrated + ' 件を「' + CRED_OPTIONS.logSheet + '」へ移しました。' : '') +
+      (skipped.length ? '（ボタン列の無い「' + skipped.join('」「') + '」には付けていません）' : '');
+    ss.toast(message, CRED_OPTIONS.menuTitle, 10);
+    return message;
   } finally {
     try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
   }
@@ -391,6 +443,7 @@ function credColumnWidths_() {
 
 /** 新規登録。req = {sheetName, row, customer, customerColumn, values} → {entry, message} */
 function saveCredentialEntry(req) {
+  credRequireEnabled_();
   return credWithLock_(() => {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const target = credTarget_(ss, req);
@@ -425,6 +478,7 @@ function saveCredentialEntry(req) {
 
 /** 編集。req = {sheetName, row, customer, customerColumn, id, original, values} → {entry, message} */
 function updateCredentialEntry(req) {
+  credRequireEnabled_();
   return credWithLock_(() => {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const timezone = ss.getSpreadsheetTimeZone();
@@ -484,6 +538,7 @@ function updateCredentialEntry(req) {
 
 /** 削除。req = {sheetName, row, customer, customerColumn, id, original} → {id, message} */
 function deleteCredentialEntry(req) {
+  credRequireEnabled_();
   return credWithLock_(() => {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const {target, log, cols, rowNumber, current} = credExisting_(ss, req);
@@ -899,7 +954,8 @@ function credResolveTarget_(sheet, row) {
   return {sheet, rule, row, customerColumn, customer};
 }
 
-function credColumnByHeader_(sheet, rule, header) {
+/** 見出しの列番号。ちょうど1つでなければ止める（optional なら、見出しが無いときは 0 を返す。ボタン列はシートに置かなくてもよいため）。 */
+function credColumnByHeader_(sheet, rule, header, optional) {
   const normalize = v => String(v == null ? '' : v).replace(/\s/g, '');
   const target = normalize(header);
   const headers = sheet
@@ -909,6 +965,7 @@ function credColumnByHeader_(sheet, rule, header) {
   const matches = [];
   headers.forEach((h, i) => { if (normalize(h) === target) matches.push(i + 1); });
 
+  if (optional && !matches.length) return 0;
   if (matches.length !== 1) {
     throw new Error(
       sheet.getName() + ' の ' + rule.headerRow + '行目に「' + credHeaderText_(header) +

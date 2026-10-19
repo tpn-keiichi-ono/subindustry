@@ -23,18 +23,9 @@ const CHG_OPTIONS = {
 
 /* ---------------- 起動 ---------------- */
 
-/** CredentialHistory.gs の onCredentialLauncherEdit / credIsLauncherEdit_ から呼ばれる。 */
-function chgIsLauncherEdit_(e, rule) {
-  try {
-    if (e.range.getNumColumns() !== 1) return false;
-    return e.range.getColumn() ===
-      credColumnByHeader_(e.range.getSheet(), rule, CHG_OPTIONS.launcherHeader);
-  } catch (_) {
-    return false;
-  }
-}
+// ボタン列のチェックは CredentialHistory.gs の credLauncherKind_()（見出しが CHG_OPTIONS.launcherHeader の列）で判断する。
 
-/** メニューから開く場合（ボタンが使えないときの代替・初回の権限承認用）。 */
+/** エディタから実行して、選んでいる行のモーダルを開く（ボタンが使えないときの代替）。 */
 function openChangeHistoryDialog() {
   const ui = SpreadsheetApp.getUi();
   try {
@@ -75,11 +66,17 @@ function setupChangeHistoryLauncher() {
   lock.waitLock(CRED_OPTIONS.lockWaitMs);
 
   try {
+    // ボタン列の無いシートは飛ばす（ボタン列は使うシートだけに置く）
+    const skipped = [];
     const plans = Object.entries(DIFF_RULES).map(([name, rule]) => {
       const sheet = ss.getSheetByName(name);
       if (!sheet) throw new Error('シートが見つかりません: ' + name);
 
-      const launcher = credColumnByHeader_(sheet, rule, CHG_OPTIONS.launcherHeader);
+      const launcher = credColumnByHeader_(sheet, rule, CHG_OPTIONS.launcherHeader, true);
+      if (!launcher) {
+        skipped.push(name);
+        return null;
+      }
       credColumnByHeader_(sheet, rule, CRED_OPTIONS.customerHeader);   // 得意先列があるか確認
       const stamp = diffStampColumn_(sheet, rule);
       const firstRow = rule.headerRow + 1;
@@ -93,7 +90,14 @@ function setupChangeHistoryLauncher() {
         );
       }
       return {sheet, launcher, firstRow};
-    });
+    }).filter(Boolean);
+
+    const header = '「' + credHeaderText_(CHG_OPTIONS.launcherHeader) + '」';
+    if (!plans.length) {
+      const message = 'ボタン列（' + header + '）のあるシートが無いので、ボタンは付けていません。';
+      ss.toast(message, CRED_OPTIONS.menuTitle, 8);
+      return message;
+    }
 
     let buttons = 0;
     for (const p of plans) {
@@ -109,7 +113,10 @@ function setupChangeHistoryLauncher() {
 
     credInstallTrigger_(ss);   // チェックを検知するトリガー（クレデンシャル履歴と共通）
     SpreadsheetApp.flush();
-    ss.toast('変更履歴のボタンを ' + buttons + ' 行に設定しました。', '変更履歴', 8);
+    const message = header + 'のボタンを ' + buttons + ' 行に設定しました。' +
+      (skipped.length ? '（ボタン列の無い「' + skipped.join('」「') + '」には付けていません）' : '');
+    ss.toast(message, CRED_OPTIONS.menuTitle, 8);
+    return message;
   } finally {
     try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
   }
@@ -158,18 +165,24 @@ function getChangeHistoryData(sheetName, row) {
   const ignoreInCompare = key => diffNormalizeStampHeader_(key) === diffNormalizeStampHeader_(stampKey);
 
   const key = credNormalize_(target.customer);
+  const current = diffSheetNameResolver_();   // シート名を変える前の記録（DIFF_RULES の formerNames）も同じシートとみなす
   let matches = [];
   for (let r = 1; r < values.length; r++) {
     const v = values[r];
-    if (v[iSheet] === name && credNormalize_(v[iCustomer]) === key) matches.push(v);
+    if (current(v[iSheet]) === name && credNormalize_(v[iCustomer]) === key) matches.push(v);
   }
+  // 行の順ではなく記録日時の順にそろえる（過去の日時の記録があとから足された場合も、古い順になるように）
+  matches.sort((a, b) => (a[iAt] < b[iAt] ? -1 : a[iAt] > b[iAt] ? 1 : 0));
   if (matches.length > CHG_OPTIONS.maxEvents) {
     matches = matches.slice(-CHG_OPTIONS.maxEvents);
     result.truncated = true;
   }
 
-  const snapshotOf = v => headers.slice(fixed)
-    .map((h, j) => [h, v[fixed + j]])
+  // 行の内容：今の版は「行の内容」の列（[[見出し, 値], …] の JSON）。前の版の行（まだ移し替えていない）は見出しごとの列から読む
+  const iContent = col(DIFF_OPTIONS.snapshotContentHeader);
+  const snapshotOf = v => (iContent >= 0 && v[iContent]
+    ? diffParseSnapshotContent_(v[iContent])
+    : headers.slice(fixed).map((h, j) => [h, v[fixed + j]]).filter((_, j) => fixed + j !== iContent))
     .filter(([h, value]) => h && !hidden.has(h) && value !== '');
 
   // ---- 変更履歴_差分（同じイベントID・同じシート・同じ行のセル）
@@ -179,7 +192,7 @@ function getChangeHistoryData(sheetName, row) {
   if (log && log.getLastRow() >= 2) {
     // B:I = イベントID, 編集者メールアドレス, シート, セル, 列名, 種類, 変更前, 変更後
     log.getRange(2, 2, log.getLastRow() - 1, 8).getDisplayValues().forEach(r => {
-      if (!eventIds.has(r[0]) || r[2] !== name) return;
+      if (!eventIds.has(r[0]) || current(r[2]) !== name) return;
       if (!recordsByEvent.has(r[0])) recordsByEvent.set(r[0], []);
       recordsByEvent.get(r[0]).push({cell: r[3], column: r[4], kind: r[5], before: r[6], after: r[7]});
     });
@@ -197,10 +210,7 @@ function getChangeHistoryData(sheetName, row) {
     const rowNumber = Number(v[iRow]);
     const snapshot = snapshotOf(v);
     let changes = (recordsByEvent.get(v[iEvent]) || [])
-      .filter(rec => {
-        const m = String(rec.cell).match(/^[A-Z]+(\d+)$/);
-        return !m || Number(m[1]) === rowNumber;   // 「5行」などの行全体の記録も含める
-      })
+      .filter(rec => chgRecordOfRow_(rec.cell, rowNumber))
       .map(rec => withParts({
         column: rec.column, cell: rec.cell, kind: rec.kind,
         before: unmark(rec.before), after: unmark(rec.after)
@@ -233,4 +243,17 @@ function getChangeHistoryData(sheetName, row) {
 
   result.events = events.reverse();
   return result;
+}
+/**
+ * 変更履歴_差分 の記録（セル）が、スナップショットの行（rowNumber）のものか。
+ * 同じイベントに複数の行の記録があるため、行で分ける（HistorySidebar.gs も使う）。
+ * - 「F5」：その行のセル / 「5行」：追加された行
+ * - 「5行（削除前の行番号）」：削除された行。残っている行の履歴には出さない
+ * - それ以外の書き方（以前の版など）は、その行のものとして扱う
+ */
+function chgRecordOfRow_(cell, rowNumber) {
+  const text = String(cell);
+  if (/（削除前の行番号）$/.test(text)) return false;
+  const m = text.match(/^[A-Z]+(\d+)$/) || text.match(/^(\d+)行$/);
+  return !m || Number(m[1]) === rowNumber;
 }
