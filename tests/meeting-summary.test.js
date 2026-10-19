@@ -2739,7 +2739,7 @@ test('日次の時点コピー：installDailySheetCopy() でトリガーを1つ�
   assert.match(gas.alerts[gas.alerts.length - 1].message, /日次の時点コピーをやめました（保存したコピーは残しています）。/);
 });
 
-test('計画に対する積み上げ：今年度の売上開始月ごとの期待値を、確度（ステータスの「-」の前）で塗り分けて積み上げ、計画（400）と比べる。失注・保留・月の無い案件は除いて注記', () => {
+test('計画に対する積み上げ：今年度の売上開始月ごとの期待値を、確度（ステータスの「-」の前）で塗り分けて積み上げ、計画（400）と比べる。時期未定・今年度より前・来年度以降・失注・保留は除いて右に参考の棒', () => {
   const {gas, g} = setup();
   const c = gas.get('MTG_OPTIONS').colors;
   const o = gas.get('MTG_OPTIONS').plan;
@@ -2759,12 +2759,15 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
     deal('提案中', 'active', 4, '2026/06'),          // 確度の分からないステータスは「未設定」
     deal('D-ヒアリング中(20%)', 'active', null, '2026/12'),   // 期待値が空は 0
     deal('C-提案中(50%)', 'active', 6, '26/09'),       // 読めない月
-    deal('C-提案中(50%)', 'active', 9, '2027/05'),     // 今年度の外
+    deal('D-ヒアリング中(20%)', 'active', 8, '2026/03'),   // 今年度より前
+    deal('C-提案中(50%)', 'active', 9, '2027/05'),     // 来年度以降
     deal('失注', 'lost', 0, '2026/10'),
     deal('保留', 'hold', 3, '2026/11')
   ];
   const p = plain(g.mtgPlanOf_(deals, '新FMT', now, {weighted: true, startMonth: true}));
-  assert.deepStrictEqual([p.plan, p.total, p.missing, p.undated, p.outside, p.excluded], [400, 75, 1, {count: 1, value: 6}, {count: 1, value: 9}, {count: 2, value: 3}]);
+  assert.deepStrictEqual([p.plan, p.total, p.missing], [400, 75, 1]);
+  assert.deepStrictEqual([p.undated, p.before, p.after, p.excluded], [{count: 1, value: 6, values: {C: 6}}, {count: 1, value: 8, values: {D: 8}},
+    {count: 1, value: 9, values: {C: 9}}, {count: 2, value: 3, values: {'未設定': 3}}]);
   assert.deepStrictEqual(p.months.map(m => [m.y + '/' + m.m, m.total]).filter(m => m[1]), [['2026/6', 4], ['2026/10', 50], ['2027/3', 21]]);
   assert.deepStrictEqual(p.months[6].values, {B: 35, C: 15});
   assert.deepStrictEqual(p.byRank, {A: 20, B: 35, C: 15, D: 0, '創注': 1, '未設定': 4});
@@ -2772,7 +2775,7 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
   const slide = plain(g.mtgPlanSlide_(p, now));
   assert.strictEqual(slide.title, '計画に対する積み上げ');
   assert.strictEqual(slide.lead, '今年度（26/4〜27/3）の期待値の積み上げは 75百万円。計画 400百万円に対して ▲325（達成率 19%）。\n' +
-    '最大は10月の 50（積み上げの 67%）、確度A・B は 55（73%）。売上開始月が未入力・読めない 1件（6）・今年度の外 1件（9）・失注・保留 2件は含まない。' +
+    '最大は10月の 50（積み上げの 67%）、確度A・B は 55（73%）。積み上げに含まない 5件（26）は右に表示。' +
     '期待値が空の 1件は 0 として数えた。');
   const roles = role => roleOf(slide, role);
   // 月の段は前の月までの積み上げから浮かせ、確度の順（A が下）に塗り分ける。合計は確度別。計画は白地に枠、不足は灰色の点線
@@ -2784,15 +2787,23 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
   assert.deepStrictEqual(roles('plan-total').map(el => el.fill), [o.ranks[0].color, o.ranks[1].color, o.ranks[2].color, o.ranks[4].color, o.otherColor]);
   assert.deepStrictEqual(roles('plan-plan').map(el => [el.fill, el.line]), [[c.white, c.dark]]);
   assert.deepStrictEqual(roles('plan-gap').map(el => [el.fill, el.dash]), [[c.graySoft, true]]);
-  assert.deepStrictEqual(roles('plan-value').map(el => el.text), ['+4', '+50', '+21', '75', '400', '▲325']);
-  assert.deepStrictEqual(roles('plan-label').map(el => el.text), ['26/4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月', '27/1月', '2月', '3月', '合計', '計画', '不足']);
+  assert.deepStrictEqual(roles('plan-value').map(el => el.text), ['+4', '+50', '+21', '75', '400', '▲325', '6', '8', '9', '3']);
+  assert.deepStrictEqual(roles('plan-label').map(el => el.text), ['26/4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月', '27/1月', '2月', '3月',
+    '合計', '計画', '不足', '時期未定\n1件', '〜26/3\n1件', '27/4〜\n1件', '失注・保留\n2件']);
+  // 積み上げに含まない案件：区切りの線の右に、0 から確度別の棒（3月と合計の数は、横に重なるときは合計を1行上げる）
+  const divider = roles('plan-divider')[0];
+  assert.ok(divider && roles('plan-aside').every(el => el.x > divider.x) && roles('plan-label').slice(0, 15).every(el => el.x < divider.x));
+  assert.deepStrictEqual(roles('plan-aside').map(el => el.fill), [o.ranks[2].color, o.ranks[3].color, o.ranks[2].color, o.otherColor]);
+  const axis = roles('plan-aside').map(el => el.y + el.h);
+  assert.ok(axis.every(v => Math.abs(v - axis[0]) < 0.01), '参考の棒は 0 から');
+  assert.strictEqual(roles('plan-aside-title')[0].text, '積み上げに含まない（参考）');
   assert.deepStrictEqual(roles('legend').filter(el => el.text).map(el => el.text), ['A', 'B', 'C', 'D', '創注', '未設定', '計画']);
   assert.strictEqual(roles('plan-line').length, 1, '計画の高さの横線');
   const S = gas.get('MTG_SLIDE');
   slide.elements.forEach(el => assert.ok(el.x >= 0 && el.x + el.w <= S.width + 0.01 && el.y + el.h <= S.bottom + 0.01, 'ページに入る：' + (el.text || el.role)));
   // 計画を超えたら「超過」
   const over = plain(g.mtgPlanSlide_(Object.assign({}, p, {plan: 50}), now));
-  assert.deepStrictEqual([roleOf(over, 'plan-label').pop().text, roleOf(over, 'plan-gap')[0].fill], ['超過', c.up]);
+  assert.deepStrictEqual([roleOf(over, 'plan-label')[14].text, roleOf(over, 'plan-gap')[0].fill], ['超過', c.up]);
   // 列が無ければ「データなし」と理由
   const lacking = plain(g.mtgPlanSlide_(g.mtgPlanOf_(deals, '新FMT', now, {weighted: true, startMonth: false}), now));
   assert.deepStrictEqual(roleOf(lacking, 'gap').map(el => el.text), ['データなし\nシートに「売上開始月」の列が無い']);
@@ -2803,6 +2814,7 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
   assert.strictEqual(p2.plan, 500);
   const merged = plain(g.mtgMergePlans_([p, p2]));
   assert.deepStrictEqual([merged.plan, merged.total, merged.months[6].values, merged.byRank.B, merged.excluded.count], [900, 125, {B: 70, C: 30}, 70, 2]);
+  assert.deepStrictEqual([merged.undated, merged.after.values], [{count: 1, value: 6, values: {C: 6}}, {C: 9}]);
   assert.strictEqual(plain(g.mtgPlanSlide_(merged, now, '全サブインダストリー')).title, '計画に対する積み上げ（全サブインダストリー）');
 
   // 資料：サマリーの次のページ。使わない設定なら出さない
