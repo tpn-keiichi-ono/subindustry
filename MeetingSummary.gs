@@ -17,9 +17,10 @@
  *   そのまま使う。登録が無ければ、ひな形と同じ絵柄（グラデーションに大きな「RX」）の画像をスクリプトで描いて背景にし、同じ位置に文字を描く（mtgCoverPng_）
  *   表紙：会議の名前と「事前資料」・サブインダストリー・会議日・データの時点・期間
  *   1 サマリー：期待値と進行中案件の数・前回以降の動き（案件ごとに1回だけ数える区分の件数と案件）・現在の状態（受注月超過・停滞）
- *   2 パイプラインの変化：前回からの期待値の増減（新規・増額・復帰・減額・受注・失注・保留・削除）・ステータス別・受注月（四半期）別の期待値
- *   3 前回から変化のある案件：ステータス・期待値・受注月・活動状況が変わった案件（区分の順に上位）
- *   4 期待値上位案件の状況・課題：進行中の案件の期待値の大きい順（ステータスの滞留日数・受注月・活動状況・課題・該当事項）
+ *   2 計画に対する積み上げ：今年度の売上開始月ごとの期待値を確度で塗り分けて積み上げ、計画（MTG_OPTIONS.plan）と比べる
+ *   3 パイプラインの変化：前回からの期待値の増減（新規・増額・復帰・減額・受注・失注・保留・削除）・ステータス別・受注月（四半期）別の期待値
+ *   4 前回から変化のある案件：ステータス・期待値・受注月・活動状況が変わった案件（区分の順に上位）
+ *   5 期待値上位案件の状況・課題：進行中の案件の期待値の大きい順（ステータスの滞留日数・受注月・活動状況・課題・該当事項）
  *   扉（Appendix。Appendix の見出しとページ）
  *   Appendix（全件。入りきらなければ続きのページ。中身が無くても ①〜③ を出す）
  *   作れないところ（シートに列が無い・変更の記録が無い・停滞をまだ数えられないなど）は、資料の型を変えずに、その場所に灰色の「データなし」と理由（mtgGaps_）
@@ -188,7 +189,20 @@ const MTG_OPTIONS = {
   stallDays: 45,                     // 停滞：ステータスがこの日数以上同じ進行中の案件
   noUpdateDays: 30,                  // 入力内容のチェック「更新なし」：最終更新日時がこの日数より前の進行中の案件
   overdueDays: 90,                   // 入力内容のチェック「予定日超過」：予定日を過ぎてこの日数以内のもの（古いものは出さない）
-  fiscalStartMonth: 4,               // 期の始まりの月（受注月別の期待値の四半期）
+  fiscalStartMonth: 4,               // 期の始まりの月（受注月別の期待値の四半期・計画に対する積み上げの今年度）
+  // 計画に対する積み上げ（本編2枚目。統合版は全サブインダストリーの状況の次）：今年度の売上開始月ごとの期待値を、確度で塗り分けて積み上げ、計画と比べる。
+  // amount はサブインダストリーごとの計画（百万円。33シナリオ ダッシュボードの計画と同じ）。plans でシートごとに変えられる（{'スーパー・GMS': 500}）。
+  // 統合版の計画は、収録したサブインダストリーの計画の合計。確度はステータスの「-」の前（「C-提案中(50%)」なら C。ダッシュボードと同じ）。
+  // ranks は確度の高い順（積み上げの下から。色は濃い順）。どれでもなければ otherLabel
+  plan: {
+    enabled: true,
+    amount: 400,
+    plans: {},
+    ranks: [{key: 'A', color: '#2E6A1A'}, {key: 'B', color: '#5A9E3A'}, {key: 'C', color: '#8FC46B'}, {key: 'D', color: '#B9D9A0'},
+      {key: '創注', color: '#DCEBCF'}],
+    otherLabel: '未設定',
+    otherColor: '#C9C9C9'
+  },
   // 読む列の見出し（改行・空白、全角・半角の違いは無視。customer・project・status はどのシートにも必要。ほかは無ければ使わない）
   columns: {
     customer: '得意先',
@@ -269,6 +283,7 @@ const MTG_TITLES = {
   pipeline: 'パイプラインの変化',
   progress: '前回から変化のある案件',
   focus: '期待値上位案件の状況・課題',
+  plan: '計画に対する積み上げ',
   contents: '目次',                         // 統合版の2枚目
   overview: '全サブインダストリーの状況',   // 統合版の3枚目
   appendix: 'Appendix',
@@ -2158,6 +2173,7 @@ function mtgReadDeals_(sheet, rule) {
       orderMonthText: text('orderMonth'),
       startMonth: mtgMonth_(value('startMonth')),
       startMonthText: text('startMonth'),
+      planMonth: mtgPlanMonth_(value('startMonth')),
       activity: text('activity'),
       issue: text('issue'),
       owner: text('owner'),
@@ -2361,6 +2377,7 @@ function mtgSummarize_(ss, name, context) {
     bridge,
     stages: mtgStages_(deals, table.statusOrder),
     quarters: mtgQuarters_(active, context.now),
+    plan: mtgPlanOf_(deals, name, context.now, table.has),
     changes,
     stalled,
     focus,
@@ -2976,7 +2993,8 @@ function mtgDealLabel_(item) {
 function mtgSlides_(summary, start) {
   const offset = start || 0;   // 前に入るページの数（統合版。ページ番号と扉の目次のページを通しにする）
   const cover = mtgCoverSlide_(summary);
-  const main = [mtgSummarySlide_(summary), mtgBridgeSlide_(summary), mtgMovesSlide_(summary)].concat(mtgFocusSlide_(summary));
+  const main = [mtgSummarySlide_(summary)].concat(MTG_OPTIONS.plan.enabled ? [mtgPlanSlide_(summary.plan, summary.now)] : [],
+    [mtgBridgeSlide_(summary), mtgMovesSlide_(summary)], mtgFocusSlide_(summary));
   // Appendix はいつも ①〜③ を出す（中身が無ければ、表の見出しの行の下に「データなし」と理由・「該当なし」）。色は appendixColors（グレー）
   const appendix = mtgWithColors_(MTG_OPTIONS.appendixColors, () => [].concat(mtgAppendixChanges_(summary), mtgAppendixStalled_(summary),
     mtgAppendixOwners_(summary), mtgAppendixAlerts_(summary)));
@@ -2993,7 +3011,8 @@ function mtgCombinedSlides_(summaries, meeting, final) {
   const S = MTG_SLIDE;
   const name = o.combined.name;
   const dummy = summaries.some(s => s.dummy);
-  let page = 3;   // 前に表紙・目次・全サブインダストリーの状況
+  const planOn = !!o.plan.enabled;
+  let page = planOn ? 4 : 3;   // 前に表紙・目次・全サブインダストリーの状況（・計画に対する積み上げ）
   const sections = summaries.map(s => {
     const slides = mtgSlides_(s, page);
     const section = {summary: s, start: page + 1, slides};
@@ -3014,7 +3033,8 @@ function mtgCombinedSlides_(summaries, meeting, final) {
     ]
   };
   const frame = {source: (final ? '' : '【試作】') + (dummy ? '【ダミーデータを含む】' : '') + name + '（' + mtgShortDate_(meeting) + ' 会議資料）　金額の単位：百万円'};
-  const first = mtgNumberSlides_(frame, [cover, mtgContentsSlide_(sections), mtgOverviewSlide_(sections)]);
+  const plan = planOn ? [mtgPlanSlide_(mtgMergePlans_(summaries.map(s => s.plan)), now, name)] : [];
+  const first = mtgNumberSlides_(frame, [cover, mtgContentsSlide_(sections), mtgOverviewSlide_(sections)].concat(plan));
   return first.concat.apply(first, sections.map(x => x.slides));
 }
 
@@ -3026,7 +3046,8 @@ function mtgCombinedSlides_(summaries, meeting, final) {
 function mtgContentsSlide_(sections) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
-  const entries = [{label: MTG_TITLES.overview, page: 3}].concat(sections.map(x => ({label: x.summary.name, page: x.start})));
+  const entries = [{label: MTG_TITLES.overview, page: 3}].concat(MTG_OPTIONS.plan.enabled ? [{label: MTG_TITLES.plan, page: 4}] : [],
+    sections.map((x, k) => ({label: x.summary.name, page: x.start, n: k + 1})));
   const cols = entries.length > 8 ? 2 : 1;
   const per = Math.ceil(entries.length / cols);
   const gap = 16;
@@ -3038,7 +3059,7 @@ function mtgContentsSlide_(sections) {
     const y = S.top + (i % per) * rowH;
     const h = rowH - 6;
     const link = entry.page - 1;
-    el.push(mtgBox_(x, y, colW - 56, h, mtgWrap_((i ? i + '.　' : '') + entry.label, colW - 56, 12, 1)[0],
+    el.push(mtgBox_(x, y, colW - 56, h, mtgWrap_((entry.n ? entry.n + '.　' : '') + entry.label, colW - 56, 12, 1)[0],
       {size: 12, bold: true, color: c.ink, fill: c.greenSoft, shape: 'RECTANGLE', link, role: 'toc'}));
     el.push(mtgBox_(x + colW - 56, y, 56, h, String(entry.page), {size: 12, bold: true, color: c.greenDark, fill: c.greenSoft, shape: 'RECTANGLE',
       align: 'END', link, role: 'toc'}));
@@ -3534,6 +3555,203 @@ function mtgBridgeSlide_(s) {
       (over ? '、受注月超過は ' + mtgAmount_(over.value) + '百万円' : '') +
       (s.kpi.missingWeighted ? '。期待値未入力の ' + s.kpi.missingWeighted + '件は金額に含めていない' : '') + '。';
   return {title: MTG_TITLES.pipeline, lead: first + (second ? '\n' + second : ''), elements: el};
+}
+
+/* ---------------- 計画に対する積み上げ ---------------- */
+
+/**
+ * 計画に対する積み上げの月（売上開始月）。日付か「yyyy/MM」の文字（2000年以降）のときだけ月とみなす（33シナリオ ダッシュボード・パイプライン管理シートと同じ。
+ * 「26/09」「2026年度後半期」などは時期未定）。{y, m} か null
+ */
+function mtgPlanMonth_(value) {
+  if (value && typeof value.getTime === 'function') return mtgMonth_(value);
+  const m = /^(\d{4})\/(\d{2})$/.exec(String(value == null ? '' : value).trim());
+  return m && Number(m[1]) >= 2000 && Number(m[2]) >= 1 && Number(m[2]) <= 12 ? {y: Number(m[1]), m: Number(m[2])} : null;
+}
+
+/** 案件の確度（ステータスの「-」の前。MTG_OPTIONS.plan.ranks のどれでもなければ otherLabel） */
+function mtgPlanRank_(status) {
+  const o = MTG_OPTIONS.plan;
+  const head = String(status || '').normalize('NFKC').split('-')[0].trim();
+  return o.ranks.some(r => r.key === head) ? head : o.otherLabel;
+}
+
+/** シート（name）の計画（百万円。MTG_OPTIONS.plan.plans にあればその値、無ければ amount） */
+function mtgPlanAmount_(name) {
+  const o = MTG_OPTIONS.plan;
+  return o.plans && o.plans[name] != null ? Number(o.plans[name]) : o.amount;
+}
+
+/**
+ * 計画に対する積み上げの中身。今年度（MTG_OPTIONS.fiscalStartMonth から12か月）の売上開始月ごとの期待値を、確度（mtgPlanRank_）ごとに足す。
+ * 進行中・受注の案件が対象（失注・保留は除き、件数と期待値を残す）。期待値が空の案件は 0 として数え、件数を残す。
+ * has はシートの列があるか（期待値・売上開始月の列が無ければ gap に理由）。
+ * 戻り値 {plan, start: 今年度の最初の月の番号, months: [{y, m, values: {確度: 期待値}, total, count}], total, byRank: {確度: 期待値},
+ *  undated: 売上開始月が空・読めない {count, value}, outside: 今年度の外 {count, value}, excluded: 失注・保留 {count, value}, missing: 期待値が空の件数, gap}
+ */
+function mtgPlanOf_(deals, name, now, has) {
+  const o = MTG_OPTIONS.plan;
+  const start = mtgFiscalStart_(now);
+  const columns = MTG_OPTIONS.columns;
+  const lack = ['weighted', 'startMonth'].filter(key => has && !has[key]).map(key => '「' + String(columns[key]).replace(/\s+/g, '') + '」');
+  const out = {plan: mtgPlanAmount_(name), start, months: [], total: 0, byRank: {}, undated: {count: 0, value: 0}, outside: {count: 0, value: 0},
+    excluded: {count: 0, value: 0}, missing: 0, gap: lack.length ? 'シートに' + lack.join('・') + 'の列が無い' : ''};
+  for (let i = 0; i < 12; i++) {
+    const mo = mtgMonthOf_(start + i);
+    out.months.push({y: mo.y, m: mo.m, values: {}, total: 0, count: 0});
+  }
+  o.ranks.map(r => r.key).concat([o.otherLabel]).forEach(k => { out.byRank[k] = 0; });
+  deals.forEach(d => {
+    const v = d.weighted || 0;
+    if (d.kind === 'lost' || d.kind === 'hold') {
+      out.excluded.count++;
+      out.excluded.value += v;
+      return;
+    }
+    if (d.weighted == null) out.missing++;
+    const i = d.planMonth ? mtgMonthIndex_(d.planMonth) - start : null;
+    const bucket = i == null ? out.undated : i < 0 || i >= 12 ? out.outside : null;
+    if (bucket) {
+      bucket.count++;
+      bucket.value += v;
+      return;
+    }
+    const rank = mtgPlanRank_(d.status);
+    const mo = out.months[i];
+    mo.values[rank] = (mo.values[rank] || 0) + v;
+    mo.total += v;
+    mo.count++;
+    out.byRank[rank] += v;
+    out.total += v;
+  });
+  return out;
+}
+
+/** 統合版の計画に対する積み上げ：各サブインダストリーの mtgPlanOf_ の戻り値を足したもの（計画も合計。どれかに gap があれば最初の gap） */
+function mtgMergePlans_(plans) {
+  const out = JSON.parse(JSON.stringify(plans[0] || mtgPlanOf_([], '', new Date(), null)));
+  out.plan = 0;
+  out.total = 0;
+  out.missing = 0;
+  ['undated', 'outside', 'excluded'].forEach(k => { out[k] = {count: 0, value: 0}; });
+  Object.keys(out.byRank).forEach(k => { out.byRank[k] = 0; });
+  out.months.forEach(mo => { mo.values = {}; mo.total = 0; mo.count = 0; });
+  plans.forEach(p => {
+    out.plan += p.plan;
+    out.total += p.total;
+    out.missing += p.missing;
+    ['undated', 'outside', 'excluded'].forEach(k => { out[k].count += p[k].count; out[k].value += p[k].value; });
+    Object.keys(p.byRank).forEach(k => { out.byRank[k] = (out.byRank[k] || 0) + p.byRank[k]; });
+    p.months.forEach((mo, i) => {
+      const to = out.months[i];
+      Object.keys(mo.values).forEach(k => { to.values[k] = (to.values[k] || 0) + mo.values[k]; });
+      to.total += mo.total;
+      to.count += mo.count;
+    });
+  });
+  out.gap = (plans.find(p => p.gap) || {}).gap || '';
+  return out;
+}
+
+/**
+ * 計画に対する積み上げ（本編2枚目。統合版は全サブインダストリーの状況の次）：今年度の売上開始月ごとの期待値を左から積み上げる滝の図。
+ * 月の段は確度（濃い緑 A → 淡い緑 創注・灰色 未設定）で塗り分け、最後に 合計（確度別）・計画（白地に枠）・差（計画に届かない分 ▲／超えた分 +）。
+ * 計画の高さに横線を引く（どの月で計画に届くかが分かる）。p は mtgPlanOf_（統合版は mtgMergePlans_）の戻り値。name は統合版のときだけ（見出しに付ける）
+ */
+function mtgPlanSlide_(p, now, name) {
+  const S = MTG_SLIDE;
+  const c = MTG_OPTIONS.colors;
+  const o = MTG_OPTIONS.plan;
+  const title = MTG_TITLES.plan + (name ? '（' + name + '）' : '');
+  const first = mtgMonthOf_(p.start);
+  const last = mtgMonthOf_(p.start + 11);
+  const period = String(first.y).slice(2) + '/' + first.m + '〜' + String(last.y).slice(2) + '/' + last.m;
+  const heading = '今年度（' + period + '）の売上開始月別 期待値の積み上げ（百万円）';
+  if (p.gap) {
+    return {title, lead: '計画に対する積み上げは' + MTG_OPTIONS.gapText + '（' + p.gap + '）。', elements: [
+      mtgBox_(S.x, S.top - 2, 420, 20, heading, {size: 10.5, bold: true, color: c.ink}), mtgEmptyBox_(S.x, S.top + 26, 360, 64, 'gap', p.gap)]};
+  }
+  const ranks = o.ranks.concat([{key: o.otherLabel, color: o.otherColor}]);
+  const diff = p.total - p.plan;
+  const rate = p.plan > 0 ? Math.round(p.total / p.plan * 100) : null;
+  const peak = p.months.slice().sort((a, b) => b.total - a.total)[0];
+  const sure = (p.byRank.A || 0) + (p.byRank.B || 0);
+  const share = v => (p.total > 0 ? Math.round(v / p.total * 100) + '%' : '—');
+  const notes = [];
+  if (p.undated.count) notes.push('売上開始月が未入力・読めない ' + p.undated.count + '件（' + mtgAmount_(p.undated.value) + '）');
+  if (p.outside.count) notes.push('今年度の外 ' + p.outside.count + '件（' + mtgAmount_(p.outside.value) + '）');
+  if (p.excluded.count) notes.push('失注・保留 ' + p.excluded.count + '件');
+  const lead = '今年度（' + period + '）の期待値の積み上げは ' + mtgAmount_(p.total) + '百万円。計画 ' + mtgAmount_(p.plan) + '百万円に対して ' +
+    mtgSigned_(diff) + (rate == null ? '' : '（達成率 ' + rate + '%）') + '。\n' +
+    (peak && peak.total > 0 ? '最大は' + peak.m + '月の ' + mtgAmount_(peak.total) + '（積み上げの ' + share(peak.total) + '）、確度A・B は ' +
+      mtgAmount_(sure) + '（' + share(sure) + '）。' : '今年度に売上開始月がある案件の期待値はなし。') +
+    (notes.length ? notes.join('・') + 'は含まない。' : '') + (p.missing ? '期待値が空の ' + p.missing + '件は 0 として数えた。' : '');
+
+  const x = S.x;
+  const w = S.w;
+  const y = S.top;
+  const el = [mtgBox_(x, y - 2, 420, 20, heading, {size: 10.5, bold: true, color: c.ink})];
+  // 凡例：確度の色（右端を図の右端にそろえる）と、計画の枠
+  const legend = ranks.map(r => ({label: r.key, color: r.color})).concat([{label: '計画', color: c.white, line: c.dark}]);
+  legend.forEach(item => { item.bw = mtgTextWidth_(item.label, 8.5) + 16; });
+  let lx = x + w - legend.reduce((sum, item) => sum + 6 + item.bw, 0) - (legend.length - 1) * (8 - 7.2 - 1.6);
+  legend.forEach(item => {
+    el.push({type: 'box', x: lx, y: y + 5, w: 7, h: 7, fill: item.color, line: item.line, lineWeight: item.line ? 1 : undefined, shape: 'RECTANGLE', role: 'legend'});
+    el.push(mtgBox_(lx + 6, y - 1, item.bw, 18, item.label, {size: 8.5, color: c.sub, role: 'legend'}));
+    lx += 6 + item.bw + 8 - 7.2 - 1.6;
+  });
+  // 棒：12か月（前の月までの積み上げから浮かせる）・合計・計画・差
+  const top = y + 40;
+  const axis = S.bottom - 30;
+  const slots = 15;
+  const slot = w / slots;
+  const bw = Math.min(30, slot * 0.66);
+  const max = Math.max(p.total, p.plan, 1);
+  const scale = (axis - top) / max;
+  const ypos = v => axis - v * scale;
+  // 棒の上の数：100 以上は整数に丸める（隣の棒の数と重ならないように。リード文は丸めない）
+  const num = (v, signed) => {
+    const r = Math.abs(v) >= 100 ? Math.round(v) : v;
+    return signed ? mtgSigned_(r) : mtgAmount_(r);
+  };
+  const label = (i, text) => el.push(mtgBox_(x + slot * i - 6, axis + 3, slot + 12, 14, text, {size: 8.5, bold: true, color: c.ink, align: 'CENTER', role: 'plan-label'}));
+  const value = (i, v, text) => el.push(mtgBox_(x + slot * i - 8, ypos(v) - 15, slot + 16, 14, text, {size: 8.5, bold: true, color: c.ink, align: 'CENTER', role: 'plan-value'}));
+  const stack = (i, base, values, role) => {
+    const bx = x + slot * i + (slot - bw) / 2;
+    let level = base;
+    ranks.forEach(r => {
+      const v = values[r.key] || 0;
+      if (v <= 0) return;
+      const h = Math.max(v * scale, 0.75);
+      el.push({type: 'box', x: bx, y: ypos(level) - h, w: bw, h, fill: r.color, line: c.white, lineWeight: 0.5, shape: 'RECTANGLE', role});
+      level += v;
+    });
+  };
+  el.push({type: 'box', x, y: axis, w, h: 0.75, fill: c.faint, shape: 'RECTANGLE'});
+  // 計画の高さの横線（月の段の上に重ねる。右端に「計画 400」）
+  el.push({type: 'box', x, y: ypos(p.plan), w: slot * 13, h: 0.75, fill: c.dark, shape: 'RECTANGLE', role: 'plan-line'});
+  let level = 0;
+  p.months.forEach((mo, i) => {
+    stack(i, level, mo.values, 'plan-month');
+    if (mo.total) value(i, level + mo.total, num(mo.total, true));
+    level += mo.total;
+    label(i, (i === 0 || mo.m === 1 ? String(mo.y).slice(2) + '/' : '') + mo.m + '月');
+  });
+  stack(12, 0, p.byRank, 'plan-total');
+  value(12, p.total, num(p.total));
+  label(12, '合計');
+  const bx = i => x + slot * i + (slot - bw) / 2;
+  el.push({type: 'box', x: bx(13), y: ypos(p.plan), w: bw, h: Math.max(p.plan * scale, 0.75), fill: c.white, line: c.dark, lineWeight: 1,
+    shape: 'RECTANGLE', role: 'plan-plan'});
+  value(13, p.plan, num(p.plan));
+  label(13, '計画');
+  const lo = Math.min(p.total, p.plan);
+  const hi = Math.max(p.total, p.plan);
+  el.push({type: 'box', x: bx(14), y: ypos(hi), w: bw, h: Math.max((hi - lo) * scale, 0.75), fill: diff < 0 ? c.graySoft : c.up,
+    line: diff < 0 ? c.down : undefined, lineWeight: diff < 0 ? 0.75 : undefined, dash: diff < 0, shape: 'RECTANGLE', role: 'plan-gap'});
+  value(14, hi, num(diff, true));
+  label(14, diff < 0 ? '不足' : '超過');
+  return {title, lead, elements: el};
 }
 
 /** 期待値の増減の滝の図（前回 → 内訳 → 今回）。見出しと凡例（期待値・増加・減少・受注）つき。左上 (x, y)・幅 w・高さ h。縦軸は0から */
