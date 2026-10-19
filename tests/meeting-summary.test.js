@@ -169,27 +169,30 @@ test('削除した行の「見出し: 値」は、シートの見出しで区切
 
 /* ---------------- 中身 ---------------- */
 
-test('前回からの変化：案件ごとに1つの区分（失注・延期・前進・新規・削除・活動の更新・更新のみ）。区分の順（受注・失注・保留・後退・削除 → 新規・前進・復帰 → 活動更新 → 受注月・期待値などの変更）', () => {
+test('前回からの変化：案件ごとに1つの区分（失注・延期・前進・新規・削除・活動の更新・更新のみ。数える用で、資料にラベルは出さない）。並びは今のステータスのまとまり → 想定売上の大きい順（その他更新は後ろ）', () => {
   const {gas, g, sheet} = setup();
   g.recordDiffEdit(gas.edit(sheet, 'I7', month(3).text));                          // E社：受注月を延ばす
   g.recordDiffEdit(gas.edit(sheet, 'D8:F8', [['G社', 'POS連携', '初回訪問']]));      // G社：空の行に新しい案件
   g.recordDiffEdit(gas.edit(sheet, 'K4', '請求の時期を確認中'));                    // B社：活動における課題だけ（更新のみ）
   const s = plain(summarize(g, '新FMT'));
+  // テストのシートのステータス（初回訪問・提案中…）には確度（A-…）が無いので、どれも最後のまとまり（失注・保留・削除・その他）。その中は想定売上の大きい順
   assert.deepStrictEqual(s.changes.map(c => [label(c), c.category]), [
+    ['E社／販促DX', 'slipped'],
+    ['A社／アプリ刷新', 'forward'],
     ['C社／店舗什器', 'lost'],
     ['F社／ブランド刷新', 'removed'],
     ['G社／POS連携', 'new'],
-    ['A社／アプリ刷新', 'forward'],
     ['D社／物流改善', 'activity'],
-    ['E社／販促DX', 'slipped'],
     ['B社／EC立ち上げ', 'updated']
   ]);
-  assert.ok(s.changes[3].flags.indexOf('activity') >= 0, 'A社は活動状況も変わったが、区分は前進（上の区分が先）');
-  const a = s.changes[3];
+  const byName = name => s.changes.find(c => c.customer === name);
+  const a = byName('A社');
+  assert.ok(a.flags.indexOf('activity') >= 0, 'A社は活動状況も変わったが、区分は前進（上の区分が先）');
   assert.deepStrictEqual([a.statusFrom, a.statusTo, a.activity, a.columns.join('・')], ['初回訪問', '提案中', '10/10 提案書を提出', '案件ステータス・活動状況']);
-  const e = s.changes[5];
+  const e = byName('E社');
   assert.deepStrictEqual([e.monthFrom, e.monthTo, e.weightedFrom, e.weightedTo], [month(1).text, month(3).text, 40, 40]);
-  assert.deepStrictEqual([s.changes[1].removed, s.changes[1].statusFrom, s.changes[1].weightedFrom], [true, '提案中', 3], '削除した行は失注に数えない');
+  const f = byName('F社');
+  assert.deepStrictEqual([f.removed, f.statusFrom, f.weightedFrom], [true, '提案中', 3], '削除した行は失注に数えない');
   const k = s.kpi;
   assert.deepStrictEqual([k.changed, k.activity, k.updated, k.lost, k.forward, k.new, k.removed, k.slips, k.slipped], [6, 1, 1, 1, 1, 1, 1, 1, 1]);
 
@@ -197,6 +200,38 @@ test('前回からの変化：案件ごとに1つの区分（失注・延期・�
   g.recordDiffEdit(gas.edit(sheet, 'J7', '仮の書き込み'));
   g.recordDiffEdit(gas.edit(sheet, 'J7', '提案書を送付'));
   assert.strictEqual(plain(summarize(g, '新FMT')).changes.find(c => c.customer === 'E社').flags.indexOf('activity'), -1);
+});
+
+test('変化のある案件は区分ではなく今のステータスでまとめる：確度 A → 創注 → 失注・保留・削除の順（その中は想定売上の大きい順）。サマリーの動きの表も同じ行', () => {
+  const {g} = setup({edits: false});
+  const order = ['A-受注済み(100%)', 'B-クロージング中(70%)', 'C-提案中(50%)', 'C-稟議対応中(50%)', 'D-ヒアリング中(20%)', '創注-仮検討(10%)', '失注', '保留'];
+  const groups = plain(g.mtgStatusGroups_(order));
+  assert.deepStrictEqual(groups.map(gr => gr.label), ['A 受注済み', 'B クロージング中', 'C 提案中・稟議対応中', 'D ヒアリング中', '創注 仮検討', '失注・保留・削除']);
+  assert.deepStrictEqual(plain(g.mtgStatusGroups_([])).map(gr => gr.label), ['A', 'B', 'C', 'D', '創注', '失注・保留・削除'], 'プルダウンが無ければ確度だけ');
+  const ch = (customer, category, statusFrom, statusTo, amount, extra) => Object.assign({customer, project: '案件', category, statusFrom, statusTo, amount,
+    flags: [], columns: [], at: 0}, extra || {});
+  const changes = [
+    ch('甲社', 'forward', 'C-提案中(50%)', 'B-クロージング中(70%)', 30),
+    ch('乙社', 'new', '', 'D-ヒアリング中(20%)', 10),
+    ch('丙社', 'lost', 'C-提案中(50%)', '失注', 50),
+    ch('丁社', 'removed', 'C-稟議対応中(50%)', '', 20, {removed: true}),
+    ch('戊社', 'slipped', 'C-提案中(50%)', 'C-提案中(50%)', 40, {monthFrom: '2026/11', monthTo: '2026/12'}),
+    ch('己社', 'won', 'B-クロージング中(70%)', 'A-受注済み(100%)', 60),
+    ch('庚社', 'activity', 'D-ヒアリング中(20%)', 'D-ヒアリング中(20%)', 5),
+    ch('辛社', 'updated', 'C-提案中(50%)', 'C-提案中(50%)', 100)
+  ];
+  assert.deepStrictEqual(changes.map(c => g.mtgStatusGroupOf_(c)), ['B', 'D', 'closed', 'closed', 'C', 'A', 'D', 'C']);
+  const s = {changes, statusGroups: groups, stalled: [], overdue: [], alerts: [], gaps: {}, first: true};
+  const moves = g.mtgBreakdown_(s).moves;
+  const names = line => g.mtgNames_(line.items, line.note);
+  assert.deepStrictEqual(plain(moves.map(line => [line.label, line.items.length, names(line)])), [
+    ['A 受注済み', 1, '己社／案件（前回 B-クロージング中）'],
+    ['B クロージング中', 1, '甲社／案件（前回 C-提案中）'],
+    ['C 提案中・稟議対応中', 1, '戊社／案件（受注月 2026/11 ▶ 2026/12）'],
+    ['D ヒアリング中', 2, '乙社／案件（新規）、庚社／案件（活動更新）'],
+    ['創注 仮検討', 0, '該当なし'],
+    ['失注・保留・削除', 2, '丙社／案件（失注・前回 C-提案中）、丁社／案件（削除・前回 C-稟議対応中）']
+  ], 'その他更新（辛社）は数えない。失注・保留・削除の行は今のステータス（削除）も書く');
 });
 
 test('前回からの変化：得意先・案件名を書き換えた案件・あとから案件名を入れた案件は、前の名前の記録をつなげる', () => {
@@ -207,8 +242,8 @@ test('前回からの変化：得意先・案件名を書き換えた案件・�
   g.recordDiffEdit(gas.edit(sheet, 'E9', '店舗分析'));               // あとから案件名
   const s = plain(summarize(g, '新FMT'));
   assert.deepStrictEqual(s.changes.map(c => [label(c), c.category, c.columns.join('・')]), [
-    ['H社／店舗分析', 'new', '得意先・案件名'],
-    ['A社／アプリ刷新（第2期）', 'forward', '案件ステータス・案件名']
+    ['A社／アプリ刷新（第2期）', 'forward', '案件ステータス・案件名'],
+    ['H社／店舗分析', 'new', '得意先・案件名']
   ]);
   assert.strictEqual(s.unmatched, 0);
 });
@@ -223,8 +258,8 @@ test('期待値の増減：前回の時点で進行中だった期待値 + 内�
   ].forEach(([a1, value]) => g.recordDiffEdit(gas.edit(sheet, a1, value)));
   const s = plain(summarize(g, '新FMT'));
   assert.deepStrictEqual(s.changes.map(c => [label(c), c.category]), [
-    ['E社／販促DX', 'won'], ['F社／ブランド刷新', 'hold'], ['C社／店舗什器', 'backward'], ['A社／アプリ刷新', 'forward'], ['B社／EC立ち上げ', 'revived']
-  ]);
+    ['E社／販促DX', 'won'], ['B社／EC立ち上げ', 'revived'], ['A社／アプリ刷新', 'forward'], ['C社／店舗什器', 'backward'], ['F社／ブランド刷新', 'hold']
+  ], '想定売上の大きい順（テストのシートのステータスには確度が無いので、どれも同じまとまり）');
   const b = s.bridge;
   assert.deepStrictEqual([b.start, b.end, b.startCount, b.endCount], [58, 67, 5, 4], '前回：A10・C5・D空・E40・F3／今：A15・B50・C2・D空');
   assert.deepStrictEqual(b.steps.filter(st => st.count).map(st => [st.label, st.value, st.count]),
@@ -547,14 +582,16 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
   assert.deepStrictEqual(roleOf(slides[1], 'heading').map(el => el.text), ['直近14日間の動き（変化のある案件 4件）', '現在の状態（進行中案件）']);
   const [movesTable, statesTable] = slides[1].elements.filter(el => el.type === 'table');
   const textsOf = t => t.rows.map(r => r.cells.map(cell => cell.text.replace(/\n/g, '')));
+  // 動きの行は今回のステータスのまとまり（確度 A → 創注・失注・保留・削除）。テストのシートのステータスには確度が無いので、どれも最後の行（「・その他」を足す）
   assert.deepStrictEqual(textsOf(movesTable), [
-    ['区分', '件数', '想定売上', '主な案件（想定売上順）'],
-    ['受注', '0件', '—', '該当なし'],
-    ['失注・保留・後退・削除', '2件', '30', 'C社／店舗什器（失注）、F社／ブランド刷新（削除）'],
-    ['新規・前進・復帰', '1件', '30', 'A社／アプリ刷新（初回訪問 ▶ 提案中）'],
-    ['活動更新', '1件', '0', 'D社／物流改善（10/12 打ち合わせ）'],
-    ['受注月・期待値などの変更', '0件', '—', '該当なし']
-  ], '行の順は P4 の区分の順と同じ。活動更新は独立した行にし、最新の活動状況を書く');
+    ['今回のステータス', '件数', '想定売上', '主な案件（想定売上順。（）は変わったこと）'],
+    ['A', '0件', '—', '該当なし'],
+    ['B', '0件', '—', '該当なし'],
+    ['C', '0件', '—', '該当なし'],
+    ['D', '0件', '—', '該当なし'],
+    ['創注', '0件', '—', '該当なし'],
+    ['失注・保留・削除・その他', '4件', '60', 'A社／アプリ刷新（提案中・前回 初回訪問）、C社／店舗什器（失注・前回 提案中）　他 2件']
+  ], '区分は使わない。行は資料の型として、案件が無くても出す');
   assert.strictEqual(movesTable.rows.slice(1).reduce((sum, r) => sum + Number(r.cells[1].text.replace('件', '')), 0), 4,
     '動きの行の件数を合わせると、見出しの「変化のある案件」の件数になる（案件ごとに1回だけ数える）');
   assert.deepStrictEqual(textsOf(statesTable), [
@@ -566,36 +603,25 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
   assert.deepStrictEqual([statesTable.rows[2].cells[3].fill, statesTable.rows[2].cells[3].color], [c.gap, c.muted], 'データなしは灰色のセル');
   const stall = statesTable.rows[1].cells[0];
   assert.deepStrictEqual(JSON.parse(JSON.stringify([stall.text, stall.size, stall.color, stall.spans])),
-    ['停滞（同一ステータス45日以上）', 7.5, c.muted, [{start: 0, end: 2, size: S.bodySize, bold: true, color: c.ink}]],
-    '定義は区分の名前のあとに小さな字で（同じ行に入るので、行を高くしない）');
+    ['停滞（同一ステータス45日以上）', 7.5, c.muted, [{start: 0, end: 2, size: movesTable.rows[1].cells[0].size, bold: true, color: c.ink}]],
+    '定義は名前のあとに小さな字で（同じ行に入るので、行を高くしない。名前は表の文字の大きさ）');
+  assert.ok(movesTable.rows[1].cells[0].size >= 7.5, 'リード文が2行でも、表の文字は 7.5pt 以上');
   assert.strictEqual(statesTable.rows[1].h, statesTable.rows[0].h, '停滞の行も、ほかの行と同じ高さ');
   const counts = movesTable.rows.slice(1).concat(statesTable.rows).map(r => r.cells[1]).filter(cell => cell.text !== '—');   // —：数えられない行
-  assert.ok(counts.every(cell => cell.size >= S.bodySize && cell.size === counts[0].size && cell.bold && cell.color === c.greenDark), '件数は緑の太字（どの行も同じ大きさ）');
+  assert.ok(counts.every(cell => cell.size >= movesTable.rows[1].cells[0].size && cell.size === counts[0].size && cell.bold && cell.color === c.greenDark),
+    '件数は緑の太字（どの行も同じ大きさ。表の文字より小さくしない）');
   assert.deepStrictEqual(statesTable.columns, movesTable.columns, '2つの表の列はそろえる');
   // 表は緑の見出し・1列目は薄い緑（得意先は太字）・ほかは白
   const moves = slides[4].elements.find(el => el.type === 'table');
   assert.ok(moves.rows[0].cells.every(cell => cell.fill === c.green && cell.color === c.white && cell.bold));
   assert.deepStrictEqual([moves.rows[1].cells[0].fill, moves.rows[1].cells[0].spans, moves.rows[1].cells[2].fill],
     [c.greenSoft, [{start: 0, end: 2, bold: true}], c.white]);
-  // 3枚目：区分はセルに重ねたラベル（前向きは濃い緑・後ろ向きは濃いグレー・そのほかは薄いグレー。枠なし）。活動状況だけ変わった案件（活動の更新）も、最後に活動状況と一緒に出す
-  assert.match(moves.rows[1].cells.map(cell => cell.text).join(' | '), /^C社\n店舗什器 \|  \| 提案中 ▶ 失注 \| 5 \|/);
-  const pills = roleOf(slides[4], 'pill');
-  assert.deepStrictEqual(pills.map(el => [el.text, el.fill, el.color, el.line || null, el.shape]), [
-    ['失注', c.dark, c.white, null, 'ROUND_RECTANGLE'],
-    ['削除', c.dark, c.white, null, 'ROUND_RECTANGLE'],
-    ['前進', c.greenDeep, c.white, null, 'ROUND_RECTANGLE'],
-    ['活動更新', c.graySoft, c.sub, null, 'ROUND_RECTANGLE']
-  ], 'サマリーの動きの表と同じ順');
-  assert.strictEqual(new Set(pills.map(el => el.w)).size, 1, '区分のラベルの幅は同じ');
-  assert.ok(pills.every(el => el.h === S.pill.h && el.size === S.pill.size));
-  pills.forEach((el, i) => {
-    const x0 = moves.x + moves.columns[0];
-    const y0 = moves.y + moves.rows.slice(0, i + 1).reduce((a, r) => a + r.h, 0);
-    assert.ok(el.x >= x0 + 4 && el.x + el.w <= x0 + moves.columns[1] - 4 && el.y >= y0 + 4 && el.y + el.h <= y0 + moves.rows[i + 1].h - 4,
-      'ラベルがセルに余白をあけて入る：' + el.text);
-    assert.deepStrictEqual(plain(g.mtgWrap_(el.text, el.w, el.size, 2)), [el.text], 'ラベルの文字が1行に入る：' + el.text);
-  });
-  assert.deepStrictEqual([moves.rows[4].cells[0].text.split('\n')[0], moves.rows[4].cells[5].text], ['D社', '10/12 打ち合わせ']);
+  // 3枚目：区分の列・ラベルは無い。今のステータスのまとまりの順、その中は想定売上の大きい順（テストのシートのステータスには確度が無いので、想定売上の順）
+  assert.match(moves.rows[1].cells.map(cell => cell.text).join(' | '), /^A社\nアプリ刷新 \| 初回訪問 ▶ 提案中 \| 10 \|/);
+  assert.deepStrictEqual(moves.rows.slice(1).map(r => r.cells[0].text.split('\n')[0]), ['A社', 'C社', 'F社', 'D社'], 'サマリーの動きの表と同じ順');
+  assert.strictEqual(roleOf(slides[4], 'pill').length, 0);
+  assert.ok(!moves.rows[0].cells.some(cell => cell.text === '区分'));
+  assert.deepStrictEqual([moves.rows[4].cells[0].text.split('\n')[0], moves.rows[4].cells[4].text], ['D社', '10/12 打ち合わせ'], '活動状況だけ変わった案件も、活動状況と一緒に出す');
   // 4枚目：期待値の大きい順。当てはまる状況は事実だけ
   const focus = slides[5].elements.find(el => el.type === 'table');
   assert.deepStrictEqual(focus.rows[0].cells.map(cell => cell.text.replace(/\n/g, '')),
@@ -610,7 +636,7 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
   assert.strictEqual(lead(slides[8]), '直近14日間に変化のある案件は 4件。');
   const appendixRows = slides[8].elements.find(el => el.type === 'table').rows.slice(1);
   assert.strictEqual(appendixRows.length, 4, 'Appendix ① の行の数は、サマリー・P4 の「変化のある案件」の件数と同じ（その他の項目のみの更新は入れない）');
-  assert.deepStrictEqual(appendixRows.map(r => r.cells[0].text.split('\n')[0]), ['C社', 'F社', 'A社', 'D社'], 'P4 と同じ順');
+  assert.deepStrictEqual(appendixRows.map(r => r.cells[0].text.split('\n')[0]), ['A社', 'C社', 'F社', 'D社'], 'P4 と同じ順');
   assert.strictEqual(lead(slides[9]), '進行中案件のうち、同一ステータスに 45日以上滞留している案件は 2件（想定売上合計 80百万円。想定売上未入力の 1件を除く）。' +
     'うち直近14日間の更新なし 1件。', '合計に含めていない空欄の件数を書く');
   assert.deepStrictEqual(roleOf(slides[9], 'lead').map(el => el.text.split('\n').length).slice(1), [1], '1つ目の文と、更新なしの件数は行を分ける');
@@ -630,7 +656,7 @@ test('空欄は推定で補わず「未入力」と書く（「—」や 0 に�
   const slides = plain(g.mtgSlides_(s));
   const rowOf = (slide, customer) => slide.elements.filter(el => el.type === 'table').map(t => t.rows.find(r => r.cells[0].text.split('\n')[0] === customer))
     .find(Boolean).cells.map(cell => cell.text);
-  assert.deepStrictEqual(rowOf(slides[4], 'D社'), ['D社\n物流改善', '', '未入力', '未入力', '未入力', '10/12 打ち合わせ', '未入力'],
+  assert.deepStrictEqual(rowOf(slides[4], 'D社'), ['D社\n物流改善', '未入力', '未入力', '未入力', '10/12 打ち合わせ', '未入力'],
     'P3：ステータス・期待値・受注月・責任者');
   assert.deepStrictEqual(rowOf(slides[5], 'D社').slice(1, 6), ['未入力\n未入力', '未入力\n100日以上', '未入力', '10/12 打ち合わせ', '未入力'],
     '期待値上位：期待値・想定売上・ステータス・受注月・課題');
@@ -2160,8 +2186,8 @@ test('addBusinessMtgDummyHistory：シートの値は変えずに、ダミーの
 
   // 会議サマリはダミーを数える（サンプル SMP- は数えない）：前回より後の変化・停滞
   const s = plain(summarize(g, '新FMT'));
-  assert.deepStrictEqual(s.changes.map(c => [label(c), c.category]), [['ダミー商事／（ダミー）削除した案件', 'removed'], ['F社／ブランド刷新', 'new'],
-    ['E社／販促DX', 'forward'], ['D社／物流改善', 'activity'], ['C社／店舗什器', 'slipped']]);
+  assert.deepStrictEqual(s.changes.map(c => [label(c), c.category]), [['E社／販促DX', 'forward'], ['ダミー商事／（ダミー）削除した案件', 'removed'],
+    ['C社／店舗什器', 'slipped'], ['F社／ブランド刷新', 'new'], ['D社／物流改善', 'activity']], '想定売上の大きい順（テストのシートのステータスには確度が無い）');
   assert.deepStrictEqual(s.changes.filter(c => c.category === 'slipped').map(c => [c.monthFrom, c.monthTo]), [[month(1).text, month(2).text]]);
   assert.deepStrictEqual(s.stalled.map(d => [label(d), d.days, d.touched]), [['A社／アプリ刷新', 100, false], ['D社／物流改善', 70, true]],
     'ステータスを最後に変えた日を 100日・70日前に（D社は前回以降に活動を更新した）');
@@ -2669,7 +2695,7 @@ test('mtgPdfFitLinks_：PDF のページへのリンクの飛び先「/XYZ null 
   assert.ok(Buffer.from(saved.getBytes().map(b => b & 255)).toString('latin1').indexOf('/Fit') > 0);
 });
 
-test('Appendix のページはグレー（扉に合わせる）：表の見出し・1列目・大きな数字をグレーに。区分・該当事項のラベルは意味の色のまま。本編は緑', () => {
+test('Appendix のページはグレー（扉に合わせる）：表の見出し・1列目・大きな数字をグレーに。区分のラベルは置かない。本編は緑', () => {
   const {gas, g} = setup();
   const T = gas.get('MTG_TITLES');
   const c = gas.get('MTG_OPTIONS').colors;
@@ -2682,8 +2708,8 @@ test('Appendix のページはグレー（扉に合わせる）：表の見出�
     assert.ok(f.indexOf('#7F7F7F') >= 0 && f.indexOf(c.green) < 0 && f.indexOf(c.greenSoft) < 0, sl.title + '：' + JSON.stringify(Array.from(new Set(f))));
   });
   const changes = appendix.find(sl => sl.title === T.changes);
-  const pills = changes.elements.filter(el => el.role === 'pill');
-  assert.ok(pills.some(p => p.fill === c.greenDeep), '前向きの区分は緑のまま');
+  assert.strictEqual(changes.elements.filter(el => el.role === 'pill').length, 0, '区分のラベルは置かない（今のステータスの順に並べる）');
+  assert.ok(!changes.elements.find(el => el.type === 'table').rows[0].cells.some(cell => cell.text === '区分'));
   // 本編は緑のまま（色を戻している）
   const moves = slides.find(sl => sl.title === T.progress);
   assert.ok(fills(moves).indexOf(c.green) >= 0 && fills(moves).indexOf('#7F7F7F') < 0);
