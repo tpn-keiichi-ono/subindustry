@@ -1110,6 +1110,24 @@ function createGas(options) {
           const copyId = 'copy-' + (++copySeq);
           gas.driveCopies.push({from: id, name, folder: folder ? folder.getId() : null, locked: gas.lockHolders > 0});
           if ((gas.copyErrors || []).indexOf(folder ? folder.getId() : '') >= 0) throw new Error('Access denied: DriveApp.');
+          // スプレッドシートのコピー（このスプレッドシート・作ったスプレッドシート）：すべてのシートの中身（値・数式・書式）をそのまま写した
+          // スプレッドシートにする（SpreadsheetApp.openById で開け、フォルダの一覧（getFiles）にも出る）
+          const book = id === gas.ss.getId() ? gas.ss : gas.created.find(b => b.getId() === id);
+          if (book) {
+            const clone = new Spreadsheet(gas, {id: copyId, name: String(name), timeZone: book.timeZone});
+            book.getSheets().forEach(sheet => {
+              const copy = new Sheet(gas, clone, sheet.name, sheet.id, sheet.maxRows, sheet.maxCols);
+              copy.data = sheet.data.map(line => line && line.map(cell => (cell ? Object.assign({}, cell) : cell)));
+              copy.frozenRows = sheet.frozenRows;
+              copy.widths = Object.assign({}, sheet.widths);
+              copy.hidden = sheet.hidden;
+              clone.sheets.push(copy);
+            });
+            gas.created.push(clone);
+            gas.driveFiles.push({id: copyId, folder: folder ? folder.getId() : null, name: String(name),
+              blob: {getContentType: () => MimeType.GOOGLE_SHEETS}});
+            return {getId: () => copyId, getName: () => String(name), getUrl: () => clone.getUrl()};
+          }
           const source = gas.driveFiles.find(f => f.id === id);
           if (source) {
             // フォルダに作ったファイル（PDF など）のコピー：同じフォルダの一覧（getFilesByName）に出るようにする

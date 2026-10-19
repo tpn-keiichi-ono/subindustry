@@ -117,7 +117,7 @@ const MTG_OPTIONS = {
     tabColor: '#000000',
     widths: {date: 83, kind: 119, combined: 158, sheet: 138}   // 列の幅（px）
   },
-  // 時点コピー：追跡シートの値を別のスプレッドシート（タイトルは保存した日時と、いつ保存したか）に保存する。保存するのは、本番の資料を作ったとき
+  // 時点コピー：スプレッドシート全体を別のスプレッドシート（タイトルは保存した日時と、いつ保存したか）にコピーする。保存するのは、本番の資料を作ったとき
   // （資料作成時）・基準を記録したとき（基準）・毎日（日次。installDailySheetCopy() で始める）。次の資料の「前回からの変化」は、前回の資料作成時の
   // コピーと今のシートを比べて出す（差分追跡が止まっていた間・2,000セルを超える貼り付けの変更も出る）。資料を作る画面では、保存先のフォルダの
   // どの時点コピーと比べるかも選べる。保存先は、会議サマリのフォルダの中の copyFolderName のフォルダ
@@ -130,7 +130,6 @@ const MTG_OPTIONS = {
   // keepDays 日より古い日次のコピーはゴミ箱に移す（資料作成時・基準のコピーは消さない）
   dailyCopy: {hour: 5, keepDays: 90, handler: 'saveDailySheetCopy'},
   copyFolderKey: 'MTG_COPY_FOLDER_ID', // 作ったフォルダの ID（ドキュメントのプロパティ）
-  copyChunkRows: 500,                 // コピーするときの1回の行数
   indexLockWaitMs: 30000,             // インデックスに書くときのロック（ドキュメントロック）の待ち時間
   // 表紙・扉のひな形（Google スライド。いただいた .pptx を Google スライドにしたもの）。資料はひな形のコピーに作る（ページの大きさもひな形のまま）。
   // ひな形の URL は、スクリプトのプロパティ templateUrlKey（MTG_TEMPLATE_URL）に入れる（エディタの「プロジェクトの設定」→「スクリプト プロパティ」。
@@ -387,12 +386,12 @@ function setBusinessMtgBaseline() {
   const answer = !ui ? null : ui.alert(CRED_OPTIONS.menuTitle,
     '「' + names.join('」「') + '」に、今（' + at + '）を基準として記録します。\n' +
     '次に作る会議サマリは、基準より後の変化だけを出します（今までに貼り付けた案件を「新規」に数えません）。\n' +
-    '今の値は「' + MTG_OPTIONS.copyName + '」（別のスプレッドシート）に保存し、次の資料はそれと比べます。\n' +
+    'スプレッドシート全体を「' + MTG_OPTIONS.copyName + '」（別のスプレッドシート）にコピーし、次の資料はそれと比べます。\n' +
     '移行の貼り付けがすべて終わってから実行してください。記録してよろしいですか？', ui.ButtonSet.YES_NO);
   if (ui && answer !== ui.Button.YES) return;
   const copy = mtgRecordBaseline_(ss, names, now);
   const message = '「' + names.join('」「') + '」に、基準（' + at + '）を記録しました。次に作る会議サマリは、基準より後の変化を出します。\n' +
-    '今の値を「' + copy.title + '」に保存しました：' + copy.url +
+    'スプレッドシート全体を「' + copy.title + '」にコピーしました：' + copy.url +
     (ui ? '' : '（スプレッドシートの画面に出せないため、確かめずにすべての追跡シートに記録しました）');
   console.log(message);
   if (ui) ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
@@ -405,7 +404,7 @@ function setBusinessMtgBaseline() {
 function mtgRecordBaseline_(ss, names, now) {
   const props = PropertiesService.getDocumentProperties();
   const date = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/MM/dd');
-  const copy = mtgSaveCopy_(ss, names, now, mtgCopyNote_('baseline'));
+  const copy = mtgSaveCopy_(ss, now, mtgCopyNote_('baseline'));
   names.forEach(name => {
     const list = mtgMeetings_(props, name).filter(m => !m.baseline)
       .concat([{date, cutoff: now.getTime(), baseline: true, copy: {id: copy.id, sheet: name}}])
@@ -491,10 +490,10 @@ function mtgScheduledPrevious_(meeting) {
 }
 
 /**
- * 比べる時点の候補（画面のプルダウン。新しい順）。時点コピー（保存先のフォルダにあるもの（前の名前も）と、シートの会議の記録にあるもの）と、
+ * 比べる時点の候補（画面のプルダウン。新しい順）。時点コピー（保存先のフォルダにあるもの（前の名前も）と、シートの会議の記録にあるもの。同じコピーは1つ）と、
  * 会議日程の一覧（インデックスの RX Business Meeting）の会議日（その日の 0時から。変更の記録で比べる）。
  * [{key: 'copy:<ID>' | 'date:yyyy/MM/dd', label, group: プルダウンの見出し, day: その時点の日付（資料作成時のコピーは会議日。画面では、選んだ会議日より前の
- *  ものだけ出す）, at, date, copyId, copyKind: 'meeting' | 'daily' | 'baseline' | '', meeting, sheets: コピーにあるシート（記録に無ければ null）}]
+ *  ものだけ出す）, at, date, copyId, copyKind: 'meeting' | 'daily' | 'baseline' | '', meeting}]
  */
 function mtgComparePoints_(ss) {
   const props = PropertiesService.getDocumentProperties();
@@ -503,19 +502,18 @@ function mtgComparePoints_(ss) {
   Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name)).forEach(name => {
     mtgMeetings_(props, name).forEach(m => {
       if (!m.copy || !m.copy.id) return;
-      const c = copies.get(m.copy.id) || {copyId: m.copy.id, at: m.cutoff, copyKind: m.baseline ? 'baseline' : 'meeting', meeting: m.baseline ? '' : m.date, sheets: []};
-      c.sheets.push(name);
-      copies.set(m.copy.id, c);
+      if (!copies.has(m.copy.id)) {
+        copies.set(m.copy.id, {copyId: m.copy.id, at: m.cutoff, copyKind: m.baseline ? 'baseline' : 'meeting', meeting: m.baseline ? '' : m.date});
+      }
     });
   });
   mtgListCopies_().forEach(f => {
-    if (!copies.has(f.id)) copies.set(f.id, {copyId: f.id, at: f.at, copyKind: f.kind, meeting: f.meeting, sheets: null});
+    if (!copies.has(f.id)) copies.set(f.id, {copyId: f.id, at: f.at, copyKind: f.kind, meeting: f.meeting});
   });
   const points = Array.from(copies.values()).map(c => {
     const date = c.meeting || Utilities.formatDate(new Date(c.at), tz, 'yyyy/MM/dd');
     return Object.assign(c, {key: 'copy:' + c.copyId, day: date, date, group: '時点コピー（その時点のシートの値と比べる）',
-      label: Utilities.formatDate(new Date(c.at), tz, 'yyyy/M/d HH:mm') + '（' + mtgCopyKindText_(c.copyKind, c.meeting) +
-        (c.sheets ? '・' + c.sheets.length + 'シート' : '') + '）'});
+      label: Utilities.formatDate(new Date(c.at), tz, 'yyyy/M/d HH:mm') + '（' + mtgCopyKindText_(c.copyKind, c.meeting) + '）'});
   });
   mtgIndexMeetings_(MTG_OPTIONS.index.kind).forEach(m => {
     points.push({key: 'date:' + m.date, day: m.date, date: m.date, at: Utilities.parseDate(m.date, tz, 'yyyy/MM/dd').getTime(),
@@ -533,7 +531,7 @@ function mtgCopyKindText_(kind, meeting) {
 
 /**
  * 画面で選んだ比べる時点（key）を、資料の「前回」の形にする。空なら null（シートごとに前回の会議から。mtgPreviousOf_）。
- * 'copy:<ID>'：その時点コピーと比べる {date, cutoff, copy: {id}, sheets, baseline, copyKind, meeting, chosen}（記録に無いコピーは、開いてシートを確かめる）
+ * 'copy:<ID>'：その時点コピーと比べる {date, cutoff, copy: {id}, sheets, baseline, copyKind, meeting, chosen}（コピーを開いて、あるシートを確かめる）
  * 'date:yyyy/MM/dd'：その日の 0時から、変更の記録で比べる {date, cutoff, scheduled, chosen}
  * 'at:yyyy/MM/dd HH:mm'：その日時から、変更の記録で比べる {date, cutoff, at, chosen}
  * 分からない・開けない・今より後なら止める
@@ -546,13 +544,12 @@ function mtgResolvePoint_(key) {
   if (text.indexOf('copy:') === 0) {
     const c = mtgComparePoints_(SpreadsheetApp.getActiveSpreadsheet()).find(p => p.key === text);
     if (!c) throw new Error('比べる時点（' + MTG_OPTIONS.copyName + '）が見つかりません。画面を開き直して、選び直してください。');
-    let sheets = c.sheets;
-    if (!sheets) {
-      try {
-        sheets = SpreadsheetApp.openById(c.copyId).getSheets().map(sheet => sheet.getName());
-      } catch (_) {
-        throw new Error('選んだ' + MTG_OPTIONS.copyName + '（' + c.label + '）を開けません（ファイルを消した・権限が無いなど）。ほかの時点を選んでください。');
-      }
+    // コピーにあるシート（スプレッドシート全体のコピーなら、すべての追跡シート。前の版の値だけのコピーは、そのとき選んだシート）
+    let sheets;
+    try {
+      sheets = SpreadsheetApp.openById(c.copyId).getSheets().map(sheet => sheet.getName());
+    } catch (_) {
+      throw new Error('選んだ' + MTG_OPTIONS.copyName + '（' + c.label + '）を開けません（ファイルを消した・権限が無いなど）。ほかの時点を選んでください。');
     }
     point = {date: c.date, cutoff: c.at, copy: {id: c.copyId}, sheets, baseline: c.copyKind === 'baseline', copyKind: c.copyKind, meeting: c.meeting,
       chosen: true};
@@ -627,7 +624,7 @@ function mtgRunCheckText_(final, names, meeting, point) {
   return (final ? '本番の資料を作り、会議日を記録します。' : '試しに資料を作ります（会議日は記録しません。ファイル名に「試作」が付きます）。') +
     '\n\n会議日：' + mtgDateLabel_(meeting) + '\n比べる時点：' + (point ? '選んだ時点（全シート共通）' : '前回の会議（シートごと）') +
     '\n対象期間\n' + lines.join('\n') +
-    (final ? '\n\n今の値は「' + MTG_OPTIONS.copyName + '」（別のスプレッドシート。タイトルは今の日時）に保存し、次の会議の資料はそれと比べます。' +
+    (final ? '\n\nスプレッドシート全体を「' + MTG_OPTIONS.copyName + '」（別のスプレッドシート。タイトルは今の日時）にコピーし、次の会議の資料はそれと比べます。' +
       '\n記録した会議日は、次の会議の資料の起点になります。配布したあとは作り直さないでください。' : '');
 }
 
@@ -689,7 +686,7 @@ function mtgJobRun_(ss, job, started) {
   // 本番：今の値を時点コピーに保存し（次の会議の資料はこれと比べる）、会議日を記録する。資料を全部作れてから
   if (job.final && !job.copy) {
     if (!fits(R.copyMs)) return mtgJobPause_(job);
-    const copy = mtgSaveCopy_(ss, job.names, new Date(job.now), mtgCopyNote_('meeting', job.meeting));
+    const copy = mtgSaveCopy_(ss, new Date(job.now), mtgCopyNote_('meeting', job.meeting));
     job.copy = {id: copy.id, title: copy.title, url: copy.url};
     const props = PropertiesService.getDocumentProperties();
     job.names.forEach(name => {
@@ -772,7 +769,7 @@ function mtgJobMessage_(job, done) {
       lines.push('（スマートチップにできなかったので、ファイル名のリンクで書きました。チップにするには、エディタの「サービス」に Google Sheets API を追加してください）');
     }
   }
-  if (job.copy) lines.push('今の値を「' + job.copy.title + '」に保存しました（次の会議の資料はこれと比べます）：' + job.copy.url);
+  if (job.copy) lines.push('スプレッドシート全体を「' + job.copy.title + '」にコピーしました（次の会議の資料はこれと比べます）：' + job.copy.url);
   if (o.keepSlides) lines.push('同じフォルダに、Google スライド（同じ名前）も保存しました。');
   lines.push(job.final
     ? '会議日（' + job.meeting + '）を記録しました。次の会議の資料は、今以降の変化を出します。配るときは、PDF を参加者に共有してください（保存先のフォルダは共有しない）。'
@@ -1827,41 +1824,20 @@ function mtgFolderIdOf_(text) {
 /* ---------------- 時点コピー ---------------- */
 
 /**
- * 追跡シート（names）の今の値を、新しいスプレッドシート（タイトルは「時点コピー_実行日時」＋ note）に保存する。シートごとに同じ名前のシートにし、
- * 同じ位置に値だけを写す（数式は計算した値に。文字は先頭に ' を付けて数式にならないように。日付・数値の書式も写す）。
- * 保存先は mtgCopyFolder_。途中で止まったら作りかけのファイルはゴミ箱に移す。戻り値 {id, title, url}
+ * このスプレッドシート全体（すべてのシート・数式・書式・入力規則）を、新しいスプレッドシート（タイトルは「時点コピー_実行日時」＋ note）にコピーする
+ * （Drive のファイルのコピー。値を1セルずつ写すより速い）。保存先は mtgCopyFolder_。比べるときは、コピーの追跡シートの値を読む
+ * （追跡シートの数式は同じファイルの中のシート（定義_ステータス など）だけを参照するので、コピーでも保存した時点の値になる）。
+ * 復旧の控えにも使える。コピーにはスクリプトも入る（トリガーは入らない）。戻り値 {id, title, url}
  */
-function mtgSaveCopy_(ss, names, now, note) {
-  const o = MTG_OPTIONS;
-  const title = o.copyName + '_' + Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm') + (note || '');
+function mtgSaveCopy_(ss, now, note) {
+  const title = MTG_OPTIONS.copyName + '_' + Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm') + (note || '');
   const folder = mtgCopyFolder_(ss);
-  const book = SpreadsheetApp.create(title);
   try {
-    const blank = book.getSheets()[0];
-    names.forEach((name, i) => {
-      const source = ss.getSheetByName(name);
-      if (!source) throw new Error('「' + name + '」シートが見つかりません。');
-      const target = i === 0 ? blank.setName(name) : book.insertSheet(name);
-      const rows = Math.max(source.getLastRow(), 1);
-      const cols = Math.max(source.getLastColumn(), 1);
-      diffEnsureGrid_(target, rows, cols);
-      for (let start = 1; start <= rows; start += o.copyChunkRows) {
-        const count = Math.min(o.copyChunkRows, rows - start + 1);
-        const from = source.getRange(start, 1, count, cols);
-        target.getRange(start, 1, count, cols)
-          .setValues(from.getValues().map(line => line.map(v => (typeof v === 'string' ? credText_(v) : v))))
-          .setNumberFormats(from.getNumberFormats());
-      }
-      diffTrimGrid_(target, cols, rows);
-      const header = DIFF_RULES[name] ? DIFF_RULES[name].headerRow : 1;
-      if (target.getMaxRows() > header) target.setFrozenRows(header);
-    });
-    DriveApp.getFileById(book.getId()).moveTo(folder);
+    const file = DriveApp.getFileById(ss.getId()).makeCopy(title, folder);
+    return {id: file.getId(), title, url: file.getUrl()};
   } catch (error) {
-    try { DriveApp.getFileById(book.getId()).setTrashed(true); } catch (_) {}
     throw new Error('時点コピーを保存できませんでした（' + (error && error.message || error) + '）。もう一度お試しください。');
   }
-  return {id: book.getId(), title, url: book.getUrl()};
 }
 
 /**
@@ -1936,13 +1912,13 @@ function mtgListCopies_() {
 }
 
 /**
- * 日次の時点コピーを始める（エディタから実行する。管理者のアカウントで）。毎日 MTG_OPTIONS.dailyCopy.hour 時台に、追跡シートの値を時点コピー（日次）に保存する
+ * 日次の時点コピーを始める（エディタから実行する。管理者のアカウントで）。毎日 MTG_OPTIONS.dailyCopy.hour 時台に、スプレッドシート全体を時点コピー（日次）にコピーする
  * トリガーを1つだけ作る（もう一度実行しても増えない）。資料を作る画面の「比べる時点」に出る
  */
 function installDailySheetCopy() {
   const o = MTG_OPTIONS.dailyCopy;
   const message = mtgInstallDailyCopyTrigger_() ?
-    '日次の' + MTG_OPTIONS.copyName + 'を始めました。毎日 ' + o.hour + '時台に、追跡シートの値を「' + MTG_OPTIONS.copyName + '_日時（' + MTG_OPTIONS.copyKinds.daily + '）」に保存します' +
+    '日次の' + MTG_OPTIONS.copyName + 'を始めました。毎日 ' + o.hour + '時台に、スプレッドシート全体を「' + MTG_OPTIONS.copyName + '_日時（' + MTG_OPTIONS.copyKinds.daily + '）」にコピーします' +
       '（' + o.keepDays + '日より古い日次のコピーはゴミ箱に移します）。今すぐ1つ保存するときは saveDailySheetCopy() を実行してください。'
     : '日次の' + MTG_OPTIONS.copyName + 'はすでに始めています（毎日 ' + o.hour + '時台）。';
   console.log(message);
@@ -1973,18 +1949,13 @@ function mtgInstallDailyCopyTrigger_() {
 }
 
 /**
- * 日次の時点コピーを保存する（時間主導のトリガーから。エディタから実行してもよい）。追跡シートの今の値を「時点コピー_日時（日次）」に保存し、
+ * 日次の時点コピーを保存する（時間主導のトリガーから。エディタから実行してもよい）。スプレッドシート全体を「時点コピー_日時（日次）」にコピーし、
  * keepDays 日より古い日次のコピーをゴミ箱に移す（資料作成時・基準のコピーは消さない）。シートは読むだけなのでロックは取らない
  */
 function saveDailySheetCopy() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const names = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
-  if (!names.length) {
-    console.log('追跡しているシート（test.gs の DIFF_RULES）が見つからないため、' + MTG_OPTIONS.copyName + 'を保存しませんでした。');
-    return;
-  }
   const now = new Date();
-  const copy = mtgSaveCopy_(ss, names, now, mtgCopyNote_('daily'));
+  const copy = mtgSaveCopy_(ss, now, mtgCopyNote_('daily'));
   const limit = now.getTime() - MTG_OPTIONS.dailyCopy.keepDays * 86400000;
   let removed = 0;
   mtgListCopies_().filter(c => c.kind === 'daily' && c.at < limit).forEach(c => {
@@ -1995,7 +1966,7 @@ function saveDailySheetCopy() {
       console.warn('古い日次の' + MTG_OPTIONS.copyName + '（' + c.title + '）をゴミ箱に移せませんでした：' + (error && error.message || error));
     }
   });
-  console.log('「' + copy.title + '」に ' + names.length + 'シートを保存しました：' + copy.url + (removed ? '（古い日次のコピー ' + removed + '件をゴミ箱に移しました）' : ''));
+  console.log('スプレッドシート全体を「' + copy.title + '」にコピーしました：' + copy.url + (removed ? '（古い日次のコピー ' + removed + '件をゴミ箱に移しました）' : ''));
   return copy;
 }
 

@@ -1404,44 +1404,43 @@ test('インデックス：書けないとき（ほかの処理が実行中な�
 test('時点コピー：copyFolderId を設定すれば、そのフォルダに保存する（開けなければ止める）', () => {
   const {gas, g} = setup({edits: false});
   gas.get('MTG_OPTIONS').copyFolderId = 'https://drive.google.com/drive/folders/CopyFolder000001';
-  g.mtgSaveCopy_(gas.ss, ['新FMT'], new Date(), '');
-  assert.deepStrictEqual(plain(gas.moved), [{id: gas.created[0].getId(), folder: 'CopyFolder000001'}]);
+  g.mtgSaveCopy_(gas.ss, new Date(), '');
+  assert.deepStrictEqual(plain(gas.driveCopies.map(c => c.folder)), ['CopyFolder000001']);
   assert.strictEqual(gas.driveFolders.length, 0, 'フォルダは作らない');
   gas.missingFolders = ['CopyFolder000001'];
-  assert.throws(() => g.mtgSaveCopy_(gas.ss, ['新FMT'], new Date(), ''), /時点コピーの保存先のフォルダ（ID：CopyFolder000001）を開けません/);
+  assert.throws(() => g.mtgSaveCopy_(gas.ss, new Date(), ''), /時点コピーの保存先のフォルダ（ID：CopyFolder000001）を開けません/);
 });
 
 /* ---------------- 時点コピー ---------------- */
 
-test('mtgSaveCopy_：追跡シートの値を、実行日時のタイトルの別のスプレッドシートに写す（文字は数式にならない。書式・見出しの固定も）', () => {
+test('mtgSaveCopy_：スプレッドシート全体（すべてのシート・数式・書式）を、実行日時のタイトルの別のスプレッドシートにコピーする（保存先は会議サマリのフォルダの中のフォルダ）', () => {
   const {gas, g, sheet} = setup({edits: false});
-  gas.asUser(() => sheet.getRange(3, COL.issue).setValue("'=SUM(1)"));   // 「=」で始まる文字
   sheet.getRange(7, COL.stamp).setNumberFormat('yyyy/MM/dd HH:mm');
   const now = new Date(Date.UTC(2026, 9, 16, 9, 30));   // 日本時間 2026/10/16 18:30
-  const copy = g.mtgSaveCopy_(gas.ss, ['新FMT', '新FMT2'], now, '（会議日 2026-10-23）');
-  assert.strictEqual(copy.title, '時点コピー_2026-10-16 18:30（会議日 2026-10-23）');
-  const book = gas.created[0];
-  assert.deepStrictEqual([book.getId(), book.getName()], [copy.id, copy.title]);
-  assert.deepStrictEqual(book.getSheets().map(t => t.getName()), ['新FMT', '新FMT2'], '追跡シートごとに同じ名前のシート');
+  const copy = g.mtgSaveCopy_(gas.ss, now, g.mtgCopyNote_('meeting', '2026/10/23'));
+  assert.strictEqual(copy.title, '時点コピー_2026-10-16 18:30（資料作成時・会議日 2026-10-23）');
+  const book = gas.created.find(b => b.getId() === copy.id);
+  assert.deepStrictEqual([book.getName(), copy.url], [copy.title, 'https://docs.google.com/spreadsheets/d/' + copy.id + '/edit']);
+  assert.deepStrictEqual(plain(book.getSheets().map(t => t.getName())), plain(gas.ss.getSheets().map(t => t.getName())), 'すべてのシート（変更の記録なども）');
   const target = book.getSheetByName('新FMT');
   const rows = sheet.getLastRow();
   const cols = sheet.getLastColumn();
   assert.deepStrictEqual(plain(target.getRange(1, 1, rows, cols).getDisplayValues()), plain(sheet.getRange(1, 1, rows, cols).getDisplayValues()),
     '同じ位置に、同じ表示の値');
-  assert.deepStrictEqual([target.getRange(3, COL.issue).getFormula(), target.getRange(3, COL.issue).getValue()], ['', '=SUM(1)'], '文字のまま（数式にしない）');
   assert.ok(target.getRange(7, COL.stamp).getValue() instanceof gas.Date, '日付は日付のまま');
-  assert.strictEqual(target.getFrozenRows(), 2, '見出しの行まで固定');
-  assert.deepStrictEqual([target.getMaxRows(), target.getMaxColumns()], [rows, cols], '使わない行・列は持たない');
   assert.deepStrictEqual(plain(gas.driveFolders), [{id: 'folder-1', name: '時点コピー', parent: gas.get('MTG_OPTIONS').folderId}], '会議サマリのフォルダの中のフォルダ');
-  assert.deepStrictEqual(plain(gas.moved), [{id: copy.id, folder: 'folder-1'}]);
-  g.mtgSaveCopy_(gas.ss, ['新FMT'], now, '');
+  assert.deepStrictEqual(plain(gas.driveCopies.map(c => [c.from, c.name, c.folder])), [[gas.ss.getId(), copy.title, 'folder-1']], 'Drive のファイルのコピー');
+  // コピーのあとで元のシートを変えても、コピーは変わらない
+  gas.asUser(() => sheet.getRange(3, COL.status).setValue('受注'));
+  assert.notStrictEqual(target.getRange(3, COL.status).getValue(), '受注');
+  g.mtgSaveCopy_(gas.ss, now, '');
   assert.strictEqual(gas.driveFolders.length, 1, '2回目からは同じフォルダ');
-  assert.deepStrictEqual(gas.writes.filter(w => w.ss === gas.ss.getId()), [], '元のスプレッドシートには書き込まない');
+  assert.deepStrictEqual(gas.writes.filter(w => w.ss === gas.ss.getId() && w.sheet !== '新FMT'), [], '元のスプレッドシートには書き込まない');
 });
 
 test('前回からの変化を時点コピーと比べる：差分追跡を通らなかった変更（止まっていた間など）も出し、記録の無い変更として数える', () => {
   const {gas, g, sheet} = setup({edits: false});
-  const copy = g.mtgSaveCopy_(gas.ss, ['新FMT'], new Date(), '');
+  const copy = g.mtgSaveCopy_(gas.ss, new Date(), '');
   g.recordDiffEdit(gas.edit(sheet, 'J3', '10/10 提案書を提出'));   // A社：活動状況（記録あり）
   // ここからは差分追跡を通らない変更（止まっていた間の変更の代わり）
   gas.asUser(() => {
@@ -1474,7 +1473,7 @@ test('前回からの変化を時点コピーと比べる：差分追跡を通�
 
 test('時点コピーと比べるとき：得意先・案件名を書き換えた案件は、変更の記録で前の名前とつなげる（新規・削除にしない）。値が戻っていれば変化なし', () => {
   const {gas, g, sheet} = setup({edits: false});
-  const copy = g.mtgSaveCopy_(gas.ss, ['新FMT'], new Date(), '');
+  const copy = g.mtgSaveCopy_(gas.ss, new Date(), '');
   g.recordDiffEdit(gas.edit(sheet, 'E3', 'アプリ刷新（第2期）'));
   g.recordDiffEdit(gas.edit(sheet, 'J5', '一時的な変更'));
   g.recordDiffEdit(gas.edit(sheet, 'J5', '見積提出'));   // 元に戻した
@@ -1493,7 +1492,7 @@ test('前回の時点コピーを開けないときは、変更の記録から�
   assert.strictEqual(gas.created.length, 1);
   const props = g.PropertiesService.getDocumentProperties();
   assert.deepStrictEqual(plain(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT'))[0].copy), {id: gas.created[0].getId(), sheet: '新FMT'});
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /今の値を「時点コピー_.*（資料作成時・会議日 \d{4}-10-23）」に保存しました（次の会議の資料はこれと比べます）：https:\/\/docs\.google\.com\/spreadsheets\/d\/created-1\/edit/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /スプレッドシート全体を「時点コピー_.*（資料作成時・会議日 \d{4}-10-23）」にコピーしました（次の会議の資料はこれと比べます）：https:\/\/docs\.google\.com\/spreadsheets\/d\/copy-\d+\/edit/);
 
   g.recordDiffEdit(gas.edit(sheet, 'F7', '受注見込み'));
   gas.unopenable = [gas.created[0].getId()];
@@ -1543,8 +1542,8 @@ test('createBusinessMtgSummaries：シートと会議日を聞き、シートご
     [file + '_新FMT_RX Business Meeting用資料.pdf', 'folder-1', 'deck-1', 'application/pdf'],
     [file + '_新FMT2_RX Business Meeting用資料.pdf', 'folder-1', 'deck-2', 'application/pdf']
   ]);
-  assert.deepStrictEqual(plain(gas.moved), [{id: 'deck-1', folder: 'folder-1'}, {id: 'deck-2', folder: 'folder-1'}, {id: 'created-1', folder: 'folder-2'}],
-    'スライドも同じフォルダに残す。時点コピーは、その中のフォルダ');
+  assert.deepStrictEqual(plain(gas.moved), [{id: 'deck-1', folder: 'folder-1'}, {id: 'deck-2', folder: 'folder-1'}], 'スライドも同じフォルダに残す');
+  assert.deepStrictEqual(plain(gas.driveCopies.filter(c => c.from === gas.ss.getId()).map(c => c.folder)), ['folder-2'], '時点コピーは、その中のフォルダ');
   // ひな形が無いので、表紙（1枚目）と扉（6枚目）の背景を、緑のグラデーションと RX の画像にする（PDF にする前に保存する）
   assert.deepStrictEqual(gas.slideBackgrounds.map(b => [b.deck, b.page, b.blob.getContentType(), b.blob.getName()]), [
     ['deck-1', 'mtg_p1', 'image/png', 'meeting-cover.png'], ['deck-1', 'mtg_p6', 'image/png', 'meeting-divider.png'],
@@ -1562,7 +1561,7 @@ test('createBusinessMtgSummaries：シートと会議日を聞き、シートご
   const done = gas.alerts[gas.alerts.length - 1].message;
   assert.match(done, /「新FMT」：\d{4}1023_新FMT_RX Business Meeting用資料\.pdf（変化のある案件 4・停滞 0・確認事項 3）\n　https:\/\/drive\.google\.com\/file\/d\/file-1\/view/,
     '配る PDF の URL を出す');
-  assert.doesNotMatch(done, /全体/);
+  assert.doesNotMatch(done, /「全サブインダストリー」：/, '統合版は作らない');
   assert.match(done, /保存先：https:\/\/drive\.google\.com\/drive\/folders\/folder-1/);
   assert.match(done, /会議日（\d{4}\/10\/23）を記録しました。/);
   const props = g.PropertiesService.getDocumentProperties();
@@ -1642,7 +1641,7 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   gas.layoutPlaceholders = ['SLIDE_NUMBER', 'FOOTER'];   // ひな形の白紙のレイアウトにはページ番号・フッターの枠がある
   gas.promptAnswers = ['1', '10/23'];
   g.createBusinessMtgSummaries();
-  assert.deepStrictEqual(gas.driveCopies.map(cp => [cp.from, cp.folder]), [[id, 'folder-1']], '変換したひな形を保存先のフォルダにコピーする');
+  assert.deepStrictEqual(gas.driveCopies.filter(cp => cp.from !== gas.ss.getId()).map(cp => [cp.from, cp.folder]), [[id, 'folder-1']], '変換したひな形を保存先のフォルダにコピーする');
   assert.strictEqual(gas.fetches.length, fetched, '.pptx を更新していなければ、変換し直さない');
   const deck = gas.decks.find(d => d.template === id);
   const r = plain(deck.requests);
@@ -1706,7 +1705,7 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   assert.strictEqual(props.getProperty('MTG_TEMPLATE_URL'), null);
   gas.promptAnswers = ['1', '10/23'];
   g.createBusinessMtgSummaries();
-  assert.strictEqual(gas.driveCopies.length, 2);
+  assert.strictEqual(gas.driveCopies.filter(cp => cp.from !== gas.ss.getId()).length, 2);
 
   // スクリプトのプロパティに Google スライドの URL を直接入れてもよい（変換しない）。前の版の登録（ドキュメントのプロパティ）は、空のときだけ読む
   props.setProperty('MTG_TEMPLATE_URL', 'https://docs.google.com/presentation/d/' + id + '/edit');
@@ -2620,7 +2619,7 @@ test('比べる時点を選ぶ：時点コピー（前々回の会議など）�
   // 画面の候補：時点コピー（会議日ごと。シートの数も）
   const points = plain(g.getMeetingRunData('business', false).points);
   const copyOf = date => points.find(p => p.key.indexOf('copy:') === 0 && p.day === date);
-  assert.match(copyOf(d9).label, /^\d{4}\/\d+\/\d+ \d{2}:\d{2}（資料作成時・会議日 10\/9・1シート）$/);
+  assert.match(copyOf(d9).label, /^\d{4}\/\d+\/\d+ \d{2}:\d{2}（資料作成時・会議日 10\/9）$/);
   assert.strictEqual(copyOf(d9).group, '時点コピー（その時点のシートの値と比べる）');
   assert.ok(copyOf(d23));
 
@@ -2644,7 +2643,7 @@ test('比べる時点を選ぶ：時点コピー（前々回の会議など）�
   const check = g.checkMeetingRun('business', true, d30, ['新FMT', '新FMT2'], copyOf(d9).key).text;
   assert.match(check, /比べる時点：選んだ時点（全シート共通）/);
   assert.match(check, /・新FMT：選んだ時点：\d+\/\d+ \d{2}:\d{2} の時点コピー（資料作成時・会議日 10\/9）以降（その時点のコピーと比べる）/);
-  assert.match(check, /・新FMT2：選んだ時点：.* の時点コピー（資料作成時・会議日 10\/9）以降（その時点のコピーにこのシートが無いため、変更の記録から）/);
+  assert.match(check, /・新FMT2：選んだ時点：.* の時点コピー（資料作成時・会議日 10\/9）以降（その時点のコピーと比べる）/, 'スプレッドシート全体のコピーなので、作らなかったシートもある');
   assert.match(g.checkMeetingRun('business', true, d30, ['新FMT'], '').text, /比べる時点：前回の会議（シートごと）\n対象期間\n・新FMT：前回会議（10\/23）の資料作成時/);
 
   // 日時を指定：その時刻から変更の記録で（コピーは使わない）
@@ -2674,9 +2673,9 @@ test('時点コピーの保存先のフォルダから選ぶ：記録に無い�
   const {gas, g, sheet} = setup();
   const now = Date.now();
   // 日次のコピー（2日前）と、前の名前（会議時点のコピー）のコピー
-  const daily = g.mtgSaveCopy_(gas.ss, ['新FMT', '新FMT2'], new Date(now - 2 * 86400000), g.mtgCopyNote_('daily'));
+  const daily = g.mtgSaveCopy_(gas.ss, new Date(now - 2 * 86400000), g.mtgCopyNote_('daily'));
   assert.match(daily.title, /^時点コピー_\d{4}-\d{2}-\d{2} \d{2}:\d{2}（日次）$/);
-  const old = g.mtgSaveCopy_(gas.ss, ['新FMT'], new Date(now - 5 * 86400000), '');
+  const old = g.mtgSaveCopy_(gas.ss, new Date(now - 5 * 86400000), '');
   const oldTitle = old.title.replace('時点コピー_', '会議時点のコピー_') + '（会議日 2026-10-09）';   // 前の版のタイトル
   gas.created.find(book => book.getId() === old.id).name = oldTitle;
   gas.driveFiles.find(f => f.id === old.id).name = oldTitle;
@@ -2690,13 +2689,18 @@ test('時点コピーの保存先のフォルダから選ぶ：記録に無い�
   // 日次のコピーと比べる：そのあとの変更が出る。シートはコピーを開いて確かめる
   g.recordDiffEdit(gas.edit(sheet, 'F7', '受注見込み'));
   const point = g.mtgResolvePoint_('copy:' + daily.id);
-  assert.deepStrictEqual(plain([point.copyKind, point.sheets]), ['daily', ['新FMT', '新FMT2']]);
+  assert.deepStrictEqual(plain([point.copyKind, point.sheets.filter(n => /^新FMT/.test(n))]), ['daily', ['新FMT', '新FMT2']]);
   const meeting = g.mtgParseDate_('10/30', new Date());
   const s = g.mtgSummaries_(gas.ss, ['新FMT'], new Date(), false, meeting, point).summaries[0];
   assert.ok(s.copy && s.previous.copyKind === 'daily');
   assert.match(g.mtgPeriodText_(s), /^\d+\/\d+ \d{2}:\d{2} の時点コピー（日次）以降（選んだ時点）$/);
   assert.ok(s.changes.some(c => label(c) === 'E社／販促DX'));
   assert.match(g.checkMeetingRun('business', false, meeting, ['新FMT2'], 'copy:' + daily.id).text, /・新FMT2：選んだ時点：.*（日次）以降（その時点のコピーと比べる）/);
+  // 前の版の値だけのコピー（そのとき選んだシートだけ）：コピーに無いシートは、その時刻から変更の記録で比べる
+  const oldBook = gas.created.find(book => book.getId() === old.id);
+  oldBook.deleteSheet(oldBook.getSheetByName('新FMT2'));
+  assert.match(g.checkMeetingRun('business', false, meeting, ['新FMT2'], 'copy:' + old.id).text,
+    /・新FMT2：選んだ時点：.*（資料作成時・会議日 10\/9）以降（その時点のコピーにこのシートが無いため、変更の記録から）/);
   // 開けないコピーは止める
   gas.unopenable = [daily.id];
   assert.throws(() => g.mtgResolvePoint_('copy:' + daily.id), /選んだ時点コピー（.*（日次））を開けません/);
@@ -2712,11 +2716,12 @@ test('日次の時点コピー：installDailySheetCopy() でトリガーを1つ�
   assert.match(gas.alerts[gas.alerts.length - 1].message, /すでに始めています/);
   // 古い日次（100日前）・古い資料作成時のコピーと、新しい日次
   const now = Date.now();
-  const oldDaily = g.mtgSaveCopy_(gas.ss, ['新FMT'], new Date(now - 100 * 86400000), g.mtgCopyNote_('daily'));
-  const oldMeeting = g.mtgSaveCopy_(gas.ss, ['新FMT'], new Date(now - 100 * 86400000), g.mtgCopyNote_('meeting', '2026/07/10'));
+  const oldDaily = g.mtgSaveCopy_(gas.ss, new Date(now - 100 * 86400000), g.mtgCopyNote_('daily'));
+  const oldMeeting = g.mtgSaveCopy_(gas.ss, new Date(now - 100 * 86400000), g.mtgCopyNote_('meeting', '2026/07/10'));
   const copy = g.saveDailySheetCopy();
   assert.match(copy.title, /（日次）$/);
-  assert.deepStrictEqual(plain(gas.created.find(b => b.getId() === copy.id).getSheets().map(sh => sh.getName())), ['新FMT', '新FMT2']);
+  assert.deepStrictEqual(plain(gas.created.find(b => b.getId() === copy.id).getSheets().map(sh => sh.getName())), plain(gas.ss.getSheets().map(sh => sh.getName())),
+    'スプレッドシート全体');
   assert.ok(gas.trashed.indexOf(oldDaily.id) >= 0, '古い日次はゴミ箱へ');
   assert.ok(gas.trashed.indexOf(oldMeeting.id) < 0, '資料作成時のコピーは残す');
   assert.deepStrictEqual(plain(g.mtgListCopies_().map(c => c.id)), [copy.id, oldMeeting.id]);
