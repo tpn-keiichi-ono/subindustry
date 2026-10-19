@@ -2048,13 +2048,22 @@ test('remindBusinessMtgUpdate：管理フォーマットの更新のお願いを
   assert.deepStrictEqual(gas.fetches.map(f => f.url), [hook]);
   const text = sentText(gas.fetches[0]);
   const lines = text.split('\n');
-  assert.deepStrictEqual(lines.slice(0, 3), ['*【RX Business Meeting】管理フォーマットの更新のお願い（新FMT）*',
-    '2026年10月23日（金）9:00〜10:30 の RX Business Meeting に向けて、事前資料を作成します。',
-    'お手数ですが、*10月21日（水） 17:00* までに、管理フォーマットの案件の情報を最新にしてください。']);
+  assert.deepStrictEqual(lines.slice(0, 11), ['*【RX Business Meeting】 管理フォーマットの更新のお願い（新FMT）*',
+    '2026年10月23日（金）9:00〜10:30 の 「RX Business Meeting」 に向けて、事前資料（新FMT）を作成します。',
+    'お手数ですが、更新期限までに、管理フォーマットの案件の情報を最新にしてください。',
+    '',
+    '*▼ 更新期限*',
+    '10月21日（水） 17:00',
+    '',
+    '*▼ 更新していただきたい項目*',
+    '・案件ステータス・想定売上・期待値・受注月・売上開始月',
+    '・活動状況・活動における課題・次回アクション',
+    ''], '事前資料のご案内と同じ形（題・会議日程・太字の見出し）');
+  assert.ok(lines.indexOf('*▼ 会議日程*') > 0 && lines[lines.indexOf('*▼ 会議日程*') + 1] === '2026年10月23日（金）9:00〜10:30');
   // 今の入力状況：進行中は A社・C社・D社・E社・F社。必須項目が空は D社・F社（活動状況）、受注月を過ぎているのは A社、最終更新から30日以上は E社
   assert.ok(lines.indexOf('・進行中の案件 5件') > 0 && lines.some(l => /^・必須項目（案件ステータス・.*・活動状況・アカウント責任者）が未入力の案件 2件$/.test(l)) &&
     lines.indexOf('・受注月を過ぎている案件 1件') > 0 && lines.indexOf('・最終更新から 30日以上たっている案件 1件') > 0, text);
-  assert.match(text, /▼ 管理フォーマット\n<https:\/\/docs\.google\.com\/spreadsheets\/d\/spreadsheet-id\/edit#gid=\d+\|「新FMT」シート>$/, 'シートを開くリンク');
+  assert.match(text, /\*▼ 管理フォーマット\*\n<https:\/\/docs\.google\.com\/spreadsheets\/d\/spreadsheet-id\/edit#gid=\d+\|「新FMT」シート>$/, 'シートを開くリンク');
   assert.match(gas.alerts[gas.alerts.length - 1].message, /^管理フォーマットの更新のお願いを送りました（1\/1スペース）。\n・新FMT：送りました/);
   // 送れなかったスペースがあっても、ほかは送る（理由を出す）
   props.setProperty('MTG_SUBCHAT_新FMT2', hook.replace('SPACE1', 'SPACE2'));
@@ -2078,8 +2087,23 @@ test('notifySubBusinessMtgSummaries：その会議日の本番の事前資料（
   assert.deepStrictEqual(sent.map(f => f.url.replace(/\?.*/, '')), ['https://chat.googleapis.com/v1/spaces/SPACE1/messages']);
   const meeting = g.mtgParseDate_('10/23', new Date());
   const pdf = meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料.pdf';
-  assert.match(sentText(sent[0]), new RegExp('^\\*【RX Business Meeting】事前資料のご案内（新FMT）\\*\\n[\\s\\S]*▼ 事前資料\\n<https://drive\\.google\\.com/file/d/[^|]+\\|' +
-    pdf.replace(/[.()]/g, '\\$&') + '>$'));
+  const lines = sentText(sent[0]).split('\n');
+  assert.deepStrictEqual(lines.slice(0, -1), [
+    '*【RX Business Meeting】 事前資料のご案内（新FMT）*',
+    g.mtgDateLabel_(meeting) + '9:00〜10:30 の 「RX Business Meeting」 の事前資料（新FMT）が作成されました。',
+    '',
+    '*▼ レビュアーの方々*',
+    'お手数ですが、会議の前にご一読いただきレビュー観点を整理ください。',
+    '',
+    '*▼ 発表者の方々*',
+    '資料内容をご確認の上、発表内容のご準備をお願いいたします。',
+    '',
+    '*▼ 会議日程*',
+    g.mtgDateLabel_(meeting) + '9:00〜10:30',
+    '',
+    '*▼ 事前資料*'
+  ]);
+  assert.match(lines[lines.length - 1], new RegExp('^<https://drive\\.google\\.com/file/d/[^|]+\\|' + pdf.replace(/[.()]/g, '\\$&') + '>$'), 'PDF のリンク（ファイル名で表示）');
   assert.match(gas.alerts[gas.alerts.length - 1].message, /送らなかったシート：\n・新FMT2：会議日 \d{4}\/10\/23 の本番の事前資料（PDF）が無い/);
 });
 
