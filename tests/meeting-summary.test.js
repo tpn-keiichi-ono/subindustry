@@ -2942,7 +2942,7 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
 function withScenario(gas, g) {
   ['新FMT', '新FMT2'].forEach(name => {
     const sheet = gas.ss.getSheetByName(name);
-    gas.asUser(() => sheet.getRange(2, 16).setValue('RXシナリオ構成'));
+    gas.asUser(() => sheet.getRange(2, 16).setValue('RXシナリオ構成（サービス）'));
     sheet.getRange('P3:P20').setDataValidation(g.SpreadsheetApp.newDataValidation().requireValueInList(['X', 'Y', 'W'], true).build());
   });
   const a = gas.ss.getSheetByName('新FMT');
@@ -3040,7 +3040,7 @@ test('createBusinessMtgScenarioSummary：シートを選び、確かめてから
   const props = g.PropertiesService.getDocumentProperties();
   // 列が無ければ止める（何も作らない）
   gas.promptAnswers = [''];
-  assert.throws(() => g.createBusinessMtgScenarioSummary(), /選んだシートに「RXシナリオ構成」の列がありません/);
+  assert.throws(() => g.createBusinessMtgScenarioSummary(), /選んだシートに「RXシナリオ構成（サービス）」の列がありません/);
   assert.strictEqual(gas.decks.length, 0);
 
   withScenario(gas, g);

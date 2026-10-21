@@ -119,12 +119,12 @@ test('本物のシート名の設定：DIFF_RULES・前の名前（formerNames�
   });
 });
 
-test('本物のシートの見出し（2026/10/16 のスーパー・GMS の2行目に、2026/10/21 に J列「RXシナリオ構成」を足したもの）に、会議サマリが読む列がそろっている。差分追跡の範囲に入っている', () => {
+test('本物のシートの見出し（2026/10/16 のスーパー・GMS の2行目に、2026/10/22 の J列「RXシナリオ構成（サービス）」・K列「サービス価格」を足したもの）に、会議サマリが読む列がそろっている。差分追跡の範囲に入っている', () => {
   const gas = createGas({realSheetNames: true});
   const mtg = gas.get('MTG_OPTIONS');
   const g = gas.global;
   const headers = ['最終更新日時\n（自動入力）', 'No.', 'サブインダストリー', '得意先', '先方部門', '先方担当役職', '先方担当氏名',
-    'クライアントとのリレーション\nクライアント内のガバナンス', '案件名', 'RXシナリオ構成', '案件のスコープ', 'スコープに対する競合他社', 'プロジェクト開始-終了', '案件ステータス',
+    'クライアントとのリレーション\nクライアント内のガバナンス', '案件名', 'RXシナリオ構成（サービス）', 'サービス価格', '案件のスコープ', 'スコープに対する競合他社', 'プロジェクト開始-終了', '案件ステータス',
     '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '売上開始月', '提案開始日', '活動状況', '活動における課題', '次回アクション',
     '商談記録（ＵＲＬ）', 'アカウント責任者部署', 'アカウント責任者', 'BX部署', 'BX担当', '想定される価値創出のケース／期待される導入効果',
     '提案を勝ち取るための戦略・差異化要素', 'サービスのリクエスト'];
@@ -139,7 +139,7 @@ test('本物のシートの見出し（2026/10/16 のスーパー・GMS の2行�
   const rule = gas.get('DIFF_RULES')['スーパー・GMS'];
   assert.deepStrictEqual(JSON.parse(JSON.stringify([rule.headerRow, rule.ranges])), [2, ['D3:AF']]);
   ['customer', 'project', 'status', 'amount', 'weighted', 'orderMonth', 'activity', 'scenario'].forEach(key => assert.ok(at(mtg.columns[key]) + 1 >= 4, key));
-  assert.strictEqual(at(mtg.columns.scenario), 9, 'RXシナリオ構成は J列（案件名の右）');
+  assert.strictEqual(at(mtg.columns.scenario), 9, 'RXシナリオ構成（サービス）は J列（案件名の右）');
   assert.ok(headers.length <= 32, 'AF 列まで');
 });
 
