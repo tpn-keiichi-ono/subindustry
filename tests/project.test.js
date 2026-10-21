@@ -141,6 +141,10 @@ test('本物のシートの見出し（2026/10/16 のスーパー・GMS の2行�
   ['customer', 'project', 'status', 'amount', 'weighted', 'orderMonth', 'activity', 'scenario'].forEach(key => assert.ok(at(mtg.columns[key]) + 1 >= 4, key));
   assert.strictEqual(at(mtg.columns.scenario), 9, 'RXシナリオ構成（サービス）は J列（案件名の右）');
   assert.ok(headers.length <= 32, 'AF 列まで');
+  // サービスリクエストの取り込み（ServiceManagement.gs）が読む列も、見出しがちょうど1つずつある（列を足しても見出しで探すのでずれない）
+  const svc = gas.get('SVC_OPTIONS');
+  svc.sourceHeaders.concat(svc.sourceOptionalHeaders).forEach(label => assert.strictEqual(g.taskHeaderCount_(headers, label), 1, 'リクエストの取り込み：' + label));
+  assert.strictEqual(headers.indexOf('サービスのリクエスト') + 1, 31, 'サービスのリクエストは AE列（追跡範囲 D3:AF の中）');
 });
 
 test('本物の設定：11のサブインダストリーのシート（2026/10/16 にスーパー・GMS と同じ見出しにそろえた）を、同じ見出しの行・追跡範囲で追跡し、リクエストも読む', () => {
