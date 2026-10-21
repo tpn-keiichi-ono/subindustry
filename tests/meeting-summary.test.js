@@ -1885,7 +1885,7 @@ test('スプレッドシートの画面に出せないとき（エディタを�
   assert.ok(gas.logs.some(l => /「新FMT」「新FMT2」に、基準（.*）を記録しました。[\s\S]*確かめずにすべての追跡シートに記録しました/.test(l.line)), '実行ログに書く');
   assert.deepStrictEqual([gas.prompts.length, gas.alerts.length], [0, 0]);
   ['createBusinessMtgSummaries', 'previewBusinessMtgSummaries', 'removeBusinessMtgRecord', 'setMeetingTemplate',
-    'setBusinessMtgSubChats', 'remindBusinessMtgUpdate', 'notifySubBusinessMtgSummaries'].forEach(fn => {
+    'setBusinessMtgSubChats', 'remindBusinessMtgUpdate', 'notifySubBusinessMtgSummaries', 'createBusinessMtgScenarioSummary'].forEach(fn => {
     assert.throws(() => g[fn](), /スプレッドシートの画面に、入力・確かめの画面を出せません。スプレッドシートを開いたまま、そのスプレッドシートの「拡張機能」→「Apps Script」から開いたエディタで実行してください/, fn);
   });
 });
@@ -2934,4 +2934,143 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
   o.enabled = false;
   assert.ok(!plain(g.mtgSlides_(s)).some(sl => sl.title === '計画に対する積み上げ'));
   assert.ok(!plain(g.mtgCombinedSlides_([s], '2026/10/23', true)).some(sl => /^計画に対する積み上げ/.test(sl.title)));
+});
+
+/* ---------------- RXシナリオ構成（J列。複数選択） ---------------- */
+
+/** 2つのシートに「RXシナリオ構成」の列（P列。プルダウンの選択肢 X・Y・W）を足し、案件に選ぶ */
+function withScenario(gas, g) {
+  ['新FMT', '新FMT2'].forEach(name => {
+    const sheet = gas.ss.getSheetByName(name);
+    gas.asUser(() => sheet.getRange(2, 16).setValue('RXシナリオ構成'));
+    sheet.getRange('P3:P20').setDataValidation(g.SpreadsheetApp.newDataValidation().requireValueInList(['X', 'Y', 'W'], true).build());
+  });
+  const a = gas.ss.getSheetByName('新FMT');
+  gas.asUser(() => {
+    a.getRange('P3').setValue('X, Y');          // A社（10）：2つ
+    a.getRange('P5').setValue('X');             // C社（5）：単独
+    a.getRange('P7').setValue('Y, Z\nY');       // E社（40）：選択肢に無い Z も。同じものは1つ
+    gas.ss.getSheetByName('新FMT2').getRange('P3').setValue('X');   // A社（10）：単独
+  });
+}
+
+test('mtgScenarioList_：プルダウンの複数選択（「A, B」）・改行で区切り、同じものは1つ。読点は選択肢の名前の一部として切らない', () => {
+  const {g} = setup({edits: false});
+  assert.deepStrictEqual(plain(g.mtgScenarioList_('ID-POS分析, アプリ・CRM')), ['ID-POS分析', 'アプリ・CRM']);
+  assert.deepStrictEqual(plain(g.mtgScenarioList_(' A ,B\nA，C ')), ['A', 'B', 'C']);
+  assert.deepStrictEqual(plain(g.mtgScenarioList_('店頭、販促')), ['店頭、販促']);
+  assert.deepStrictEqual(plain(g.mtgScenarioList_('')), []);
+  assert.deepStrictEqual(plain(g.mtgScenarioList_(null)), []);
+});
+
+test('RXシナリオ構成の集計：按分（複数選んだ案件は等分。合計は期待値合計と一致）・関与（重複あり）・件数・単独・未設定・組み合わせ。進行中の案件だけ', () => {
+  const {gas, g} = setup({edits: false});
+  withScenario(gas, g);
+  const data = g.mtgScenarioData_(gas.ss, ['新FMT', '新FMT2']);
+  assert.deepStrictEqual(plain(data.withColumn), ['新FMT', '新FMT2']);
+  assert.deepStrictEqual(plain(data.options), ['X', 'Y', 'W', 'Z'], 'プルダウンの順。選択肢に無い値はあとに足す');
+  assert.ok(!data.deals.some(d => d.customer === 'B社'), '受注（終わった案件）は除く');
+  const t = plain(g.mtgScenarioTotals_(data));
+  assert.deepStrictEqual([t.total, t.count, t.blank], [68, 6, 1], '期待値が空の D社は 0 として数える');
+  const pick = item => [item.key, item.share, item.full, item.count, item.solo];
+  assert.deepStrictEqual(t.items.map(pick), [
+    ['Y', 25, 50, 2, 0],       // A社 10/2 + E社 40/2
+    ['X', 20, 25, 3, 2],       // A社 10/2 + C社 5 + 新FMT2 A社 10
+    ['Z', 20, 40, 1, 0],
+    ['W', 0, 0, 0, 0],         // 選ばれていない選択肢も 0 で出す
+    ['未設定', 3, 3, 2, 2]      // D社（0）・F社（3）。いちばん下
+  ]);
+  assert.strictEqual(t.items.reduce((sum, item) => sum + item.share, 0), t.total, '按分の合計は期待値合計と一致');
+  assert.ok(t.items.reduce((sum, item) => sum + item.full, 0) > t.total, '関与は重複して数える');
+  assert.deepStrictEqual(t.items[1].bySheet, {新FMT: 10, 新FMT2: 10});
+  assert.deepStrictEqual(t.combos.map(cb => [cb.key, cb.size, cb.count, cb.value]), [['Y＋Z', 2, 1, 40], ['X', 1, 2, 15], ['X＋Y', 2, 1, 10]],
+    '組み合わせの名前はプルダウンの順でつなぐ。期待値の大きい順');
+
+  // 列が無いシートは除く
+  const sheet = gas.ss.getSheetByName('新FMT2');
+  gas.asUser(() => sheet.getRange(2, 16).setValue(''));
+  const one = g.mtgScenarioData_(gas.ss, ['新FMT', '新FMT2']);
+  assert.deepStrictEqual(plain([one.withColumn, one.withoutColumn]), [['新FMT'], ['新FMT2']]);
+});
+
+test('RXシナリオ構成別の期待値の資料：表紙・全体（横棒・按分・関与・件数・単独）・サブインダストリー別（行の合計は期待値合計）・組み合わせ。ページに入る', () => {
+  const {gas, g} = setup({edits: false});
+  withScenario(gas, g);
+  const data = g.mtgScenarioData_(gas.ss, ['新FMT', '新FMT2']);
+  const t = g.mtgScenarioTotals_(data);
+  const slides = plain(g.mtgScenarioSlides_(data, t, new Date()));
+  assert.deepStrictEqual(slides.map(sl => sl.title), ['表紙', 'RXシナリオ構成別の期待値（全サブインダストリー）',
+    'RXシナリオ構成別の期待値（サブインダストリー別）', 'RXシナリオ構成別の期待値（組み合わせ）']);
+  assert.match(slides[0].template.subtitle, /参考資料【試作】$/);
+  const bars = slides[1];
+  assert.match(leadOf(bars), /^進行中案件 6件・期待値 68百万円を、RXシナリオ構成ごとに集計（按分の大きい順）。按分：複数選んだ案件（2件）は選んだ数で等分（合計＝期待値）。関与：/);
+  assert.deepStrictEqual(roleOf(bars, 'scenario-name').map(el => el.text), ['Y', 'X', 'Z', 'W', '未設定']);
+  assert.deepStrictEqual(roleOf(bars, 'scenario-value').slice(0, 4).map(el => el.text), ['25', '50', '2件', '0件']);
+  assert.deepStrictEqual(roleOf(bars, 'scenario-value').slice(-4).map(el => el.text), ['3', '3', '2件', '—'], '未設定に単独は無い');
+  const table = slides[2].elements.find(el => el.type === 'table');
+  assert.deepStrictEqual(table.rows[0].cells.map(cell => cell.text.replace(/\n/g, '')), ['サブインダストリー', 'Y', 'X', 'Z', 'W', '未設定', '合計']);
+  assert.deepStrictEqual(table.rows.slice(1).map(r => r.cells.map(cell => cell.text)), [
+    ['新FMT', '25', '10', '20', '—', '3', '58'],
+    ['新FMT2', '—', '10', '—', '—', '—', '10'],
+    ['合計', '25', '20', '20', '—', '3', '68']
+  ]);
+  const combos = slides[3].elements.find(el => el.type === 'table');
+  assert.deepStrictEqual(combos.rows.slice(1).map(r => r.cells.slice(0, 3).map(cell => cell.text)), [['Y＋Z', '1件', '40'], ['X', '2件', '15'], ['X＋Y', '1件', '10']]);
+  assert.match(combos.rows[2].cells[3].text, /^新FMT2／A社／アプリ刷新|A社／アプリ刷新（新FMT2）/, '主な案件は期待値の大きい順・シート名つき');
+  const S = gas.get('MTG_SLIDE');
+  slides.slice(1).forEach(sl => {
+    // ページの下の区切り線・出典・ページ番号（共通の枠）は除く
+    sl.elements.filter(el => el.type !== 'table' && el.y < S.bottom).forEach(el => assert.ok(el.x >= 0 && el.x + el.w <= S.width + 0.01 && el.y + el.h <= S.bottom + 0.01,
+      sl.title + '：' + (el.text || el.role)));
+    sl.elements.filter(el => el.type === 'table').forEach(tb => assert.ok(S.top + tb.rows.reduce((sum, r) => sum + r.h, 0) <= S.bottom + 0.1, sl.title));
+  });
+
+  // 組み合わせが多ければ上位 scenario.combos 件まで・続きのページ。選んだ案件が無ければ空の表に理由
+  const many = Object.assign({}, plain(t), {combos: Array.from({length: 20}, (_, i) => ({key: 'C' + i, size: 1, count: 1, value: 20 - i,
+    deals: [{sheet: '新FMT', customer: '得意先' + i, project: '案件', weighted: 20 - i}]}))});
+  const pages = plain(g.mtgScenarioCombosSlides_(many));
+  assert.strictEqual(pages.reduce((sum, p) => sum + p.elements[0].rows.length - 1, 0), 15);
+  assert.match(pages[0].lead, /期待値の大きい順に 15件（全 20通り）。$/);
+  const none = plain(g.mtgScenarioCombosSlides_(Object.assign({}, many, {combos: []})));
+  assert.strictEqual(none[0].lead, 'RXシナリオ構成を選んだ進行中の案件なし。');
+});
+
+test('createBusinessMtgScenarioSummary：シートを選び、確かめてから、保存先のフォルダに試作の PDF を作る（会議日の記録は変えない）。列が無ければ止める', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getDocumentProperties();
+  // 列が無ければ止める（何も作らない）
+  gas.promptAnswers = [''];
+  assert.throws(() => g.createBusinessMtgScenarioSummary(), /選んだシートに「RXシナリオ構成」の列がありません/);
+  assert.strictEqual(gas.decks.length, 0);
+
+  withScenario(gas, g);
+  const before = props.getProperty('MTG_MEETINGS_新FMT');
+  // 「いいえ」なら作らない
+  gas.promptAnswers = [''];
+  gas.confirmAnswer = 'NO';
+  g.createBusinessMtgScenarioSummary();
+  assert.strictEqual(gas.decks.length, 0);
+  gas.confirmAnswer = 'YES';
+  gas.promptAnswers = ['1'];
+  g.createBusinessMtgScenarioSummary();
+  const confirm = gas.alerts[gas.alerts.length - 2].message;
+  assert.match(confirm, /^RXシナリオ構成別の期待値の資料（試作）を作ります。\n\n・対象：新FMT（進行中の案件 5件・期待値 58百万円）\n・シナリオ：Y・Z・X・W\n・未設定：2件\n/);
+  assert.match(gas.decks[gas.decks.length - 1].title, /^\d{8}_RXシナリオ構成別の期待値_試作$/);
+  assert.ok(gas.driveFiles.some(f => /^\d{8}_RXシナリオ構成別の期待値_試作\.pdf$/.test(f.name)), 'PDF を作る');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^RXシナリオ構成別の期待値の資料（試作）を作りました：\d{8}_RXシナリオ構成別の期待値_試作\.pdf（4ページ）/);
+  assert.strictEqual(props.getProperty('MTG_MEETINGS_新FMT'), before, '会議日の記録は変えない');
+});
+
+test('期待値上位案件：RXシナリオ構成の列があれば、案件名の下に小さく選んだシナリオ（空なら「RXシナリオ：未入力」）。列が無ければ今のまま', () => {
+  const {gas, g} = setup({edits: false});
+  const page = s => plain(g.mtgSlides_(s)).find(sl => sl.title === '期待値上位案件の状況・課題').elements.find(el => el.type === 'table');
+  const before = page(summarize(g, '新FMT'));
+  assert.ok(before.rows.slice(1).every(r => r.cells[0].text.split('\n').length === 2), '列が無ければ2行のまま');
+  withScenario(gas, g);
+  const s = summarize(g, '新FMT');
+  assert.strictEqual(s.scenarioColumn, true);
+  const cells = page(s).rows.slice(1).map(r => r.cells[0]);
+  const line = customer => cells.find(cell => cell.text.startsWith(customer)).text.split('\n')[2];
+  assert.deepStrictEqual([line('E社'), line('A社'), line('C社')], ['Y・Z', 'X・Y', 'X']);
+  assert.strictEqual(line('F社'), 'RXシナリオ：未入力', '列の幅に入る短さ');
 });

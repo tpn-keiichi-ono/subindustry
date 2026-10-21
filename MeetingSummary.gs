@@ -212,6 +212,14 @@ const MTG_OPTIONS = {
   stallDays: 45,                     // 停滞：ステータスがこの日数以上同じ進行中の案件
   recentMonths: 2,                   // 期待値上位案件の直近の動き：何か月前（同じ日）からの変更の記録を出すか
   recentMax: 8,                      // 期待値上位案件の直近の動き：1案件に出す動きの数（新しい順。残りは「ほか N件」）
+  // RXシナリオ構成別の期待値（createBusinessMtgScenarioSummary()。構成が未確定のあいだの別の資料）。複数のシナリオを選んだ案件は、
+  // 期待値を選んだ数で等分して配分する（按分。合計は期待値合計と一致）。あわせて、そのシナリオを含む案件の期待値をそのまま足した「関与」（重複あり）も出す
+  scenario: {
+    title: 'RXシナリオ構成別の期待値',
+    fileName: '{date}_RXシナリオ構成別の期待値_試作',
+    unsetLabel: '未設定',
+    combos: 15                       // 組み合わせの表に出す数（期待値の大きい順）
+  },
   noUpdateDays: 30,                  // 入力内容のチェック「更新なし」：最終更新日時がこの日数より前の進行中の案件
   overdueDays: 90,                   // 入力内容のチェック「予定日超過」：予定日を過ぎてこの日数以内のもの（古いものは出さない）
   fiscalStartMonth: 4,               // 期の始まりの月（受注月別の期待値の四半期・計画に対する積み上げの今年度）
@@ -241,6 +249,7 @@ const MTG_OPTIONS = {
     issue: '活動における課題',
     owner: 'アカウント責任者',
     nextAction: '次回アクション',
+    scenario: 'RXシナリオ構成',           // 複数選んだときは「A, B」の形（プルダウンの複数選択）。無ければ使わない
     // デリバリー担当：新FMT にはこの列が無いので空（入力内容のチェック「デリバリー担当未設定」を出さない）。列を作ったら、その見出しを書く
     delivery: '',
     record: '商談記録（ＵＲＬ）'          // 提案資料・商談の音声の格納先（入力内容のチェック「資料なし」）
@@ -960,6 +969,240 @@ function mtgPostChat_(webhook, text) {
 function mtgChatSpace_(webhook) {
   const m = /\/spaces\/([^/?]+)/.exec(webhook);
   return 'スペース ' + (m ? m[1] : '（不明）');
+}
+
+/* ---------------- RXシナリオ構成別の期待値（構成が未確定のあいだの別の資料） ---------------- */
+
+/** RXシナリオ構成のセルの値を、選んだシナリオの一覧に（プルダウンの複数選択は「A, B」。改行でも区切る。選択肢の名前に読点があっても切らない。同じものは1つ） */
+function mtgScenarioList_(text) {
+  const out = [];
+  String(text || '').split(/\s*[,，\n]\s*/).map(v => v.trim()).filter(Boolean).forEach(v => { if (out.indexOf(v) < 0) out.push(v); });
+  return out;
+}
+
+/**
+ * RXシナリオ構成別の期待値の資料を作る（エディタから実行する。構成が未確定のあいだは、事前資料とは別の資料）。シートを選び（空欄ならすべて）、
+ * 進行中の案件の期待値を、シナリオ（「RXシナリオ構成」の列。複数選択）ごとにまとめた PDF を保存先のフォルダに作る（会議日・記録は変えない）。
+ * 複数のシナリオを選んだ案件は、期待値を選んだ数で等分して配分（按分。合計は期待値合計と一致）し、あわせて関与（そのシナリオを含む案件の期待値の合計。
+ * 重複あり）・件数・単独（そのシナリオだけを選んだ案件）を出す。空欄の案件は「未設定」
+ */
+function createBusinessMtgScenarioSummary() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = mtgUi_();
+  const title = CRED_OPTIONS.menuTitle;
+  const o = MTG_OPTIONS.scenario;
+  const names = mtgAskSheets_(ss, ui, o.title + 'の資料（試作）を作ります。');
+  if (!names) return;
+  const data = mtgScenarioData_(ss, names);
+  if (!data.withColumn.length) {
+    throw new Error('選んだシートに「' + MTG_OPTIONS.columns.scenario + '」の列がありません。2行目の見出しを確かめてください（MeetingSummary.gs の MTG_OPTIONS.columns.scenario）。');
+  }
+  const t = mtgScenarioTotals_(data);
+  const answer = ui.alert(title, o.title + 'の資料（試作）を作ります。\n\n' +
+    '・対象：' + data.withColumn.join('・') + '（進行中の案件 ' + t.count + '件・期待値 ' + mtgAmount_(t.total) + '百万円）\n' +
+    '・シナリオ：' + t.items.filter(item => !item.unset).map(item => item.key).join('・') + '\n' +
+    '・' + o.unsetLabel + '：' + t.unset.count + '件' +
+    (data.withoutColumn.length ? '\n・列が無いので除くシート：' + data.withoutColumn.join('・') : '') +
+    '\n\n保存先のフォルダに PDF を作ります（会議日の記録・会議のフォルダ・インデックスは変えません）。作りますか？', ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+  mtgRequireSlides_();
+  const folder = mtgFolder_(ss);
+  const now = new Date();
+  const slides = mtgScenarioSlides_(data, t, now);
+  const name = o.fileName.replace('{date}', Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyyMMdd'));
+  const out = mtgExportDeck_(name, slides, folder);
+  const message = o.title + 'の資料（試作）を作りました：' + out.pdf.getName() + '（' + slides.length + 'ページ）\n' + out.pdf.getUrl();
+  console.log(message);
+  ui.alert(title, message, ui.ButtonSet.OK);
+}
+
+/**
+ * シートごとの進行中の案件と、シナリオの選択肢（読むだけ）。
+ * {withColumn: 列のあるシート, withoutColumn, options: プルダウンの選択肢の順（どのシートのものも。選択肢に無い値はあとに足す）,
+ *  deals: [{sheet, customer, project, status, rank: 確度, weighted: 期待値（空は 0）, blank: 期待値が空か, scenarios}]}
+ */
+function mtgScenarioData_(ss, names) {
+  const out = {withColumn: [], withoutColumn: [], options: [], deals: []};
+  names.forEach(name => {
+    const sheet = ss.getSheetByName(name);
+    const rule = DIFF_RULES[name];
+    const table = mtgReadDeals_(sheet, rule);
+    if (!table.has.scenario) {
+      out.withoutColumn.push(name);
+      return;
+    }
+    out.withColumn.push(name);
+    const col = table.headers.findIndex(h => credNormalize_(h) === credNormalize_(MTG_OPTIONS.columns.scenario));
+    (mtgListOptions_(sheet.getRange(rule.headerRow + 1, col + 1).getDataValidation()) || []).forEach(v => { if (out.options.indexOf(v) < 0) out.options.push(v); });
+    table.deals.filter(d => d.kind === 'active').forEach(d => out.deals.push({sheet: name, customer: d.customer, project: d.project, status: d.status,
+      rank: mtgPlanRank_(d.status), weighted: d.weighted || 0, blank: d.weighted == null, scenarios: d.scenarios}));
+  });
+  out.deals.forEach(d => d.scenarios.forEach(v => { if (out.options.indexOf(v) < 0) out.options.push(v); }));
+  return out;
+}
+
+/**
+ * シナリオごとの集計。{total, count, blank: 期待値が空の件数, items: [{key, unset, share: 按分した期待値, full: 関与（含む案件の期待値の合計）, count, solo: 単独の件数,
+ *  byRank: {確度: 按分}, bySheet: {シート: 按分}}]（按分の大きい順。未設定は最後）, unset: 未設定の item, combos: [{key: 「A＋B」, size, count, value, deals}]（期待値の大きい順）}
+ */
+function mtgScenarioTotals_(data) {
+  const o = MTG_OPTIONS.scenario;
+  const make = (key, unset) => ({key, unset: !!unset, share: 0, full: 0, count: 0, solo: 0, byRank: {}, bySheet: {}});
+  const items = new Map(data.options.map(v => [v, make(v)]));
+  const unset = make(o.unsetLabel, true);
+  const combos = new Map();
+  let total = 0;
+  data.deals.forEach(d => {
+    total += d.weighted;
+    const list = d.scenarios.length ? d.scenarios.map(v => items.get(v)) : [unset];
+    const part = d.weighted / list.length;
+    list.forEach(item => {
+      item.share += part;
+      item.full += d.weighted;
+      item.count++;
+      if (list.length === 1) item.solo++;
+      item.byRank[d.rank] = (item.byRank[d.rank] || 0) + part;
+      item.bySheet[d.sheet] = (item.bySheet[d.sheet] || 0) + part;
+    });
+    if (d.scenarios.length) {
+      const key = data.options.filter(v => d.scenarios.indexOf(v) >= 0).join('＋');
+      if (!combos.has(key)) combos.set(key, {key, size: d.scenarios.length, count: 0, value: 0, deals: []});
+      const c = combos.get(key);
+      c.count++;
+      c.value += d.weighted;
+      c.deals.push(d);
+    }
+  });
+  const sorted = Array.from(items.values()).sort((a, b) => (b.share - a.share) || (b.count - a.count));
+  return {total, count: data.deals.length, blank: data.deals.filter(d => d.blank).length, items: sorted.concat([unset]), unset,
+    combos: Array.from(combos.values()).sort((a, b) => (b.value - a.value) || (b.count - a.count))};
+}
+
+/** RXシナリオ構成別の期待値の資料のスライド：表紙・シナリオ別（横棒）・シナリオ × サブインダストリー・組み合わせ */
+function mtgScenarioSlides_(data, t, now) {
+  const o = MTG_OPTIONS.scenario;
+  const c = MTG_OPTIONS.colors;
+  const S = MTG_SLIDE;
+  const tz = Session.getScriptTimeZone();
+  const line = (y, text) => mtgBox_(S.x, y, S.w, 16, mtgWrap_(text, S.w, 9, 1)[0], {size: 9, color: c.white, align: 'CENTER'});
+  const cover = {
+    title: MTG_TITLES.cover,
+    cover: true,
+    combined: true,
+    template: {title: o.title, subtitle: MTG_OPTIONS.meetingName + '　参考資料【試作】', date: mtgDateLabel_(Utilities.formatDate(now, tz, 'yyyy/MM/dd')), name: ''},
+    elements: [
+      line(350, '収録：' + data.withColumn.join('・') + '（' + data.withColumn.length + 'サブインダストリー）'),
+      line(365, '出典：各サブインダストリーのシートの「' + MTG_OPTIONS.columns.scenario + '」と期待値（' + Utilities.formatDate(now, tz, 'yyyy/M/d HH:mm') + ' 時点）')
+    ]
+  };
+  const frame = {source: '【試作】' + o.title + '（' + Utilities.formatDate(now, tz, 'M/d') + ' 時点）　金額の単位：百万円'};
+  return mtgNumberSlides_(frame, [cover, mtgScenarioBarsSlide_(t), mtgScenarioMatrixSlide_(data, t)].concat(mtgScenarioCombosSlides_(t)));
+}
+
+/** シナリオ別：按分した期待値の横棒（確度別）と、按分・関与・件数・単独。未設定は最後（灰色） */
+function mtgScenarioBarsSlide_(t) {
+  const S = MTG_SLIDE;
+  const o = MTG_OPTIONS;
+  const c = o.colors;
+  const ranks = o.plan.ranks.concat([{key: o.plan.otherLabel, color: o.plan.otherColor}]);
+  const multi = t.combos.filter(cb => cb.size > 1).reduce((sum, cb) => sum + cb.count, 0);
+  const lead = '進行中案件 ' + t.count + '件・期待値 ' + mtgAmount_(t.total) + '百万円を、RXシナリオ構成ごとに集計（按分の大きい順）。' +
+    '\n按分：複数選んだ案件（' + multi + '件）は選んだ数で等分（合計＝期待値）。関与：そのシナリオを含む案件の期待値の合計（重複あり）。' +
+    (t.blank ? '期待値が空の ' + t.blank + '件は 0。' : '');
+  const x = S.x;
+  const w = S.w;
+  const y = S.top;
+  const el = [mtgBox_(x, y - 2, 420, 20, 'RXシナリオ構成別の期待値（進行中・按分・百万円）', {size: 10.5, bold: true, color: c.ink})];
+  const legend = ranks.map(r => ({label: r.key, color: r.color}));
+  legend.forEach(item => { item.bw = mtgTextWidth_(item.label, 8.5) + 16; });
+  let lx = x + w - legend.reduce((sum, item) => sum + 6 + item.bw, 0) - (legend.length - 1) * (8 - 7.2 - 1.6);
+  legend.forEach(item => {
+    el.push({type: 'box', x: lx, y: y + 5, w: 7, h: 7, fill: item.color, shape: 'RECTANGLE', role: 'legend'});
+    el.push(mtgBox_(lx + 6, y - 1, item.bw, 18, item.label, {size: 8.5, color: c.sub, role: 'legend'}));
+    lx += 6 + item.bw + (8 - 7.2 - 1.6);
+  });
+  const nameW = 150;
+  const cols = [{label: '按分', w: 54}, {label: '関与（重複あり）', w: 78}, {label: '件数', w: 40}, {label: 'うち単独', w: 46}];
+  const colsW = cols.reduce((sum, col) => sum + col.w, 0);
+  const barX = x + nameW + 6;
+  const barW = w - nameW - 6 - colsW - 10;
+  const headY = y + 22;
+  const rows = t.items;
+  const rowH = Math.max(12, Math.min(22, (S.bottom - headY - 16) / Math.max(rows.length, 1)));
+  const max = Math.max.apply(null, [1].concat(rows.map(item => item.share)));
+  const scale = barW / max;
+  let cx = barX + barW + 10;
+  cols.forEach(col => {
+    el.push(mtgBox_(cx - S.padX / 2, headY, col.w + S.padX, 14, col.label, {size: 8, color: c.sub, align: 'CENTER', role: 'scenario-head'}));
+    col.x = cx;
+    cx += col.w;
+  });
+  const size = rowH < 16 ? 7.5 : 8.5;
+  rows.forEach((item, i) => {
+    const ry = headY + 16 + rowH * i;
+    if (item.unset) el.push({type: 'box', x, y: ry, w, h: 0.75, fill: c.line, shape: 'RECTANGLE'});
+    else if (i % 2 === 1) el.push({type: 'box', x, y: ry, w, h: rowH, fill: c.greenSoft, alpha: 0.35, shape: 'RECTANGLE', role: 'scenario-band'});
+    el.push(mtgBox_(x, ry, nameW, rowH, mtgWrap_(item.key, nameW, size, 1)[0], {size, bold: true, color: item.unset ? c.muted : c.ink, role: 'scenario-name'}));
+    let level = 0;
+    const bh = Math.max(rowH - 8, 5);
+    ranks.forEach(r => {
+      const v = item.byRank[r.key] || 0;
+      if (v <= 0) return;
+      el.push({type: 'box', x: barX + level * scale, y: ry + (rowH - bh) / 2, w: Math.max(v * scale, 0.75), h: bh, fill: item.unset ? o.plan.otherColor : r.color,
+        line: c.white, lineWeight: 0.5, shape: 'RECTANGLE', role: 'scenario-bar'});
+      level += v;
+    });
+    [mtgAmount_(Math.round(item.share * 10) / 10), mtgAmount_(Math.round(item.full * 10) / 10), item.count + '件', item.unset ? '—' : item.solo + '件'].forEach((text, k) => {
+      el.push(mtgBox_(cols[k].x - S.padX / 2, ry, cols[k].w + S.padX, rowH, text, {size, bold: k === 0, color: k === 0 ? c.ink : c.body, align: 'END', role: 'scenario-value'}));
+    });
+  });
+  return {title: o.scenario.title + '（全サブインダストリー）', lead, elements: el};
+}
+
+/** シナリオ × サブインダストリー：按分した期待値の表（いちばん右に合計、いちばん下に合計）。0 は「—」 */
+function mtgScenarioMatrixSlide_(data, t) {
+  const S = MTG_SLIDE;
+  const c = MTG_OPTIONS.colors;
+  const keys = t.items.map(item => item.key);
+  const nameW = 110;
+  const each = Math.floor((S.w - nameW) / (keys.length + 1));
+  const columns = [S.w - each * (keys.length + 1)].concat(keys.map(() => each), [each]);
+  const size = each < 52 ? 7 : 8;
+  const head = mtgHeadRow_(columns, ['サブインダストリー'].concat(keys, ['合計']), size);
+  const num = v => (Math.abs(v) < 0.05 ? '—' : mtgAmount_(Math.round(v * 10) / 10));
+  const row = (label, values, total) => mtgRow_(columns, [{text: label, size, bold: true, color: c.ink, fill: c.greenSoft}]
+    .concat(values.map(v => ({text: num(v), size, fill: total ? c.greenSoft : c.white, align: 'END', bold: !!total}))), 0);
+  const rows = data.withColumn.map(name => {
+    const values = t.items.map(item => item.bySheet[name] || 0);
+    return row(name, values.concat([values.reduce((a, b) => a + b, 0)]));
+  }).concat([row('合計', t.items.map(item => item.share).concat([t.total]), true)]);
+  const lead = 'サブインダストリーごとの RXシナリオ構成別の期待値（進行中・按分）。行の合計は各サブインダストリーの期待値合計と一致。';
+  return {title: MTG_OPTIONS.scenario.title + '（サブインダストリー別）', lead, elements: [{type: 'table', x: S.x, y: S.top, columns, rows: [head].concat(rows)}]};
+}
+
+/** よく選ばれる組み合わせ（単独も）：期待値の大きい順に scenario.combos 件まで。入りきらなければ続きのページ */
+function mtgScenarioCombosSlides_(t) {
+  const S = MTG_SLIDE;
+  const c = MTG_OPTIONS.colors;
+  const o = MTG_OPTIONS.scenario;
+  const columns = mtgColumns_([250, 50, 70, 290], 3);
+  const head = mtgHeadRow_(columns, ['RXシナリオ構成（組み合わせ）', '件数', '期待値', '主な案件（期待値の大きい順）']);
+  const list = t.combos.slice(0, o.combos);
+  const title = o.title + '（組み合わせ）';
+  const lead = '選ばれた RXシナリオ構成の組み合わせ（単独も含む）ごとの件数・期待値（進行中。按分しない）。期待値の大きい順に ' + list.length + '件' +
+    (t.combos.length > list.length ? '（全 ' + t.combos.length + '通り）' : '') + '。';
+  if (!list.length) return [{title, lead: 'RXシナリオ構成を選んだ進行中の案件なし。', elements: mtgEmptyTable_(columns, head, 'none', '')}];
+  const rows = list.map(cb => {
+    const top = cb.deals.slice().sort((a, b) => b.weighted - a.weighted);
+    return mtgRow_(columns, [
+      {text: cb.key, lines: 3, bold: true, color: c.ink, fill: c.greenSoft},
+      {text: cb.count + '件', fill: c.white, align: 'CENTER'},
+      {text: mtgAmount_(Math.round(cb.value * 10) / 10), fill: c.white, align: 'END'},
+      {text: mtgNames_(top, d => d.sheet, columns[3], 2), lines: 2, fill: c.white}
+    ]);
+  });
+  return mtgTablePages_(head, rows).map((p, n) => ({title: title + (n ? '（続き）' : ''), lead,
+    elements: [{type: 'table', x: S.x, y: S.top, columns, rows: p.rows}]}));
 }
 
 /* ---------------- サブインダストリーごとの Google チャットへの通知 ---------------- */
@@ -2279,6 +2522,7 @@ function mtgReadDeals_(sheet, rule) {
       owner: text('owner'),
       delivery: text('delivery'),
       nextAction: text('nextAction'),
+      scenarios: mtgScenarioList_(text('scenario')),
       record: text('record'),
       updatedAt: stampCol >= 0 ? mtgTime_(values[n][stampCol]) : null,
       missing: required.filter(r => !String(line[r.col]).trim()).map(r => r.label),
@@ -2478,6 +2722,7 @@ function mtgSummarize_(ss, name, context) {
       owners: owners.size
     },
     recordColumn: !!table.has.record,
+    scenarioColumn: !!table.has.scenario,
     stallPending,
     gaps: gaps.parts,
     alertGaps: gaps.alerts,
@@ -4192,8 +4437,16 @@ function mtgFocusSlide_(s) {
   const rows = [head];
   const G = MTG_OPTIONS.gapText;
   const lack = s.gaps || {};
+  // RXシナリオ構成の列があれば、案件名の下に小さな字で（複数は「・」でつなぐ）
+  const dealCell = d => {
+    const cell = mtgDealCell_(d, columns[0]);
+    if (!s.scenarioColumn) return cell;
+    const line = d.scenarios && d.scenarios.length ? d.scenarios.join('・') : 'RXシナリオ：' + MTG_OPTIONS.blankText;
+    return Object.assign(cell, {text: cell.text + '\n' + mtgWrap_(line, columns[0], 7.5, 1)[0], lines: 3,
+      parts: cell.parts.concat([{size: 7.5, color: c.muted}])});
+  };
   s.focus.forEach(d => rows.push(mtgRow_(columns, [
-    mtgDealCell_(d, columns[0]),
+    dealCell(d),
     // 期待値は大きな緑の字。空なら「未入力」を本文の大きさ・グレーで（数のように見せない）。列が無ければ灰色のセルに「データなし」
     lack.weighted && lack.amount ? mtgGapCell_({lines: 2, align: 'CENTER'})
       : {text: (lack.weighted ? G : mtgAmount_(d.weighted)) + '\n' + (lack.amount ? G : mtgAmount_(d.amount)),
@@ -4719,7 +4972,7 @@ function mtgMonthLabel_(text) {
 function mtgShortHeader_(header) {
   const names = {customer: '得意先', project: '案件名', status: 'ステータス', amount: '想定売上', weighted: '期待値', orderMonth: '受注月',
     startMonth: '売上開始月', activity: '活動状況', issue: '課題', owner: '責任者', delivery: 'デリバリー担当', nextAction: '次回アクション',
-    record: '商談記録'};
+    scenario: 'RXシナリオ構成', record: '商談記録'};
   const labels = mtgLabels_();
   const key = Object.keys(labels).find(k => labels[k] === credNormalize_(header));
   return key ? names[key] : String(header).replace(/\s+/g, '');
