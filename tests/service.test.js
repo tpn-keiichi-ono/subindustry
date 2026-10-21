@@ -897,7 +897,7 @@ test('diagnoseRequestSources：シートごとに、リクエストの件数と�
   g.diagnoseRequestSources();
   assert.deepStrictEqual(gas.writes, [], '何も書き換えない');
   assert.deepStrictEqual(gas.alerts[0].message.split('\n'), [
-    '「新FMT」：リクエストのある行 4件 → パネルに出る 2件（出ないもの：登録済み 1件、ほかの行・シートと同じリクエスト 1件）。',
+    '「新FMT」：リクエストのある行 4件 → パネルに出る 2件（出ないもの：登録済み 1件、ほかの行・シートと同じリクエスト 1件）。「サービスのリクエスト」は F列。',
     '「新FMT」：「アカウント責任者部署」「アカウント責任者」「BX部署」「BX担当」の見出しがちょうど1つではないため、その列は空のまま登録します。',
     '「新FMT2」：読みません（test.gs の DIFF_RULES に requests: true がありません）。'
   ]);
@@ -921,13 +921,27 @@ test('diagnoseRequestSources：登録済みで取り込み元に見つからな�
   assert.match(gas.alerts[0].message, /「新FMT2」：/);
 });
 
+test('diagnoseRequestSources：どのシートにもリクエストが無ければ、壊れていないことと書く場所を出す。画面に出せないとき（エディタをスプレッドシートから開いていない）は実行ログだけ', () => {
+  const {gas, g} = setup([['食品スーパー', 'A社', 'アプリ刷新', '']]);
+  g.setupRequestSheet();
+  gas.alerts.length = 0;
+  g.diagnoseRequestSources();
+  assert.match(gas.alerts[0].message, /「新FMT」：リクエストのある行 0件 → パネルに出る 0件。「サービスのリクエスト」は F列。\n/);
+  assert.match(gas.alerts[0].message, /→ どのシートの「サービスのリクエスト」の列にもリクエストが入っていないため、パネルに出るものがありません（壊れてはいません）。/);
+  gas.noUi = true;
+  gas.alerts.length = 0;
+  ['diagnoseRequestSources', 'diagnoseServiceLock', 'diagnoseTaskChoices'].forEach(fn => assert.doesNotThrow(() => g[fn](), fn));
+  assert.strictEqual(gas.alerts.length, 0);
+  assert.ok(gas.logs.some(l => /壊れてはいません/.test(l.line)), '実行ログに書く');
+});
+
 test('diagnoseRequestSources：前の版の候補のシートが残っていれば、setupRequestSheet() を案内する', () => {
   const {gas, g} = setup();
   g.setupRequestSheet();
   gas.addSheet('__REQUEST_LISTS', [['']], {rows: 2, columns: 2});
   g.diagnoseRequestSources();
   const message = gas.alerts[gas.alerts.length - 1].message;
-  assert.match(message, /「新FMT」：リクエストのある行 4件 → パネルに出る 3件（出ないもの：ほかの行・シートと同じリクエスト 1件）。/);
+  assert.match(message, /「新FMT」：リクエストのある行 4件 → パネルに出る 3件（出ないもの：ほかの行・シートと同じリクエスト 1件）。「サービスのリクエスト」は F列。/);
   assert.match(message, /前の版の「__REQUEST_LISTS」シートが残っています。setupRequestSheet\(\) を実行すると外します。/);
 });
 

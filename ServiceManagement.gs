@@ -899,10 +899,7 @@ function svcTextHash_(text) {
  * 直すときは setupTaskSheet() を実行する（候補を書き直してプルダウンを付け直す。うまくいかなければエラーの文が出る）。
  */
 function diagnoseTaskChoices() {
-  const lines = svcTaskChoiceLines_(SpreadsheetApp.getActiveSpreadsheet());
-  console.log(lines.join('\n'));
-  const ui = SpreadsheetApp.getUi();
-  ui.alert(SVC_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
+  svcShowLines_(svcTaskChoiceLines_(SpreadsheetApp.getActiveSpreadsheet()));
 }
 
 /** diagnoseTaskChoices() の中身。画面に出す文（行ごと）を返す。 */
@@ -1019,10 +1016,7 @@ function svcDescribeTaskRule_(rule, choiceSheet, request) {
  * サービス管理が使うロックの種類（貼り替えが済んでいるか）、今ロックを持っている処理、差分追跡などのドキュメントロックが使われているかを画面に出す。
  */
 function diagnoseServiceLock() {
-  const lines = svcLockLines_();
-  console.log(lines.join('\n'));
-  const ui = SpreadsheetApp.getUi();
-  ui.alert(SVC_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
+  svcShowLines_(svcLockLines_());
 }
 
 /** diagnoseServiceLock() の中身。画面に出す文（行ごと）を返す。 */
@@ -1053,10 +1047,17 @@ function svcLockLines_() {
  */
 function diagnoseRequestSources() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const lines = svcDiagnoseLines_(ss);
+  svcShowLines_(svcDiagnoseLines_(ss));
+}
+
+/**
+ * 確認の関数（diagnose*）の結果を実行ログに書き、スプレッドシートの画面に出せれば画面にも出す
+ * （エディタをスプレッドシートから開いていないときは getUi() が使えないので、実行ログだけ）。
+ */
+function svcShowLines_(lines) {
   console.log(lines.join('\n'));
-  const ui = SpreadsheetApp.getUi();
-  ui.alert(SVC_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
+  const ui = diffUiOrNull_();
+  if (ui) ui.alert(SVC_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
 }
 
 /** diagnoseRequestSources() の中身。画面に出す文（行ごと）を返す。 */
@@ -1076,6 +1077,7 @@ function svcDiagnoseLines_(ss) {
 
   const seen = new Set();
   let complete = !!request;   // 読むシートをすべて読めたか（読めないシートがあると、見つからない行を数えられない）
+  let total = 0;              // 読むシートの、リクエストのある行の数（合計）
   Object.keys(DIFF_RULES).forEach(name => {
     const rule = DIFF_RULES[name];
     if (!rule.requests) {
@@ -1115,13 +1117,18 @@ function svcDiagnoseLines_(ss) {
     const reasons = [];
     if (selected) reasons.push('登録済み ' + selected + '件');
     if (duplicate) reasons.push('ほかの行・シートと同じリクエスト ' + duplicate + '件');
+    total += withRequest.length;
     lines.push('「' + name + '」：リクエストのある行 ' + withRequest.length + '件 → パネルに出る ' + candidates + '件' +
-      (reasons.length ? '（出ないもの：' + reasons.join('、') + '）' : '') + '。');
+      (reasons.length ? '（出ないもの：' + reasons.join('、') + '）' : '') + '。「' + SVC_OPTIONS.sourceHeaders[3] + '」は ' + diffColumnLetter_(cols[3]) + '列。');
     const optional = (SVC_OPTIONS.sourceOptionalHeaders || []).filter(h => taskHeaderCount_(headers, h) !== 1);
     if (optional.length) {
       lines.push('「' + name + '」：「' + optional.join('」「') + '」の見出しがちょうど1つではないため、その列は空のまま登録します。');
     }
   });
+  if (complete && !total) {
+    lines.push('→ どのシートの「' + SVC_OPTIONS.sourceHeaders[3] + '」の列にもリクエストが入っていないため、パネルに出るものがありません' +
+      '（壊れてはいません）。案件の行の「' + SVC_OPTIONS.sourceHeaders[3] + '」にリクエストを書くと、パネルに出ます。');
+  }
   // 登録済みで、取り込み元に見つからない行（取り込み元で書き換えか削除された）
   if (complete && registered.rows) {
     const rows = registered.rows.filter(r => !seen.has(r.key)).map(r => r.row);
