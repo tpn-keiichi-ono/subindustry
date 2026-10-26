@@ -160,11 +160,12 @@ function newDataValidation() {
 /* ---------------- Range ---------------- */
 
 class Range {
-  constructor(sheet, row, col, numRows, numCols) {
+  // a1：文字の範囲（「D3:AF」）で作ったとき。シートより広くても止めない（本物と同じ）
+  constructor(sheet, row, col, numRows, numCols, a1) {
     if (!(numRows >= 1)) throw new Error('The number of rows in the range must be at least 1.');
     if (!(numCols >= 1)) throw new Error('The number of columns in the range must be at least 1.');
-    if (row < 1 || row + numRows - 1 > sheet.maxRows) throw new Error('Those rows are out of bounds.');
-    if (col < 1 || col + numCols - 1 > sheet.maxCols) throw new Error('Those columns are out of bounds.');
+    if (!a1 && (row < 1 || row + numRows - 1 > sheet.maxRows)) throw new Error('Those rows are out of bounds.');
+    if (!a1 && (col < 1 || col + numCols - 1 > sheet.maxCols)) throw new Error('Those columns are out of bounds.');
     this.sheet = sheet;
     this.row = row;
     this.col = col;
@@ -507,11 +508,9 @@ class Sheet {
   getRange(a, b, c, d) {
     if (typeof a === 'string') {
       const p = parseA1(a, this.maxRows, this.maxCols);
-      // 本物と同じく、シートの行数・列数を超える範囲は止める（列を消してシートが狭くなったとき、追跡範囲「D3:AF」などが止まるのを再現する）
-      if (p.row + p.numRows - 1 > this.maxRows || p.col + p.numCols - 1 > this.maxCols) {
-        throw new Error('範囲の座標がシートのサイズ外です。（' + this.name + '!' + a + '）');
-      }
-      return new Range(this, p.row, p.col, p.numRows, p.numCols);
+      // 「D3:AF」のような文字の範囲は、シートより広くても止めない（本物も、27列のシートで追跡範囲 D3:AF の比較基準を作れた。2026/10/26）。
+      // 行・列の番号で指す範囲は、シートの外を含むと止める（下の Range。本物は「範囲の座標がシートのサイズ外です」）
+      return new Range(this, p.row, p.col, p.numRows, p.numCols, true);
     }
     return new Range(this, a, b, c === undefined ? 1 : c, d === undefined ? 1 : d);
   }

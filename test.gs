@@ -2597,7 +2597,8 @@ function diffEnsureGrid_(sheet, rows, columns) {
 
 /**
  * 追跡範囲（DIFF_RULES の ranges。「D3:AF」など）を、シートの行数・列数の中に切り詰めた範囲（シートの外から始まるなら null）。
- * 列を消してシートが範囲より狭くなっても止まらないように（Apps Script はシートの外を含む範囲を指すと止まる）
+ * 列を消してシートが範囲より狭くなったとき（2026/10/26 から A〜AA の27列）、範囲の右端（AF）を列の数として使うと、
+ * 行・列の番号で指す getRange がシートの外を指して止まるため（「範囲の座標がシートのサイズ外です」）
  */
 function diffRuleRange_(sheet, a1) {
   const m = /^\$?([A-Z]*)\$?(\d*)(?::\$?([A-Z]*)\$?(\d*))?$/.exec(String(a1).toUpperCase().trim());
