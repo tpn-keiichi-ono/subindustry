@@ -3080,3 +3080,66 @@ test('期待値上位案件：RXシナリオ構成の列があれば、案件名
   assert.deepStrictEqual([line('E社'), line('A社'), line('C社')], ['Y・Z', 'X・Y', 'X']);
   assert.strictEqual(line('F社'), 'RXシナリオ：未入力', '列の幅に入る短さ');
 });
+
+/* ---------------- 出力先（スクリプトのプロパティ） ---------------- */
+
+test('出力先はスクリプトのプロパティで指定できる：保存先 MTG_SAVE_FOLDER・時点コピー MTG_COPY_FOLDER（あればコードの設定より優先。URL か ID。読めない値は止める）', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getScriptProperties();
+  props.setProperty('MTG_SAVE_FOLDER', 'https://drive.google.com/drive/folders/SaveFolder00001?usp=sharing');
+  assert.strictEqual(g.mtgFolder_(gas.ss).getId(), 'SaveFolder00001');
+  props.setProperty('MTG_COPY_FOLDER', 'CopyFolder00001');
+  g.mtgSaveCopy_(gas.ss, new Date(), '');
+  assert.deepStrictEqual(plain(gas.driveCopies.map(c => c.folder)), ['CopyFolder00001']);
+  assert.strictEqual(gas.driveFolders.length, 0, 'フォルダは作らない');
+  gas.missingFolders = ['SaveFolder00001'];
+  assert.throws(() => g.mtgFolder_(gas.ss), /保存先のフォルダ（ID：SaveFolder00001）を開けません。.*（スクリプトのプロパティ「MTG_SAVE_FOLDER」）/);
+  props.setProperty('MTG_SAVE_FOLDER', '会議のフォルダ');
+  assert.throws(() => g.mtgFolder_(gas.ss), /保存先の設定（スクリプトのプロパティ「MTG_SAVE_FOLDER」）の値「会議のフォルダ」を、フォルダの URL か ID として読めません/);
+  // 空にすればコードの設定に戻る
+  props.deleteProperty('MTG_SAVE_FOLDER');
+  gas.missingFolders = [];
+  assert.strictEqual(g.mtgFolder_(gas.ss).getId(), gas.get('MTG_OPTIONS').folderId);
+});
+
+test('事前資料の格納先：スクリプトのプロパティ MTG_MEETING_FOLDER_<シート名> → MTG_MEETING_FOLDER（全シート共通）→ コード（DIFF_RULES の meetingFolder）の順。統合版も同じ', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getScriptProperties();
+  const where = name => plain(g.mtgMeetingFolderSetting_(name));
+  assert.strictEqual(where('新FMT').where, 'test.gs の DIFF_RULES の meetingFolder');
+  props.setProperty('MTG_MEETING_FOLDER', 'https://drive.google.com/drive/folders/CommonFolder0001');
+  assert.deepStrictEqual([where('新FMT').prop, where('新FMT2').prop, where('全サブインダストリー').prop], ['MTG_MEETING_FOLDER', 'MTG_MEETING_FOLDER', 'MTG_MEETING_FOLDER']);
+  props.setProperty('MTG_MEETING_FOLDER_新FMT', 'SuperFolder00001');
+  props.setProperty('MTG_MEETING_FOLDER_全サブインダストリー', 'AllFolder000001');
+  assert.deepStrictEqual([where('新FMT').value, where('新FMT2').value, where('全サブインダストリー').value],
+    ['SuperFolder00001', 'https://drive.google.com/drive/folders/CommonFolder0001', 'AllFolder000001']);
+  // 会議のフォルダはそのフォルダの中に作る
+  gas.driveFolders.push({id: 'SuperFolder00001', name: 'スーパー', parent: 'root'});
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  const found = g.mtgMeetingFolder_('新FMT', meeting);
+  assert.ok(found.folder && found.created);
+  assert.strictEqual(gas.driveFolders.find(f => f.id === found.folder.getId()).parent, 'SuperFolder00001');
+  props.setProperty('MTG_MEETING_FOLDER_新FMT', 'ちがう');
+  assert.match(g.mtgMeetingFolder_('新FMT', meeting).error, /会議のフォルダの設定（スクリプトのプロパティ「MTG_MEETING_FOLDER_新FMT」）をフォルダの URL か ID として読めない/);
+});
+
+test('showOutputFolders：出力先ごとに、使っている設定（スクリプトのプロパティかコードか）と、開けるか（フォルダの名前）を出す。画面に出せなければ実行ログだけ', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getScriptProperties();
+  props.setProperty('MTG_MEETING_FOLDER_新FMT2', 'MissingFolder001');
+  gas.missingFolders = ['MissingFolder001'];
+  gas.driveFolders.push({id: gas.get('MTG_OPTIONS').folderId, name: '会議サマリ（テスト）', parent: 'root'});
+  g.showOutputFolders();
+  const text = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(text, /・事前資料などの保存先（作る場所・試作）：○ 会議サマリ（テスト）（ID：1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK）\n　設定：MeetingSummary\.gs の MTG_OPTIONS\.folderId/);
+  assert.match(text, /・時点コピーの保存先：（未設定。保存先の中の「時点コピー」）/);
+  assert.match(text, /・新FMT2：✗ 開けません（ID：MissingFolder001。[^\n]*\n　設定：スクリプトのプロパティ「MTG_MEETING_FOLDER_新FMT2」/);
+  assert.match(text, /・全サブインダストリー：/);
+  assert.match(text, /・アカウントプランシートの保存先：[^\n]*\n　設定：コード\.gs の AP_OPTIONS\.destFolderId/);
+  assert.match(text, /MTG_MEETING_FOLDER_<シート名>（そのシートだけ）・AP_DEST_FOLDER（アカウントプランシート）$/);
+  assert.deepStrictEqual(gas.driveFolders.length, 1, 'フォルダは作らない');
+  gas.noUi = true;
+  gas.logs.length = 0;
+  assert.doesNotThrow(() => g.showOutputFolders());
+  assert.ok(gas.logs.some(l => /事前資料の格納先/.test(l.line)));
+});

@@ -69,6 +69,12 @@ const MTG_OPTIONS = {
   folderId: '1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK',   // 保存先のフォルダの ID（空なら、このスプレッドシートと同じフォルダの中に folderName を作る）
   folderName: '会議サマリ',
   folderKey: 'MTG_FOLDER_ID',         // 作ったフォルダの ID（ドキュメントのプロパティ）
+  // 出力先は、スクリプトのプロパティでも指定できる（あればコードの設定より優先。値はフォルダの URL か ID。今の出力先は showOutputFolders() で確かめる）。
+  //   save：保存先（folderId の代わり。資料を作る場所・試作の置き場所）
+  //   meeting：事前資料の格納先（会議のフォルダを探す・作るフォルダ。全サブインダストリー共通。test.gs の DIFF_RULES の meetingFolder・combined.meetingFolder の代わり）。
+  //            「MTG_MEETING_FOLDER_<シート名>」でそのシートだけ（統合版は MTG_MEETING_FOLDER_全サブインダストリー）。シートごと → 共通 → コードの順に使う
+  //   copy：時点コピー（会議時点・日次のスプレッドシートのコピー）の保存先（copyFolderId の代わり）
+  folderProps: {save: 'MTG_SAVE_FOLDER', meeting: 'MTG_MEETING_FOLDER', copy: 'MTG_COPY_FOLDER'},
   // 会議のフォルダへの格納（本番だけ）：サブインダストリーのフォルダ（test.gs の DIFF_RULES の meetingFolder）の中の、名前が会議日の
   // meetingFolderDate（yyMMdd）＋「_」で始まり、会議の名前（RX Business Meeting・RX Service Meeting）を含むフォルダ（例：261023_RX Business Meeting_第5回）に、
   // 事前資料の PDF を置く。RX Service Meeting の資料（ServiceMeeting.gs）も同じフォルダの中の、自分の会議の名前のフォルダに置く。
@@ -1769,6 +1775,7 @@ function mtgMeetingFolder_(name, meeting, noCreate, kind) {
   const meetingName = kind || MTG_OPTIONS.meetingName;
   const setting = mtgMeetingFolderSetting_(name);
   const id = mtgFolderIdOf_(setting.value);
+  if (setting.value && !id) return {error: '「' + name + '」の会議のフォルダの設定（' + setting.where + '）をフォルダの URL か ID として読めない'};
   if (!id) return {error: '「' + name + '」の会議のフォルダが設定されていない（' + setting.where + '）'};
   let parent;
   try {
@@ -1805,11 +1812,79 @@ function mtgMeetingFolder_(name, meeting, noCreate, kind) {
   return {folder: found[0]};
 }
 
-/** 会議のフォルダを探すフォルダの設定 {value: URL か ID, where: 設定の場所}（統合版は MTG_OPTIONS.combined.meetingFolder、ほかは DIFF_RULES の meetingFolder） */
+/**
+ * 会議のフォルダを探すフォルダ（事前資料の格納先）の設定 {value: URL か ID, where: 設定の場所}。
+ * スクリプトのプロパティ「MTG_MEETING_FOLDER_<シート名>」→「MTG_MEETING_FOLDER」→ コード（統合版は MTG_OPTIONS.combined.meetingFolder、ほかは DIFF_RULES の meetingFolder）の順
+ */
 function mtgMeetingFolderSetting_(name) {
+  const key = MTG_OPTIONS.folderProps.meeting;
   const combined = MTG_OPTIONS.combined;
-  if (name === combined.name && !DIFF_RULES[name]) return {value: combined.meetingFolder, where: 'MeetingSummary.gs の MTG_OPTIONS.combined.meetingFolder'};
-  return {value: (DIFF_RULES[name] || {}).meetingFolder, where: 'test.gs の DIFF_RULES の meetingFolder'};
+  if (name === combined.name && !DIFF_RULES[name]) {
+    return mtgOutputSetting_([key + '_' + name, key], combined.meetingFolder, 'MeetingSummary.gs の MTG_OPTIONS.combined.meetingFolder');
+  }
+  return mtgOutputSetting_([key + '_' + name, key], (DIFF_RULES[name] || {}).meetingFolder, 'test.gs の DIFF_RULES の meetingFolder');
+}
+
+/**
+ * 出力先の設定 {value, where: 設定の場所, prop: スクリプトのプロパティの名前（コードの設定なら空）}。
+ * keys のスクリプトのプロパティを順に見て、値があればそれ、どれも無ければコードの設定（codeValue）
+ */
+function mtgOutputSetting_(keys, codeValue, codeWhere) {
+  let props = null;
+  try { props = PropertiesService.getScriptProperties(); } catch (_) {}
+  for (const key of keys) {
+    const value = props ? String(props.getProperty(key) || '').trim() : '';
+    if (value) return {value, where: 'スクリプトのプロパティ「' + key + '」', prop: key};
+  }
+  return {value: String(codeValue || '').trim(), where: codeWhere, prop: ''};
+}
+
+/**
+ * 今の出力先を一覧にする（エディタから実行する。読むだけで、フォルダは作らない）。出力先ごとに、どの設定（スクリプトのプロパティかコードか）を使っているかと、
+ * フォルダを開けるか（開ければフォルダの名前）を出す。スクリプトのプロパティを変えたあとの確かめに使う。画面に出せなければ実行ログだけ
+ */
+function showOutputFolders() {
+  const check = setting => {
+    const id = mtgFolderIdOf_(setting.value);
+    if (!setting.value) return '（未設定）';
+    if (!id) return '✗ フォルダの URL か ID として読めません：' + setting.value;
+    try {
+      return '○ ' + DriveApp.getFolderById(id).getName() + '（ID：' + id + '）';
+    } catch (_) {
+      return '✗ 開けません（ID：' + id + '。実行するアカウントに編集の権限があるか確かめてください）';
+    }
+  };
+  const line = (label, setting, empty) => '・' + label + '：' + (setting.value ? check(setting) : empty) + '\n　設定：' + setting.where;
+  const lines = ['出力先（スクリプトのプロパティがあれば、コードの設定より優先します。値はフォルダの URL か ID）', ''];
+  lines.push(line('事前資料などの保存先（作る場所・試作）', mtgSaveFolderSetting_(),
+    '（未設定。このスプレッドシートと同じフォルダの中の「' + MTG_OPTIONS.folderName + '」）'));
+  const copy = mtgCopyFolderSetting_();
+  lines.push(line('時点コピーの保存先', copy, '（未設定。保存先の中の「' + MTG_OPTIONS.copyFolderName + '」）'));
+  lines.push('', '事前資料の格納先（会議のフォルダ「yyMMdd_RX Business Meeting_第N回」を探す・作るフォルダ）');
+  Object.keys(DIFF_RULES).concat(DIFF_RULES[MTG_OPTIONS.combined.name] ? [] : [MTG_OPTIONS.combined.name]).forEach(name => {
+    lines.push(line(name, mtgMeetingFolderSetting_(name), '✗ 未設定（本番の資料を会議のフォルダに格納できません）'));
+  });
+  if (typeof apDestFolderSetting_ === 'function') {
+    lines.push('', line('アカウントプランシートの保存先', apDestFolderSetting_(), '✗ 未設定'));
+  }
+  const p = MTG_OPTIONS.folderProps;
+  lines.push('', 'スクリプトのプロパティの名前：' + p.save + '（保存先）・' + p.copy + '（時点コピー）・' + p.meeting + '（格納先。全シート共通）・' +
+    p.meeting + '_<シート名>（そのシートだけ）' + (typeof AP_OPTIONS === 'object' ? '・' + AP_OPTIONS.destFolderProp + '（アカウントプランシート）' : ''));
+  const text = lines.join('\n');
+  console.log(text);
+  const ui = diffUiOrNull_();
+  if (ui) ui.alert(CRED_OPTIONS.menuTitle, text, ui.ButtonSet.OK);
+  return lines;
+}
+
+/** 出力先の設定のフォルダの ID（設定が無ければ空）。値があるのにフォルダの URL・ID として読めなければ止める */
+function mtgOutputFolderId_(setting, label) {
+  const id = mtgFolderIdOf_(setting.value);
+  if (setting.value && !id) {
+    throw new Error(label + 'の設定（' + setting.where + '）の値「' + setting.value + '」を、フォルダの URL か ID として読めません。' +
+      'ドライブでフォルダを開いたときのアドレス欄の URL を入れてください。');
+  }
+  return id;
 }
 
 /**
@@ -2070,6 +2145,7 @@ function rebuildBusinessMtgIndex() {
 function mtgStoredDecks_(name) {
   const setting = mtgMeetingFolderSetting_(name);
   const id = mtgFolderIdOf_(setting.value);
+  if (setting.value && !id) return {error: '会議のフォルダの設定（' + setting.where + '）をフォルダの URL か ID として読めない'};
   if (!id) return {error: '会議のフォルダが設定されていない（' + setting.where + '）'};
   let parent;
   try {
@@ -2207,14 +2283,15 @@ function mtgSaveCopy_(ss, now, note) {
  * noCreate なら作らず、無い・開けなければ null（読むだけのとき）
  */
 function mtgCopyFolder_(ss, noCreate) {
-  if (MTG_OPTIONS.copyFolderId) {
-    const id = mtgFolderIdOf_(MTG_OPTIONS.copyFolderId);
+  const setting = mtgCopyFolderSetting_();
+  const id = mtgOutputFolderId_(setting, '時点コピーの保存先');
+  if (id) {
     try {
       return DriveApp.getFolderById(id);
     } catch (error) {
       if (noCreate) return null;
       throw new Error('時点コピーの保存先のフォルダ（ID：' + id + '）を開けません。実行するアカウントが、そのフォルダに書き込めるか確かめてください' +
-        '（MeetingSummary.gs の MTG_OPTIONS.copyFolderId）。');
+        '（' + setting.where + '）。');
     }
   }
   const props = PropertiesService.getDocumentProperties();
@@ -6055,14 +6132,29 @@ function mtgTrashOld_(folder, names, keep) {
   return count;
 }
 
-/** 保存先のフォルダ（MTG_OPTIONS.folderId。空なら、このスプレッドシートと同じフォルダの中に folderName を作り、次からも使う）。 */
+/** 時点コピーの保存先の設定（スクリプトのプロパティ MTG_COPY_FOLDER → MTG_OPTIONS.copyFolderId） */
+function mtgCopyFolderSetting_() {
+  return mtgOutputSetting_([MTG_OPTIONS.folderProps.copy], MTG_OPTIONS.copyFolderId, 'MeetingSummary.gs の MTG_OPTIONS.copyFolderId');
+}
+
+/** 保存先の設定（スクリプトのプロパティ MTG_SAVE_FOLDER → MTG_OPTIONS.folderId） */
+function mtgSaveFolderSetting_() {
+  return mtgOutputSetting_([MTG_OPTIONS.folderProps.save], MTG_OPTIONS.folderId, 'MeetingSummary.gs の MTG_OPTIONS.folderId');
+}
+
+/**
+ * 保存先のフォルダ（スクリプトのプロパティ MTG_SAVE_FOLDER、無ければ MTG_OPTIONS.folderId。どちらも空なら、
+ * このスプレッドシートと同じフォルダの中に folderName を作り、次からも使う）。
+ */
 function mtgFolder_(ss) {
-  if (MTG_OPTIONS.folderId) {
+  const setting = mtgSaveFolderSetting_();
+  const id = mtgOutputFolderId_(setting, '保存先');
+  if (id) {
     try {
-      return DriveApp.getFolderById(MTG_OPTIONS.folderId);
+      return DriveApp.getFolderById(id);
     } catch (error) {
-      throw new Error('保存先のフォルダ（ID：' + MTG_OPTIONS.folderId + '）を開けません。実行するアカウントが、そのフォルダに書き込めるか確かめてください' +
-        '（MeetingSummary.gs の MTG_OPTIONS.folderId）。');
+      throw new Error('保存先のフォルダ（ID：' + id + '）を開けません。実行するアカウントが、そのフォルダに書き込めるか確かめてください' +
+        '（' + setting.where + '）。');
     }
   }
   const props = PropertiesService.getDocumentProperties();

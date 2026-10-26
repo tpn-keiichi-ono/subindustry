@@ -1,3 +1,29 @@
+/** アカウントプランシートの作成の設定 */
+const AP_OPTIONS = {
+  templateFileId: '17Fn7jUW7gdEtX4_Hn5PtOGX4oGLHrqeU-CI6mm49x9k',   // ひな形のスプレッドシート
+  destFolderId: '1B4-lxlvtGwroP_5iHi9erMZT7c7sW76P',                 // 作ったアカウントプランシートの保存先のフォルダ
+  // 保存先は、スクリプトのプロパティ「AP_DEST_FOLDER」（フォルダの URL か ID）でも指定できる（あれば destFolderId より優先）
+  destFolderProp: 'AP_DEST_FOLDER'
+};
+
+/** アカウントプランシートの保存先の設定（スクリプトのプロパティ AP_DEST_FOLDER → AP_OPTIONS.destFolderId） */
+function apDestFolderSetting_() {
+  return mtgOutputSetting_([AP_OPTIONS.destFolderProp], AP_OPTIONS.destFolderId, 'コード.gs の AP_OPTIONS.destFolderId');
+}
+
+/** アカウントプランシートの保存先のフォルダ。開けなければ、どの設定かを書いて止める */
+function apDestFolder_() {
+  const setting = apDestFolderSetting_();
+  const id = mtgOutputFolderId_(setting, 'アカウントプランシートの保存先');
+  if (!id) throw new Error('アカウントプランシートの保存先が設定されていません（' + setting.where + '）。');
+  try {
+    return DriveApp.getFolderById(id);
+  } catch (_) {
+    throw new Error('アカウントプランシートの保存先のフォルダ（ID：' + id + '）を開けません。実行するアカウントが、そのフォルダに書き込めるか確かめてください（' +
+      setting.where + '）。');
+  }
+}
+
 /**
  * メニューを追加（CredentialHistory.gs の onOpen() から呼ばれる）
  * onOpen() はプロジェクトに1つだけにするため、ここには置かない。
@@ -45,10 +71,7 @@ function executeCopyProcess(targetSheetName) {
   const MAX_RUNTIME_MS = 300000; // 5分で停止
   const LOCK_WAIT_MS = 30000;    // ほかの書き込み（差分追跡・クレデンシャル履歴）を待つ時間
 
-  // --- 設定項目 ---
-  const TEMPLATE_FILE_ID = '17Fn7jUW7gdEtX4_Hn5PtOGX4oGLHrqeU-CI6mm49x9k';
-  const DEST_FOLDER_ID = '1B4-lxlvtGwroP_5iHi9erMZT7c7sW76P';
-  // ----------------
+  // 設定はファイルの先頭の AP_OPTIONS（保存先はスクリプトのプロパティ AP_DEST_FOLDER でも指定できる）
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(targetSheetName);
@@ -58,8 +81,8 @@ function executeCopyProcess(targetSheetName) {
   const range = sheet.getRange(2, 5, lastRow - 1, 9);
   const values = range.getValues();
   
-  const templateFile = DriveApp.getFileById(TEMPLATE_FILE_ID);
-  const destFolder = DriveApp.getFolderById(DEST_FOLDER_ID);
+  const templateFile = DriveApp.getFileById(AP_OPTIONS.templateFileId);
+  const destFolder = apDestFolder_();
 
   let count = 0;
   let isTimeout = false;

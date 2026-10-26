@@ -41,6 +41,23 @@ test('executeCopyProcess：対象の行ごとにテンプレートをコピー�
   assert.match(sheet.getRange('M4').getValue(), /^https:\/\/docs\.google\.com\//);
 });
 
+test('executeCopyProcess：保存先は AP_OPTIONS.destFolderId。スクリプトのプロパティ AP_DEST_FOLDER（URL か ID）があればそちら。開けなければ止める', () => {
+  const gas = createGas();
+  addPlanSheet(gas, [['A社', '']]);
+  gas.global.executeCopyProcess(SHEET);
+  assert.strictEqual(gas.driveCopies[0].folder, '1B4-lxlvtGwroP_5iHi9erMZT7c7sW76P', 'コードの設定');
+
+  const other = createGas();
+  addPlanSheet(other, [['A社', '']]);
+  other.global.PropertiesService.getScriptProperties().setProperty('AP_DEST_FOLDER', 'https://drive.google.com/drive/folders/PlanFolder000001?usp=sharing');
+  other.global.executeCopyProcess(SHEET);
+  assert.strictEqual(other.driveCopies[0].folder, 'PlanFolder000001', 'スクリプトのプロパティ');
+  other.missingFolders = ['PlanFolder000001'];
+  assert.throws(() => other.global.executeCopyProcess(SHEET), /アカウントプランシートの保存先のフォルダ（ID：PlanFolder000001）を開けません。[\s\S]*スクリプトのプロパティ「AP_DEST_FOLDER」/);
+  other.global.PropertiesService.getScriptProperties().setProperty('AP_DEST_FOLDER', 'フォルダ');
+  assert.throws(() => other.global.executeCopyProcess(SHEET), /スクリプトのプロパティ「AP_DEST_FOLDER」）の値「フォルダ」を、フォルダの URL か ID として読めません/);
+});
+
 test('protectSpecificColumnsWithLock：「案件_」のシートの列だけを保護し、2回目は増やさない', () => {
   const gas = createGas();
   const target = gas.addSheet('案件_A社', [['見出し']], {rows: 5, columns: 30});
