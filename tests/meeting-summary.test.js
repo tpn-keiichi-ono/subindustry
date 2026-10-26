@@ -1895,33 +1895,38 @@ test('removeBusinessMtgRecord：会議日の記録を取り消す（はいのと
   gas.get('MTG_OPTIONS').keepSlides = true;   // Google スライドも残す設定で確かめる
   const props = g.PropertiesService.getDocumentProperties();
   const lastAlert = () => gas.alerts[gas.alerts.length - 1];
+  // 会議日は今日より後にする（過ぎた日付だと、資料を作る画面で選べないため。テストを実行する日に左右されないように）
+  const md = days => { const d = new Date(Date.now() + 9 * 3600000 + days * 86400000); return (d.getUTCMonth() + 1) + '/' + d.getUTCDate(); };
+  const DAY = md(7);
+  const OTHER = md(14);
   gas.promptAnswers = ['1'];
   g.setBusinessMtgBaseline();
-  gas.promptAnswers = ['1', '10/23'];
+  gas.promptAnswers = ['1', DAY];
   g.createBusinessMtgSummaries();
-  const meeting = g.mtgParseDate_('10/23', new Date());
+  const meeting = g.mtgParseDate_(DAY, new Date());
   const files = gas.driveFiles.length;
 
-  gas.promptAnswers = ['1', '10/30'];
+  gas.promptAnswers = ['1', OTHER];
   g.removeBusinessMtgRecord();
-  assert.match(gas.prompts[gas.prompts.length - 1].message, /取り消す会議日を入力してください（例：10\/23）。\n\n記録してある会議日\n・新FMT：10\/23$/);
-  assert.match(lastAlert().message, /会議日 \d{4}\/10\/30 の記録はありません。/);
+  const ask = gas.prompts[gas.prompts.length - 1].message;
+  assert.ok(ask.startsWith('取り消す会議日を入力してください（例：') && ask.endsWith('記録してある会議日\n・新FMT：' + DAY), ask);
+  assert.ok(lastAlert().message.includes('会議日 ' + g.mtgParseDate_(OTHER, new Date()) + ' の記録はありません。'), lastAlert().message);
 
   gas.confirmAnswer = 'NO';
-  gas.promptAnswers = ['1', '10/23'];
+  gas.promptAnswers = ['1', DAY];
   g.removeBusinessMtgRecord();
-  assert.match(lastAlert().message, /「新FMT」の会議日（\d{4}\/10\/23）の記録を取り消します。/);
+  assert.ok(lastAlert().message.includes('「新FMT」の会議日（' + meeting + '）の記録を取り消します。'), lastAlert().message);
   assert.deepStrictEqual(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT')).map(m => m.date).slice(-1), [meeting], '「いいえ」なら消さない');
 
   gas.confirmAnswer = 'YES';
-  gas.promptAnswers = ['1', '10/23'];
+  gas.promptAnswers = ['1', DAY];
   g.removeBusinessMtgRecord();
-  assert.match(lastAlert().message, /「新FMT」の会議日（\d{4}\/10\/23）の記録を取り消しました。/);
+  assert.ok(lastAlert().message.includes('「新FMT」の会議日（' + meeting + '）の記録を取り消しました。'), lastAlert().message);
   const list = JSON.parse(props.getProperty('MTG_MEETINGS_新FMT'));
   assert.deepStrictEqual(list.map(m => !!m.baseline), [true], '基準の記録は残す');
   assert.strictEqual(gas.driveFiles.length, files);
   assert.deepStrictEqual(gas.trashed, [], '資料のファイルは消さない');
-  gas.promptAnswers = ['1', '10/23'];
+  gas.promptAnswers = ['1', DAY];
   g.createBusinessMtgSummaries();
   assert.match(gas.alerts.filter(a => /本番の資料を作り/.test(a.message)).pop().message, /・新FMT：基準（/, '取り消したあとは、基準からの変化に戻る');
   assert.throws(() => { gas.promptAnswers = ['1', 'あした']; g.removeBusinessMtgRecord(); }, /「あした」を会議日として読めません。/);
@@ -2938,11 +2943,12 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
 
 /* ---------------- RXシナリオ構成（J列。複数選択） ---------------- */
 
-/** 2つのシートに「RXシナリオ構成」の列（P列。プルダウンの選択肢 X・Y・W）を足し、案件に選ぶ */
+/** 2つのシートに「RXシナリオ構成」「RXシナリオ構成（サービス）」の列（P列。プルダウンの選択肢 X・Y・W）を足し、案件に選ぶ */
 function withScenario(gas, g) {
   ['新FMT', '新FMT2'].forEach(name => {
     const sheet = gas.ss.getSheetByName(name);
-    gas.asUser(() => sheet.getRange(2, 16).setValue('RXシナリオ構成（サービス）'));
+    // 本物は、シートによって見出しが「RXシナリオ構成」か「RXシナリオ構成（サービス）」（columnAliases）。どちらでも読む
+    gas.asUser(() => sheet.getRange(2, 16).setValue(name === '新FMT' ? 'RXシナリオ構成' : 'RXシナリオ構成（サービス）'));
     sheet.getRange('P3:P20').setDataValidation(g.SpreadsheetApp.newDataValidation().requireValueInList(['X', 'Y', 'W'], true).build());
   });
   const a = gas.ss.getSheetByName('新FMT');
@@ -3040,7 +3046,7 @@ test('createBusinessMtgScenarioSummary：シートを選び、確かめてから
   const props = g.PropertiesService.getDocumentProperties();
   // 列が無ければ止める（何も作らない）
   gas.promptAnswers = [''];
-  assert.throws(() => g.createBusinessMtgScenarioSummary(), /選んだシートに「RXシナリオ構成（サービス）」の列がありません/);
+  assert.throws(() => g.createBusinessMtgScenarioSummary(), /選んだシートに「RXシナリオ構成」か「RXシナリオ構成（サービス）」の列がありません/);
   assert.strictEqual(gas.decks.length, 0);
 
   withScenario(gas, g);

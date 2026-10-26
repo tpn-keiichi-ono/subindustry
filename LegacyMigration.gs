@@ -107,7 +107,8 @@ function migPlan_(ss, source, name) {
 
   // 新：見出しの列と、数式の列（データの1行目に数式があれば、その列は書かない・消さない）
   const firstRow = rule.headerRow + 1;
-  const width = Math.max(Math.max.apply(null, rule.ranges.map(a1 => sheet.getRange(a1).getLastColumn())), sheet.getLastColumn());
+  // 書く・消す列：追跡範囲（シートの中まで）と、値のある最後の列の広いほう
+  const width = Math.max(1, sheet.getLastColumn(), ...rule.ranges.map(a1 => diffRuleRange_(sheet, a1)).filter(Boolean).map(range => range.getLastColumn()));
   const headers = sheet.getRange(rule.headerRow, 1, 1, width).getDisplayValues()[0].map(credNormalize_);
   const formulas = sheet.getRange(firstRow, 1, 1, width).getFormulas()[0];
   const formulaCols = [];

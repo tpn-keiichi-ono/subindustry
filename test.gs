@@ -95,7 +95,8 @@ const DIFF_RULES = {
   },
   'コンビニ': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER, formerNames: ['新FMT2']},
   '百貨店': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
-  // 2026/10/16 に足したサブインダストリー（11シートとも、スーパー・GMS と同じ見出し（A〜AC列）。見出しの行・追跡範囲も同じ）
+  // 2026/10/16 に足したサブインダストリー（11シートとも、スーパー・GMS と同じ見出し。見出しの行・追跡範囲も同じ）。
+  // 2026/10/26 に列を消してシートは A〜AA の27列になった。追跡範囲 D3:AF はシートの中まで読む（diffRuleRange_）ので、そのままでよい
   '化粧品・トイレタリー': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
   '飲料・食品': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
   '自動車販売': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
@@ -1816,7 +1817,8 @@ function diffColumnNames_(sheet, rule, firstColumn, columnCount) {
 function diffBlocks_(sheet, rule, edit, stampColumn, usedOnly) {
   const blocks = [];
   for (const a1 of rule.ranges) {
-    const target = sheet.getRange(a1);
+    const target = diffRuleRange_(sheet, a1);
+    if (!target) continue;
     const r1 = Math.max(target.getRow(), rule.headerRow + 1, edit ? edit.getRow() : 1);
     const r2 = Math.min(target.getLastRow(), edit ? edit.getLastRow() : sheet.getMaxRows(),
       usedOnly ? sheet.getLastRow() : sheet.getMaxRows());
@@ -2583,7 +2585,7 @@ function diffTrimRecordSheets_(ss) {
     if (!rule) return;
     const baseline = ss.getSheets().find(s => s.getSheetId() === saved.snapshotId);
     if (!baseline) return;
-    const right = Math.max(...rule.ranges.map(a1 => sheet.getRange(a1).getLastColumn()));
+    const right = Math.max(1, ...rule.ranges.map(a1 => diffRuleRange_(sheet, a1)).filter(Boolean).map(range => range.getLastColumn()));
     diffTrimGrid_(baseline, right, sheet.getMaxRows());
   });
 }
@@ -2591,6 +2593,25 @@ function diffTrimRecordSheets_(ss) {
 function diffEnsureGrid_(sheet, rows, columns) {
   if (rows > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), rows - sheet.getMaxRows());
   if (columns > sheet.getMaxColumns()) sheet.insertColumnsAfter(sheet.getMaxColumns(), columns - sheet.getMaxColumns());
+}
+
+/**
+ * 追跡範囲（DIFF_RULES の ranges。「D3:AF」など）を、シートの行数・列数の中に切り詰めた範囲（シートの外から始まるなら null）。
+ * 列を消してシートが範囲より狭くなっても止まらないように（Apps Script はシートの外を含む範囲を指すと止まる）
+ */
+function diffRuleRange_(sheet, a1) {
+  const m = /^\$?([A-Z]*)\$?(\d*)(?::\$?([A-Z]*)\$?(\d*))?$/.exec(String(a1).toUpperCase().trim());
+  if (!m || (!m[1] && !m[2])) throw new Error('DIFF_RULES の ranges「' + a1 + '」を範囲として読めません。');
+  const num = letters => letters.split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+  const maxRows = sheet.getMaxRows();
+  const maxCols = sheet.getMaxColumns();
+  const single = m[3] === undefined;
+  const row = m[2] ? Number(m[2]) : 1;
+  const col = m[1] ? num(m[1]) : 1;
+  const lastRow = Math.min(single ? row : (m[4] ? Number(m[4]) : maxRows), maxRows);
+  const lastCol = Math.min(single ? col : (m[3] ? num(m[3]) : maxCols), maxCols);
+  if (row > lastRow || col > lastCol) return null;
+  return sheet.getRange(row, col, lastRow - row + 1, lastCol - col + 1);
 }
 
 function diffA1_(row, column) {

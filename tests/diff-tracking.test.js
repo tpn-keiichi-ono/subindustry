@@ -382,6 +382,34 @@ test('列の追加：止めずに、その場で比較基準を取り直して�
   assert.strictEqual(gas.records(LOG).length, 1);
 });
 
+test('追跡シートが追跡範囲（D3:AF）より狭い（本物は列を消して A〜AA の27列）：比較基準を作り・記録し、さらに列を消しても取り直して続ける', () => {
+  const gas = createGas();
+  const g = gas.global;
+  const WIDE = 27;
+  const line = values => values.concat(new Array(WIDE - values.length).fill(''));
+  ['新FMT', '新FMT2'].forEach(name => gas.addSheet(name, [
+    line(['', '入力主体']),
+    line(['最終更新日時\n（自動入力）', 'No.', 'サブインダストリー', '得意先', '先方部門', '先方担当役職', '先方担当氏名', '案件名', 'RXシナリオ構成']),
+    line(['', '1', name, 'A社', '営業部', '部長', '山田', '販促DX', '']),
+    line(['', '2', name, 'B社', '', '', '', 'EC', ''])
+  ], {rows: 10, columns: WIDE}));
+  const sheet = gas.ss.getSheetByName('新FMT');
+  g.setupDiffTracking();
+  Object.values(STATE(gas)).forEach(s => assert.strictEqual(s.paused, false));
+  g.recordDiffEdit(gas.edit(sheet, 'E3', '営業企画部'));
+  assert.deepStrictEqual(gas.records(LOG).map(r => [r['セル'], r['列名']]), [['E3', '先方部門']]);
+
+  // 列を消す（先方担当役職）：止めずに比較基準を取り直し、そのあとの編集も記録する
+  gas.asUser(() => sheet.deleteColumn(6));
+  g.pauseDiffOnStructureChange(gas.change('REMOVE_COLUMN'));
+  assert.strictEqual(STATE(gas)[sheet.getSheetId()].paused, false);
+  assert.strictEqual(STATE(gas)[sheet.getSheetId()].gridColumns, WIDE - 1);
+  g.recordDiffEdit(gas.edit(sheet, 'G3', '販促DX（第2期）'));   // 案件名は G 列に
+  assert.deepStrictEqual(gas.records(LOG).map(r => [r['セル'], r['列名']]).slice(-1), [['G3', '案件名']]);
+  assert.deepStrictEqual(g.diffRuleRange_(sheet, 'D3:AF').getA1Notation(), 'D3:Z10', 'シートの中まで');
+  assert.strictEqual(g.diffRuleRange_(sheet, 'AB3:AF'), null, 'シートの外から始まる範囲は無し');
+});
+
 /* ---------------- 止まったときの知らせと立て直し ---------------- */
 
 const STATE = gas => JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'));

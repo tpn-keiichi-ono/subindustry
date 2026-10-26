@@ -22,6 +22,7 @@ const OC_OPTIONS = {
   },
   // キャンバスの枠（no は記入順の番号、question は枠の問い）
   // 新FMT に当てはまる列が無い枠（利用の指標・予算・ビジネス上の課題）は出さない。枠の内容と合わない列も入れない
+  // headers の中の配列は、同じ列のほかの見出し（シートによって見出しが違う列。見つかった最初の見出しを使う）
   sections: [
     {key: 'users', no: 2, title: '顧客・ユーザー',
       question: 'この課題を抱えているのは、どんな顧客・ユーザーか',
@@ -29,12 +30,14 @@ const OC_OPTIONS = {
     {key: 'problems', no: 1, title: '課題',
       question: '顧客・ユーザーが今抱えている課題・ニーズは何か',
       headers: ['クライアントが置かれている状況・課題・現在の解決策']},
+    // 「スコープに対する競合他社」の列は 2026/10/26 にシートから消えたので、当てはまる列なし
     {key: 'today', no: 3, title: '現在の解決策',
       question: '顧客は今その課題にどう対処しているか（競合・代替手段）',
-      headers: ['スコープに対する競合他社']},
+      headers: []},
+    // 「案件のスコープ」の列は 2026/10/26 にシートから消えたので、RXシナリオ構成（シートによって見出しが2通り）・サービス価格を出す
     {key: 'ideas', no: 1, title: '解決策のアイデア',
       question: '提供する商品・サービス・提案の内容',
-      headers: ['案件のスコープ', 'サブインシナリオ']},
+      headers: [['RXシナリオ構成', 'RXシナリオ構成（サービス）'], 'サービス価格', 'サブインシナリオ']},
     {key: 'use', no: 4, title: '使われ方・導入効果',
       question: '解決策によって、顧客の行動や成果はどう変わるか',
       headers: ['想定される価値創出のケース／期待される導入効果']},
@@ -112,9 +115,11 @@ function getOpportunityCanvasData(sheetName, row) {
   });
 
   const missing = [];
+  // header が配列なら、同じ列のほかの見出し（見つかった最初のもの。どれも無ければ最初の見出しを「見つからない列」に出す）
   const pick = header => {
-    const found = byHeader.get(ocHeaderKey_(header));
-    if (!found) missing.push(diffCleanHeaderText_(header));
+    const names = Array.isArray(header) ? header : [header];
+    const found = names.map(name => byHeader.get(ocHeaderKey_(name))).find(Boolean);
+    if (!found) missing.push(diffCleanHeaderText_(names[0]));
     return found || null;
   };
   const valueOf = header => { const found = pick(header); return found ? found.value : ''; };

@@ -3,11 +3,11 @@
 const {test, assert} = require('./lib/harness');
 const {createGas, plain} = require('./lib/gas-mock');
 
-// 新FMT の見出し（2行目）。実際のシートと同じ並び（C列から）
+// 新FMT の見出し（2行目）。実際のシートの並び（C列から。2026/10/26 に「クライアントとのリレーション」「案件のスコープ」
+// 「スコープに対する競合他社」「プロジェクト開始-終了」を消し、RXシナリオ構成・サービス価格を足した。キャンバス用の列はシートに無いものも含む）
 const HEADERS = [
   'サブインダストリー', '得意先', '先方部門', '先方担当役職', '先方担当氏名',
-  'クライアントとのリレーション\nクライアント内のガバナンス', '案件名', '案件のスコープ', 'スコープに対する競合他社',
-  'プロジェクト開始-終了', '案件ステータス', '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月',
+  '案件名', 'RXシナリオ構成', 'サービス価格', '案件ステータス', '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月',
   '売上開始月', '提案開始日', '活動状況', '活動における課題', 'アカウント責任者', 'BX担当', '品質責任者', 'デリバリー担当',
   'クライアントが置かれている状況・課題・現在の解決策', 'アカウントプラン（リンク）', 'サブインシナリオ',
   '本案件におけるターゲットユーザー', 'マーケットに出すソリューションか', '想定される価値創出のケース／期待される導入効果',
@@ -39,11 +39,9 @@ const VALUES = {
   '先方部門': '営業企画部',
   '先方担当役職': '部長',
   '先方担当氏名': '原田 明博',
-  'クライアントとのリレーション\nクライアント内のガバナンス': 'テストABC',
   '案件名': 'シナリオ提案',
-  '案件のスコープ': '販促DXの全社展開',
-  'スコープに対する競合他社': 'A社・B社',
-  'プロジェクト開始-終了': '2026/11〜2027/03',
+  'RXシナリオ構成': 'ID-POS分析, アプリ・CRM',
+  'サービス価格': '1,200万円',
   '案件ステータス': '提案中',
   '想定売上規模（百万）': '30',
   '期待値調整済\n想定売上規模（百万）': '15',
@@ -77,6 +75,8 @@ test('getOpportunityCanvasData：見出し名で列を探し、キャンバス�
     ['use', 4, '使われ方・導入効果'], ['adoption', 5, '導入戦略'], ['benefits', 6, 'ビジネス上の効果・指標']
   ]);
   data.sections.forEach(s => assert.ok(!/[A-Za-z]/.test(s.title), s.title));
+  // 競合他社の列は消えたので、「現在の解決策」は当てはまる列なし（画面は「この枠に当てはまる列はありません。」）
+  assert.deepStrictEqual([section(data, 'today').configured, section(data, 'today').items], [false, []]);
   assert.deepStrictEqual(pairs(section(data, 'users')), [
     ['サブインダストリー', '食品小売'], ['先方部門', '営業企画部'], ['先方担当役職', '部長'], ['先方担当氏名', '原田 明博'],
     ['本案件におけるターゲットユーザー', '店舗の販促担当']
@@ -91,7 +91,7 @@ test('getOpportunityCanvasData：見出し名で列を探し、キャンバス�
   ]);
   // 枠と合わない列・体制は出さない
   const text = JSON.stringify(data);
-  ['テストABC', '決裁者に会えていない', '2026/11〜2027/03', '佐藤', '鈴木'].forEach(v =>
+  ['決裁者に会えていない', '佐藤', '鈴木'].forEach(v =>
     assert.ok(!text.includes(v), '枠と合わない列の値が入っています: ' + v));
   assert.strictEqual(data.team, undefined);
   assert.deepStrictEqual(data.missing, []);
@@ -114,8 +114,20 @@ test('getOpportunityCanvasData：クレデンシャル・オファリングの�
   data.sections.forEach(s => assert.deepStrictEqual(Object.keys(s).sort(),
     ['configured', 'items', 'key', 'no', 'question', 'title']));
   assert.deepStrictEqual(pairs(section(data, 'ideas')), [
-    ['案件のスコープ', '販促DXの全社展開'], ['サブインシナリオ', '離反防止']
+    ['RXシナリオ構成', 'ID-POS分析, アプリ・CRM'], ['サービス価格', '1,200万円'], ['サブインシナリオ', '離反防止']
   ]);
+});
+
+test('getOpportunityCanvasData：RXシナリオ構成は「RXシナリオ構成（サービス）」の見出しのシートでも出す（見つからない列にしない）', () => {
+  const headers = HEADERS.map(h => (h === 'RXシナリオ構成' ? 'RXシナリオ構成（サービス）' : h));
+  const values = Object.assign({}, VALUES, {'RXシナリオ構成（サービス）': 'サイネージ'});
+  const {g} = setup(values, {headers});
+  const data = plain(g.getOpportunityCanvasData('新FMT', 3));
+  assert.deepStrictEqual(pairs(section(data, 'ideas'))[0], ['RXシナリオ構成（サービス）', 'サイネージ']);
+  assert.deepStrictEqual(data.missing, []);
+  // どちらも無ければ、最初の見出しを見つからない列に出す
+  const {g: g2} = setup(VALUES, {headers: HEADERS.filter(h => h !== 'RXシナリオ構成')});
+  assert.deepStrictEqual(plain(g2.getOpportunityCanvasData('新FMT', 3)).missing, ['RXシナリオ構成']);
 });
 
 test('getOpportunityCanvasData：見つからない列は missing で知らせる', () => {
@@ -152,7 +164,7 @@ test('openOpportunityCanvas：選んだ行のキャンバスをモーダルで�
   assert.match(gas.alerts[gas.alerts.length - 1].message, /データ行（3行目以降）を選んでください/);
 });
 
-test('サンプルデータ（samples/新FMT_サンプルデータ.tsv）：見出しの並びどおりで、どの行もキャンバスの全部の枠に値が入る', () => {
+test('サンプルデータ（samples/新FMT_サンプルデータ.tsv）：見出しの並びどおりで、どの行もキャンバスの枠（当てはまる列のあるもの）に値が入る', () => {
   const file = require('path').join(__dirname, '..', 'samples', '新FMT_サンプルデータ.tsv');
   const rows = require('fs').readFileSync(file, 'utf8').split('\n').filter(Boolean).map(line => line.split('\t'));
   assert.strictEqual(rows.length, 5);
@@ -164,9 +176,10 @@ test('サンプルデータ（samples/新FMT_サンプルデータ.tsv）：見�
     const {g} = setup(values);
     const data = plain(g.getOpportunityCanvasData('新FMT', 3));
     assert.strictEqual(data.header.customer, row[1]);
-    assert.strictEqual(data.header.title, row[6]);
+    assert.strictEqual(data.header.title, row[5]);
     assert.deepStrictEqual(data.missing, []);
-    data.sections.forEach(s => assert.ok(s.items.some(i => i.value), row[1] + ' の「' + s.title + '」が空です'));
+    // 当てはまる列の無い枠（現在の解決策）は除く
+    data.sections.filter(s => s.configured).forEach(s => assert.ok(s.items.some(i => i.value), row[1] + ' の「' + s.title + '」が空です'));
   });
 });
 

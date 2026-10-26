@@ -507,6 +507,10 @@ class Sheet {
   getRange(a, b, c, d) {
     if (typeof a === 'string') {
       const p = parseA1(a, this.maxRows, this.maxCols);
+      // 本物と同じく、シートの行数・列数を超える範囲は止める（列を消してシートが狭くなったとき、追跡範囲「D3:AF」などが止まるのを再現する）
+      if (p.row + p.numRows - 1 > this.maxRows || p.col + p.numCols - 1 > this.maxCols) {
+        throw new Error('範囲の座標がシートのサイズ外です。（' + this.name + '!' + a + '）');
+      }
       return new Range(this, p.row, p.col, p.numRows, p.numCols);
     }
     return new Range(this, a, b, c === undefined ? 1 : c, d === undefined ? 1 : d);

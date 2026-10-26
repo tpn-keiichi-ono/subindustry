@@ -249,11 +249,14 @@ const MTG_OPTIONS = {
     issue: '活動における課題',
     owner: 'アカウント責任者',
     nextAction: '次回アクション',
-    scenario: 'RXシナリオ構成（サービス）',   // J列。複数選んだときは「A, B」の形（プルダウンの複数選択）。無ければ使わない
+    scenario: 'RXシナリオ構成',           // I列。複数選んだときは「A, B」の形（プルダウンの複数選択）。無ければ使わない（ほかの見出しは columnAliases）
     // デリバリー担当：新FMT にはこの列が無いので空（入力内容のチェック「デリバリー担当未設定」を出さない）。列を作ったら、その見出しを書く
     delivery: '',
     record: '商談記録（ＵＲＬ）'          // 提案資料・商談の音声の格納先（入力内容のチェック「資料なし」）
   },
+  // 同じ列のほかの見出し（シートによって見出しが違うもの。columns の見出しが無ければ、これを順に探す）。
+  // 2026/10/26 時点で、I列はシートによって「RXシナリオ構成」と「RXシナリオ構成（サービス）」の2通り
+  columnAliases: {scenario: ['RXシナリオ構成（サービス）']},
   // 必須項目：進行中の案件で空なら、入力内容のチェックの「未入力」に出す（シートに無い見出しは見ない）
   required: ['案件ステータス', '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '活動状況', 'アカウント責任者'],
   // ステータスの定義のシート（期待値の率）。ステータスの進み具合（前進・後退）は率の大きい順、率が同じなら定義の下の行ほど進んでいる
@@ -995,7 +998,8 @@ function createBusinessMtgScenarioSummary() {
   if (!names) return;
   const data = mtgScenarioData_(ss, names);
   if (!data.withColumn.length) {
-    throw new Error('選んだシートに「' + MTG_OPTIONS.columns.scenario + '」の列がありません。2行目の見出しを確かめてください（MeetingSummary.gs の MTG_OPTIONS.columns.scenario）。');
+    const names = [MTG_OPTIONS.columns.scenario].concat((MTG_OPTIONS.columnAliases || {}).scenario || []);
+    throw new Error('選んだシートに「' + names.join('」か「') + '」の列がありません。2行目の見出しを確かめてください（MeetingSummary.gs の MTG_OPTIONS.columns.scenario・columnAliases）。');
   }
   const t = mtgScenarioTotals_(data);
   const answer = ui.alert(title, o.title + 'の資料（試作）を作ります。\n\n' +
@@ -1032,7 +1036,7 @@ function mtgScenarioData_(ss, names) {
       return;
     }
     out.withColumn.push(name);
-    const col = table.headers.findIndex(h => credNormalize_(h) === credNormalize_(MTG_OPTIONS.columns.scenario));
+    const col = mtgColumnIndex_(table.headers, 'scenario');
     (mtgListOptions_(sheet.getRange(rule.headerRow + 1, col + 1).getDataValidation()) || []).forEach(v => { if (out.options.indexOf(v) < 0) out.options.push(v); });
     table.deals.filter(d => d.kind === 'active').forEach(d => out.deals.push({sheet: name, customer: d.customer, project: d.project, status: d.status,
       rank: mtgPlanRank_(d.status), weighted: d.weighted || 0, blank: d.weighted == null, scenarios: d.scenarios}));
@@ -2353,7 +2357,8 @@ function mtgTrackedLabels_(sheet, rule, headers) {
   const stamp = diffNormalizeStampHeader_(DIFF_OPTIONS.stampHeader);
   const out = [];
   rule.ranges.forEach(a1 => {
-    const range = sheet.getRange(a1);
+    const range = diffRuleRange_(sheet, a1);   // シートより広い範囲（列を消したあと）はシートの中まで
+    if (!range) return;
     for (let c = range.getColumn(); c <= range.getLastColumn(); c++) {
       const header = String(headers[c - 1] || '');
       const key = credNormalize_(header);
@@ -2475,7 +2480,7 @@ function mtgReadDeals_(sheet, rule) {
   const cols = {};
   const has = {};
   Object.keys(MTG_OPTIONS.columns).forEach(key => {
-    cols[key] = find(MTG_OPTIONS.columns[key]);
+    cols[key] = mtgColumnIndex_(headers, key);
     has[key] = cols[key] >= 0;
   });
   ['customer', 'project', 'status'].forEach(key => {
@@ -2804,6 +2809,16 @@ function mtgGapList_(s) {
 }
 
 /** 正規化した見出し（変更の記録の列名と比べる） */
+/** columns の key の列（0 から。無ければ -1）。columns の見出しが無ければ columnAliases の見出しを順に探す */
+function mtgColumnIndex_(headers, key) {
+  const names = [MTG_OPTIONS.columns[key]].concat((MTG_OPTIONS.columnAliases || {})[key] || []).filter(Boolean).map(credNormalize_);
+  for (const name of names) {
+    const i = headers.findIndex(h => credNormalize_(h) === name);
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
 function mtgLabels_() {
   const cols = MTG_OPTIONS.columns;
   const out = {};
@@ -4973,8 +4988,7 @@ function mtgShortHeader_(header) {
   const names = {customer: '得意先', project: '案件名', status: 'ステータス', amount: '想定売上', weighted: '期待値', orderMonth: '受注月',
     startMonth: '売上開始月', activity: '活動状況', issue: '課題', owner: '責任者', delivery: 'デリバリー担当', nextAction: '次回アクション',
     scenario: 'RXシナリオ構成', record: '商談記録'};
-  const labels = mtgLabels_();
-  const key = Object.keys(labels).find(k => labels[k] === credNormalize_(header));
+  const key = Object.keys(names).find(k => mtgColumnIndex_([header], k) === 0);
   return key ? names[key] : String(header).replace(/\s+/g, '');
 }
 
