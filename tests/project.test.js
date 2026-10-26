@@ -34,7 +34,7 @@ test('「🟩RXビジネスMTG用」のメニューは「履歴サイドバー�
     {label: '権限を承認する（初回のみ）', fn: 'authorizeHistoryFeatures'}
   ]);
   // メニューから外した関数も、エディタから実行できるよう残っている
-  ['openHistorySidebar', 'openCredentialDialog', 'openChangeHistoryDialog', 'openOpportunityCanvas',
+  ['openHistorySidebar', 'openCredentialDialog', 'openChangeHistoryDialog',
     'setupCredentialLauncher', 'setupChangeHistoryLauncher', 'removeHistorySidebarAutoOpen',
     'addSampleHistory', 'removeSampleHistory'].forEach(fn => {
     assert.strictEqual(typeof gas.global[fn], 'function', fn + ' がありません');
@@ -202,4 +202,16 @@ test('本物の設定：カレンダーの予定の名前で、RX Business Meeti
   assert.strictEqual(g.mschKeyOfTitle_('RX Business MTG（パイプライン会議）'), 'business');
   assert.strictEqual(g.mschKeyOfTitle_('RX Business Meeting'), 'business');
   assert.strictEqual(g.mschKeyOfTitle_('部会'), '');
+});
+
+test('オポチュニティキャンバスは廃止（2026/10/26）：サーバーの関数・モーダル・サイドバーのボタンが無い', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const root = path.join(__dirname, '..');
+  ['OpportunityCanvas.gs', 'OpportunityCanvasDialog.html'].forEach(f => assert.ok(!fs.existsSync(path.join(root, f)), f + ' が残っています'));
+  const gas = createGas();
+  ['openOpportunityCanvas', 'openOpportunityCanvasFromSidebar', 'getOpportunityCanvasData'].forEach(fn =>
+    assert.strictEqual(typeof gas.global[fn], 'undefined', fn + ' が残っています'));
+  const sidebar = fs.readFileSync(path.join(root, 'HistorySidebarView.html'), 'utf8');
+  assert.ok(!/キャンバス|Canvas/.test(sidebar), 'サイドバーにキャンバスが残っています');
 });

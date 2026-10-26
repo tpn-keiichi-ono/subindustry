@@ -25,8 +25,6 @@ Google スプレッドシート「シナリオ攻略先リスト」に組み込�
   Loading.html                  アカウントプランシート作成の進み具合の画面
   自動入力部分のシート保護.gs   「案件_」シートの列の保護
   サンプルデータ.gs             画面確認用のサンプル履歴の追加・削除（エディタから実行）
-  OpportunityCanvas.gs          オポチュニティキャンバス（行の内容をキャンバスの枠に並べる）のサーバー側
-  OpportunityCanvasDialog.html  オポチュニティキャンバスのモーダル
   TaskManagement.gs             タスク管理シート（サービス案ごとの検討の進捗）
   ServiceManagement.gs          サービスリクエスト（新FMT のリクエストを選択パネルで登録する。サービス案を付けてまとめる。メニューは onOpen から追加）
   RequestPickerView.html        サービスリクエストの選択パネル（サイドバー）
@@ -39,7 +37,6 @@ docs/
 tests/                        Node.js で動くロジックのテスト（Apps Script には送らない）
   lib/gas-mock.js               Apps Script のモック
   lib/fixture.js                テスト用の追跡シート（新FMT・新FMT2）
-samples/新FMT_サンプルデータ.tsv  新FMT に貼り付けられるサンプルの5行（オポチュニティキャンバスの確認用。Apps Script には送らない）
 scripts/check-syntax.js       構文・ファイルの置き場所・名前の重複・onOpen の数などのチェック
 .claspignore                  clasp で push するファイルを Apps Script のファイルだけに絞る
 CLAUDE.md                     Claude Code 向けの作業ルール
