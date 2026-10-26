@@ -2,9 +2,27 @@
 const AP_OPTIONS = {
   templateFileId: '17Fn7jUW7gdEtX4_Hn5PtOGX4oGLHrqeU-CI6mm49x9k',   // ひな形のスプレッドシート
   destFolderId: '1B4-lxlvtGwroP_5iHi9erMZT7c7sW76P',                 // 作ったアカウントプランシートの保存先のフォルダ
-  // 保存先は、スクリプトのプロパティ「AP_DEST_FOLDER」（フォルダの URL か ID）でも指定できる（あれば destFolderId より優先）
+  // どちらも、スクリプトのプロパティでも指定できる（あればコードの設定より優先）。ひな形はスプレッドシートの URL か ID、保存先はフォルダの URL か ID
+  templateFileProp: 'AP_TEMPLATE_FILE',
   destFolderProp: 'AP_DEST_FOLDER'
 };
+
+/** アカウントプランシートのひな形の設定（スクリプトのプロパティ AP_TEMPLATE_FILE → AP_OPTIONS.templateFileId） */
+function apTemplateSetting_() {
+  return mtgOutputSetting_([AP_OPTIONS.templateFileProp], AP_OPTIONS.templateFileId, 'コード.gs の AP_OPTIONS.templateFileId');
+}
+
+/** アカウントプランシートのひな形のファイル。読めない・開けなければ、どの設定かを書いて止める */
+function apTemplateFile_() {
+  const setting = apTemplateSetting_();
+  const id = mtgFileIdOf_(setting.value);
+  if (!id) throw new Error('アカウントプランシートのひな形の設定（' + setting.where + '）の値「' + setting.value + '」を、スプレッドシートの URL か ID として読めません。');
+  try {
+    return DriveApp.getFileById(id);
+  } catch (_) {
+    throw new Error('アカウントプランシートのひな形（ID：' + id + '）を開けません。実行するアカウントが閲覧できるか確かめてください（' + setting.where + '）。');
+  }
+}
 
 /** アカウントプランシートの保存先の設定（スクリプトのプロパティ AP_DEST_FOLDER → AP_OPTIONS.destFolderId） */
 function apDestFolderSetting_() {
@@ -71,7 +89,7 @@ function executeCopyProcess(targetSheetName) {
   const MAX_RUNTIME_MS = 300000; // 5分で停止
   const LOCK_WAIT_MS = 30000;    // ほかの書き込み（差分追跡・クレデンシャル履歴）を待つ時間
 
-  // 設定はファイルの先頭の AP_OPTIONS（保存先はスクリプトのプロパティ AP_DEST_FOLDER でも指定できる）
+  // 設定はファイルの先頭の AP_OPTIONS（ひな形・保存先はスクリプトのプロパティ AP_TEMPLATE_FILE・AP_DEST_FOLDER でも指定できる）
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(targetSheetName);
@@ -81,7 +99,7 @@ function executeCopyProcess(targetSheetName) {
   const range = sheet.getRange(2, 5, lastRow - 1, 9);
   const values = range.getValues();
   
-  const templateFile = DriveApp.getFileById(AP_OPTIONS.templateFileId);
+  const templateFile = apTemplateFile_();
   const destFolder = apDestFolder_();
 
   let count = 0;

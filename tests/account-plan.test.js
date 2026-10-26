@@ -58,6 +58,22 @@ test('executeCopyProcess：保存先は AP_OPTIONS.destFolderId。スクリプ�
   assert.throws(() => other.global.executeCopyProcess(SHEET), /スクリプトのプロパティ「AP_DEST_FOLDER」）の値「フォルダ」を、フォルダの URL か ID として読めません/);
 });
 
+test('executeCopyProcess：ひな形は AP_OPTIONS.templateFileId。スクリプトのプロパティ AP_TEMPLATE_FILE（スプレッドシートの URL か ID）があればそちら', () => {
+  const gas = createGas();
+  addPlanSheet(gas, [['A社', '']]);
+  gas.global.executeCopyProcess(SHEET);
+  assert.strictEqual(gas.driveCopies[0].from, '17Fn7jUW7gdEtX4_Hn5PtOGX4oGLHrqeU-CI6mm49x9k', 'コードの設定');
+
+  const other = createGas();
+  addPlanSheet(other, [['A社', '']]);
+  const props = other.global.PropertiesService.getScriptProperties();
+  props.setProperty('AP_TEMPLATE_FILE', 'https://docs.google.com/spreadsheets/d/PlanTemplate0000000000001/edit#gid=0');
+  other.global.executeCopyProcess(SHEET);
+  assert.strictEqual(other.driveCopies[0].from, 'PlanTemplate0000000000001', 'スクリプトのプロパティ');
+  props.setProperty('AP_TEMPLATE_FILE', 'ひな形');
+  assert.throws(() => other.global.executeCopyProcess(SHEET), /アカウントプランシートのひな形の設定（スクリプトのプロパティ「AP_TEMPLATE_FILE」）の値「ひな形」を、スプレッドシートの URL か ID として読めません/);
+});
+
 test('protectSpecificColumnsWithLock：「案件_」のシートの列だけを保護し、2回目は増やさない', () => {
   const gas = createGas();
   const target = gas.addSheet('案件_A社', [['見出し']], {rows: 5, columns: 30});

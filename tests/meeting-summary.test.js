@@ -3102,17 +3102,19 @@ test('出力先はスクリプトのプロパティで指定できる：保存�
   assert.strictEqual(g.mtgFolder_(gas.ss).getId(), gas.get('MTG_OPTIONS').folderId);
 });
 
-test('事前資料の格納先：スクリプトのプロパティ MTG_MEETING_FOLDER_<シート名> → MTG_MEETING_FOLDER（全シート共通）→ コード（DIFF_RULES の meetingFolder）の順。統合版も同じ', () => {
+test('事前資料の格納先：スクリプトのプロパティ MTG_MEETING_FOLDER_<シート名> → コード（DIFF_RULES の meetingFolder）の順。統合版は MTG_MEETING_FOLDER_全サブインダストリー', () => {
   const {gas, g} = setup({edits: false});
   const props = g.PropertiesService.getScriptProperties();
   const where = name => plain(g.mtgMeetingFolderSetting_(name));
   assert.strictEqual(where('新FMT').where, 'test.gs の DIFF_RULES の meetingFolder');
+  // 全シート共通のプロパティ（MTG_MEETING_FOLDER）は無い（共通の格納先はコードの DIFF_RULES に書く）
   props.setProperty('MTG_MEETING_FOLDER', 'https://drive.google.com/drive/folders/CommonFolder0001');
-  assert.deepStrictEqual([where('新FMT').prop, where('新FMT2').prop, where('全サブインダストリー').prop], ['MTG_MEETING_FOLDER', 'MTG_MEETING_FOLDER', 'MTG_MEETING_FOLDER']);
+  assert.strictEqual(where('新FMT').prop, '');
   props.setProperty('MTG_MEETING_FOLDER_新FMT', 'SuperFolder00001');
-  props.setProperty('MTG_MEETING_FOLDER_全サブインダストリー', 'AllFolder000001');
+  props.setProperty('MTG_MEETING_FOLDER_全サブインダストリー', 'https://drive.google.com/drive/folders/AllFolder000001');
   assert.deepStrictEqual([where('新FMT').value, where('新FMT2').value, where('全サブインダストリー').value],
-    ['SuperFolder00001', 'https://drive.google.com/drive/folders/CommonFolder0001', 'AllFolder000001']);
+    ['SuperFolder00001', gas.get('DIFF_RULES')['新FMT2'].meetingFolder || '', 'https://drive.google.com/drive/folders/AllFolder000001']);
+  assert.deepStrictEqual([where('新FMT').prop, where('新FMT2').prop, where('全サブインダストリー').prop], ['MTG_MEETING_FOLDER_新FMT', '', 'MTG_MEETING_FOLDER_全サブインダストリー']);
   // 会議のフォルダはそのフォルダの中に作る
   gas.driveFolders.push({id: 'SuperFolder00001', name: 'スーパー', parent: 'root'});
   const meeting = g.mtgParseDate_('10/23', new Date());
@@ -3136,7 +3138,10 @@ test('showOutputFolders：出力先ごとに、使っている設定（スクリ
   assert.match(text, /・新FMT2：✗ 開けません（ID：MissingFolder001。[^\n]*\n　設定：スクリプトのプロパティ「MTG_MEETING_FOLDER_新FMT2」/);
   assert.match(text, /・全サブインダストリー：/);
   assert.match(text, /・アカウントプランシートの保存先：[^\n]*\n　設定：コード\.gs の AP_OPTIONS\.destFolderId/);
-  assert.match(text, /MTG_MEETING_FOLDER_<シート名>（そのシートだけ）・AP_DEST_FOLDER（アカウントプランシート）$/);
+  // 素材（ひな形）：事前資料の表紙・扉は無くても作れる。アカウントプランシートのひな形
+  assert.match(text, /素材（ひな形）\n・事前資料の表紙・扉のひな形：（未設定。表紙・扉はコードで描く/);
+  assert.match(text, /・アカウントプランシートのひな形：[^\n]*\n　設定：コード\.gs の AP_OPTIONS\.templateFileId/);
+  assert.match(text, /MTG_MEETING_FOLDER_<シート名>（そのシートの格納先）・AP_DEST_FOLDER（アカウントプランシートの保存先）・MTG_TEMPLATE_URL（表紙・扉のひな形）・AP_TEMPLATE_FILE（アカウントプランシートのひな形）$/);
   assert.deepStrictEqual(gas.driveFolders.length, 1, 'フォルダは作らない');
   gas.noUi = true;
   gas.logs.length = 0;

@@ -498,8 +498,9 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   `mtgWriteIndex_` で書き直します。前の形式のシートは、確かめてから中身を消して（`clear`）今の形式で作り直します。今の形式なら消さずに資料のセルだけ書き直します（何度実行してもよい）。
 - **時点コピーの保存先**：`MTG_OPTIONS.copyFolderId`（URL か ID。開けなければ止める）。空なら会議サマリのフォルダの中の「時点コピー」フォルダ。
 - **保存先**：`MTG_OPTIONS.folderId`（2026/10 から指定のフォルダ `1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK`）。開けなければ、フォルダの ID を書いて止めます。
-- **出力先をスクリプトのプロパティで指定する**（2026/10/26 から）：保存先（`MTG_SAVE_FOLDER`）・事前資料の格納先（`MTG_MEETING_FOLDER_<シート名>` → `MTG_MEETING_FOLDER`）・
-  時点コピー（`MTG_COPY_FOLDER`）・アカウントプランシート（`AP_DEST_FOLDER`）は、スクリプトのプロパティがあればコードの設定より優先します（`mtgOutputSetting_`。`MTG_OPTIONS.folderProps`）。
+- **出力先・素材をスクリプトのプロパティで指定する**（2026/10/26 から）：保存先（`MTG_SAVE_FOLDER`）・事前資料の格納先（`MTG_MEETING_FOLDER_<シート名>`。統合版は `_全サブインダストリー`）・
+  時点コピー（`MTG_COPY_FOLDER`）・アカウントプランシート（`AP_DEST_FOLDER`）と、素材のひな形（`MTG_TEMPLATE_URL`・`AP_TEMPLATE_FILE`）は、スクリプトのプロパティがあればコードの設定より優先します
+  （`mtgOutputSetting_`。`MTG_OPTIONS.folderProps`）。全シート共通の格納先のプロパティは置きません（共通の値は `DIFF_RULES` の `meetingFolder` に書けば足り、優先の順が分かりにくくなるため）。
   運用のフォルダが変わるたびにコードを書き換えて貼り直さなくてよいように、またテストのフォルダと本番のフォルダをコードを変えずに切り替えられるようにするためです。
   値はフォルダの URL か ID で、読めない値は設定の場所（プロパティの名前）を書いて止めます。今の出力先と使っている設定は `showOutputFolders()` で一覧にします（読むだけ）。
   空にすると、スプレッドシートと同じフォルダの中に「会議サマリ」フォルダを作って使います（前の動き）。

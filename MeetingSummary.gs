@@ -71,10 +71,10 @@ const MTG_OPTIONS = {
   folderKey: 'MTG_FOLDER_ID',         // 作ったフォルダの ID（ドキュメントのプロパティ）
   // 出力先は、スクリプトのプロパティでも指定できる（あればコードの設定より優先。値はフォルダの URL か ID。今の出力先は showOutputFolders() で確かめる）。
   //   save：保存先（folderId の代わり。資料を作る場所・試作の置き場所）
-  //   meeting：事前資料の格納先（会議のフォルダを探す・作るフォルダ。全サブインダストリー共通。test.gs の DIFF_RULES の meetingFolder・combined.meetingFolder の代わり）。
-  //            「MTG_MEETING_FOLDER_<シート名>」でそのシートだけ（統合版は MTG_MEETING_FOLDER_全サブインダストリー）。シートごと → 共通 → コードの順に使う
+  //   meeting：事前資料の格納先（会議のフォルダを探す・作るフォルダ）の名前の頭。「MTG_MEETING_FOLDER_<シート名>」でそのシートの格納先
+  //            （統合版は MTG_MEETING_FOLDER_全サブインダストリー）。無いシートは test.gs の DIFF_RULES の meetingFolder（統合版は combined.meetingFolder）
   //   copy：時点コピー（会議時点・日次のスプレッドシートのコピー）の保存先（copyFolderId の代わり）
-  folderProps: {save: 'MTG_SAVE_FOLDER', meeting: 'MTG_MEETING_FOLDER', copy: 'MTG_COPY_FOLDER'},
+  folderProps: {save: 'MTG_SAVE_FOLDER', meeting: 'MTG_MEETING_FOLDER_', copy: 'MTG_COPY_FOLDER'},
   // 会議のフォルダへの格納（本番だけ）：サブインダストリーのフォルダ（test.gs の DIFF_RULES の meetingFolder）の中の、名前が会議日の
   // meetingFolderDate（yyMMdd）＋「_」で始まり、会議の名前（RX Business Meeting・RX Service Meeting）を含むフォルダ（例：261023_RX Business Meeting_第5回）に、
   // 事前資料の PDF を置く。RX Service Meeting の資料（ServiceMeeting.gs）も同じフォルダの中の、自分の会議の名前のフォルダに置く。
@@ -141,7 +141,7 @@ const MTG_OPTIONS = {
   // 表紙・扉のひな形（Google スライド。いただいた .pptx を Google スライドにしたもの）。資料はひな形のコピーに作る（ページの大きさもひな形のまま）。
   // ひな形の URL は、スクリプトのプロパティ templateUrlKey（MTG_TEMPLATE_URL）に入れる（エディタの「プロジェクトの設定」→「スクリプト プロパティ」。
   // setMeetingTemplate() でも入れられる）。.pptx のままでもよい（Google スライドに変換したもの（templateConvertedKey に覚える）を使う。.pptx を
-  // 更新したら変換し直す）。templateId を書けば、そちらを使う。どれも無ければ、ひな形なしで作る
+  // 更新したら変換し直す）。スクリプトのプロパティが無ければ templateId（コードの設定）。どれも無ければ、ひな形なしで作る（表紙・扉はコードで描く）
   templateId: '',
   templateUrlKey: 'MTG_TEMPLATE_URL',             // スクリプトのプロパティ：ひな形の URL（Google スライドか .pptx）
   templateConvertedKey: 'MTG_TEMPLATE_CONVERTED', // スクリプトのプロパティ：.pptx を変換した Google スライド {source, updated, id}
@@ -1814,15 +1814,15 @@ function mtgMeetingFolder_(name, meeting, noCreate, kind) {
 
 /**
  * 会議のフォルダを探すフォルダ（事前資料の格納先）の設定 {value: URL か ID, where: 設定の場所}。
- * スクリプトのプロパティ「MTG_MEETING_FOLDER_<シート名>」→「MTG_MEETING_FOLDER」→ コード（統合版は MTG_OPTIONS.combined.meetingFolder、ほかは DIFF_RULES の meetingFolder）の順
+ * スクリプトのプロパティ「MTG_MEETING_FOLDER_<シート名>」→ コード（統合版は MTG_OPTIONS.combined.meetingFolder、ほかは DIFF_RULES の meetingFolder）の順
  */
 function mtgMeetingFolderSetting_(name) {
-  const key = MTG_OPTIONS.folderProps.meeting;
+  const key = MTG_OPTIONS.folderProps.meeting + name;
   const combined = MTG_OPTIONS.combined;
   if (name === combined.name && !DIFF_RULES[name]) {
-    return mtgOutputSetting_([key + '_' + name, key], combined.meetingFolder, 'MeetingSummary.gs の MTG_OPTIONS.combined.meetingFolder');
+    return mtgOutputSetting_([key], combined.meetingFolder, 'MeetingSummary.gs の MTG_OPTIONS.combined.meetingFolder');
   }
-  return mtgOutputSetting_([key + '_' + name, key], (DIFF_RULES[name] || {}).meetingFolder, 'test.gs の DIFF_RULES の meetingFolder');
+  return mtgOutputSetting_([key], (DIFF_RULES[name] || {}).meetingFolder, 'test.gs の DIFF_RULES の meetingFolder');
 }
 
 /**
@@ -1840,8 +1840,8 @@ function mtgOutputSetting_(keys, codeValue, codeWhere) {
 }
 
 /**
- * 今の出力先を一覧にする（エディタから実行する。読むだけで、フォルダは作らない）。出力先ごとに、どの設定（スクリプトのプロパティかコードか）を使っているかと、
- * フォルダを開けるか（開ければフォルダの名前）を出す。スクリプトのプロパティを変えたあとの確かめに使う。画面に出せなければ実行ログだけ
+ * 今の出力先と素材（ひな形）を一覧にする（エディタから実行する。読むだけで、フォルダは作らない）。どの設定（スクリプトのプロパティかコードか）を使っているかと、
+ * 開けるか（開ければフォルダ・ファイルの名前）を出す。スクリプトのプロパティを変えたあとの確かめに使う。画面に出せなければ実行ログだけ
  */
 function showOutputFolders() {
   const check = setting => {
@@ -1867,9 +1867,33 @@ function showOutputFolders() {
   if (typeof apDestFolderSetting_ === 'function') {
     lines.push('', line('アカウントプランシートの保存先', apDestFolderSetting_(), '✗ 未設定'));
   }
+  // 素材（ひな形）：出力先ではないが、同じくスクリプトのプロパティで差し替えられる
+  const file = (label, id, where, empty) => {
+    let state = empty;
+    if (id) {
+      try { state = '○ ' + DriveApp.getFileById(id).getName() + '（ID：' + id + '）'; } catch (_) { state = '✗ 開けません（ID：' + id + '）'; }
+    }
+    return '・' + label + '：' + state + '\n　設定：' + where;
+  };
+  lines.push('', '素材（ひな形）');
+  const o = MTG_OPTIONS;
+  const templateWhere = PropertiesService.getScriptProperties().getProperty(o.templateUrlKey) ? 'スクリプトのプロパティ「' + o.templateUrlKey + '」'
+    : o.templateId ? 'MeetingSummary.gs の MTG_OPTIONS.templateId'
+      : PropertiesService.getDocumentProperties().getProperty(o.templateKey) ? '前の版の登録（setMeetingTemplate()）' : 'スクリプトのプロパティ「' + o.templateUrlKey + '」';
+  try {
+    lines.push(file('事前資料の表紙・扉のひな形', mtgTemplateSourceId_(), templateWhere,
+      '（未設定。表紙・扉はコードで描く（緑のグラデーションに「RX」）ので、素材のファイルが無くても作れる）'));
+  } catch (error) {
+    lines.push('・事前資料の表紙・扉のひな形：✗ ' + error.message + '\n　設定：' + templateWhere);
+  }
+  if (typeof apTemplateSetting_ === 'function') {
+    const ap = apTemplateSetting_();
+    lines.push(file('アカウントプランシートのひな形', mtgFileIdOf_(ap.value), ap.where, '✗ 未設定'));
+  }
   const p = MTG_OPTIONS.folderProps;
-  lines.push('', 'スクリプトのプロパティの名前：' + p.save + '（保存先）・' + p.copy + '（時点コピー）・' + p.meeting + '（格納先。全シート共通）・' +
-    p.meeting + '_<シート名>（そのシートだけ）' + (typeof AP_OPTIONS === 'object' ? '・' + AP_OPTIONS.destFolderProp + '（アカウントプランシート）' : ''));
+  lines.push('', 'スクリプトのプロパティの名前：' + p.save + '（保存先）・' + p.copy + '（時点コピー）・' + p.meeting + '<シート名>（そのシートの格納先）' +
+    (typeof AP_OPTIONS === 'object' ? '・' + AP_OPTIONS.destFolderProp + '（アカウントプランシートの保存先）' : '') + '・' + o.templateUrlKey + '（表紙・扉のひな形）' +
+    (typeof AP_OPTIONS === 'object' ? '・' + AP_OPTIONS.templateFileProp + '（アカウントプランシートのひな形）' : ''));
   const text = lines.join('\n');
   console.log(text);
   const ui = diffUiOrNull_();
@@ -5850,16 +5874,19 @@ function mtgZlib_(data, stride) {
   return out.concat([(b >>> 8) & 255, b & 255, (a >>> 8) & 255, a & 255]);
 }
 
-/** ひな形のファイルの ID（MTG_OPTIONS.templateId・スクリプトのプロパティ MTG_TEMPLATE_URL・前の版の登録の順。Google スライドか .pptx。無ければ空） */
+/**
+ * ひな形のファイルの ID（スクリプトのプロパティ MTG_TEMPLATE_URL・MTG_OPTIONS.templateId・前の版の登録の順。ほかの設定と同じく、スクリプトのプロパティを優先する。
+ * Google スライドか .pptx。無ければ空）
+ */
 function mtgTemplateSourceId_() {
   const o = MTG_OPTIONS;
-  if (o.templateId) return mtgFileIdOf_(o.templateId);
   const url = PropertiesService.getScriptProperties().getProperty(o.templateUrlKey);
   if (url) {
     const id = mtgFileIdOf_(url);
     if (!id) throw new Error('スクリプトのプロパティ ' + o.templateUrlKey + ' の「' + url + '」から、ひな形のファイルの ID を読めません。Google スライド（か .pptx）を開いたときの URL を入れてください。');
     return id;
   }
+  if (o.templateId) return mtgFileIdOf_(o.templateId);
   return PropertiesService.getDocumentProperties().getProperty(o.templateKey) || '';
 }
 
