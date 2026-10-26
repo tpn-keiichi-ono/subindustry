@@ -3125,7 +3125,7 @@ test('事前資料の格納先：スクリプトのプロパティ MTG_MEETING_F
   assert.match(g.mtgMeetingFolder_('新FMT', meeting).error, /会議のフォルダの設定（スクリプトのプロパティ「MTG_MEETING_FOLDER_新FMT」）をフォルダの URL か ID として読めない/);
 });
 
-test('showOutputFolders：出力先ごとに、使っている設定（スクリプトのプロパティかコードか）と、開けるか（フォルダの名前）を出す。画面に出せなければ実行ログだけ', () => {
+test('showOutputFolders：項目ごとに、使っているフォルダ・ファイル（○ 開ける・✗ 開けない）と、スクリプトのプロパティが設定ありか未設定（コードの設定を使用）かを分けて出す', () => {
   const {gas, g} = setup({edits: false});
   const props = g.PropertiesService.getScriptProperties();
   props.setProperty('MTG_MEETING_FOLDER_新FMT2', 'MissingFolder001');
@@ -3133,16 +3133,20 @@ test('showOutputFolders：出力先ごとに、使っている設定（スクリ
   gas.driveFolders.push({id: gas.get('MTG_OPTIONS').folderId, name: '会議サマリ（テスト）', parent: 'root'});
   g.showOutputFolders();
   const text = gas.alerts[gas.alerts.length - 1].message;
-  assert.match(text, /・事前資料などの保存先（作る場所・試作）：○ 会議サマリ（テスト）（ID：1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK）\n　設定：MeetingSummary\.gs の MTG_OPTIONS\.folderId/);
-  assert.match(text, /・時点コピーの保存先：（未設定。保存先の中の「時点コピー」）/);
-  assert.match(text, /・新FMT2：✗ 開けません（ID：MissingFolder001。[^\n]*\n　設定：スクリプトのプロパティ「MTG_MEETING_FOLDER_新FMT2」/);
-  assert.match(text, /・全サブインダストリー：/);
-  assert.match(text, /・アカウントプランシートの保存先：[^\n]*\n　設定：コード\.gs の AP_OPTIONS\.destFolderId/);
-  // 素材（ひな形）：事前資料の表紙・扉は無くても作れる。アカウントプランシートのひな形
-  assert.match(text, /素材（ひな形）\n・事前資料の表紙・扉のひな形：（未設定。表紙・扉はコードで描く/);
-  assert.match(text, /・アカウントプランシートのひな形：[^\n]*\n　設定：コード\.gs の AP_OPTIONS\.templateFileId/);
-  assert.match(text, /MTG_MEETING_FOLDER_<シート名>（そのシートの格納先）・AP_DEST_FOLDER（アカウントプランシートの保存先）・MTG_TEMPLATE_URL（表紙・扉のひな形）・AP_TEMPLATE_FILE（アカウントプランシートのひな形）$/);
-  assert.deepStrictEqual(gas.driveFolders.length, 1, 'フォルダは作らない');
+  assert.match(text, /^出力先・素材の一覧（○＝開ける　✗＝開けない。スクリプトのプロパティが未設定なら、コードの設定を使います）/);
+  // プロパティを入れていない：○ はフォルダを開けるという意味。プロパティは「未設定 → コードの設定を使用」と書く
+  assert.match(text, /・事前資料などの保存先（作る場所・試作）\n　使っているもの：○ 会議サマリ（テスト）（ID：1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK）\n　スクリプトのプロパティ「MTG_SAVE_FOLDER」：未設定 → コードの設定（MeetingSummary\.gs の MTG_OPTIONS\.folderId）を使用/);
+  assert.match(text, /・時点コピーの保存先\n　使っているもの：（無し。保存先の中の「時点コピー」）\n　スクリプトのプロパティ「MTG_COPY_FOLDER」：未設定/);
+  // プロパティを入れた：設定あり（これを使用）
+  assert.match(text, /・新FMT2\n　使っているもの：✗ 開けません（ID：MissingFolder001。[^\n]*\n　スクリプトのプロパティ「MTG_MEETING_FOLDER_新FMT2」：設定あり（これを使用）/);
+  assert.match(text, /・全サブインダストリー\n[^\n]*\n　スクリプトのプロパティ「MTG_MEETING_FOLDER_全サブインダストリー」：未設定 → コードの設定（MeetingSummary\.gs の MTG_OPTIONS\.combined\.meetingFolder）を使用/);
+  assert.match(text, /・アカウントプランシートの保存先\n[^\n]*\n　スクリプトのプロパティ「AP_DEST_FOLDER」：未設定 → コードの設定（コード\.gs の AP_OPTIONS\.destFolderId）を使用/);
+  assert.match(text, /■ 素材（ひな形）\n・事前資料の表紙・扉のひな形\n　使っているもの：（無し。表紙・扉はコードで描くので、素材が無くても作れる）\n　スクリプトのプロパティ「MTG_TEMPLATE_URL」：未設定/);
+  assert.match(text, /・アカウントプランシートのひな形\n　使っているもの：[^\n]*\n　スクリプトのプロパティ「AP_TEMPLATE_FILE」：未設定 → コードの設定（コード\.gs の AP_OPTIONS\.templateFileId）を使用$/);
+  props.setProperty('MTG_TEMPLATE_URL', 'https://docs.google.com/presentation/d/TemplateDeck0000000000001/edit');
+  g.showOutputFolders();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /・事前資料の表紙・扉のひな形\n　使っているもの：○ [^\n]*（ID：TemplateDeck0000000000001）\n　スクリプトのプロパティ「MTG_TEMPLATE_URL」：設定あり（これを使用）/);
+  assert.strictEqual(gas.driveFolders.length, 1, 'フォルダは作らない');
   gas.noUi = true;
   gas.logs.length = 0;
   assert.doesNotThrow(() => g.showOutputFolders());
