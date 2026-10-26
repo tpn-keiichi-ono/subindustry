@@ -3152,3 +3152,41 @@ test('showOutputFolders：項目ごとに、使っているフォルダ・ファ
   assert.doesNotThrow(() => g.showOutputFolders());
   assert.ok(gas.logs.some(l => /事前資料の格納先/.test(l.line)));
 });
+
+test('setBusinessMtgMeetingFolders：親フォルダの中の「01.スーパー・GMS」などを、番号を除いた名前でシートと対応させ、MTG_MEETING_FOLDER_<シート名> に入れる（はいのときだけ）', () => {
+  const gas = createGas({realSheetNames: true});
+  const g = gas.global;
+  Object.keys(gas.get('DIFF_RULES')).forEach(name => gas.addSheet(name, [['']], {rows: 3, columns: 3}));
+  // 本物の親フォルダと同じ名前（2026/10/26）。百貨店は無い・同じ名前が2つ・関係ないフォルダも試す
+  const names = ['00.全サブインダストリー', '01.スーパー・GMS', '02.コンビニ', '04.化粧品・トイレタリー', '05.飲料・食品', '06.地方銀行',
+    '07.自動車販売', '08.住設', '09.電鉄・不動産', '10.エネルギー', '11.生協', '11 生協', '99.過去資料'];
+  gas.driveFolders.push({id: 'ParentFolder0001', name: '事前資料', parent: 'root'});
+  names.forEach((name, i) => gas.driveFolders.push({id: 'SubFolder' + String(i).padStart(7, '0'), name, parent: 'ParentFolder0001'}));
+  const props = g.PropertiesService.getScriptProperties();
+  props.setProperty('MTG_MEETING_FOLDER_百貨店', 'KeepFolder000001');
+
+  gas.promptAnswers = ['https://drive.google.com/drive/folders/ParentFolder0001?usp=drive_link'];
+  gas.confirmAnswer = 'NO';
+  g.setBusinessMtgMeetingFolders();
+  const confirm = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(confirm, /^「事前資料」の中のフォルダを、次のとおり事前資料の格納先にします/);
+  assert.match(confirm, /・スーパー・GMS：01\.スーパー・GMS\n・コンビニ：02\.コンビニ\n・百貨店：対応するフォルダなし（今のまま：スクリプトのプロパティ「MTG_MEETING_FOLDER_百貨店」）/);
+  assert.match(confirm, /・生協：11 生協（同じ名前のフォルダが 2個。最初のものを使う）/);
+  assert.match(confirm, /・全サブインダストリー：00\.全サブインダストリー/);
+  assert.match(confirm, /使わないフォルダ：99\.過去資料/);
+  assert.strictEqual(props.getProperty('MTG_MEETING_FOLDER_スーパー・GMS'), null, '「いいえ」なら入れない');
+
+  gas.promptAnswers = ['https://drive.google.com/drive/folders/ParentFolder0001'];
+  gas.confirmAnswer = 'YES';
+  g.setBusinessMtgMeetingFolders();
+  assert.strictEqual(props.getProperty('MTG_MEETING_FOLDER_スーパー・GMS'), 'https://drive.google.com/drive/folders/SubFolder0000001');
+  assert.strictEqual(props.getProperty('MTG_MEETING_FOLDER_全サブインダストリー'), 'https://drive.google.com/drive/folders/SubFolder0000000');
+  assert.strictEqual(props.getProperty('MTG_MEETING_FOLDER_百貨店'), 'KeepFolder000001', '対応しないシートは今のまま');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^事前資料の格納先を 11件、スクリプトのプロパティに入れました。/);
+  assert.strictEqual(g.mtgMeetingFolderSetting_('コンビニ').prop, 'MTG_MEETING_FOLDER_コンビニ', '格納先はプロパティのフォルダになる');
+
+  gas.promptAnswers = ['親フォルダ'];
+  assert.throws(() => g.setBusinessMtgMeetingFolders(), /フォルダの URL として読めません/);
+  gas.noUi = true;
+  assert.throws(() => g.setBusinessMtgMeetingFolders(), /スプレッドシートの画面に、入力・確かめの画面を出せません/);
+});

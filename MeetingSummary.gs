@@ -1883,6 +1883,66 @@ function showOutputFolders() {
   return lines;
 }
 
+/**
+ * 事前資料の格納先を、親フォルダの中のサブインダストリーごとのフォルダから、スクリプトのプロパティ MTG_MEETING_FOLDER_<シート名> にまとめて入れる
+ * （エディタから実行する。管理者が1回。フォルダを作り直したときも）。親フォルダの URL を聞き、中のフォルダの名前（先頭の「01.」などの番号は除く）が
+ * シート名（統合版は「全サブインダストリー」）と同じものを対応させる。対応を確かめて「はい」のときだけ入れる（今の値は置き換える。対応しないシートは今のまま）
+ */
+function setBusinessMtgMeetingFolders() {
+  const ui = mtgUi_();
+  const title = CRED_OPTIONS.menuTitle;
+  const response = ui.prompt(title, 'サブインダストリーごとのフォルダ（「01.スーパー・GMS」「00.全サブインダストリー」など）が入っている、親フォルダの URL を入力してください。\n' +
+    '中のフォルダを、スクリプトのプロパティ「' + MTG_OPTIONS.folderProps.meeting + '<シート名>」（事前資料の格納先）に入れます。', ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+  const id = mtgFolderIdOf_(response.getResponseText());
+  if (!id) throw new Error('フォルダの URL として読めません。ドライブで親フォルダを開いたときのアドレス欄の URL をそのまま貼り付けてください。');
+  let parent;
+  try {
+    parent = DriveApp.getFolderById(id);
+  } catch (_) {
+    throw new Error('親フォルダ（ID：' + id + '）を開けません。実行するアカウントが、そのフォルダを開けるか確かめてください。');
+  }
+  const plan = mtgMeetingFolderPlan_(parent);
+  const props = PropertiesService.getScriptProperties();
+  const lines = plan.items.map(p => '・' + p.name + '：' + (p.folder ? p.folder.getName() + (p.duplicate ? '（同じ名前のフォルダが ' + p.duplicate + '個。最初のものを使う）' : '')
+    : '対応するフォルダなし（今のまま：' + mtgMeetingFolderSetting_(p.name).where + '）'));
+  const matched = plan.items.filter(p => p.folder);
+  if (!matched.length) {
+    ui.alert(title, '「' + parent.getName() + '」の中に、シート名と同じ名前のフォルダがありません。\n\n' + lines.join('\n'), ui.ButtonSet.OK);
+    return;
+  }
+  const answer = ui.alert(title, '「' + parent.getName() + '」の中のフォルダを、次のとおり事前資料の格納先にします（スクリプトのプロパティ。今の値は置き換えます）。\n\n' +
+    lines.join('\n') + (plan.others.length ? '\n\n使わないフォルダ：' + plan.others.join('・') : '') + '\n\nよろしいですか？', ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return;
+  matched.forEach(p => props.setProperty(MTG_OPTIONS.folderProps.meeting + p.name, p.folder.getUrl()));
+  const message = '事前資料の格納先を ' + matched.length + '件、スクリプトのプロパティに入れました。showOutputFolders() で確かめられます。\n\n' + lines.join('\n');
+  console.log(message);
+  ui.alert(title, message, ui.ButtonSet.OK);
+}
+
+/**
+ * 親フォルダの中のフォルダと、シート（DIFF_RULES の順。最後に統合版）の対応。{items: [{name, folder, duplicate}], others: 対応しないフォルダの名前}。
+ * フォルダの名前は、先頭の番号（「01.」「1_」「01 」など）を除き、全角・半角と空白の違いを無視してシート名と比べる。ゴミ箱のフォルダは見ない
+ */
+function mtgMeetingFolderPlan_(parent) {
+  const strip = name => credNormalize_(String(name).replace(/^\s*[0-9０-９]+\s*[.．_＿、,\-－\s]\s*/, ''));
+  const folders = [];
+  const it = parent.getFolders();
+  while (it.hasNext()) {
+    const folder = it.next();
+    if (!folder.isTrashed()) folders.push(folder);
+  }
+  folders.sort((a, b) => String(a.getName()).localeCompare(String(b.getName())));
+  const names = Object.keys(DIFF_RULES).concat(DIFF_RULES[MTG_OPTIONS.combined.name] ? [] : [MTG_OPTIONS.combined.name]);
+  const used = new Set();
+  const items = names.map(name => {
+    const found = folders.filter(f => strip(f.getName()) === credNormalize_(name));
+    found.forEach(f => used.add(f));
+    return {name, folder: found[0] || null, duplicate: found.length > 1 ? found.length : 0};
+  });
+  return {items, others: folders.filter(f => !used.has(f)).map(f => f.getName())};
+}
+
 /** 出力先の設定のフォルダの ID（設定が無ければ空）。値があるのにフォルダの URL・ID として読めなければ止める */
 function mtgOutputFolderId_(setting, label) {
   const id = mtgFolderIdOf_(setting.value);
