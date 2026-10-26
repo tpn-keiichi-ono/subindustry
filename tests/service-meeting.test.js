@@ -434,29 +434,27 @@ test('ひな形：RX Service Meeting の表紙はひな形の3枚目（紫）を
   assert.deepStrictEqual(gas.slideBackgrounds.map(b => b.page), ['mtg_p1']);
 });
 
-test('会議のフォルダ：本番は、サブインダストリーのフォルダ（全サブインダストリーは統合版のフォルダ）の中の「yyMMdd_RX Service Meeting_第N回」に格納する（無ければ作る。RX Business Meeting のフォルダとは別）', () => {
+test('会議のフォルダ：本番は、事前資料の格納先（全サブインダストリー共通）の中の「yyMMdd_RX Service Meeting_第N回」に、サブインダストリーと全サブインダストリーの資料を格納する（無ければ作る。RX Business Meeting のフォルダとは別）', () => {
   const {gas, g, request, task} = setup();
   fill(gas, request, task);
   const meeting = g.mtgParseDate_('11/13', new Date());
   const ymd = meeting.slice(2, 4) + meeting.slice(5, 7) + meeting.slice(8, 10);
-  gas.driveFolders.push({id: 'SubIndustryFolder0001', name: 'スーパー・GMS', parent: 'root'}, {id: 'CombinedFolder00001', name: '全サブインダストリー', parent: 'root'},
+  gas.driveFolders.push({id: 'SubIndustryFolder0001', name: '事前資料', parent: 'root'},
     {id: 'business-1', name: ymd + '_第5回会議', parent: 'SubIndustryFolder0001'},                 // 同じ日の前の版の RX Business Meeting のフォルダ（使わない）
     {id: 'service-old', name: '261009_RX Service Meeting_第2回', parent: 'SubIndustryFolder0001'});     // 前の RX Service Meeting（回数を数える）
-  gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'SubIndustryFolder0001';
-  gas.get('MTG_OPTIONS').combined.meetingFolder = 'https://drive.google.com/drive/folders/CombinedFolder00001';
+  gas.get('MTG_OPTIONS').meetingFolder = 'https://drive.google.com/drive/folders/SubIndustryFolder0001';
   gas.promptAnswers = ['', '11/13'];
   g.createServiceMtgSummaries();
   const created = gas.driveFolders.filter(f => f.name.indexOf(ymd) === 0 && /Service/.test(f.name));
-  assert.deepStrictEqual(created.map(f => [f.parent, f.name]),
-    [['SubIndustryFolder0001', ymd + '_RX Service Meeting_第3回'], ['CombinedFolder00001', ymd + '_RX Service Meeting_第1回']]);
-  assert.deepStrictEqual(created.map(f => gas.driveFiles.filter(x => x.folder === f.id).map(x => x.name.replace(/^\d+_/, ''))),
-    [['新FMT_RX Service Meeting用資料.pdf'], ['全サブインダストリー_RX Service Meeting用資料.pdf']]);
+  assert.deepStrictEqual(created.map(f => [f.parent, f.name]), [['SubIndustryFolder0001', ymd + '_RX Service Meeting_第3回']], '会議日のフォルダは1つ');
+  assert.deepStrictEqual(gas.driveFiles.filter(x => x.folder === created[0].id).map(x => x.name.replace(/^\d+_/, '')).sort(),
+    ['全サブインダストリー_RX Service Meeting用資料.pdf', '新FMT_RX Service Meeting用資料.pdf']);
   assert.ok(!gas.driveFiles.some(x => x.folder === 'business-1'), 'RX Business Meeting のフォルダには入れない');
   assert.match(gas.alerts[gas.alerts.length - 1].message, new RegExp('会議のフォルダ「' + ymd + '_RX Service Meeting_第3回」に作って格納しました'));
   // 作り直しても、同じフォルダを使う
   gas.promptAnswers = ['1', '11/13'];
   g.createServiceMtgSummaries();
-  assert.strictEqual(gas.driveFolders.filter(f => f.name.indexOf(ymd) === 0 && /Service/.test(f.name)).length, 2);
+  assert.strictEqual(gas.driveFolders.filter(f => f.name.indexOf(ymd) === 0 && /Service/.test(f.name)).length, 1);
   assert.match(gas.alerts[gas.alerts.length - 1].message, new RegExp('会議のフォルダ「' + ymd + '_RX Service Meeting_第3回」に格納しました'));
 });
 

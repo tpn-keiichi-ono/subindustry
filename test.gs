@@ -78,33 +78,30 @@
 // - formerNames は前のシート名。差分追跡の記録はシート名で残るので、名前を変えたら前の名前をここに足す
 //   （前の名前の記録も、このシートの記録としてサイドバー・変更履歴に出す。記録は書き換えない）
 // シートを足した・名前を変えたら、setupAfterSheetChange() を実行する（docs/OPERATIONS.md「シート名の一覧」）。
-// 会議サマリの事前資料の格納先（テスト中は、すべてのサブインダストリーでこのフォルダを使う。本番では各シートの meetingFolder にそれぞれのフォルダを書く）
-const TEST_MEETING_FOLDER = 'https://drive.google.com/drive/folders/1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK';
+// 会議サマリの事前資料の格納先は、全サブインダストリー共通の1つのフォルダ（MeetingSummary.gs の MTG_OPTIONS.meetingFolder。2026/10/26 から）。
+// 前の版のシートごとの meetingFolder は使わない
 
 const DIFF_RULES = {
   'スーパー・GMS': {
     headerRow: 2,
     ranges: ['D3:AF'],
     requests: true,          // サービスリクエストの選択パネルに出す（「サービスのリクエスト」の列を読む）
-    // 会議サマリの事前資料を格納する、このサブインダストリーのフォルダ（URL か ID）。この中の、会議日の「yyMMdd_」で始まるフォルダ
-    // （例：261023_第5回会議。無ければ作る）に PDF を置く（MeetingSummary.gs の mtgMeetingFolder_）。空なら格納しない
-    meetingFolder: TEST_MEETING_FOLDER,
     formerNames: ['新FMT']
     // Optional: capture an explicit row span in the row snapshot.
     // , snapshotColumns: 'A:Z'
   },
-  'コンビニ': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER, formerNames: ['新FMT2']},
-  '百貨店': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
+  'コンビニ': {headerRow: 2, ranges: ['D3:AF'], requests: true, formerNames: ['新FMT2']},
+  '百貨店': {headerRow: 2, ranges: ['D3:AF'], requests: true},
   // 2026/10/16 に足したサブインダストリー（11シートとも、スーパー・GMS と同じ見出し。見出しの行・追跡範囲も同じ）。
   // 2026/10/26 に列を消してシートは A〜AA の27列になった。追跡範囲 D3:AF はシートの中まで読む（diffRuleRange_）ので、そのままでよい
-  '化粧品・トイレタリー': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
-  '飲料・食品': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
-  '自動車販売': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
-  '住設': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
-  '地方銀行': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
-  '電鉄・不動産': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
-  'エネルギー': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER},
-  '生協': {headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: TEST_MEETING_FOLDER}
+  '化粧品・トイレタリー': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  '飲料・食品': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  '自動車販売': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  '住設': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  '地方銀行': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  '電鉄・不動産': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  'エネルギー': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  '生協': {headerRow: 2, ranges: ['D3:AF'], requests: true}
 };
 
 /**
@@ -376,7 +373,7 @@ function diffWriteBaseline_(ss, plan, own) {
   return {
     snapshotId: snapshot.getSheetId(),
     name: sheet.getName(),
-    signature: JSON.stringify(rule),
+    signature: diffRuleSignature_(rule),
     stampColumn: column,
     gridRows: sheet.getMaxRows(),
     gridColumns: sheet.getMaxColumns(),
@@ -1113,7 +1110,7 @@ function diffSameLayout_(sheet, rule, saved) {
   try { stampColumn = diffStampColumn_(sheet, rule); } catch (_) { return false; }
 
   return saved.name === sheet.getName() &&
-    saved.signature === JSON.stringify(rule) &&
+    diffSameSignature_(saved.signature, rule) &&
     saved.stampColumn === stampColumn &&
     saved.gridColumns === sheet.getMaxColumns();
 }
@@ -1580,7 +1577,7 @@ function diffContext_(ss, sheet, rule) {
   const stampColumn = diffStampColumn_(sheet, rule);
 
   if (saved.name !== sheet.getName() ||
-      saved.signature !== JSON.stringify(rule) ||
+      !diffSameSignature_(saved.signature, rule) ||
       saved.stampColumn !== stampColumn ||
       saved.gridRows !== sheet.getMaxRows() ||
       saved.gridColumns !== sheet.getMaxColumns()) {
@@ -2615,6 +2612,22 @@ function diffRuleRange_(sheet, a1) {
   return sheet.getRange(row, col, lastRow - row + 1, lastCol - col + 1);
 }
 
+/**
+ * 比較基準を作ったときの DIFF_RULES の印。比較基準の形に関わる設定（見出しの行・追跡範囲・スナップショットの列）だけにする
+ * （リクエストを読むか・前の名前などは記録の形に関わらないので、変えても差分追跡を止めない。2026/10/26 に会議の格納先の設定を外したときのため）
+ */
+function diffRuleSignature_(rule) {
+  const r = rule || {};
+  return JSON.stringify({headerRow: r.headerRow, ranges: r.ranges, snapshotColumns: r.snapshotColumns || ''});
+}
+
+/** 保存した印（前の版は DIFF_RULES 全体の JSON）が、今の DIFF_RULES と同じ形か */
+function diffSameSignature_(saved, rule) {
+  let old;
+  try { old = JSON.parse(saved); } catch (_) { return false; }
+  return diffRuleSignature_(old) === diffRuleSignature_(rule);
+}
+
 function diffA1_(row, column) {
   return diffColumnLetter_(column) + row;
 }
@@ -2751,7 +2764,7 @@ function diagnoseDiffState() {
       ['停止していない', saved.paused === false, '止めた時刻 ' + fmt(saved.pausedAt) + '・理由：' + (saved.pausedReason || '記録なし（前の版で止まった）') +
         (saved.healError ? '・自動の立て直しに失敗（' + fmt(saved.healTriedAt) + '）：' + saved.healError : '')],
       ['シート名', saved.name === sheet.getName(), saved.name + ' / ' + sheet.getName()],
-      ['DIFF_RULES', saved.signature === JSON.stringify(rule), saved.signature + ' / ' + JSON.stringify(rule)],
+      ['DIFF_RULES', diffSameSignature_(saved.signature, rule), saved.signature + ' / ' + diffRuleSignature_(rule)],
       ['タイムスタンプ列', saved.stampColumn === stamp, saved.stampColumn + ' / ' + stamp],
       ['行数（違う場合は次の編集・回収で自動反映）', saved.gridRows === sheet.getMaxRows(), saved.gridRows + ' / ' + sheet.getMaxRows()],
       ['列数', saved.gridColumns === sheet.getMaxColumns(), saved.gridColumns + ' / ' + sheet.getMaxColumns()],

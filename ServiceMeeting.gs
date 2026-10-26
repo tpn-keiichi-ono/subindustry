@@ -218,7 +218,7 @@ function smtgCreateOne_(base, job, name, folder) {
   const lines = ['「' + name + '」：' + out.pdf.getName() + '（リクエスト ' + k.requests + '・判断待ち ' + k.undecided + '・サービス案 ' + k.services +
     '・確認事項 ' + data.checks.length + '。' + slides.length + 'ページ）', '　' + out.pdf.getUrl()];
   if (!job.final) return {name, line: lines.join('\n')};
-  // 会議のフォルダ：サブインダストリーのフォルダ（DIFF_RULES の meetingFolder。全サブインダストリーは MTG_OPTIONS.combined.meetingFolder）の中の
+  // 会議のフォルダ：事前資料の格納先（MTG_OPTIONS.meetingFolder。全サブインダストリー共通）の中の
   // 「yyMMdd_RX Service Meeting_第N回」（無ければ作る。mtgMeetingFolder_）
   let stored = {file: out.pdf, folder};
   const moved = mtgStoreToMeetingFolder_(name, job.meeting, out.pdf, SMTG_OPTIONS.meetingName);

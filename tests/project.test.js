@@ -164,14 +164,15 @@ test('本物の設定：クレデンシャル・オファリング履歴の管�
   assert.strictEqual(gas.global.credEnabled_(), false);
 });
 
-test('本物の設定：11シートとも、会議サマリの格納先（meetingFolder）がフォルダの URL か ID になっている', () => {
+test('本物の設定：事前資料の格納先は全サブインダストリー共通の1つ（MTG_OPTIONS.meetingFolder。シートごとの meetingFolder は無い）', () => {
   const gas = createGas({realSheetNames: true});
   const rules = gas.get('DIFF_RULES');
-  Object.keys(rules).forEach(name => assert.ok(gas.global.mtgFolderIdOf_(rules[name].meetingFolder), name + ' の meetingFolder'));
+  assert.ok(gas.global.mtgFolderIdOf_(gas.get('MTG_OPTIONS').meetingFolder), 'MTG_OPTIONS.meetingFolder');
+  Object.keys(rules).forEach(name => assert.strictEqual(rules[name].meetingFolder, undefined, name + ' に meetingFolder が残っている'));
   // 統合版（全サブインダストリー）も作り、会議のフォルダに格納する。名前はシート名・インデックスの見出しと重ならない
   const combined = gas.get('MTG_OPTIONS').combined;
   assert.strictEqual(combined.enabled, true);
-  assert.ok(gas.global.mtgFolderIdOf_(combined.meetingFolder), '統合版の meetingFolder');
+  assert.strictEqual(combined.meetingFolder, undefined, '統合版も同じ格納先');
   const index = gas.get('MTG_OPTIONS').index;
   assert.ok(!rules[combined.name] && [index.dateHeader, index.kindHeader].indexOf(combined.name) < 0);
 });

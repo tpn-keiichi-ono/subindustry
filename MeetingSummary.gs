@@ -71,30 +71,31 @@ const MTG_OPTIONS = {
   folderKey: 'MTG_FOLDER_ID',         // 作ったフォルダの ID（ドキュメントのプロパティ）
   // 出力先は、スクリプトのプロパティでも指定できる（あればコードの設定より優先。値はフォルダの URL か ID。今の出力先は showOutputFolders() で確かめる）。
   //   save：保存先（folderId の代わり。資料を作る場所・試作の置き場所）
-  //   meeting：事前資料の格納先（会議のフォルダを探す・作るフォルダ）の名前の頭。「MTG_MEETING_FOLDER_<シート名>」でそのシートの格納先
-  //            （統合版は MTG_MEETING_FOLDER_全サブインダストリー）。無いシートは test.gs の DIFF_RULES の meetingFolder（統合版は combined.meetingFolder）
+  //   meeting：事前資料の格納先（この中に会議日のフォルダを作る。meetingFolder の代わり。全サブインダストリー・統合版で共通）
   //   copy：時点コピー（会議時点・日次のスプレッドシートのコピー）の保存先（copyFolderId の代わり）
-  folderProps: {save: 'MTG_SAVE_FOLDER', meeting: 'MTG_MEETING_FOLDER_', copy: 'MTG_COPY_FOLDER'},
-  // 会議のフォルダへの格納（本番だけ）：サブインダストリーのフォルダ（test.gs の DIFF_RULES の meetingFolder）の中の、名前が会議日の
+  folderProps: {save: 'MTG_SAVE_FOLDER', meeting: 'MTG_MEETING_FOLDER', copy: 'MTG_COPY_FOLDER'},
+  // 前の版のプロパティ（サブインダストリーごとの格納先「MTG_MEETING_FOLDER_<シート名>」）。使わない（showOutputFolders() に、消してよいと出す）
+  formerFolderPropPrefix: 'MTG_MEETING_FOLDER_',
+  // 会議のフォルダへの格納（本番だけ）：事前資料の格納先（meetingFolder。全サブインダストリー共通の1つのフォルダ）の中の、名前が会議日の
   // meetingFolderDate（yyMMdd）＋「_」で始まり、会議の名前（RX Business Meeting・RX Service Meeting）を含むフォルダ（例：261023_RX Business Meeting_第5回）に、
-  // 事前資料の PDF を置く。RX Service Meeting の資料（ServiceMeeting.gs）も同じフォルダの中の、自分の会議の名前のフォルダに置く。
+  // その会議日の全サブインダストリーの事前資料と統合版の PDF を置く（2026/10/26 から。前の版はサブインダストリーごとのフォルダの中に会議日のフォルダを作っていた）。
+  // RX Service Meeting の資料（ServiceMeeting.gs）も同じ格納先の中の、自分の会議の名前のフォルダに置く。
   // 会議の名前を含まない前の版のフォルダ（261023_第5回会議）は、RX Business Meeting のフォルダとして使い続ける。
   // 見つからない・格納できないときは保存先（folderId）にだけ残して知らせ、フォルダを用意してから storeBusinessMtgSummaries() で格納する
+  meetingFolder: 'https://drive.google.com/drive/folders/1qL4qzi2NrefekmByCDz5RAAJmJRdGWZi',   // 事前資料の格納先（URL か ID）
   meetingFolderDate: 'yyMMdd',
   // 会議日のフォルダが無ければ作る（false なら作らずに知らせる）。名前は meetingFolderName の {date}（meetingFolderDate）・{meeting}（会議の名前）・
-  // {n}（第何回）を置き換えたもの。{n} は、そのフォルダの中の、この会議日より前の同じ会議のフォルダ（「yyMMdd_…第N回」）のいちばん大きい N ＋ 1（無ければ 1）
+  // {n}（第何回）を置き換えたもの。{n} は、格納先の中の、この会議日より前の同じ会議のフォルダ（「yyMMdd_…第N回」）のいちばん大きい N ＋ 1（無ければ 1）
   createMeetingFolder: true,
   meetingFolderName: '{date}_{meeting}_第{n}回',
   // 統合版（全サブインダストリーの資料を1つにまとめた資料）。すべてのサブインダストリーの資料を作ったあとに、createBusinessMtgCombinedSummary() で作る
   // （資料を作る関数とは分ける。1回の実行の6分の上限に収めるため）。
   // 表紙・全サブインダストリーの状況（一覧）のあとに、各サブインダストリーの資料（表紙から Appendix まで）を DIFF_RULES の順に入れる（ページ番号は通し）。
-  // 本番は会議のフォルダ（meetingFolder の中の yyMMdd_RX Business Meeting_第N回）に格納し、インデックスの name の列に書く
+  // 本番は、各サブインダストリーの資料と同じ会議のフォルダ（meetingFolder の中の yyMMdd_RX Business Meeting_第N回）に格納し、インデックスの name の列に書く
   combined: {
     enabled: true,
     name: '全サブインダストリー',     // 表紙の見出し・ファイル名の {name}・インデックスの列の見出し
-    coverTone: 'cover',               // ひな形が無いときの表紙の色（'cover' 緑・'combined' 紫。MTG_COVER）
-    // 会議のフォルダを探す・作るフォルダ（URL か ID。各サブインダストリーの DIFF_RULES の meetingFolder と同じ形）。2026/10 はテストのフォルダ
-    meetingFolder: 'https://drive.google.com/drive/folders/1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK',
+    coverTone: 'cover'                // ひな形が無いときの表紙の色（'cover' 緑・'combined' 紫。MTG_COVER）
   },
   // Apps Script の1回の実行は6分まで（入力・確かめの画面を出している時間も含む）。作り始めてから limitMs を過ぎそうなら、そこで区切り、
   // 残りは continueAfterMs あとに自動で続ける（時間主導のトリガー continueBusinessMtgSummaries。1回きり）。次の仕事にかかる時間の見積もり：
@@ -1545,7 +1546,7 @@ function mtgSummaries_(ss, names, now, final, meeting, point) {
 
 /**
  * 統合版（全サブインダストリーの資料を1つにまとめた資料。mtgCombinedSlides_）を作り、PDF を保存先に保存する。
- * 本番は会議のフォルダ（MTG_OPTIONS.combined.meetingFolder の中）に格納し、インデックスの統合版の列に書く（できなくても止めない）。
+ * 本番は会議のフォルダ（事前資料の格納先 MTG_OPTIONS.meetingFolder の中。各サブインダストリーの資料と同じフォルダ）に格納し、インデックスの統合版の列に書く（できなくても止めない）。
  * 戻り値 {name, file: PDF, pages, stored, storeError, index}
  */
 function mtgCreateCombined_(summaries, meeting, final, folder) {
@@ -1766,22 +1767,22 @@ function mtgStoreToMeetingFolder_(name, meeting, pdf, kind) {
 }
 
 /**
- * シートの会議のフォルダ：サブインダストリーのフォルダ（DIFF_RULES の meetingFolder。統合版・全サブインダストリーは MTG_OPTIONS.combined.meetingFolder）の中の、
+ * シート（name）の会議のフォルダ：事前資料の格納先（mtgMeetingFolderSetting_。全サブインダストリー・統合版で共通）の中の、
  * 名前が会議日の meetingFolderDate（yyMMdd）で始まり、そのすぐあとが数字でなく、会議 kind（会議の名前。省けば MTG_OPTIONS.meetingName）のフォルダ
  * （mtgFolderIsMeeting_。261023_RX Business Meeting_第5回）。{folder} か {error: 理由}（設定が無い・開けない・見つからない・2つ以上ある）。
  * 見つからなければ作る（createMeetingFolder。noCreate なら作らない。名前は meetingFolderName）
  */
 function mtgMeetingFolder_(name, meeting, noCreate, kind) {
   const meetingName = kind || MTG_OPTIONS.meetingName;
-  const setting = mtgMeetingFolderSetting_(name);
+  const setting = mtgMeetingFolderSetting_();
   const id = mtgFolderIdOf_(setting.value);
-  if (setting.value && !id) return {error: '「' + name + '」の会議のフォルダの設定（' + setting.where + '）をフォルダの URL か ID として読めない'};
-  if (!id) return {error: '「' + name + '」の会議のフォルダが設定されていない（' + setting.where + '）'};
+  if (setting.value && !id) return {error: '事前資料の格納先の設定（' + setting.where + '）をフォルダの URL か ID として読めない'};
+  if (!id) return {error: '事前資料の格納先が設定されていない（' + setting.where + '）'};
   let parent;
   try {
     parent = DriveApp.getFolderById(id);
   } catch (_) {
-    return {error: '「' + name + '」のフォルダ（ID：' + id + '）を開けない（実行するアカウントに編集の権限があるか確かめてください）'};
+    return {error: '事前資料の格納先のフォルダ（ID：' + id + '）を開けない（実行するアカウントに編集の権限があるか確かめてください）'};
   }
   const p = meeting.split('/');
   const prefix = MTG_OPTIONS.meetingFolderDate.replace('yyyy', p[0]).replace('yy', p[0].slice(2)).replace('MM', p[1]).replace('dd', p[2]);
@@ -1813,16 +1814,11 @@ function mtgMeetingFolder_(name, meeting, noCreate, kind) {
 }
 
 /**
- * 会議のフォルダを探すフォルダ（事前資料の格納先）の設定 {value: URL か ID, where: 設定の場所}。
- * スクリプトのプロパティ「MTG_MEETING_FOLDER_<シート名>」→ コード（統合版は MTG_OPTIONS.combined.meetingFolder、ほかは DIFF_RULES の meetingFolder）の順
+ * 会議のフォルダを探す・作るフォルダ（事前資料の格納先）の設定 {value: URL か ID, where: 設定の場所}。
+ * 全サブインダストリー・統合版で共通（2026/10/26 から）：スクリプトのプロパティ「MTG_MEETING_FOLDER」→ MTG_OPTIONS.meetingFolder の順
  */
-function mtgMeetingFolderSetting_(name) {
-  const key = MTG_OPTIONS.folderProps.meeting + name;
-  const combined = MTG_OPTIONS.combined;
-  if (name === combined.name && !DIFF_RULES[name]) {
-    return mtgOutputSetting_([key], combined.meetingFolder, 'MeetingSummary.gs の MTG_OPTIONS.combined.meetingFolder');
-  }
-  return mtgOutputSetting_([key], (DIFF_RULES[name] || {}).meetingFolder, 'test.gs の DIFF_RULES の meetingFolder');
+function mtgMeetingFolderSetting_() {
+  return mtgOutputSetting_([MTG_OPTIONS.folderProps.meeting], MTG_OPTIONS.meetingFolder, 'MeetingSummary.gs の MTG_OPTIONS.meetingFolder');
 }
 
 /**
@@ -1865,10 +1861,8 @@ function showOutputFolders() {
   lines.push(item('事前資料などの保存先（作る場所・試作）', mtgSaveFolderSetting_(), '（無し。このスプレッドシートと同じフォルダの中に「' + o.folderName + '」を作る）'));
   lines.push(item('時点コピーの保存先', mtgCopyFolderSetting_(), '（無し。保存先の中の「' + o.copyFolderName + '」）'));
   if (typeof apDestFolderSetting_ === 'function') lines.push(item('アカウントプランシートの保存先', apDestFolderSetting_(), '✗ 無し'));
-  lines.push('', '■ 事前資料の格納先（この中に会議のフォルダ「yyMMdd_RX Business Meeting_第N回」を探す・作る）');
-  Object.keys(DIFF_RULES).concat(DIFF_RULES[o.combined.name] ? [] : [o.combined.name]).forEach(name => {
-    lines.push(item(name, mtgMeetingFolderSetting_(name), '✗ 無し（本番の資料を会議のフォルダに格納できません）'));
-  });
+  lines.push(item('事前資料の格納先（この中に会議日のフォルダ「yyMMdd_RX Business Meeting_第N回」を作り、全サブインダストリーと統合版の資料を入れる）',
+    mtgMeetingFolderSetting_(), '✗ 無し（本番の資料を会議のフォルダに格納できません）'));
   // 素材（ひな形）：表紙・扉のひな形は、プロパティ → コードの templateId → 前の版の登録の順
   lines.push('', '■ 素材（ひな形）');
   const legacy = PropertiesService.getDocumentProperties().getProperty(o.templateKey) || '';
@@ -1876,6 +1870,12 @@ function showOutputFolders() {
     o.templateId ? 'MeetingSummary.gs の MTG_OPTIONS.templateId' : legacy ? '前の版の登録（setMeetingTemplate()）' : 'MeetingSummary.gs の MTG_OPTIONS.templateId');
   lines.push(item('事前資料の表紙・扉のひな形', template, '（無し。表紙・扉はコードで描くので、素材が無くても作れる）', 'file'));
   if (typeof apTemplateSetting_ === 'function') lines.push(item('アカウントプランシートのひな形', apTemplateSetting_(), '✗ 無し', 'file'));
+  // 前の版のプロパティ（サブインダストリーごとの格納先）は使わないので、消してよいと知らせる
+  const former = PropertiesService.getScriptProperties().getKeys().filter(k => k.indexOf(o.formerFolderPropPrefix) === 0).sort();
+  if (former.length) {
+    lines.push('', '■ 使わなくなったスクリプトのプロパティ（' + former.length + '件。消してかまいません。removeFormerMeetingFolderProps() でまとめて消せます）',
+      former.map(k => '・' + k).join('\n'));
+  }
   const text = lines.join('\n');
   console.log(text);
   const ui = diffUiOrNull_();
@@ -1884,63 +1884,22 @@ function showOutputFolders() {
 }
 
 /**
- * 事前資料の格納先を、親フォルダの中のサブインダストリーごとのフォルダから、スクリプトのプロパティ MTG_MEETING_FOLDER_<シート名> にまとめて入れる
- * （エディタから実行する。管理者が1回。フォルダを作り直したときも）。親フォルダの URL を聞き、中のフォルダの名前（先頭の「01.」などの番号は除く）が
- * シート名（統合版は「全サブインダストリー」）と同じものを対応させる。対応を確かめて「はい」のときだけ入れる（今の値は置き換える。対応しないシートは今のまま）
+ * 前の版のスクリプトのプロパティ（サブインダストリーごとの事前資料の格納先「MTG_MEETING_FOLDER_<シート名>」）を消す（エディタから実行する。確かめてから）。
+ * 2026/10/26 から格納先は全サブインダストリー共通の1つ（MTG_MEETING_FOLDER）になり、使わない
  */
-function setBusinessMtgMeetingFolders() {
+function removeFormerMeetingFolderProps() {
   const ui = mtgUi_();
-  const title = CRED_OPTIONS.menuTitle;
-  const response = ui.prompt(title, 'サブインダストリーごとのフォルダ（「01.スーパー・GMS」「00.全サブインダストリー」など）が入っている、親フォルダの URL を入力してください。\n' +
-    '中のフォルダを、スクリプトのプロパティ「' + MTG_OPTIONS.folderProps.meeting + '<シート名>」（事前資料の格納先）に入れます。', ui.ButtonSet.OK_CANCEL);
-  if (response.getSelectedButton() !== ui.Button.OK) return;
-  const id = mtgFolderIdOf_(response.getResponseText());
-  if (!id) throw new Error('フォルダの URL として読めません。ドライブで親フォルダを開いたときのアドレス欄の URL をそのまま貼り付けてください。');
-  let parent;
-  try {
-    parent = DriveApp.getFolderById(id);
-  } catch (_) {
-    throw new Error('親フォルダ（ID：' + id + '）を開けません。実行するアカウントが、そのフォルダを開けるか確かめてください。');
-  }
-  const plan = mtgMeetingFolderPlan_(parent);
   const props = PropertiesService.getScriptProperties();
-  const lines = plan.items.map(p => '・' + p.name + '：' + (p.folder ? p.folder.getName() + (p.duplicate ? '（同じ名前のフォルダが ' + p.duplicate + '個。最初のものを使う）' : '')
-    : '対応するフォルダなし（今のまま：' + mtgMeetingFolderSetting_(p.name).where + '）'));
-  const matched = plan.items.filter(p => p.folder);
-  if (!matched.length) {
-    ui.alert(title, '「' + parent.getName() + '」の中に、シート名と同じ名前のフォルダがありません。\n\n' + lines.join('\n'), ui.ButtonSet.OK);
+  const keys = props.getKeys().filter(k => k.indexOf(MTG_OPTIONS.formerFolderPropPrefix) === 0).sort();
+  if (!keys.length) {
+    ui.alert(CRED_OPTIONS.menuTitle, '使わなくなったプロパティ（' + MTG_OPTIONS.formerFolderPropPrefix + '<シート名>）はありません。', ui.ButtonSet.OK);
     return;
   }
-  const answer = ui.alert(title, '「' + parent.getName() + '」の中のフォルダを、次のとおり事前資料の格納先にします（スクリプトのプロパティ。今の値は置き換えます）。\n\n' +
-    lines.join('\n') + (plan.others.length ? '\n\n使わないフォルダ：' + plan.others.join('・') : '') + '\n\nよろしいですか？', ui.ButtonSet.YES_NO);
+  const answer = ui.alert(CRED_OPTIONS.menuTitle, '次のスクリプトのプロパティを消します（今は使っていません。フォルダや資料は消えません）。よろしいですか？\n\n' +
+    keys.map(k => '・' + k).join('\n'), ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return;
-  matched.forEach(p => props.setProperty(MTG_OPTIONS.folderProps.meeting + p.name, p.folder.getUrl()));
-  const message = '事前資料の格納先を ' + matched.length + '件、スクリプトのプロパティに入れました。showOutputFolders() で確かめられます。\n\n' + lines.join('\n');
-  console.log(message);
-  ui.alert(title, message, ui.ButtonSet.OK);
-}
-
-/**
- * 親フォルダの中のフォルダと、シート（DIFF_RULES の順。最後に統合版）の対応。{items: [{name, folder, duplicate}], others: 対応しないフォルダの名前}。
- * フォルダの名前は、先頭の番号（「01.」「1_」「01 」など）を除き、全角・半角と空白の違いを無視してシート名と比べる。ゴミ箱のフォルダは見ない
- */
-function mtgMeetingFolderPlan_(parent) {
-  const strip = name => credNormalize_(String(name).replace(/^\s*[0-9０-９]+\s*[.．_＿、,\-－\s]\s*/, ''));
-  const folders = [];
-  const it = parent.getFolders();
-  while (it.hasNext()) {
-    const folder = it.next();
-    if (!folder.isTrashed()) folders.push(folder);
-  }
-  folders.sort((a, b) => String(a.getName()).localeCompare(String(b.getName())));
-  const names = Object.keys(DIFF_RULES).concat(DIFF_RULES[MTG_OPTIONS.combined.name] ? [] : [MTG_OPTIONS.combined.name]);
-  const used = new Set();
-  const items = names.map(name => {
-    const found = folders.filter(f => strip(f.getName()) === credNormalize_(name));
-    found.forEach(f => used.add(f));
-    return {name, folder: found[0] || null, duplicate: found.length > 1 ? found.length : 0};
-  });
-  return {items, others: folders.filter(f => !used.has(f)).map(f => f.getName())};
+  keys.forEach(k => props.deleteProperty(k));
+  ui.alert(CRED_OPTIONS.menuTitle, keys.length + '件のプロパティを消しました。', ui.ButtonSet.OK);
 }
 
 /** 出力先の設定のフォルダの ID（設定が無ければ空）。値があるのにフォルダの URL・ID として読めなければ止める */
@@ -2209,7 +2168,7 @@ function rebuildBusinessMtgIndex() {
  * 会議のフォルダは、名前が meetingFolderDate（yyMMdd）の日付と「_」で始まるもの。PDF の名前は mtgFileName_（本番）
  */
 function mtgStoredDecks_(name) {
-  const setting = mtgMeetingFolderSetting_(name);
+  const setting = mtgMeetingFolderSetting_();
   const id = mtgFolderIdOf_(setting.value);
   if (setting.value && !id) return {error: '会議のフォルダの設定（' + setting.where + '）をフォルダの URL か ID として読めない'};
   if (!id) return {error: '会議のフォルダが設定されていない（' + setting.where + '）'};

@@ -1262,12 +1262,12 @@ test('クレデンシャル・オファリング履歴を使っていない間�
 
 /* ---------------- 会議のフォルダへの格納 ---------------- */
 
-/** 新FMT のサブインダストリーのフォルダ（会議のフォルダ folders を中に置く）を用意し、DIFF_RULES の meetingFolder に設定する */
+/** 事前資料の格納先のフォルダ（全サブインダストリー共通。会議のフォルダ folders を中に置く）を用意し、MTG_OPTIONS.meetingFolder に設定する */
 function meetingFolders(gas, folders) {
   const parent = 'SubIndustryFolder0001';
   gas.driveFolders.push({id: parent, name: 'スーパー・GMS', parent: 'root'});
   folders.forEach((name, i) => gas.driveFolders.push({id: 'meeting-folder-' + i, name, parent}));
-  gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'https://drive.google.com/drive/folders/' + parent + '?usp=sharing';
+  gas.get('MTG_OPTIONS').meetingFolder = 'https://drive.google.com/drive/folders/' + parent + '?usp=sharing';
   return parent;
 }
 
@@ -1348,15 +1348,15 @@ test('会議のフォルダが無ければ「yyMMdd_RX Business Meeting_第N回�
 
 test('mtgMeetingFolder_：設定が無い・開けない・2つある・コピーできないときは理由を返す（止めない）。URL・ID のどちらでも設定できる', () => {
   const {gas, g} = setup({edits: false});
-  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /「新FMT」の会議のフォルダが設定されていない（test\.gs の DIFF_RULES の meetingFolder）/);
+  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /事前資料の格納先が設定されていない（MeetingSummary\.gs の MTG_OPTIONS\.meetingFolder）/);
   meetingFolders(gas, ['261023_第5回会議', '261023_第5回会議（予備）']);
   assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /「261023_」で始まる RX Business Meeting のフォルダが 2個ある（「261023_第5回会議」「261023_第5回会議（予備）」。1つにしてください）/);
   gas.driveFolders.pop();
   assert.strictEqual(g.mtgMeetingFolder_('新FMT', '2026/10/23').folder.getId(), 'meeting-folder-0');
-  gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'SubIndustryFolder0001';
+  gas.get('MTG_OPTIONS').meetingFolder = 'SubIndustryFolder0001';
   assert.strictEqual(g.mtgMeetingFolder_('新FMT', '2026/10/23').folder.getId(), 'meeting-folder-0', 'ID だけでもよい');
   gas.missingFolders = ['SubIndustryFolder0001'];
-  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /フォルダ（ID：SubIndustryFolder0001）を開けない/);
+  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /事前資料の格納先のフォルダ（ID：SubIndustryFolder0001）を開けない/);
   gas.missingFolders = [];
   gas.copyErrors = ['meeting-folder-0'];
   const pdf = g.DriveApp.getFolderById('x').createFile({getName: () => '20261023_新FMT_RX Business Meeting用資料.pdf'});
@@ -1437,8 +1437,8 @@ test('インデックス：前の形式（行＝サブインダストリー）�
   assert.match(r.error, /「INDEX_会議資料」シートに書き込めませんでした（1行目に「日付」の見出しがありません）。前の形式（行がサブインダストリー）のシートは、エディタで rebuildBusinessMtgIndex\(\) を実行すると、今の形式で作り直します。/);
   assert.strictEqual(old.getRange(2, 2).getValue(), '前のチップ', '前の形式のシートは書き換えない');
 
-  // 会議のフォルダ：新FMT は 10/16・10/23（10/30 は資料なし）、新FMT2 は設定なし
-  gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'https://drive.google.com/drive/folders/SubIndustryFolder0001';
+  // 会議のフォルダ（全サブインダストリー共通の格納先の中）：新FMT は 10/16・10/23（10/30 は資料なし）、新FMT2 は資料なし
+  gas.get('MTG_OPTIONS').meetingFolder = 'https://drive.google.com/drive/folders/SubIndustryFolder0001';
   gas.driveFolders.push({id: 'm1023', name: year.slice(2) + '1023_第2回会議', parent: 'SubIndustryFolder0001'},
     {id: 'm1016', name: year.slice(2) + '1016_第1回会議', parent: 'SubIndustryFolder0001'},
     {id: 'm1030', name: year.slice(2) + '1030_第3回会議', parent: 'SubIndustryFolder0001'},
@@ -1465,7 +1465,7 @@ test('インデックス：前の形式（行＝サブインダストリー）�
   assert.ok(gas.writes.filter(w => w.sheet === 'INDEX_会議資料').every(w => w.locked), '書き込みはロックの中');
   const done = gas.alerts[gas.alerts.length - 1].message;
   assert.match(done, /「INDEX_会議資料」シートに、資料のファイルを 2件書きました。/);
-  assert.match(done, new RegExp('・新FMT：2件（' + year + '/10/16・' + year + '/10/23）\n・新FMT2：会議のフォルダが設定されていない'));
+  assert.match(done, new RegExp('・新FMT：2件（' + year + '/10/16・' + year + '/10/23）\n・新FMT2：資料なし'));
 
   // 今の形式なら消さずに書き直す（何度実行してもよい）
   gas.asUser(() => sheet.getRange(2, 3).setValue('全体の資料'));
@@ -2413,7 +2413,7 @@ test('統合版：createBusinessMtgSummaries() では作らず、すべてのシ
   const o = gas.get('MTG_OPTIONS');
   const meeting = g.mtgParseDate_('10/23', new Date());
   const parent = meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
-  Object.assign(o.combined, {enabled: true, meetingFolder: parent});
+  o.combined.enabled = true;   // 統合版も、各サブインダストリーと同じ格納先（meetingFolders で設定）
   gas.promptAnswers = ['1', '10/23'];
   g.previewBusinessMtgSummaries();
   assert.doesNotMatch(gas.alerts[gas.alerts.length - 1].message, /統合版/, '試作では案内しない');
@@ -2465,7 +2465,7 @@ test('createBusinessMtgCombinedSummary：すべてのシートに会議日の本
   const o = gas.get('MTG_OPTIONS');
   const meeting = g.mtgParseDate_('10/23', new Date());
   const parent = meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
-  Object.assign(o.combined, {enabled: true, meetingFolder: parent});
+  o.combined.enabled = true;   // 統合版も、各サブインダストリーと同じ格納先（meetingFolders で設定）
   const props = g.PropertiesService.getDocumentProperties();
 
   gas.promptAnswers = ['1', '10/23'];
@@ -2683,7 +2683,7 @@ test('サブインダストリーごとに作る：本番を1つずつ作ると�
   const o = gas.get('MTG_OPTIONS');
   const meeting = g.mtgParseDate_('10/23', new Date());
   const parent = meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
-  Object.assign(o.combined, {enabled: true, meetingFolder: parent});
+  o.combined.enabled = true;   // 統合版も、各サブインダストリーと同じ格納先（meetingFolders で設定）
   gas.promptAnswers = ['2', '10/23'];
   g.createBusinessMtgSummaries();
   const first = gas.alerts[gas.alerts.length - 1].message;
@@ -3102,33 +3102,38 @@ test('出力先はスクリプトのプロパティで指定できる：保存�
   assert.strictEqual(g.mtgFolder_(gas.ss).getId(), gas.get('MTG_OPTIONS').folderId);
 });
 
-test('事前資料の格納先：スクリプトのプロパティ MTG_MEETING_FOLDER_<シート名> → コード（DIFF_RULES の meetingFolder）の順。統合版は MTG_MEETING_FOLDER_全サブインダストリー', () => {
+test('事前資料の格納先は全サブインダストリー共通の1つ（スクリプトのプロパティ MTG_MEETING_FOLDER → MTG_OPTIONS.meetingFolder）。その中の会議日のフォルダに、全サブインダストリーの資料を格納する', () => {
   const {gas, g} = setup({edits: false});
   const props = g.PropertiesService.getScriptProperties();
-  const where = name => plain(g.mtgMeetingFolderSetting_(name));
-  assert.strictEqual(where('新FMT').where, 'test.gs の DIFF_RULES の meetingFolder');
-  // 全シート共通のプロパティ（MTG_MEETING_FOLDER）は無い（共通の格納先はコードの DIFF_RULES に書く）
-  props.setProperty('MTG_MEETING_FOLDER', 'https://drive.google.com/drive/folders/CommonFolder0001');
-  assert.strictEqual(where('新FMT').prop, '');
-  props.setProperty('MTG_MEETING_FOLDER_新FMT', 'SuperFolder00001');
-  props.setProperty('MTG_MEETING_FOLDER_全サブインダストリー', 'https://drive.google.com/drive/folders/AllFolder000001');
-  assert.deepStrictEqual([where('新FMT').value, where('新FMT2').value, where('全サブインダストリー').value],
-    ['SuperFolder00001', gas.get('DIFF_RULES')['新FMT2'].meetingFolder || '', 'https://drive.google.com/drive/folders/AllFolder000001']);
-  assert.deepStrictEqual([where('新FMT').prop, where('新FMT2').prop, where('全サブインダストリー').prop], ['MTG_MEETING_FOLDER_新FMT', '', 'MTG_MEETING_FOLDER_全サブインダストリー']);
-  // 会議のフォルダはそのフォルダの中に作る
-  gas.driveFolders.push({id: 'SuperFolder00001', name: 'スーパー', parent: 'root'});
   const meeting = g.mtgParseDate_('10/23', new Date());
-  const found = g.mtgMeetingFolder_('新FMT', meeting);
-  assert.ok(found.folder && found.created);
-  assert.strictEqual(gas.driveFolders.find(f => f.id === found.folder.getId()).parent, 'SuperFolder00001');
-  props.setProperty('MTG_MEETING_FOLDER_新FMT', 'ちがう');
-  assert.match(g.mtgMeetingFolder_('新FMT', meeting).error, /会議のフォルダの設定（スクリプトのプロパティ「MTG_MEETING_FOLDER_新FMT」）をフォルダの URL か ID として読めない/);
+  meetingFolders(gas, []);
+  assert.strictEqual(g.mtgMeetingFolderSetting_().where, 'MeetingSummary.gs の MTG_OPTIONS.meetingFolder');
+  // 2つのシートの本番の資料：同じ会議日のフォルダ（1つだけ作る）に入る
+  gas.promptAnswers = ['', '10/23'];
+  g.createBusinessMtgSummaries();
+  const folders = gas.driveFolders.filter(f => f.parent === 'SubIndustryFolder0001');
+  assert.deepStrictEqual(folders.map(f => f.name), [yymmdd(meeting) + '_RX Business Meeting_第1回'], '会議日のフォルダは1つ（サブインダストリーごとのフォルダは作らない）');
+  assert.deepStrictEqual(gas.driveFiles.filter(f => f.folder === folders[0].id).map(f => f.name.replace(/^\d+_/, '')).sort(),
+    ['新FMT2_RX Business Meeting用資料.pdf', '新FMT_RX Business Meeting用資料.pdf']);
+  // 前の版のシートごとのプロパティ・DIFF_RULES の meetingFolder は使わない
+  props.setProperty('MTG_MEETING_FOLDER_新FMT', 'OldSubFolder0001');
+  gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'OldSubFolder0002';
+  assert.strictEqual(g.mtgMeetingFolder_('新FMT', meeting).folder.getId(), folders[0].id);
+  // スクリプトのプロパティがあればそちら
+  gas.driveFolders.push({id: 'RootFolder000001', name: 'RX Business Meeting', parent: 'root'});
+  props.setProperty('MTG_MEETING_FOLDER', 'https://drive.google.com/drive/folders/RootFolder000001');
+  assert.strictEqual(g.mtgMeetingFolderSetting_().prop, 'MTG_MEETING_FOLDER');
+  const found = g.mtgMeetingFolder_('新FMT2', meeting);
+  assert.strictEqual(gas.driveFolders.find(f => f.id === found.folder.getId()).parent, 'RootFolder000001');
+  props.setProperty('MTG_MEETING_FOLDER', 'ちがう');
+  assert.match(g.mtgMeetingFolder_('新FMT', meeting).error, /事前資料の格納先の設定（スクリプトのプロパティ「MTG_MEETING_FOLDER」）をフォルダの URL か ID として読めない/);
 });
 
 test('showOutputFolders：項目ごとに、使っているフォルダ・ファイル（○ 開ける・✗ 開けない）と、スクリプトのプロパティが設定ありか未設定（コードの設定を使用）かを分けて出す', () => {
   const {gas, g} = setup({edits: false});
   const props = g.PropertiesService.getScriptProperties();
-  props.setProperty('MTG_MEETING_FOLDER_新FMT2', 'MissingFolder001');
+  props.setProperty('MTG_MEETING_FOLDER', 'MissingFolder001');
+  props.setProperty('MTG_MEETING_FOLDER_新FMT2', 'OldSubFolder0001');   // 前の版のプロパティ
   gas.missingFolders = ['MissingFolder001'];
   gas.driveFolders.push({id: gas.get('MTG_OPTIONS').folderId, name: '会議サマリ（テスト）', parent: 'root'});
   g.showOutputFolders();
@@ -3138,11 +3143,12 @@ test('showOutputFolders：項目ごとに、使っているフォルダ・ファ
   assert.match(text, /・事前資料などの保存先（作る場所・試作）\n　使っているもの：○ 会議サマリ（テスト）（ID：1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK）\n　スクリプトのプロパティ「MTG_SAVE_FOLDER」：未設定 → コードの設定（MeetingSummary\.gs の MTG_OPTIONS\.folderId）を使用/);
   assert.match(text, /・時点コピーの保存先\n　使っているもの：（無し。保存先の中の「時点コピー」）\n　スクリプトのプロパティ「MTG_COPY_FOLDER」：未設定/);
   // プロパティを入れた：設定あり（これを使用）
-  assert.match(text, /・新FMT2\n　使っているもの：✗ 開けません（ID：MissingFolder001。[^\n]*\n　スクリプトのプロパティ「MTG_MEETING_FOLDER_新FMT2」：設定あり（これを使用）/);
-  assert.match(text, /・全サブインダストリー\n[^\n]*\n　スクリプトのプロパティ「MTG_MEETING_FOLDER_全サブインダストリー」：未設定 → コードの設定（MeetingSummary\.gs の MTG_OPTIONS\.combined\.meetingFolder）を使用/);
+  assert.match(text, /・事前資料の格納先（この中に会議日のフォルダ「yyMMdd_RX Business Meeting_第N回」を作り、全サブインダストリーと統合版の資料を入れる）\n　使っているもの：✗ 開けません（ID：MissingFolder001。[^\n]*\n　スクリプトのプロパティ「MTG_MEETING_FOLDER」：設定あり（これを使用）/);
+  assert.ok(!/・新FMT2\n/.test(text), 'サブインダストリーごとの格納先は出さない');
+  assert.match(text, /■ 使わなくなったスクリプトのプロパティ（1件。消してかまいません。removeFormerMeetingFolderProps\(\) でまとめて消せます）\n・MTG_MEETING_FOLDER_新FMT2$/);
   assert.match(text, /・アカウントプランシートの保存先\n[^\n]*\n　スクリプトのプロパティ「AP_DEST_FOLDER」：未設定 → コードの設定（コード\.gs の AP_OPTIONS\.destFolderId）を使用/);
   assert.match(text, /■ 素材（ひな形）\n・事前資料の表紙・扉のひな形\n　使っているもの：（無し。表紙・扉はコードで描くので、素材が無くても作れる）\n　スクリプトのプロパティ「MTG_TEMPLATE_URL」：未設定/);
-  assert.match(text, /・アカウントプランシートのひな形\n　使っているもの：[^\n]*\n　スクリプトのプロパティ「AP_TEMPLATE_FILE」：未設定 → コードの設定（コード\.gs の AP_OPTIONS\.templateFileId）を使用$/);
+  assert.match(text, /・アカウントプランシートのひな形\n　使っているもの：[^\n]*\n　スクリプトのプロパティ「AP_TEMPLATE_FILE」：未設定 → コードの設定（コード\.gs の AP_OPTIONS\.templateFileId）を使用\n/);
   props.setProperty('MTG_TEMPLATE_URL', 'https://docs.google.com/presentation/d/TemplateDeck0000000000001/edit');
   g.showOutputFolders();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /・事前資料の表紙・扉のひな形\n　使っているもの：○ [^\n]*（ID：TemplateDeck0000000000001）\n　スクリプトのプロパティ「MTG_TEMPLATE_URL」：設定あり（これを使用）/);
@@ -3153,40 +3159,18 @@ test('showOutputFolders：項目ごとに、使っているフォルダ・ファ
   assert.ok(gas.logs.some(l => /事前資料の格納先/.test(l.line)));
 });
 
-test('setBusinessMtgMeetingFolders：親フォルダの中の「01.スーパー・GMS」などを、番号を除いた名前でシートと対応させ、MTG_MEETING_FOLDER_<シート名> に入れる（はいのときだけ）', () => {
-  const gas = createGas({realSheetNames: true});
-  const g = gas.global;
-  Object.keys(gas.get('DIFF_RULES')).forEach(name => gas.addSheet(name, [['']], {rows: 3, columns: 3}));
-  // 本物の親フォルダと同じ名前（2026/10/26）。百貨店は無い・同じ名前が2つ・関係ないフォルダも試す
-  const names = ['00.全サブインダストリー', '01.スーパー・GMS', '02.コンビニ', '04.化粧品・トイレタリー', '05.飲料・食品', '06.地方銀行',
-    '07.自動車販売', '08.住設', '09.電鉄・不動産', '10.エネルギー', '11.生協', '11 生協', '99.過去資料'];
-  gas.driveFolders.push({id: 'ParentFolder0001', name: '事前資料', parent: 'root'});
-  names.forEach((name, i) => gas.driveFolders.push({id: 'SubFolder' + String(i).padStart(7, '0'), name, parent: 'ParentFolder0001'}));
+test('removeFormerMeetingFolderProps：前の版のサブインダストリーごとの格納先のプロパティ（MTG_MEETING_FOLDER_<シート名>）を、確かめてから消す（ほかのプロパティは消さない）', () => {
+  const {gas, g} = setup({edits: false});
   const props = g.PropertiesService.getScriptProperties();
-  props.setProperty('MTG_MEETING_FOLDER_百貨店', 'KeepFolder000001');
-
-  gas.promptAnswers = ['https://drive.google.com/drive/folders/ParentFolder0001?usp=drive_link'];
+  ['MTG_MEETING_FOLDER_新FMT', 'MTG_MEETING_FOLDER_全サブインダストリー', 'MTG_MEETING_FOLDER', 'MTG_SAVE_FOLDER'].forEach(k => props.setProperty(k, 'Folder' + k.length + '000000'));
   gas.confirmAnswer = 'NO';
-  g.setBusinessMtgMeetingFolders();
-  const confirm = gas.alerts[gas.alerts.length - 1].message;
-  assert.match(confirm, /^「事前資料」の中のフォルダを、次のとおり事前資料の格納先にします/);
-  assert.match(confirm, /・スーパー・GMS：01\.スーパー・GMS\n・コンビニ：02\.コンビニ\n・百貨店：対応するフォルダなし（今のまま：スクリプトのプロパティ「MTG_MEETING_FOLDER_百貨店」）/);
-  assert.match(confirm, /・生協：11 生協（同じ名前のフォルダが 2個。最初のものを使う）/);
-  assert.match(confirm, /・全サブインダストリー：00\.全サブインダストリー/);
-  assert.match(confirm, /使わないフォルダ：99\.過去資料/);
-  assert.strictEqual(props.getProperty('MTG_MEETING_FOLDER_スーパー・GMS'), null, '「いいえ」なら入れない');
-
-  gas.promptAnswers = ['https://drive.google.com/drive/folders/ParentFolder0001'];
+  g.removeFormerMeetingFolderProps();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /次のスクリプトのプロパティを消します[\s\S]*・MTG_MEETING_FOLDER_全サブインダストリー\n・MTG_MEETING_FOLDER_新FMT$/);
+  assert.ok(props.getProperty('MTG_MEETING_FOLDER_新FMT'), '「いいえ」なら消さない');
   gas.confirmAnswer = 'YES';
-  g.setBusinessMtgMeetingFolders();
-  assert.strictEqual(props.getProperty('MTG_MEETING_FOLDER_スーパー・GMS'), 'https://drive.google.com/drive/folders/SubFolder0000001');
-  assert.strictEqual(props.getProperty('MTG_MEETING_FOLDER_全サブインダストリー'), 'https://drive.google.com/drive/folders/SubFolder0000000');
-  assert.strictEqual(props.getProperty('MTG_MEETING_FOLDER_百貨店'), 'KeepFolder000001', '対応しないシートは今のまま');
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /^事前資料の格納先を 11件、スクリプトのプロパティに入れました。/);
-  assert.strictEqual(g.mtgMeetingFolderSetting_('コンビニ').prop, 'MTG_MEETING_FOLDER_コンビニ', '格納先はプロパティのフォルダになる');
-
-  gas.promptAnswers = ['親フォルダ'];
-  assert.throws(() => g.setBusinessMtgMeetingFolders(), /フォルダの URL として読めません/);
-  gas.noUi = true;
-  assert.throws(() => g.setBusinessMtgMeetingFolders(), /スプレッドシートの画面に、入力・確かめの画面を出せません/);
+  g.removeFormerMeetingFolderProps();
+  assert.deepStrictEqual(['MTG_MEETING_FOLDER_新FMT', 'MTG_MEETING_FOLDER_全サブインダストリー', 'MTG_MEETING_FOLDER', 'MTG_SAVE_FOLDER'].map(k => !!props.getProperty(k)),
+    [false, false, true, true]);
+  g.removeFormerMeetingFolderProps();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /使わなくなったプロパティ（MTG_MEETING_FOLDER_<シート名>）はありません/);
 });

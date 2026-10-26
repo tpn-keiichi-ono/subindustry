@@ -549,3 +549,19 @@ test('サービス管理がロック（スクリプトロック）を使って�
   const log = gas.ss.getSheetByName('変更履歴_差分');
   assert.strictEqual(log.getLastRow(), 2, '記録が1行増える');
 });
+
+test('DIFF_RULES の印：比較基準の形に関わる設定（見出しの行・追跡範囲）だけを比べる。格納先・リクエストなどを変えても（前の版の印でも）止めない', () => {
+  const {gas, g, sheet} = setupProject({launchers: false});
+  const old = JSON.stringify({headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: 'https://drive.google.com/drive/folders/OldFolder', formerNames: ['新FMT']});
+  assert.strictEqual(g.diffSameSignature_(old, {headerRow: 2, ranges: ['D3:AF'], requests: true, formerNames: ['新FMT']}), true, '前の版の印（meetingFolder 入り）');
+  assert.strictEqual(g.diffSameSignature_(old, {headerRow: 2, ranges: ['D3:AE']}), false, '追跡範囲が変われば別');
+  assert.strictEqual(g.diffSameSignature_(old, {headerRow: 3, ranges: ['D3:AF']}), false, '見出しの行が変われば別');
+  // 保存した印に meetingFolder があっても、編集を記録し続ける
+  const state = JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'));
+  const id = sheet.getSheetId();
+  state[id].signature = JSON.stringify(Object.assign({}, gas.get('DIFF_RULES')['新FMT'], {meetingFolder: 'OldFolder'}));
+  gas.props.document.set('CHAR_DIFF_STATE_V1', JSON.stringify(state));
+  g.recordDiffEdit(gas.edit(sheet, 'F3', '受注'));
+  assert.strictEqual(gas.records(LOG).length, 1);
+  assert.strictEqual(JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'))[id].paused, false);
+});

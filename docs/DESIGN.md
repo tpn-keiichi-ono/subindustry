@@ -441,14 +441,14 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
 - **ファイル名**（`mtgFileName_`）：`MTG_OPTIONS.fileName` の `{date}`（会議日の yyyyMMdd）・`{name}`（シート名）を置き換える
   （`20261023_スーパー・GMS_RX Business Meeting用資料`。試作は末尾に `_試作`）。
 - **会議のフォルダへの格納**（`mtgStoreToMeetingFolder_`・`mtgMeetingFolder_`）：本番だけ、資料を作って会議日を記録したあとに、
-  シートの `DIFF_RULES` の `meetingFolder`（サブインダストリーのフォルダ。URL か ID。シート名を1か所に書く決まりのため `DIFF_RULES` に置く）の中から、
+  事前資料の格納先（全サブインダストリー共通の1つのフォルダ。スクリプトのプロパティ `MTG_MEETING_FOLDER` → `MTG_OPTIONS.meetingFolder`。`mtgMeetingFolderSetting_`）の中から、
   名前が会議日の `meetingFolderDate`（yyMMdd）で始まり、すぐあとが数字でないフォルダを探し、PDF を移します（`moveTo`。保存先と二重にしないため。同じ名前の古い版はゴミ箱へ）。
   見つからない・2つ以上ある・開けない・書き込めないときは止めずに、理由を終わりの画面に出します（資料は保存先にある）。
   あとから `storeBusinessMtgSummaries()`（エディタから実行。シートと会議日を聞く）で、保存先の本番の PDF を同じように格納します。
   会議のフォルダが無ければ作ります（`createMeetingFolder`。名前は `meetingFolderName` の `{date}_{meeting}_第{n}回`（`261023_RX Business Meeting_第5回`）。
   `{n}` は、そのフォルダの中の、この会議日より前の同じ会議のフォルダの「第N回」のいちばん大きい N ＋ 1（`mtgNextMeetingNumber_`。全角の数字も読む。後の会議日のフォルダは数えない））。
   作り直したときは、作ったフォルダが見つかるので、もう1つは作りません。
-  会議のフォルダは、名前に含む会議の名前（RX Business Meeting・RX Service Meeting）で見分けます（`mtgFolderIsMeeting_`）。同じサブインダストリーのフォルダの中に両方の会議のフォルダが並び、
+  会議のフォルダは、名前に含む会議の名前（RX Business Meeting・RX Service Meeting）で見分けます（`mtgFolderIsMeeting_`）。格納先の中に両方の会議のフォルダが並び、
   第N回は会議ごとに数えます。会議の名前を含まない前の版のフォルダ（`261023_第5回会議`）は、RX Business Meeting のフォルダとして使い続けます（2026/10/17 から）。
   前の会議の名前（RX Business MTG・RX Service MTG。`formerMeetingNames`）のフォルダも、同じ会議のフォルダとして見分けます。インデックスの会議名も、前の名前の行（`index.formerKinds`）を
   同じ会議の行として使い、書くときに今の名前に書き換えます。
@@ -466,7 +466,7 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   その資料の表紙のページの表で、いちばん下に合計を置きます。増減の列の見出しは、いちばん多い比べ方（前回比・10/17比（基準）・直近14日間の増減）で、
   ほかの比べ方のシートはセルの1行目に何との比かを書きます。作れない値は灰色の「データなし」、合計は作れたシートの分だけで ※ を付け、意味を出典の行の後ろに書きます
   （どのシートも作れなければ合計も「データなし」）。リード文は1行（11サブインダストリーと合計を1ページに入れるため。入らなければ表の字を 7pt まで小さくする）。
-  本番は会議のフォルダ（`combined.meetingFolder` の中の `yyMMdd_第N回会議`。各サブインダストリーと同じ探し方・作り方。`mtgMeetingFolderSetting_`）に格納し、
+  本番は、各サブインダストリーの資料と同じ会議のフォルダ（事前資料の格納先の中の `yyMMdd_RX Business Meeting_第N回`。`mtgMeetingFolder_`）に格納し、
   インデックスの「全サブインダストリー」の列に書きます。`createBusinessMtgCombinedSummary()` は会議日を聞き、すべてのシートの会議サマリを今の値で作り直してまとめ
   （`mtgSummaries_`。会議日・時点コピーは記録しない）、本番として作ります。実行の条件は、すべてのシートにその会議日の本番の記録と PDF（会議のフォルダか保存先。`mtgStoredPdf_`）があること
   （インデックスのその会議日の行に空のセルが無いこと）で、満たさなければ足りないサブインダストリーを知らせて、何も作らずに終えます（試作も作らない）。
@@ -493,14 +493,18 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   手で入れた値（C列など）はそのまま残します。書き込みはドキュメントロックの中です（資料作成はエディタから実行するので待ってよい）。書けなくても止めず、理由を知らせます
   （`storeBusinessMtgSummaries()` で書き直す）。差分追跡の対象外のシートなので、行の差し込みで追跡は止まりません。
   1行目に「日付」の見出しが無いシート（前の形式：行＝サブインダストリー・列＝会議日）には書かずに、`rebuildBusinessMtgIndex()` を案内します。
-- **インデックスの作り直し**（`rebuildBusinessMtgIndex()`。エディタから実行）：各サブインダストリーの `meetingFolder` の中の会議のフォルダ
+- **インデックスの作り直し**（`rebuildBusinessMtgIndex()`。エディタから実行）：事前資料の格納先の中の会議のフォルダ
   （名前が `meetingFolderDate` の日付と「_」で始まるもの。`mtgMeetingOfFolder_`）にある本番の PDF（`mtgFileName_`。試作は除く）を探し（`mtgStoredDecks_`）、
   `mtgWriteIndex_` で書き直します。前の形式のシートは、確かめてから中身を消して（`clear`）今の形式で作り直します。今の形式なら消さずに資料のセルだけ書き直します（何度実行してもよい）。
 - **時点コピーの保存先**：`MTG_OPTIONS.copyFolderId`（URL か ID。開けなければ止める）。空なら会議サマリのフォルダの中の「時点コピー」フォルダ。
 - **保存先**：`MTG_OPTIONS.folderId`（2026/10 から指定のフォルダ `1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK`）。開けなければ、フォルダの ID を書いて止めます。
-- **出力先・素材をスクリプトのプロパティで指定する**（2026/10/26 から）：保存先（`MTG_SAVE_FOLDER`）・事前資料の格納先（`MTG_MEETING_FOLDER_<シート名>`。統合版は `_全サブインダストリー`）・
+- **出力先・素材をスクリプトのプロパティで指定する**（2026/10/26 から）：保存先（`MTG_SAVE_FOLDER`）・事前資料の格納先（`MTG_MEETING_FOLDER`）・
   時点コピー（`MTG_COPY_FOLDER`）・アカウントプランシート（`AP_DEST_FOLDER`）と、素材のひな形（`MTG_TEMPLATE_URL`・`AP_TEMPLATE_FILE`）は、スクリプトのプロパティがあればコードの設定より優先します
-  （`mtgOutputSetting_`。`MTG_OPTIONS.folderProps`）。全シート共通の格納先のプロパティは置きません（共通の値は `DIFF_RULES` の `meetingFolder` に書けば足り、優先の順が分かりにくくなるため）。
+  （`mtgOutputSetting_`。`MTG_OPTIONS.folderProps`）。
+- **事前資料の格納先は1つ**（2026/10/26 から）：前の版はサブインダストリーごとのフォルダ（`DIFF_RULES` の `meetingFolder`・`MTG_MEETING_FOLDER_<シート名>`）の中に会議日のフォルダを作っていましたが、
+  会議の単位で資料を見られるように、1つの親フォルダの中に会議日のフォルダを作り、その会議日の全サブインダストリーと統合版の PDF を入れます。
+  ファイル名にサブインダストリーの名前が入るので、同じフォルダでも見分けられます（インデックスの作り直しもファイル名で探す）。
+  `DIFF_RULES` から `meetingFolder` を外しても差分追跡が止まらないよう、比較基準の印（`diffRuleSignature_`）は見出しの行・追跡範囲・スナップショットの列だけで作ります（前の版の印とも比べられる）。
   運用のフォルダが変わるたびにコードを書き換えて貼り直さなくてよいように、またテストのフォルダと本番のフォルダをコードを変えずに切り替えられるようにするためです。
   値はフォルダの URL か ID で、読めない値は設定の場所（プロパティの名前）を書いて止めます。今の出力先と使っている設定は `showOutputFolders()` で一覧にします（読むだけ）。
   空にすると、スプレッドシートと同じフォルダの中に「会議サマリ」フォルダを作って使います（前の動き）。
@@ -877,7 +881,7 @@ Appendix は扉に合わせてグレー（ラベルは紫のまま）。
 **保存**：PDF を会議サマリの保存先（`mtgFolder_`）に保存します（`{date}_{サブインダストリー}_RX Service Meeting用資料.pdf`。試作は `_試作`）。本番は会議資料のインデックスの、
 会議名が「RX Service Meeting」の行（同じ日付でも RX Business Meeting の行とは別）の、そのサブインダストリー（全サブインダストリー）の列に書きます（`mtgWriteIndex_` の `kind`）。
 1回の実行の6分に収まらなければ、RX Business Meeting と同じく区切って、1回きりのトリガー `continueServiceMtgSummaries` で続けます（`smtgJobRun_`。見積もりは `SMTG_OPTIONS.run`）。
-本番の PDF は、RX Business Meeting と同じフォルダ（サブインダストリーは `DIFF_RULES` の `meetingFolder`、全サブインダストリーは `MTG_OPTIONS.combined.meetingFolder`）の中の、
+本番の PDF は、RX Business Meeting と同じ事前資料の格納先（全サブインダストリー共通）の中の、
 「yyMMdd_RX Service Meeting_第N回」フォルダに格納します（無ければ作る。第N回は RX Service Meeting のフォルダだけで数える。`mtgMeetingFolder_` の `kind`）。
 
 **サンプル**：`addServiceMtgSampleData()`（`サンプルデータ.gs`）が、リクエスト・タスク管理の最後の行の下にサンプル（`SMP_OPTIONS.service`。リクエストの先頭に「【サンプル】」）を書きます。
