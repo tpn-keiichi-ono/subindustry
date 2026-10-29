@@ -262,10 +262,14 @@ const MTG_OPTIONS = {
     record: '商談記録（ＵＲＬ）'          // 提案資料・商談の音声の格納先（入力内容のチェック「資料なし」）
   },
   // 同じ列のほかの見出し（シートによって見出しが違うもの。columns の見出しが無ければ、これを順に探す）。
-  // 2026/10/26 時点で、I列はシートによって「RXシナリオ構成」と「RXシナリオ構成（サービス）」の2通り
-  columnAliases: {scenario: ['RXシナリオ構成（サービス）']},
+  // 2026/10/26 時点で、I列はシートによって「RXシナリオ構成」と「RXシナリオ構成（サービス）」の2通り。
+  // 2026/10/29 に受注月の見出しが「受注月（改行）(yy/mm)」になった（変更の記録の列名も、ここでそろえて読む。mtgCanonicalLabel_）
+  columnAliases: {scenario: ['RXシナリオ構成（サービス）'], orderMonth: ['受注月(yy/mm)']},
+  // 資料に含めない列（見出しの形。正規表現。全角・半角と空白の違いは無視）。その列の変更は、資料の変化・更新項目・時点コピーとの比較に出さない
+  // （2026/10/29 に足した P〜U列「FY26前半期売上（百万）」〜「FY28後半期売上（百万）」。年度が変わっても同じ形なら除く）
+  ignoreHeaders: ['^FY\\d+(前|後)半期売上'],
   // 必須項目：進行中の案件で空なら、入力内容のチェックの「未入力」に出す（シートに無い見出しは見ない）
-  required: ['案件ステータス', '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '活動状況', 'アカウント責任者'],
+  required: ['案件ステータス', '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '活動状況', 'アカウント責任者'],   // columns の見出しなら columnAliases も
   // ステータスの定義のシート（期待値の率）。ステータスの進み具合（前進・後退）は率の大きい順、率が同じなら定義の下の行ほど進んでいる
   // （C-提案中 → C-選定対応中 → C-稟議対応中）。期待値の列が数式（想定売上 × 率）のとき、前回の期待値を記録から取れない案件はこの率で計算する。
   // シートが無ければ、進み具合はプルダウンの順（下ほど進んでいる）
@@ -2464,7 +2468,7 @@ function mtgTrackedLabels_(sheet, rule, headers) {
     for (let c = range.getColumn(); c <= range.getLastColumn(); c++) {
       const header = String(headers[c - 1] || '');
       const key = credNormalize_(header);
-      if (!key || diffNormalizeStampHeader_(header) === stamp || out.some(x => x.key === key)) continue;
+      if (!key || diffNormalizeStampHeader_(header) === stamp || mtgIgnoredHeader_(header) || out.some(x => x.key === key)) continue;
       out.push({key, header});
     }
   });
@@ -2593,7 +2597,7 @@ function mtgReadDeals_(sheet, rule) {
   });
   const stamp = diffNormalizeStampHeader_(DIFF_OPTIONS.stampHeader);
   const stampCol = headers.findIndex(h => diffNormalizeStampHeader_(h) === stamp);
-  const required = MTG_OPTIONS.required.map(label => ({label, col: find(label)})).filter(r => r.col >= 0);
+  const required = MTG_OPTIONS.required.map(label => ({label, col: mtgHeaderIndex_(headers, label)})).filter(r => r.col >= 0);
 
   const out = {headers, has, hasStamp: stampCol >= 0, statusOrder: [], deals: [], weightedFormula: false};
   const count = sheet.getLastRow() - headerRow;
@@ -2921,6 +2925,26 @@ function mtgColumnIndex_(headers, key) {
   return -1;
 }
 
+/** 見出し label の列（0 から。無ければ -1）。columns の見出しなら columnAliases の見出しも探す（必須項目など） */
+function mtgHeaderIndex_(headers, label) {
+  const cols = MTG_OPTIONS.columns;
+  const key = Object.keys(cols).find(k => cols[k] && credNormalize_(cols[k]) === credNormalize_(label));
+  return key ? mtgColumnIndex_(headers, key) : headers.findIndex(h => credNormalize_(h) === credNormalize_(label));
+}
+
+/** 変更の記録などの列名を、資料で使う見出し（mtgLabels_ の値）にそろえる（columnAliases の見出しは columns の見出しに）。ほかは正規化しただけ */
+function mtgCanonicalLabel_(column) {
+  const cols = MTG_OPTIONS.columns;
+  const key = Object.keys(cols).find(k => cols[k] && mtgColumnIndex_([column], k) === 0);
+  return credNormalize_(key ? cols[key] : column);
+}
+
+/** 資料に含めない列か（MTG_OPTIONS.ignoreHeaders。FY別の売上の列など） */
+function mtgIgnoredHeader_(header) {
+  const text = credNormalize_(header);
+  return (MTG_OPTIONS.ignoreHeaders || []).some(pattern => new RegExp(pattern).test(text));
+}
+
 function mtgLabels_() {
   const cols = MTG_OPTIONS.columns;
   const out = {};
@@ -2943,7 +2967,7 @@ function mtgHistory_(name, context) {
   // 同じイベントで得意先・案件名を一緒に変えたとき（貼り付けなど）の、もう一方の変更前
   const keyBefore = new Map();
   context.log.forEach(e => {
-    const label = credNormalize_(e.column);
+    const label = mtgCanonicalLabel_(e.column);
     if (isKey(label)) keyBefore.set(e.eventId + '#' + mtgCellRow_(e.cell) + '#' + label, empty(e.before));
   });
   const alias = new Map();
@@ -2953,6 +2977,7 @@ function mtgHistory_(name, context) {
   let dummy = 0;   // ダミーの記録（DMY-。addBusinessMtgDummyHistory()）の数。あれば資料に【ダミーデータを含む】と出す
   context.log.forEach(e => {
     if (resolve(e.sheet) !== name || e.at == null || /^(SMP|CRD)-/.test(e.eventId)) return;
+    if (mtgIgnoredHeader_(e.column)) return;   // 資料に含めない列（FY別の売上など）の変更は、変化にも更新項目にも出さない
     if (/^DMY-/.test(e.eventId)) dummy++;
     if (e.type === DIFF_ROW_OPTIONS.kindDelete) {
       removed.push({at: e.at, text: e.before});
@@ -2965,7 +2990,7 @@ function mtgHistory_(name, context) {
       return;
     }
     const key = mtgDealKey_(snap.customer, snap.project);
-    const label = credNormalize_(e.column);
+    const label = mtgCanonicalLabel_(e.column);
     const item = {key, at: e.at, label, column: e.column, before: empty(e.before), after: empty(e.after),
       born: e.type === DIFF_ROW_OPTIONS.kindInsert};
     if (isKey(label)) {

@@ -576,7 +576,7 @@ function smpAddDummy_(ss, plan, now) {
   const {sheet, rule, table} = plan;
   smpRemoveEvents_(ss, D.eventPrefix + '-', plan.name);
   const tz = ss.getSpreadsheetTimeZone();
-  const columnOf = key => table.headers.findIndex(h => credNormalize_(h) === credNormalize_(o.columns[key])) + 1;   // 無ければ 0
+  const columnOf = key => mtgColumnIndex_(table.headers, key) + 1;   // 無ければ 0（見出しの別名 columnAliases も探す）
   const names = diffColumnNames_(sheet, rule, 1, table.headers.length);
   const schema = diffSnapshotSchema_(sheet, rule);
   const number = n => (n == null ? '' : String(Math.round(n * 10) / 10));
@@ -786,12 +786,13 @@ function smpAppendSnapshots_(ss, sheet, rule, schema, items, editor) {
   const customerKey = diffSnapshotCustomerHeader_();
   const skipped = diffSnapshotSkippedHeaders_();
   const labels = Object.keys(MTG_OPTIONS.columns).map(key => ({key, label: credNormalize_(MTG_OPTIONS.columns[key])}));
+  const labelOf = header => mtgCanonicalLabel_(header);   // 見出しの別名（受注月(yy/mm) など）も columns の見出しにそろえる
   const tail = items.map(it => {
     const values = sheet.getRange(it.row, schema.firstColumn, 1, schema.columnCount).getDisplayValues()[0];
     const pairs = [];
     let customer = '';
     schema.items.forEach((item, i) => {
-      const hit = labels.find(l => l.label === credNormalize_(item.key));
+      const hit = labels.find(l => l.label === labelOf(item.key));
       const value = String(hit && it.overrides[hit.key] != null ? it.overrides[hit.key] : values[i] == null ? '' : values[i]);
       if (item.key === customerKey) customer = value;
       if (value !== '' && !skipped.has(item.key)) pairs.push([item.key, value]);

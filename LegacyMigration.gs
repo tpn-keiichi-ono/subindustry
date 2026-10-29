@@ -18,7 +18,8 @@ const MIG_OPTIONS = {
   sheetPrefix: '案件_',        // 旧のシートの名前（案件_スーパー・GMS）
   headerRows: [1, 2],          // 旧の見出しの行（2行に分かれている・結合している。下の行を優先）
   dataStartRow: 4,             // 旧のデータの始まり（3行目は「手動入力」「プルダウンより選択」の行）
-  // 旧の見出し → 新の見出し（見出しは改行・空白・全角半角の違いを無視して比べる）
+  // 旧の見出し → 新の見出し（見出しは改行・空白・全角半角の違いを無視して比べる）。新の見出しが配列なら、シートにある最初のもの
+  // （2026/10/29 に「受注月」は「受注月(yy/mm)」、「提案開始日」は「提案開始月(yy/mm)」になり、「売上開始月」は無くなった（無い列には書かない））
   columns: [
     ['得意先', '得意先'],
     ['案件名', '案件名'],
@@ -26,12 +27,12 @@ const MIG_OPTIONS = {
     ['先方担当役職', '先方担当役職'],
     ['先方担当氏名', '先方担当氏名'],
     ['営業担当', 'アカウント責任者'],
-    ['提案開始日', '提案開始日'],
+    ['提案開始日', ['提案開始月(yy/mm)', '提案開始日']],
     ['ステータス', '案件ステータス'],
     ['活動状況', '活動状況'],
     ['次回アクション', '次回アクション'],
     ['想定売上規模（百万）', '想定売上規模（百万）'],
-    ['受注月', '受注月'],
+    ['受注月', ['受注月(yy/mm)', '受注月']],
     ['売上開始月', '売上開始月']
   ],
   // プルダウンの選択肢に無い値も書く（プルダウンが「警告を表示」のとき。「入力を拒否」なら空欄）。false なら選択肢に無い値はいつも空欄
@@ -125,6 +126,7 @@ function migPlan_(ss, source, name) {
   const formulaCols = [];
   formulas.forEach((f, i) => { if (String(f).trim()) formulaCols.push(i + 1); });
   const colOf = label => headers.indexOf(credNormalize_(label)) + 1;
+  const colOfAny = labels => [].concat(labels).map(colOf).find(Boolean) || 0;
 
   // 旧：見出し（2行。下の行を優先）
   const oldWidth = Math.max(old.getLastColumn(), 1);
@@ -136,7 +138,10 @@ function migPlan_(ss, source, name) {
     }
     return 0;
   };
-  const pairs = o.columns.map(([from, to]) => ({from: oldCol(from), to: colOf(to), header: to}))
+  const pairs = o.columns.map(([from, to]) => {
+    const col = colOfAny(to);
+    return {from: oldCol(from), to: col, header: col ? diffCleanHeaderText_(headers[col - 1]) || [].concat(to)[0] : [].concat(to)[0]};
+  })
     .filter(p => p.from && p.to && formulaCols.indexOf(p.to) < 0);
   const customerFrom = oldCol('得意先');
   const projectFrom = oldCol('案件名');

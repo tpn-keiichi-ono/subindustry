@@ -119,34 +119,42 @@ test('本物のシート名の設定：DIFF_RULES・前の名前（formerNames�
   });
 });
 
-test('本物のシートの見出し（2026/10/26 のスーパー・GMS の2行目。4列を消して I列「RXシナリオ構成」・J列「サービス価格」。A〜AA の27列）に、会議サマリ・リクエストの取り込みが読む列がそろっている', () => {
+test('本物のシートの見出し（2026/10/29 のスーパー・GMS の2行目。P〜U列に FY別の売上、受注月は「受注月(yy/mm)」、売上開始月は無い。A〜AF の32列）に、会議サマリ・リクエストの取り込みが読む列がそろっている', () => {
   const gas = createGas({realSheetNames: true});
   const mtg = gas.get('MTG_OPTIONS');
   const g = gas.global;
   const headers = ['最終更新日時\n（自動入力）', 'No.', 'サブインダストリー', '得意先', '先方部門', '先方担当役職', '先方担当氏名',
-    '案件名', 'RXシナリオ構成', 'サービス価格', '案件ステータス',
-    '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '売上開始月', '提案開始日', '活動状況', '活動における課題', '次回アクション',
+    '案件名', 'RXシナリオ構成', 'サービスパッケージ合算（百万円）', '案件ステータス',
+    '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月\n(yy/mm)', '提案開始月\n(yy/mm)',
+    'FY26前半期売上（百万）', 'FY26後半期売上（百万）', 'FY27前半期売上（百万）', 'FY27後半期売上（百万）', 'FY28前半期売上（百万）', 'FY28後半期売上（百万）',
+    '活動状況', '活動における課題', '次回アクション',
     '商談記録（ＵＲＬ）', 'アカウント責任者部署', 'アカウント責任者', 'BX部署', 'BX担当', '想定される価値創出のケース／期待される導入効果',
     '提案を勝ち取るための戦略・差異化要素', 'サービスのリクエスト'];
   const at = label => headers.findIndex(h => g.credNormalize_(h) === g.credNormalize_(label));
-  Object.keys(mtg.columns).filter(key => key !== 'delivery').forEach(key => assert.ok(at(mtg.columns[key]) >= 0, '見出し：' + mtg.columns[key]));
+  // 売上開始月は 2026/10/29 にシートから無くなった（計画に対する積み上げ・売上開始月の確認は「データなし」）
+  Object.keys(mtg.columns).filter(key => key !== 'delivery' && key !== 'startMonth').forEach(key =>
+    assert.ok(g.mtgColumnIndex_(headers, key) >= 0, '見出し：' + mtg.columns[key]));
+  assert.strictEqual(g.mtgColumnIndex_(headers, 'startMonth'), -1);
+  assert.strictEqual(g.mtgColumnIndex_(headers, 'orderMonth'), 13, '受注月は「受注月(yy/mm)」の N列（columnAliases）');
+  // P〜U列（FY別の売上）は資料に含めない
+  assert.deepStrictEqual(headers.map((h, i) => (g.mtgIgnoredHeader_(h) ? i : -1)).filter(i => i >= 0), [15, 16, 17, 18, 19, 20], 'P〜U列だけ');
   assert.ok(at('デリバリー担当') < 0 && mtg.columns.delivery === '', 'デリバリー担当の列は無いので使わない設定（入力内容のチェック「デリバリー担当なし」は出さない）');
-  mtg.required.forEach(label => assert.ok(at(label) >= 0, '必須項目：' + label));
+  mtg.required.forEach(label => assert.ok(g.mtgHeaderIndex_(headers, label) >= 0, '必須項目：' + label));
   assert.strictEqual(at(mtg.columns.owner), headers.indexOf('アカウント責任者'), '「アカウント責任者部署」と取り違えない');
   const stamp = g.diffNormalizeStampHeader_(gas.get('DIFF_OPTIONS').stampHeader);
   assert.deepStrictEqual(headers.map((h, i) => (g.diffNormalizeStampHeader_(h) === stamp ? i : -1)).filter(i => i >= 0), [0], '最終更新日時はA列の1つだけ');
   // 差分追跡の範囲（D3:AF）に、会議サマリが前回の値を見る列（得意先〜サービスのリクエスト）が入っている
   const rule = gas.get('DIFF_RULES')['スーパー・GMS'];
   assert.deepStrictEqual(JSON.parse(JSON.stringify([rule.headerRow, rule.ranges])), [2, ['D3:AF']]);
-  ['customer', 'project', 'status', 'amount', 'weighted', 'orderMonth', 'activity', 'scenario'].forEach(key => assert.ok(at(mtg.columns[key]) + 1 >= 4, key));
+  ['customer', 'project', 'status', 'amount', 'weighted', 'orderMonth', 'activity', 'scenario'].forEach(key => assert.ok(g.mtgColumnIndex_(headers, key) + 1 >= 4, key));
   assert.strictEqual(g.mtgColumnIndex_(headers, 'scenario'), 8, 'RXシナリオ構成は I列（案件名の右）');
   // コンビニ・地方銀行・生協は「RXシナリオ構成（サービス）」（columnAliases で読む）
   assert.strictEqual(g.mtgColumnIndex_(headers.map(h => (h === 'RXシナリオ構成' ? 'RXシナリオ構成（サービス）' : h)), 'scenario'), 8);
-  assert.ok(headers.length <= 32, 'AF 列まで（シートが AF より狭くても、追跡範囲はシートの中まで読む。diffRuleRange_）');
+  assert.ok(headers.length <= 32, 'AF 列まで（追跡範囲 D3:AF。シートが狭くても、追跡範囲はシートの中まで読む。diffRuleRange_）');
   // サービスリクエストの取り込み（ServiceManagement.gs）が読む列も、見出しがちょうど1つずつある（列を足しても見出しで探すのでずれない）
   const svc = gas.get('SVC_OPTIONS');
   svc.sourceHeaders.concat(svc.sourceOptionalHeaders).forEach(label => assert.strictEqual(g.taskHeaderCount_(headers, label), 1, 'リクエストの取り込み：' + label));
-  assert.strictEqual(headers.indexOf('サービスのリクエスト') + 1, 27, 'サービスのリクエストは AA列（追跡範囲 D3:AF の中）');
+  assert.strictEqual(headers.indexOf('サービスのリクエスト') + 1, 32, 'サービスのリクエストは AF列（追跡範囲 D3:AF の中）');
 });
 
 test('本物の設定：11のサブインダストリーのシート（2026/10/16 にスーパー・GMS と同じ見出しにそろえた）を、同じ見出しの行・追跡範囲で追跡し、リクエストも読む', () => {

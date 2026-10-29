@@ -3174,3 +3174,24 @@ test('removeFormerMeetingFolderProps：前の版のサブインダストリー�
   g.removeFormerMeetingFolderProps();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /使わなくなったプロパティ（MTG_MEETING_FOLDER_<シート名>）はありません/);
 });
+
+test('列の見出しの変化（2026/10/29）：受注月は「受注月(yy/mm)」でも読み、変更の記録も受注月として延期に数える。FY別の売上（P〜U列）の変更は資料に出さない', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  gas.asUser(() => {
+    sheet.getRange(2, COL.orderMonth).setValue('受注月\n(yy/mm)');
+    sheet.getRange(2, 16).setValue('FY26前半期売上（百万）');
+  });
+  g.setupDiffTracking();
+  g.recordDiffEdit(gas.edit(sheet, 'P3', '5'));                         // A社：FY別の売上だけ
+  g.recordDiffEdit(gas.edit(sheet, 'I7', month(4).text));                // E社：受注月を後ろへ（延期）
+  g.recordDiffEdit(gas.edit(sheet, 'P7', '8'));                         // E社：FY別の売上も
+  const s = summarize(g, '新FMT');
+  const table = g.mtgReadDeals_(sheet, gas.get('DIFF_RULES')['新FMT']);
+  assert.strictEqual(table.has.orderMonth, true, '受注月(yy/mm) を受注月として読む');
+  assert.ok(!s.changes.some(c => c.customer === 'A社'), 'FY別の売上だけの変更は「前回から変化のある案件」に出さない');
+  const e = s.changes.find(c => c.customer === 'E社');
+  assert.ok(e.flags.indexOf('slipped') >= 0, '受注月(yy/mm) の変更は延期');
+  assert.ok(!e.columns.some(col => /FY26/.test(col)), '更新項目にも FY別の売上を出さない');
+  assert.ok(!plain(g.mtgTrackedLabels_(sheet, gas.get('DIFF_RULES')['新FMT'], table.headers)).some(x => /FY26/.test(x.header)), '時点コピーとの比較にも使わない');
+  assert.strictEqual(g.mtgShortHeader_('受注月\n(yy/mm)'), '受注月');
+});
