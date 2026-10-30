@@ -17,7 +17,7 @@
  *   そのまま使う。登録が無ければ、ひな形と同じ絵柄（グラデーションに大きな「RX」）の画像をスクリプトで描いて背景にし、同じ位置に文字を描く（mtgCoverPng_）
  *   表紙：会議の名前と「事前資料」・サブインダストリー・会議日・データの時点・期間
  *   1 サマリー：期待値と進行中案件の数・前回以降の動き（案件ごとに1回だけ数える区分の件数と案件）・現在の状態（受注月超過・停滞）
- *   2 計画に対する積み上げ：今年度の売上開始月ごとの期待値を確度で塗り分けて積み上げ、計画（MTG_OPTIONS.plan）と比べる
+ *   2 計画に対する積み上げ：今年度の受注月（MTG_OPTIONS.plan.monthColumn）ごとの期待値を確度で塗り分けて積み上げ、計画（MTG_OPTIONS.plan）と比べる
  *   3 パイプラインの変化：前回からの期待値の増減（新規・増額・復帰・減額・受注・失注・保留・削除）・ステータス別・受注月（四半期）別の期待値
  *   4 前回から変化のある案件：ステータス・期待値・受注月・活動状況が変わった案件（今のステータスの順に上位）
  *   5 期待値上位案件の状況・課題：進行中の案件の期待値の大きい順（ステータスの滞留日数・受注月・活動状況・課題・該当事項）
@@ -188,7 +188,7 @@ const MTG_OPTIONS = {
       '{deadline}',
       '',
       '*▼ 更新していただきたい項目*',
-      '・案件ステータス・想定売上・期待値・受注月・売上開始月',
+      '・案件ステータス・想定売上・期待値・受注月',
       '・活動状況・活動における課題・次回アクション',
       '',
       '*▼ 今の入力状況（{now} 時点）*',
@@ -233,7 +233,7 @@ const MTG_OPTIONS = {
   noUpdateDays: 30,                  // 入力内容のチェック「更新なし」：最終更新日時がこの日数より前の進行中の案件
   overdueDays: 90,                   // 入力内容のチェック「予定日超過」：予定日を過ぎてこの日数以内のもの（古いものは出さない）
   fiscalStartMonth: 4,               // 期の始まりの月（受注月別の期待値の四半期・計画に対する積み上げの今年度）
-  // 計画に対する積み上げ（本編2枚目。統合版は全サブインダストリーの状況の次）：今年度の売上開始月ごとの期待値を、確度で塗り分けて積み上げ、計画と比べる。
+  // 計画に対する積み上げ（本編2枚目。統合版は全サブインダストリーの状況の次）：今年度の受注月（plan.monthColumn）ごとの期待値を、確度で塗り分けて積み上げ、計画と比べる。
   // amount はサブインダストリーごとの計画（百万円。33シナリオ ダッシュボードの計画と同じ）。plans でシートごとに変えられる（{'スーパー・GMS': 500}）。
   // 統合版の計画は、収録したサブインダストリーの計画の合計。確度はステータスの「-」の前（「C-提案中(50%)」なら C。ダッシュボードと同じ）。
   // ranks は確度の高い順（積み上げの下から。色は濃い順）。どれでもなければ otherLabel
@@ -244,7 +244,10 @@ const MTG_OPTIONS = {
     ranks: [{key: 'A', color: '#2E6A1A'}, {key: 'B', color: '#5A9E3A'}, {key: 'C', color: '#8FC46B'}, {key: 'D', color: '#B9D9A0'},
       {key: '創注', color: '#DCEBCF'}],
     otherLabel: '未設定',
-    otherColor: '#C9C9C9'
+    otherColor: '#C9C9C9',
+    // 積み上げる月の列（columns の key）。2026/10/29 に売上開始月の列がシートから無くなったので、受注月で積み上げる
+    // （受注した月の期待値。売上の時期とは違う。売上開始月の列を戻したら 'startMonth' にすると、前の版と同じ）
+    monthColumn: 'orderMonth'
   },
   // 読む列の見出し（改行・空白、全角・半角の違いは無視。customer・project・status はどのシートにも必要。ほかは無ければ使わない。空なら読まない）
   columns: {
@@ -254,7 +257,8 @@ const MTG_OPTIONS = {
     amount: '想定売上規模（百万）',
     weighted: '期待値調整済\n想定売上規模（百万）',
     orderMonth: '受注月',
-    startMonth: '売上開始月',
+    // 売上開始月：2026/10/29 にシートから無くなったので空（確認事項「売上開始月不整合」を出さない）。列を戻したら見出しを書く
+    startMonth: '',
     activity: '活動状況',
     issue: '活動における課題',
     owner: 'アカウント責任者',
@@ -2648,7 +2652,7 @@ function mtgReadDeals_(sheet, rule) {
       orderMonthText: text('orderMonth'),
       startMonth: mtgMonth_(value('startMonth')),
       startMonthText: text('startMonth'),
-      planMonth: mtgPlanMonth_(value('startMonth')),
+      planMonth: mtgPlanMonth_(value(MTG_OPTIONS.plan.monthColumn)),   // 計画に対する積み上げの月（受注月）
       activity: text('activity'),
       issue: text('issue'),
       owner: text('owner'),
@@ -2908,7 +2912,8 @@ function mtgGaps_(ss, table, context, stallPending) {
   if (parts.record) alerts['資料なし'] = parts.record;
   if (!table.hasStamp && noLog) alerts['更新なし'] = 'シートに「最終更新日時」の列が無く、変更の記録も無い';
   if (parts.amount || parts.weighted) alerts['金額の不整合'] = parts.amount || parts.weighted;
-  if (parts.orderMonth || !table.has.startMonth) alerts['月の不整合'] = parts.orderMonth || column('startMonth');
+  // 売上開始月の列を使わない設定（columns.startMonth が空）なら、チェックしないので「データなし」にも出さない
+  if (o.columns.startMonth && (parts.orderMonth || !table.has.startMonth)) alerts['月の不整合'] = parts.orderMonth || column('startMonth');
   if (!table.statusOrder.length) alerts['選択肢外のステータス'] = '「' + o.columns.status + '」の列にプルダウンが無い';
   // デリバリー担当の列を使わない設定（columns.delivery が空）なら、チェックしないので「データなし」にも出さない
   if (o.columns.delivery) {
@@ -3229,7 +3234,8 @@ function mtgBridge_(deals, byKey, changed, changes) {
  * デリバリー担当の列を使わない設定（MTG_OPTIONS.columns.delivery が空）なら「デリバリー担当なし」を除く
  */
 function mtgAlertTypes_() {
-  return MTG_ALERT_TYPES.filter(type => (type !== '予定日超過' || credEnabled_()) && (type !== 'デリバリー担当なし' || !!MTG_OPTIONS.columns.delivery));
+  return MTG_ALERT_TYPES.filter(type => (type !== '予定日超過' || credEnabled_()) && (type !== 'デリバリー担当なし' || !!MTG_OPTIONS.columns.delivery) &&
+    (type !== '月の不整合' || !!MTG_OPTIONS.columns.startMonth));
 }
 
 /**
@@ -4107,13 +4113,18 @@ function mtgBridgeSlide_(s) {
 /* ---------------- 計画に対する積み上げ ---------------- */
 
 /**
- * 計画に対する積み上げの月（売上開始月）。日付か「yyyy/MM」の文字（2000年以降）のときだけ月とみなす（33シナリオ ダッシュボード・パイプライン管理シートと同じ。
+ * 計画に対する積み上げの月（MTG_OPTIONS.plan.monthColumn の列。今は受注月）。日付か「yyyy/MM」の文字（2000年以降）のときだけ月とみなす（33シナリオ ダッシュボード・パイプライン管理シートと同じ。
  * 「26/09」「2026年度後半期」などは時期未定）。{y, m} か null
  */
 function mtgPlanMonth_(value) {
   if (value && typeof value.getTime === 'function') return mtgMonth_(value);
   const m = /^(\d{4})\/(\d{2})$/.exec(String(value == null ? '' : value).trim());
   return m && Number(m[1]) >= 2000 && Number(m[2]) >= 1 && Number(m[2]) <= 12 ? {y: Number(m[1]), m: Number(m[2])} : null;
+}
+
+/** 積み上げる月の名前（「受注月」。plan.monthColumn の列の短い名前） */
+function mtgPlanMonthName_() {
+  return mtgShortHeader_(MTG_OPTIONS.columns[MTG_OPTIONS.plan.monthColumn]);
 }
 
 /** 案件の確度（ステータスの「-」の前。MTG_OPTIONS.plan.ranks のどれでもなければ otherLabel） */
@@ -4130,18 +4141,18 @@ function mtgPlanAmount_(name) {
 }
 
 /**
- * 計画に対する積み上げの中身。今年度（MTG_OPTIONS.fiscalStartMonth から12か月）の売上開始月ごとの期待値を、確度（mtgPlanRank_）ごとに足す。
+ * 計画に対する積み上げの中身。今年度（MTG_OPTIONS.fiscalStartMonth から12か月）の月（plan.monthColumn。今は受注月）ごとの期待値を、確度（mtgPlanRank_）ごとに足す。
  * 進行中・受注の案件が対象。積み上げに入らない案件（時期未定・今年度より前・来年度以降・失注・保留）は、それぞれの件数と期待値（確度別も）を残す
- * （資料では積み上げの右に参考として出す）。期待値が空の案件は 0 として数え、件数を残す。has はシートの列があるか（期待値・売上開始月の列が無ければ gap に理由）。
+ * （資料では積み上げの右に参考として出す）。期待値が空の案件は 0 として数え、件数を残す。has はシートの列があるか（期待値・月の列が無ければ gap に理由）。
  * 戻り値 {plan, start: 今年度の最初の月の番号, months: [{y, m, values: {確度: 期待値}, total, count}], total, byRank: {確度: 期待値},
- *  undated: 売上開始月が空・読めない, before: 今年度より前, after: 来年度以降, excluded: 失注・保留（どれも {count, value, values: {確度: 期待値}}）,
+ *  undated: 月が空・読めない, before: 今年度より前, after: 来年度以降, excluded: 失注・保留（どれも {count, value, values: {確度: 期待値}}）,
  *  missing: 期待値が空の件数, gap}
  */
 function mtgPlanOf_(deals, name, now, has) {
   const o = MTG_OPTIONS.plan;
   const start = mtgFiscalStart_(now);
   const columns = MTG_OPTIONS.columns;
-  const lack = ['weighted', 'startMonth'].filter(key => has && !has[key]).map(key => '「' + String(columns[key]).replace(/\s+/g, '') + '」');
+  const lack = ['weighted', o.monthColumn].filter(key => has && !has[key]).map(key => '「' + String(columns[key]).replace(/\s+/g, '') + '」');
   const bucket = () => ({count: 0, value: 0, values: {}});
   const out = {plan: mtgPlanAmount_(name), start, months: [], total: 0, byRank: {}, undated: bucket(), before: bucket(), after: bucket(),
     excluded: bucket(), missing: 0, gap: lack.length ? 'シートに' + lack.join('・') + 'の列が無い' : ''};
@@ -4205,7 +4216,7 @@ function mtgMergePlans_(plans) {
 }
 
 /**
- * 計画に対する積み上げ（本編2枚目。統合版は全サブインダストリーの状況の次）：今年度の売上開始月ごとの期待値を左から積み上げる滝の図。
+ * 計画に対する積み上げ（本編2枚目。統合版は全サブインダストリーの状況の次）：今年度の月（plan.monthColumn。今は受注月）ごとの期待値を左から積み上げる滝の図。
  * 月の段は確度（濃い緑 A → 淡い緑 創注・灰色 未設定）で塗り分け、最後に 合計（確度別）・計画（白地に枠）・差（計画に届かない分 ▲／超えた分 +）。
  * 計画の高さに点線の横線を引く（どの月で計画に届くかが分かる）。右に区切って、積み上げに含まない案件（時期未定・今年度より前・来年度以降・失注・保留）を
  * 参考として 0 からの確度別の棒で出す（期待値と件数）。p は mtgPlanOf_（統合版は mtgMergePlans_）の戻り値。name は統合版のときだけ（見出しに付ける）
@@ -4218,7 +4229,8 @@ function mtgPlanSlide_(p, now, name) {
   const first = mtgMonthOf_(p.start);
   const last = mtgMonthOf_(p.start + 11);
   const period = String(first.y).slice(2) + '/' + first.m + '〜' + String(last.y).slice(2) + '/' + last.m;
-  const heading = '今年度（' + period + '）の売上開始月別 期待値の積み上げ（百万円）';
+  const monthName = mtgPlanMonthName_();
+  const heading = '今年度（' + period + '）の' + monthName + '別 期待値の積み上げ（百万円）';
   if (p.gap) {
     return {title, lead: '計画に対する積み上げは' + MTG_OPTIONS.gapText + '（' + p.gap + '）。', elements: [
       mtgBox_(S.x, S.top - 2, 420, 20, heading, {size: 10.5, bold: true, color: c.ink}), mtgEmptyBox_(S.x, S.top + 26, 360, 64, 'gap', p.gap)]};
@@ -4229,7 +4241,7 @@ function mtgPlanSlide_(p, now, name) {
   const peak = p.months.slice().sort((a, b) => b.total - a.total)[0];
   const sure = (p.byRank.A || 0) + (p.byRank.B || 0);
   const share = v => (p.total > 0 ? Math.round(v / p.total * 100) + '%' : '—');
-  // 積み上げに入らない案件（右に参考として出す）：時期未定（売上開始月が空・読めない）・今年度より前（〜26/3）・来年度以降（27/4〜）・失注・保留
+  // 積み上げに入らない案件（右に参考として出す）：時期未定（月が空・読めない）・今年度より前（〜26/3）・来年度以降（27/4〜）・失注・保留
   const prevEnd = mtgMonthOf_(p.start - 1);
   const asides = [
     {key: 'undated', label: '時期未定'},
@@ -4242,7 +4254,7 @@ function mtgPlanSlide_(p, now, name) {
   const lead = '今年度（' + period + '）の期待値の積み上げは ' + mtgAmount_(p.total) + '百万円。計画 ' + mtgAmount_(p.plan) + '百万円に対して ' +
     mtgSigned_(diff) + (rate == null ? '' : '（達成率 ' + rate + '%）') + '。\n' +
     (peak && peak.total > 0 ? '最大は' + peak.m + '月の ' + mtgAmount_(peak.total) + '（積み上げの ' + share(peak.total) + '）、確度A・B は ' +
-      mtgAmount_(sure) + '（' + share(sure) + '）。' : '今年度に売上開始月がある案件の期待値はなし。') +
+      mtgAmount_(sure) + '（' + share(sure) + '）。' : '今年度に' + monthName + 'がある案件の期待値はなし。') +
     (asideCount ? '積み上げに含まない ' + asideCount + '件（' + mtgAmount_(asideValue) + '）は右に表示。' : '') +
     (p.missing ? '期待値が空の ' + p.missing + '件は 0 として数えた。' : '');
 
@@ -4344,7 +4356,7 @@ function mtgPlanSlide_(p, now, name) {
 /**
  * 統合版の計画に対する積み上げの2ページ目（同じセクション）「サブインダストリー別」：サブインダストリーごとに、今年度の期待値の積み上げ（確度別の横棒。
  * 前のページと同じ数え方）と計画（点線）。右に積み上げ・達成率・計画との差・確度A・B の割合・時期未定（積み上げに含まない）。達成率の高い順で、
- * いちばん下に合計。作れないシート（期待値・売上開始月の列が無い）は下に「データなし」と理由
+ * いちばん下に合計。作れないシート（期待値・月（受注月）の列が無い）は下に「データなし」と理由
  */
 function mtgPlanBySubSlide_(summaries, now) {
   const S = MTG_SLIDE;
@@ -4366,8 +4378,8 @@ function mtgPlanBySubSlide_(summaries, now) {
   const low = ok[ok.length - 1];
   const lead = ok.length
     ? '達成率の高い順。計画に届いているのは ' + ok.length + 'のうち ' + reached.length + '。' +
-      (low && rate(low.p) != null ? '最も低いのは ' + low.name + '（' + rate(low.p) + '%）。' : '') + '\n時期未定：売上開始月が空・読めない案件の期待値（積み上げに含まない）。'
-    : '計画に対する積み上げは' + o.gapText + '（どのシートにも期待値・売上開始月の列が無い）。';
+      (low && rate(low.p) != null ? '最も低いのは ' + low.name + '（' + rate(low.p) + '%）。' : '') + '\n時期未定：' + mtgPlanMonthName_() + 'が空・読めない案件の期待値（積み上げに含まない）。'
+    : '計画に対する積み上げは' + o.gapText + '（どのシートにも期待値・' + mtgPlanMonthName_() + 'の列が無い）。';
   const x = S.x;
   const w = S.w;
   const y = S.top;

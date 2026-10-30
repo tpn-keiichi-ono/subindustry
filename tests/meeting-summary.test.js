@@ -2021,7 +2021,7 @@ test('remindBusinessMtgUpdate：管理フォーマットの更新のお願いを
     '10月21日（水） 17:00',
     '',
     '*▼ 更新していただきたい項目*',
-    '・案件ステータス・想定売上・期待値・受注月・売上開始月',
+    '・案件ステータス・想定売上・期待値・受注月',
     '・活動状況・活動における課題・次回アクション',
     ''], '事前資料のご案内と同じ形（題・会議日程・太字の見出し）');
   assert.ok(lines.indexOf('*▼ 会議日程*') > 0 && lines[lines.indexOf('*▼ 会議日程*') + 1] === '2026年10月23日（金）9:00〜10:30');
@@ -3216,4 +3216,26 @@ test('PowerPoint も作る（exportPptx）：PDF と同じ名前の .pptx を Dr
   g.previewBusinessMtgSummaries();
   assert.ok(gas.driveFiles.some(f => f.name === base + '_試作.pdf'), 'PDF は作る');
   assert.ok(!gas.driveFiles.some(f => f.name === base + '_試作.pptx'));
+});
+
+test('本物の設定（2026/10/29 から）：計画に対する積み上げは受注月ごと（plan.monthColumn: orderMonth）。売上開始月の列は使わず、確認事項「売上開始月不整合」は出さない（「データなし」にもしない）', () => {
+  const {gas, g} = setup({edits: false});
+  const o = gas.get('MTG_OPTIONS');
+  Object.assign(o.plan, {monthColumn: 'orderMonth'});
+  o.columns.startMonth = '';
+  const s = plain(summarize(g, '新FMT'));
+  assert.strictEqual(s.plan.gap, '', '受注月の列があれば積み上げを作る');
+  // 受注月が今年度の案件（A社：先月・C社/E社/F社：来月〜再来月）の期待値が、その受注月に積み上がる
+  const byMonth = {};
+  s.plan.months.forEach(m => { if (m.total) byMonth[m.y + '/' + m.m] = m.total; });
+  const at = mo => byMonth[month(mo).y + '/' + month(mo).m] || 0;
+  assert.ok(at(1) >= 40, '来月受注の E社（40）が来月に');
+  const slide = plain(g.mtgPlanSlide_(s.plan, new Date()));
+  assert.match(roleOf(slide, 'plan-heading').concat(slide.elements.filter(el => /別 期待値の積み上げ/.test(el.text || ''))).map(el => el.text).join(''), /受注月別 期待値の積み上げ/);
+  // 売上開始月不整合は種類ごと出さない
+  assert.ok(g.mtgAlertTypes_().indexOf('月の不整合') < 0);
+  assert.ok(!s.alerts.some(a => a.type === '月の不整合'));
+  assert.ok(!Object.keys(s.alertGaps || {}).some(k => k === '月の不整合'));
+  // 前の版の設定（売上開始月の列）に戻すこともできる
+  assert.strictEqual(gas.get('MTG_OPTIONS').columns.orderMonth, '受注月');
 });

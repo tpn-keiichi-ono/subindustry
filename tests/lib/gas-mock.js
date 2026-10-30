@@ -1308,6 +1308,12 @@ function createGas(options) {
       // デリバリー担当の列は、本物（新FMT）には無いので使わない設定（空）。チェック「デリバリー担当なし」のテストのため、テストでは使う状態にする
       // （使わない状態は gas.get('MTG_OPTIONS').columns.delivery = '' で確かめる）
       if (typeof MTG_OPTIONS !== 'undefined') MTG_OPTIONS.columns.delivery = 'デリバリー担当';
+      // 売上開始月の列も、本物（2026/10/29 から）には無いので使わない設定（空）で、積み上げは受注月。仕組み（売上開始月の積み上げ・「売上開始月不整合」）の
+      // テストのため、テストでは前の版の設定にする（本物の設定は gas.get('MTG_OPTIONS') の columns.startMonth = ''・plan.monthColumn = 'orderMonth' で確かめる）
+      if (typeof MTG_OPTIONS !== 'undefined') {
+        MTG_OPTIONS.columns.startMonth = '売上開始月';
+        MTG_OPTIONS.plan.monthColumn = 'startMonth';
+      }
     } + ')(' + JSON.stringify(TEST_DIFF_RULES) + ')', context);
   }
 
