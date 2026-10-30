@@ -3195,3 +3195,25 @@ test('列の見出しの変化（2026/10/29）：受注月は「受注月(yy/mm)
   assert.ok(!plain(g.mtgTrackedLabels_(sheet, gas.get('DIFF_RULES')['新FMT'], table.headers)).some(x => /FY26/.test(x.header)), '時点コピーとの比較にも使わない');
   assert.strictEqual(g.mtgShortHeader_('受注月\n(yy/mm)'), '受注月');
 });
+
+test('PowerPoint も作る（exportPptx）：PDF と同じ名前の .pptx を Drive API の書き出しで作り、本番は PDF と一緒に会議のフォルダに移す。書き出せなくても PDF は作って知らせない（止めない）', () => {
+  const {gas, g} = setup();
+  gas.get('MTG_OPTIONS').exportPptx = true;
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  meetingFolders(gas, []);
+  gas.promptAnswers = ['1', '10/23'];
+  g.createBusinessMtgSummaries();
+  const exports = gas.fetches.filter(f => /\/drive\/v3\/files\/[^/]+\/export\?mimeType=application%2Fvnd\.openxmlformats-officedocument\.presentationml\.presentation$/.test(f.url));
+  assert.strictEqual(exports.length, 1, 'Drive API の書き出し');
+  assert.match(exports[0].params.headers.Authorization, /^Bearer /);
+  const folder = gas.driveFolders.find(f => f.parent === 'SubIndustryFolder0001');
+  const names = gas.driveFiles.filter(f => f.folder === folder.id && gas.trashed.indexOf(f.id) < 0).map(f => f.name).sort();
+  const base = meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料';
+  assert.deepStrictEqual(names, [base + '.pdf', base + '.pptx'], 'PDF と PowerPoint を同じ会議のフォルダに');
+  // 書き出せないとき：PDF は作る
+  gas.fetchStatuses = [500];
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  assert.ok(gas.driveFiles.some(f => f.name === base + '_試作.pdf'), 'PDF は作る');
+  assert.ok(!gas.driveFiles.some(f => f.name === base + '_試作.pptx'));
+});

@@ -1265,7 +1265,7 @@ function createGas(options) {
 
   // 拡張サービス（Slides）は、有効にしていないプロジェクトを試すときは options.noSlides で外す
   const MimeType = {GOOGLE_SLIDES: 'application/vnd.google-apps.presentation', GOOGLE_SHEETS: 'application/vnd.google-apps.spreadsheet',
-    PDF: 'application/pdf'};
+    PDF: 'application/pdf', MICROSOFT_POWERPOINT: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'};
   const globals = {
     SpreadsheetApp, HtmlService, PropertiesService, LockService, Utilities, Session,
     ScriptApp, CacheService, DriveApp, MimeType, UrlFetchApp, Browser, CalendarApp, console: logger
@@ -1302,6 +1302,8 @@ function createGas(options) {
       if (typeof MTG_OPTIONS !== 'undefined') {
         MTG_OPTIONS.combined.enabled = false;
         MTG_OPTIONS.meetingFolder = '';
+        // PowerPoint の書き出しは、そのテストだけで使う（ほかのテストのファイルの数・UrlFetchApp の記録を変えないように）
+        MTG_OPTIONS.exportPptx = false;
       }
       // デリバリー担当の列は、本物（新FMT）には無いので使わない設定（空）。チェック「デリバリー担当なし」のテストのため、テストでは使う状態にする
       // （使わない状態は gas.get('MTG_OPTIONS').columns.delivery = '' で確かめる）

@@ -160,6 +160,9 @@ const MTG_OPTIONS = {
   lastKeyPrefix: 'MTG_LAST_',         // 前の版の「前回の作成日時」（会議日の記録が無いときだけ使う）
   keepMeetings: 24,                  // 会議日の記録をいくつ残すか
   keepSlides: false,                 // Google スライドもフォルダに残すか（true なら推進リーダーが書き足せる。false なら PDF だけ。2026/10 から PDF だけ）
+  // PDF と同じ名前の PowerPoint（.pptx）も作り、PDF と同じフォルダに置く（会議のフォルダへの格納も一緒に移す。2026/10/29 から。
+  // Drive API の書き出し（files.export）で作る。作れなくても PDF は作る）。インデックス・チャットの通知・統合版の確認は PDF を使う
+  exportPptx: true,
   // Google チャットへの通知は、サブインダストリーごとのスペースへの2つだけ（下の subChat。2026/10/19 に全体のスペースへの通知はやめた）
   chat: {
     meetingTime: '9:00〜10:30',      // 会議の時刻（会議日程の日付のあとに書く。送るときに時刻を入力すれば、そちら。空なら日付だけ）
@@ -1764,9 +1767,27 @@ function mtgStoreToMeetingFolder_(name, meeting, pdf, kind) {
     const file = DriveApp.getFileById(pdf.getId());
     file.moveTo(target.folder);
     mtgTrashOld_(target.folder, [fileName], [pdf.getId()]);
+    mtgMoveSameNamePptx_(fileName, target.folder);
     return {folder: target.folder, file, created: !!target.created};
   } catch (error) {
     return {error: '「' + target.folder.getName() + '」に移せない：' + (error && error.message || error)};
+  }
+}
+
+/**
+ * PDF（fileName）と同じ名前の PowerPoint（.pptx。mtgExportPptx_）が保存先にあれば、会議のフォルダ（folder）に移す（同じ名前の古い版はゴミ箱へ）。
+ * 移せなくても止めない（PowerPoint は保存先に残る）
+ */
+function mtgMoveSameNamePptx_(fileName, folder) {
+  const pptxName = String(fileName).replace(/\.pdf$/i, '') + '.pptx';
+  try {
+    const files = mtgFolder_(SpreadsheetApp.getActiveSpreadsheet()).getFilesByName(pptxName);
+    if (!files.hasNext()) return;
+    const id = files.next().getId();
+    DriveApp.getFileById(id).moveTo(folder);
+    mtgTrashOld_(folder, [pptxName], [id]);
+  } catch (error) {
+    console.warn('PowerPoint（' + pptxName + '）を会議のフォルダに移せませんでした：' + (error && error.message || error));
   }
 }
 
@@ -6107,9 +6128,11 @@ function mtgExportDeck_(name, slides, folder) {
     if (!templateId && MTG_OPTIONS.keepSlides) file.moveTo(folder);   // 残さないときは動かさずにゴミ箱へ（呼び出しを減らす）
     const blob = file.getAs('application/pdf').setName(name + '.pdf');
     const pdf = folder.createFile(slides.some(slide => slide.elements.some(el => el.link != null)) ? mtgPdfFitLinks_(blob) : blob);
-    mtgTrashOld_(folder, [name, name + '.pdf'], [file.getId(), pdf.getId()]);
+    const pptx = MTG_OPTIONS.exportPptx ? mtgExportPptx_(file.getId(), name, folder) : {};
+    if (pptx.error) console.warn(name + '：' + pptx.error + '（PDF は作りました）');
+    mtgTrashOld_(folder, [name, name + '.pdf', name + '.pptx'], [file.getId(), pdf.getId()].concat(pptx.file ? [pptx.file.getId()] : []));
     if (!MTG_OPTIONS.keepSlides) file.setTrashed(true);
-    return {pdf, deck: MTG_OPTIONS.keepSlides ? file : null};
+    return {pdf, pptx: pptx.file || null, pptxError: pptx.error || '', deck: MTG_OPTIONS.keepSlides ? file : null};
   } catch (e) {
     try { file.setTrashed(true); } catch (_) {}
     throw e;
@@ -6167,6 +6190,25 @@ function mtgPlaceholderRequests_(deck, pageIds) {
  * 保存先のフォルダの、同じ名前の古いファイル（作り直す前の版）をゴミ箱に移す（古い版を配らないように）。keep の ID は残す。移した数を返す。
  * 移せないファイル（ほかの人のファイルなど）はログに残して続ける（作った資料は残す）
  */
+/**
+ * 作った Google スライド（id）を PowerPoint（name.pptx）に書き出して folder に置く（Drive API の files.export）。
+ * {file} か {error: 理由}（止めない。PDF は作ってあるので、PowerPoint だけ作れなかったと知らせる）
+ */
+function mtgExportPptx_(id, name, folder) {
+  const type = MimeType.MICROSOFT_POWERPOINT;
+  try {
+    const response = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + id + '/export?mimeType=' + encodeURIComponent(type), {
+      headers: {Authorization: 'Bearer ' + ScriptApp.getOAuthToken()},
+      muteHttpExceptions: true
+    });
+    const code = response.getResponseCode();
+    if (code !== 200) return {error: 'PowerPoint に書き出せませんでした（' + code + '：' + String(response.getContentText()).slice(0, 200) + '）'};
+    return {file: folder.createFile(response.getBlob().setName(name + '.pptx'))};
+  } catch (error) {
+    return {error: 'PowerPoint に書き出せませんでした（' + (error && error.message || error) + '）'};
+  }
+}
+
 function mtgTrashOld_(folder, names, keep) {
   let count = 0;
   names.forEach(name => {
