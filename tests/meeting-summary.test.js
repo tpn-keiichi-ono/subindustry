@@ -3519,4 +3519,15 @@ test('前回から変化のある案件：責任者の列の代わりに先方�
   assert.strictEqual(cells[6].text.replace(/\n/g, ''), 'ジャパンマーケティング部インストアメディア推進グループ', '部門名は全文（「…」で切らない）');
   assert.strictEqual(cells[7].text.replace(/\n/g, ''), 'シニアマネージャー兼グループリーダー', '役職は全文');
   assert.ok(!cells.some(cell => /…/.test(cell.text)));
+  // Appendix ①（一覧）も同じ列（シナリオの番号・先方部門・先方役職。責任者の列は無い）に、更新項目を足したもの。見出しはどれも1行
+  const appendix = plain(g.mtgAppendixChanges_(Object.assign({}, s, {changes: long, gaps, scenarioColumn: true})));
+  const at = appendix[0].elements.find(el => el.type === 'table');
+  assert.deepStrictEqual(at.rows[0].cells.map(cell => cell.text.replace(/\n.*/s, '')), ['得意先／案件名', 'シナリオ', 'ステータス', '期待値', '受注月',
+    '活動状況（最新）', '更新項目', '先方部門', '先方役職']);
+  assert.ok(at.rows[0].cells.every(cell => cell.text.split('\n').length <= 2), '見出しは途中で折り返さない（「前回▶今回」の2行まで）');
+  const aRow = at.rows[1].cells;
+  assert.strictEqual(aRow[1].text, '01-01\n01-03\n01-04\n01-05\n01-09', 'シナリオはすべて');
+  assert.strictEqual(aRow[7].text.replace(/\n/g, ''), 'ジャパンマーケティング部インストアメディア推進グループ', '部門名は全文');
+  assert.strictEqual(aRow[8].text.replace(/\n/g, ''), 'シニアマネージャー兼グループリーダー', '役職は全文');
+  assert.strictEqual(at.columns.reduce((a, b) => a + b, 0), gas.get('MTG_SLIDE').w);
 });

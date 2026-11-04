@@ -5386,10 +5386,7 @@ function mtgMovesSlide_(s, withAppendix) {
   const columns = mtgColumns_([116, 52, 126, 60, 76, 122, 70, 54], 5);   // シナリオ・先方役職は「01-04」・見出しが1行に入る幅。期待値・受注月は前と同じ幅
   const rows = [mtgHeadRow_(columns, ['得意先／案件名', 'シナリオ', 'ステータス\n' + mtgFromWord_(s) + '▶今回', '期待値\n' + mtgFromWord_(s) + '▶今回',
     '受注月\n' + mtgFromWord_(s) + '▶今回', '活動状況（最新）', '先方部門', '先方役職'])];
-  // シナリオは番号だけを縦に並べる（選んだものをすべて。列が無いシートは「データなし」、空は「未入力」）
-  const scenarioCell = ch => (s.scenarioColumn ? {text: ch.scenarios.length ? ch.scenarios.map(mtgScenarioNumber_).join('\n') : MTG_OPTIONS.blankText,
-    lines: Math.max(1, ch.scenarios.length), fill: c.white, align: 'CENTER', color: ch.scenarios.length ? c.body : c.muted}
-    : mtgGapCell_({lines: 2, fill: c.white, align: 'CENTER'}));
+  const scenarioCell = ch => mtgScenarioCell_(s, ch);
   // 上から mainRows.changes 件まで、ページに入る分だけ（行の高さは中身で変わる）
   const top = [];
   moves.slice(0, MTG_OPTIONS.mainRows.changes).some(ch => {
@@ -5426,6 +5423,15 @@ function mtgMovesSlide_(s, withAppendix) {
         : k.updated ? '\n' + all : ''),
     elements: el
   };
+}
+
+/** シナリオのセル：番号だけを縦に並べる（選んだものをすべて。列が無いシートは「データなし」、空は「未入力」）。前回から変化のある案件と Appendix ① */
+function mtgScenarioCell_(s, ch) {
+  const c = MTG_OPTIONS.colors;
+  if (!s.scenarioColumn) return mtgGapCell_({lines: 2, fill: c.white, align: 'CENTER'});
+  const list = ch.scenarios || [];
+  return {text: list.length ? list.map(mtgScenarioNumber_).join('\n') : MTG_OPTIONS.blankText, lines: Math.max(1, list.length), fill: c.white,
+    align: 'CENTER', color: list.length ? c.body : c.muted};
 }
 
 /** 4 期待値上位案件の状況・課題：進行中の案件の期待値の大きい順（summary.focus）。当てはまる状況（停滞・受注月超過・延期）は判定の中身ごと文で（mtgFlagTexts_） */
@@ -5709,7 +5715,9 @@ function mtgPillsHeight_(n) {
 function mtgAppendixChanges_(s) {
   const c = MTG_OPTIONS.colors;
   const lack = s.gaps || {};
-  const columns = mtgColumns_([118, 120, 60, 72, 156, 74, 60], 4);   // 活動状況は広く（長い文は小さく、それでも入らなければ行を伸ばして全文）
+  // 列は本編の「前回から変化のある案件」と同じ（シナリオの番号・先方部門・先方役職。2026/11/04 に責任者の列と入れ替えた）に、更新項目を足したもの。
+  // 見出しが1行に入る幅にし、残りは活動状況（長い文は小さく、それでも入らなければ行を伸ばして全文。先方部門・役職も全文）
+  const columns = mtgColumns_([100, 50, 118, 60, 72, 110, 58, 56, 52], 5);
   return mtgPagedTable_({
     title: MTG_TITLES.changes,
     lead: lack.changes ? mtgChangedLabel_(s) + 'は' + MTG_OPTIONS.gapText + '（' + lack.changes + '）。'
@@ -5718,16 +5726,19 @@ function mtgAppendixChanges_(s) {
         (s.unlogged ? '\nうち ' + s.unlogged + '件は変更の記録が無い（' + mtgCopyWord_(s) + 'との比較で検出）。' : '') +
         (s.copyError ? '\n' + mtgCopyWord_(s) + 'を開けないため、変更の記録から集計。' : ''),
     columns,
-    head: ['得意先／案件名', 'ステータス\n' + mtgFromWord_(s) + '▶今回', '期待値\n' + mtgFromWord_(s) + '▶今回', '受注月\n' + mtgFromWord_(s) + '▶今回', '活動状況（最新）', '更新項目', '責任者'],
+    head: ['得意先／案件名', 'シナリオ', 'ステータス\n' + mtgFromWord_(s) + '▶今回', '期待値\n' + mtgFromWord_(s) + '▶今回', '受注月\n' + mtgFromWord_(s) + '▶今回',
+      '活動状況（最新）', '更新項目', '先方部門', '先方役職'],
     rows: s.changes.map(ch => [
       mtgDealCell_(ch, columns[0], MTG_SLIDE.appendixSize),
+      mtgScenarioCell_(s, ch),
       {text: mtgStatusMove_(ch), lines: 3, fill: c.white},
       mtgFieldCell_(s, 'weighted', mtgValueMove_(ch.weightedFrom, ch.weightedTo, ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'orderMonth', mtgMonthMove_(ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       ch.removed ? {text: '（削除）', lines: 2, fill: c.white} : mtgFieldCell_(s, 'activity', ch.activity, {lines: 2, fill: c.white, fit: true, grow: true}),
       {text: ch.category === 'new' ? '（新規追加）' : ch.columns.map(mtgShortHeader_).join('・') || (ch.removed ? '（削除）' : MTG_OPTIONS.noneText), lines: 2,
         fill: c.white},
-      mtgFieldCell_(s, 'owner', ch.owner, {lines: 2, fill: c.white, align: 'CENTER'})
+      mtgFieldCell_(s, 'clientDept', ch.clientDept, {lines: 3, fill: c.white, align: 'CENTER', fit: true, grow: true}),
+      mtgFieldCell_(s, 'clientTitle', ch.clientTitle, {lines: 2, fill: c.white, align: 'CENTER', fit: true, grow: true})
     ]),
     // 変化が無い・記録が無いときも、表の見出しの行を置き、その下に「該当なし」・「データなし」と理由
     empty: lack.changes ? {kind: 'gap', text: lack.changes} : {kind: 'none'}
