@@ -2146,21 +2146,23 @@ function mtgIndexMeetings_(kind) {
   return Array.from(byDate.keys()).sort().map(date => ({date, filled: byDate.get(date)}));
 }
 
-/** インデックスのシートの会議日の行 [{date, kind: 会議名の列の値（空もある）, filled}]（シートのセルを読む。シートが無い・前の形式なら空） */
+/**
+ * インデックスのシートの会議日の行 [{date, kind: 会議名の列の値（空もある）, filled}]（シートのセルを読む。シートが無い・前の形式なら空）。
+ * 大勢が編集している間は、シートを読むたびに待たされることがあるので、見出しも含めて1回で読む
+ */
 function mtgIndexRowsFromSheet_() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(MTG_OPTIONS.index.sheet);
-  if (!sheet || sheet.getLastRow() < 2) return [];
-  const layout = mtgIndexLayout_(sheet);
+  if (!sheet) return [];
+  const lines = sheet.getDataRange().getValues();
+  if (lines.length < 2) return [];
+  const layout = mtgIndexLayoutOf_(lines[0]);
   if (!layout) return [];
-  const width = Math.max(sheet.getLastColumn(), layout.date, layout.kind || 1);
-  const lines = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
-  const shown = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getDisplayValues();
   const rows = [];
-  lines.forEach((line, i) => {
+  lines.slice(1).forEach(line => {
     const date = mtgIndexDate_(line[layout.date - 1]);
     if (!date) return;
     const kind = layout.kind ? String(line[layout.kind - 1] == null ? '' : line[layout.kind - 1]).trim() : '';
-    const filled = shown[i].some((v, c) => c + 1 !== layout.date && c + 1 !== layout.kind && String(v).trim() !== '');
+    const filled = line.some((v, c) => c + 1 !== layout.date && c + 1 !== layout.kind && v != null && String(v).trim() !== '');
     rows.push({date, kind, filled});
   });
   return rows;
@@ -2206,11 +2208,20 @@ function mtgIndexCacheUpdate_(date, kind, filled) {
  * 資料を作る画面の会議日程・比べる時点は、この控えを読む
  */
 function refreshMeetingIndexCache() {
-  const rows = mtgIndexCacheSave_(mtgIndexRowsFromSheet_());
-  const message = '「' + MTG_OPTIONS.index.sheet + '」の会議日の行（' + rows.length + '行）を読み直しました。資料を作る画面の会議日程は、これを使います。';
+  const timer = mschTimer_('refreshMeetingIndexCache');
+  const rows = mtgIndexRowsFromSheet_();
+  timer.lap('「' + MTG_OPTIONS.index.sheet + '」を読む');
+  mtgIndexCacheSave_(rows);
+  timer.lap('控えを保存');
+  const message = '「' + MTG_OPTIONS.index.sheet + '」の会議日の行（' + rows.length + '行）を読み直しました（' + timer.text() + '）。資料を作る画面の会議日程は、これを使います。';
   console.log(message);
-  const ui = mtgUiOrNull_();
-  if (ui) ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+  // 終わりの知らせは、待たない通知（toast）にする。ui.alert はスプレッドシートのタブに出て、OK を押すまで実行が終わらない
+  // （エディタから実行すると、スプレッドシートのタブを見ていない間ずっと「実行中」のままになっていた）
+  try {
+    SpreadsheetApp.getActiveSpreadsheet().toast(message, CRED_OPTIONS.menuTitle, 10);
+  } catch (_) {
+    // 画面が無い（トリガーなど）ときはログだけ
+  }
 }
 
 /**
@@ -2247,9 +2258,14 @@ function mtgIndexFormat_(range) {
  * 「日付」の見出しが無ければ null（前の形式（行＝サブインダストリー）など）
  */
 function mtgIndexLayout_(sheet) {
-  const o = MTG_OPTIONS.index;
   const width = Math.max(sheet.getLastColumn(), 1);
-  const heads = sheet.getRange(1, 1, 1, width).getDisplayValues()[0].map(h => String(h).trim());
+  return mtgIndexLayoutOf_(sheet.getRange(1, 1, 1, width).getDisplayValues()[0]);
+}
+
+/** 見出しの行の値 heads から、mtgIndexLayout_ と同じ列の位置を読む */
+function mtgIndexLayoutOf_(heads) {
+  const o = MTG_OPTIONS.index;
+  heads = heads.map(h => String(h == null ? '' : h).trim());
   const date = heads.indexOf(o.dateHeader) + 1;
   if (!date) return null;
   const resolve = diffSheetNameResolver_();
