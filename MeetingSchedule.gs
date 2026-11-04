@@ -145,10 +145,13 @@ function mschOpenRunDialog_(kind, final) {
  */
 function getMeetingRunData(kind, final) {
   mschCheckKind_(kind);
+  // どこで時間がかかったかを実行ログに残す（画面が「読み込んでいます…」から進まないときに、実行数のログで確かめる）
+  const timer = mschTimer_();
   const service = kind === 'service';
   const meetingName = mschKindName_(service ? 'service' : 'business');
   const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy/MM/dd');
   const meetings = mtgIndexMeetings_(meetingName).map(m => ({date: m.date, label: mtgDateLabel_(m.date), filled: m.filled, past: m.date < today}));
+  timer.lap('会議日程（' + MTG_OPTIONS.index.sheet + '）');
   // 初めに選ぶ会議日：今日以降でいちばん近い会議日（無ければ、いちばん新しい会議日）
   const upcoming = meetings.filter(m => !m.past)[0];
   const selected = upcoming ? upcoming.date : meetings.length ? meetings[meetings.length - 1].date : '';
@@ -163,16 +166,66 @@ function getMeetingRunData(kind, final) {
       return {name, checked: true, note: last ? '前回の資料 ' + mtgShortDate_(last.date) : '前回の資料なし'};
     });
     job = mtgJobPendingText_();
+    timer.lap('シートと前回の資料');
   } else if (service) {
     const data = smtgRunData_();
     sheets = data.sheets;
     points = data.points;
     job = data.job;
+    timer.lap('RX Service Meeting の対象');
   }
-  if (!service) points = mtgComparePoints_(SpreadsheetApp.getActiveSpreadsheet()).map(p => ({key: p.key, label: p.label, day: p.day, group: p.group}));
+  if (!service) {
+    points = mtgComparePoints_(SpreadsheetApp.getActiveSpreadsheet()).map(p => ({key: p.key, label: p.label, day: p.day, group: p.group}));
+    timer.lap('比べる時点（' + MTG_OPTIONS.copyName + ' ' + points.length + '件）');
+  }
+  console.log('資料を作る画面の読み込み：' + timer.text());
   const titles = {business: '会議サマリ（' + meetingName + '）', combined: '統合版（' + MTG_OPTIONS.combined.name + '）', service: meetingName + ' の事前資料'};
   return {kind, final: !!final, title: titles[kind] + (final ? 'を作る' : 'を試しに作る'), meetingName,
     color: service ? SMTG_OPTIONS.colors.green : MTG_OPTIONS.colors.cover, meetings, selected, sheets, points, canPickTime: !service, job};
+}
+
+/** 手順ごとの時間を測る（lap(名前) でそこまでの時間を記録、text() で「名前 1.2秒・…（合計 3.4秒）」） */
+function mschTimer_() {
+  const began = Date.now();
+  let last = began;
+  const laps = [];
+  const sec = ms => (Math.round(ms / 100) / 10) + '秒';
+  return {
+    lap: label => {
+      const now = Date.now();
+      laps.push(label + ' ' + sec(now - last));
+      last = now;
+    },
+    text: () => laps.join('・') + '（合計 ' + sec(Date.now() - began) + '）',
+    laps
+  };
+}
+
+/**
+ * 資料を作る画面（MeetingRunDialog）が「読み込んでいます…」から進まないときの確かめ（エディタから実行する。読むだけ）。
+ * 画面が読み込むものを同じ順に読み、手順ごとの時間と件数を出す（時点コピーの保存先のフォルダ・ファイルの数も）
+ */
+function diagnoseMeetingRunDialog() {
+  const lines = [];
+  const timer = mschTimer_();
+  try {
+    const data = getMeetingRunData('business', false);
+    lines.push('読み込み：' + timer.text());
+    lines.push('会議日程：' + data.meetings.length + '件・シート：' + data.sheets.length + '・比べる時点：' + data.points.length + '件' + (data.job ? '・途中の仕事あり' : ''));
+  } catch (error) {
+    lines.push('✗ 読み込めませんでした：' + (error && error.message || error) + '（' + timer.text() + '）');
+  }
+  const t2 = mschTimer_();
+  const folder = mtgCopyFolder_(SpreadsheetApp.getActiveSpreadsheet(), true);
+  t2.lap('時点コピーの保存先を開く');
+  let count = 0;
+  if (folder) {
+    const files = folder.getFilesByType(MimeType.GOOGLE_SHEETS);
+    while (files.hasNext()) { files.next(); count++; }
+    t2.lap('ファイルを数える');
+  }
+  lines.push('時点コピーの保存先：' + (folder ? folder.getName() + '（スプレッドシート ' + count + '件）' : 'なし') + '　' + t2.text());
+  svcShowLines_(['資料を作る画面の読み込みの確かめ'].concat(lines));
 }
 
 /** 画面の「カレンダーから読み込む」（google.script.run から呼ぶ）。{message, data: getMeetingRunData と同じ形} */

@@ -176,7 +176,8 @@
 
     /* ---------- くるくる（JavaScript で動かす。OS の「動きを減らす」設定でも止まらない） ---------- */
     let ticker = null;
-    function busy(text, note) {
+    // slow：その秒数を過ぎても終わらなければ「もう一度読み込む」を出す（読み込みが返ってこないときに、閉じずにやり直せるように）
+    function busy(text, note, slow) {
       $('loading').classList.remove('error');
       $('loading').hidden = false;
       $('loadingText').textContent = text;
@@ -189,7 +190,10 @@
         angle = (angle + 30) % 360;
         spinner.style.transform = 'rotate(' + angle + 'deg)';
         const seconds = Math.floor((Date.now() - began) / 1000);
-        $('loadingTime').textContent = seconds >= 2 ? seconds + '秒経過' + (note ? '　' + note : '') : '';
+        const late = slow && seconds >= slow;
+        $('loadingTime').textContent = seconds >= 2 ? seconds + '秒経過' + (late ? '　時間がかかっています。下のボタンでもう一度読み込むか、閉じて開き直してください'
+          : note ? '　' + note : '') : '';
+        if (late) $('reload').hidden = false;
       }, 70);
     }
     function idle() {
@@ -348,7 +352,7 @@
 
     /* ---------- サーバー ---------- */
     function load() {
-      busy('読み込んでいます…');
+      busy('読み込んでいます…', '', 40);
       google.script.run
         .withSuccessHandler(d => { idle(); render(d); show('pick'); })
         .withFailureHandler(failLoading)

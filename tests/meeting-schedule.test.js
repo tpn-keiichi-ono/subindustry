@@ -134,3 +134,27 @@ test('前回の資料の記録が無ければ、会議日程の一覧の前の�
   // 一覧の最初の会議なら、前回は無い（直近14日間）
   assert.match(g.checkMeetingRun('business', false, y + '/10/09', ['新FMT']).text, /・新FMT：直近14日間（前回の会議が無い）/);
 });
+
+test('資料を作る画面の読み込みは、手順ごとの時間を実行ログに残す。diagnoseMeetingRunDialog() は同じ読み込みの時間と時点コピーの数を出す（読むだけ）', () => {
+  const {gas, g} = setup();
+  const logs = [];
+  const original = g.console.log;
+  g.console.log = (...args) => { logs.push(args.join(' ')); };
+  try {
+    const data = g.getMeetingRunData('business', false);
+    assert.ok(data.sheets.length >= 1);
+    const line = logs.find(text => /^資料を作る画面の読み込み：/.test(text));
+    assert.match(line, /会議日程（INDEX_会議資料） [\d.]+秒・シートと前回の資料 [\d.]+秒・比べる時点（時点コピー \d+件） [\d.]+秒（合計 [\d.]+秒）$/);
+    logs.length = 0;
+    const writes = gas.writes.length;
+    g.diagnoseMeetingRunDialog();
+    const text = logs.join('\n');
+    assert.match(text, /資料を作る画面の読み込みの確かめ/);
+    assert.match(text, /読み込み：会議日程/);
+    assert.match(text, /会議日程：\d+件・シート：\d+・比べる時点：\d+件/);
+    assert.match(text, /時点コピーの保存先：/);
+    assert.strictEqual(gas.writes.length, writes, 'シートには書き込まない');
+  } finally {
+    g.console.log = original;
+  }
+});
