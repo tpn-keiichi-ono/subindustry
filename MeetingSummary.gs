@@ -292,6 +292,8 @@ const MTG_OPTIONS = {
     activity: '活動状況',
     issue: '活動における課題',
     owner: 'アカウント責任者',
+    clientDept: '先方部門',               // 得意先の部署（前回から変化のある案件の列）
+    clientTitle: '先方担当役職',          // 得意先の担当の役職（同じ。名前（先方担当氏名）は資料に出さない）
     nextAction: '次回アクション',
     scenarioAmount: 'サービスパッケージ合算（百万円）',   // J列。資料では「シナリオ金額」（RXシナリオのポートフォリオ）
     scenario: 'RXシナリオ構成',           // I列。複数選んだときは「A, B」の形（プルダウンの複数選択）。無ければ使わない（ほかの見出しは columnAliases）
@@ -1027,6 +1029,16 @@ function mtgChatSpace_(webhook) {
 }
 
 /* ---------------- RXシナリオ構成別の期待値（構成が未確定のあいだの別の資料） ---------------- */
+
+/**
+ * シナリオの番号（「01-04.顧客情報活用パッケージ」→「01-04」。前回から変化のある案件の列で、長い名前の代わりに並べる）。
+ * 名前の先頭が番号でなければ、名前のまま
+ */
+function mtgScenarioNumber_(name) {
+  const text = String(name || '').normalize('NFKC').trim();
+  const m = /^(\d+(?:[-‐−ー]\d+)*)(?=[.．、\s]|$)/.exec(text);
+  return m ? m[1].replace(/[‐−ー]/g, '-') : text;
+}
 
 /** RXシナリオ構成のセルの値を、選んだシナリオの一覧に（プルダウンの複数選択は「A, B」。改行でも区切る。選択肢の名前に読点があっても切らない。同じものは1つ） */
 function mtgScenarioList_(text) {
@@ -2700,6 +2712,8 @@ function mtgReadDeals_(sheet, rule) {
       activity: text('activity'),
       issue: text('issue'),
       owner: text('owner'),
+      clientDept: text('clientDept'),
+      clientTitle: text('clientTitle'),
       delivery: text('delivery'),
       nextAction: text('nextAction'),
       scenarios: mtgScenarioList_(text('scenario')),
@@ -2948,7 +2962,7 @@ function mtgGaps_(ss, table, context, stallPending) {
   const noLog = context.trackedSince == null;
   // 前回の時点コピーと比べるときは、変更の記録が無くても前回からの変化を出せる
   if (noLog && !context.copy) parts.changes = '「' + DIFF_OPTIONS.logSheet + '」シートに変更の記録が無い';
-  ['amount', 'weighted', 'orderMonth', 'activity', 'issue', 'owner', 'nextAction', 'record'].forEach(key => {
+  ['amount', 'weighted', 'orderMonth', 'activity', 'issue', 'owner', 'nextAction', 'record', 'clientDept', 'clientTitle'].forEach(key => {
     if (!table.has[key]) parts[key] = column(key);
   });
   if (stallPending) {
@@ -2981,7 +2995,8 @@ function mtgGaps_(ss, table, context, stallPending) {
  */
 function mtgGapList_(s) {
   const names = {changes: '前回からの変化', stalled: '停滞', amount: '想定売上', weighted: '期待値', orderMonth: '受注月・受注月超過',
-    activity: '活動状況', issue: '活動における課題', owner: '責任者', nextAction: '次回アクション', record: '商談記録未登録'};
+    activity: '活動状況', issue: '活動における課題', owner: '責任者', nextAction: '次回アクション', record: '商談記録未登録',
+    clientDept: '先方部門', clientTitle: '先方役職'};
   const byReason = new Map();
   const add = (label, reason) => {
     if (!byReason.has(reason)) byReason.set(reason, []);
@@ -3238,6 +3253,9 @@ function mtgChange_(key, deal, removed, events, states, since, labels, rules, pr
     monthTo: deal ? deal.orderMonthText : '',
     amount: cur.amount,
     owner: cur.owner || '',
+    clientDept: cur.clientDept || '',
+    clientTitle: cur.clientTitle || '',
+    scenarios: cur.scenarios || [],
     activity: deal ? deal.activity : '',
     issue: deal ? deal.issue : '',
     columns,
@@ -3441,7 +3459,8 @@ function mtgParseRemoved_(text, headers) {
   const get = label => String(values.get(credNormalize_(label)) || '').trim();
   return {customer: get(cols.customer), project: get(cols.project), status: get(cols.status),
     amount: mtgNumber_(get(cols.amount)), weighted: mtgNumber_(get(cols.weighted)),
-    orderMonth: mtgMonth_(get(cols.orderMonth)), orderMonthText: get(cols.orderMonth), owner: get(cols.owner)};
+    orderMonth: mtgMonth_(get(cols.orderMonth)), orderMonthText: get(cols.orderMonth), owner: get(cols.owner),
+    clientDept: get(cols.clientDept), clientTitle: get(cols.clientTitle), scenarios: mtgScenarioList_(get(cols.scenario))};
 }
 
 /* ---------------- 小さな補助 ---------------- */
@@ -5209,19 +5228,27 @@ function mtgMovesSlide_(s, withAppendix) {
   const k = s.kpi;
   const lack = s.gaps || {};
   const moves = s.changes.filter(ch => ch.category !== 'updated');
-  const columns = mtgColumns_([126, 126, 60, 76, 214, 58], 4);   // ステータスの列は「C-稟議対応中(50%) ▶」「B-クロージング中(70%)」が1行ずつ入る幅。活動状況は広く
-  const rows = [mtgHeadRow_(columns, ['得意先／案件名', 'ステータス\n' + mtgFromWord_(s) + '▶今回', '期待値\n' + mtgFromWord_(s) + '▶今回', '受注月\n' + mtgFromWord_(s) + '▶今回', '活動状況（最新）', '責任者'])];
+  // 列：得意先／案件名・シナリオ（番号だけ）・ステータス・期待値・受注月・活動状況・先方部門・先方役職（2026/11/04 に責任者の列を外し、シナリオと得意先の部署・役職を足した。
+  // 担当の名前は出さない）。ステータスの列は「C-稟議対応中(50%) ▶」「B-クロージング中(70%)」が1行ずつ入る幅。残りは活動状況
+  const columns = mtgColumns_([116, 52, 126, 60, 76, 132, 60, 54], 5);   // シナリオ・先方役職は「01-04」・見出しが1行に入る幅。期待値・受注月は前と同じ幅
+  const rows = [mtgHeadRow_(columns, ['得意先／案件名', 'シナリオ', 'ステータス\n' + mtgFromWord_(s) + '▶今回', '期待値\n' + mtgFromWord_(s) + '▶今回',
+    '受注月\n' + mtgFromWord_(s) + '▶今回', '活動状況（最新）', '先方部門', '先方役職'])];
+  // シナリオは番号だけを縦に並べる（列が無いシートは「データなし」、空は「未入力」）
+  const scenarioCell = ch => (s.scenarioColumn ? {text: ch.scenarios.length ? ch.scenarios.map(mtgScenarioNumber_).join('\n') : MTG_OPTIONS.blankText,
+    lines: 3, fill: c.white, align: 'CENTER', color: ch.scenarios.length ? c.body : c.muted} : mtgGapCell_({lines: 2, fill: c.white, align: 'CENTER'}));
   // 上から mainRows.changes 件まで、ページに入る分だけ（行の高さは中身で変わる）
   const top = [];
   moves.slice(0, MTG_OPTIONS.mainRows.changes).some(ch => {
     const row = mtgRow_(columns, [
       mtgDealCell_(ch, columns[0]),
+      scenarioCell(ch),
       {text: mtgStatusMove_(ch), lines: 3, fill: c.white},   // 長いステータスの名前（「C-稟議対応中(50%) ▶ B-クロージング中(70%)」）は3行まで
       mtgFieldCell_(s, 'weighted', mtgValueMove_(ch.weightedFrom, ch.weightedTo, ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'orderMonth', mtgMonthMove_(ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       // 長い文は小さくして入れる（本編は件数を優先して行は伸ばさない。全文は Appendix ①）
       mtgFieldCell_(s, 'activity', ch.activity, {lines: 3, fill: c.white, fit: true}),
-      mtgFieldCell_(s, 'owner', ch.owner, {lines: 2, fill: c.white, align: 'CENTER'})
+      mtgFieldCell_(s, 'clientDept', ch.clientDept, {lines: 3, fill: c.white, align: 'CENTER', fit: true}),
+      mtgFieldCell_(s, 'clientTitle', ch.clientTitle, {lines: 2, fill: c.white, align: 'CENTER', fit: true})
     ]);
     if (S.top + rows.reduce((sum, r) => sum + r.h, 0) + row.h > S.bottom) return true;
     rows.push(row);
@@ -5794,7 +5821,7 @@ function mtgMonthLabel_(text) {
 function mtgShortHeader_(header) {
   const names = {customer: '得意先', project: '案件名', status: 'ステータス', amount: '想定売上', weighted: '期待値', orderMonth: '受注月',
     startMonth: '売上開始月', activity: '活動状況', issue: '課題', owner: '責任者', delivery: 'デリバリー担当', nextAction: '次回アクション',
-    scenario: 'RXシナリオ構成', scenarioAmount: 'シナリオ金額', record: '商談記録'};
+    scenario: 'RXシナリオ構成', scenarioAmount: 'シナリオ金額', record: '商談記録', clientDept: '先方部門', clientTitle: '先方役職'};
   const key = Object.keys(names).find(k => mtgColumnIndex_([header], k) === 0);
   return key ? names[key] : String(header).replace(/\s+/g, '');
 }

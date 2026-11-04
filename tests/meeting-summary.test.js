@@ -164,7 +164,11 @@ test('削除した行の「見出し: 値」は、シートの見出しで区切
   const headers = Object.values(HEADERS);
   const text = '得意先: F社\n案件名: ブランド刷新\n期待値調整済\n想定売上規模（百万）: 3\n想定売上規模（百万）: 10\n活動状況: 1行目\n2行目\nアカウント責任者: 高橋';
   assert.deepStrictEqual(plain(g.mtgParseRemoved_(text, headers)), {customer: 'F社', project: 'ブランド刷新', status: '', amount: 10,
-    weighted: 3, orderMonth: null, orderMonthText: '', owner: '高橋'});
+    weighted: 3, orderMonth: null, orderMonthText: '', owner: '高橋', clientDept: '', clientTitle: '', scenarios: []});
+  // 先方部門・役職・RXシナリオ構成も読む（前回から変化のある案件の列。削除した行にも出す）
+  const more = headers.concat(['先方部門', '先方担当役職', 'RXシナリオ構成']);
+  const removed = plain(g.mtgParseRemoved_('得意先: F社\n先方部門: 営業本部\n先方担当役職: 部長\nRXシナリオ構成: 01-04.顧客情報活用パッケージ, 01-05.バックオフィス業務PF', more));
+  assert.deepStrictEqual([removed.clientDept, removed.clientTitle, removed.scenarios], ['営業本部', '部長', ['01-04.顧客情報活用パッケージ', '01-05.バックオフィス業務PF']]);
 });
 
 /* ---------------- 中身 ---------------- */
@@ -620,11 +624,14 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
   assert.deepStrictEqual([moves.rows[1].cells[0].fill, moves.rows[1].cells[0].spans, moves.rows[1].cells[2].fill],
     [c.greenSoft, [{start: 0, end: 2, bold: true}], c.white]);
   // 3枚目：区分の列・ラベルは無い。今のステータスのまとまりの順、その中は想定売上の大きい順（テストのシートのステータスには確度が無いので、想定売上の順）
-  assert.match(moves.rows[1].cells.map(cell => cell.text).join(' | '), /^A社\nアプリ刷新 \| 初回訪問 ▶ 提案中 \| 10 \|/);
+  // 列：得意先／案件名・シナリオ（テストのシートには列が無いのでデータなし）・ステータス・期待値・受注月・活動状況・先方部門・先方役職（責任者の列は無い）
+  assert.deepStrictEqual(moves.rows[0].cells.map(cell => cell.text.split('\n')[0]), ['得意先／案件名', 'シナリオ', 'ステータス', '期待値', '受注月', '活動状況（最新）',
+    '先方部門', '先方役職']);
+  assert.match(moves.rows[1].cells.map(cell => cell.text).join(' | '), /^A社\nアプリ刷新 \| データ\nなし \| 初回訪問 ▶ 提案中 \| 10 \|/);
   assert.deepStrictEqual(moves.rows.slice(1).map(r => r.cells[0].text.split('\n')[0]), ['A社', 'C社', 'F社', 'D社'], 'サマリーの動きの表と同じ順');
   assert.strictEqual(roleOf(slides[4], 'pill').length, 0);
   assert.ok(!moves.rows[0].cells.some(cell => cell.text === '区分'));
-  assert.deepStrictEqual([moves.rows[4].cells[0].text.split('\n')[0], moves.rows[4].cells[4].text], ['D社', '10/12 打ち合わせ'], '活動状況だけ変わった案件も、活動状況と一緒に出す');
+  assert.deepStrictEqual([moves.rows[4].cells[0].text.split('\n')[0], moves.rows[4].cells[5].text], ['D社', '10/12 打ち合わせ'], '活動状況だけ変わった案件も、活動状況と一緒に出す');
   // 4枚目：期待値の大きい順。当てはまる状況は事実だけ
   const focus = slides[5].elements.find(el => el.type === 'table');
   assert.deepStrictEqual(focus.rows[0].cells.map(cell => cell.text.replace(/\n/g, '')),
@@ -660,8 +667,8 @@ test('空欄は推定で補わず「未入力」と書く（「—」や 0 に�
   const slides = plain(g.mtgSlides_(s));
   const rowOf = (slide, customer) => slide.elements.filter(el => el.type === 'table').map(t => t.rows.find(r => r.cells[0].text.split('\n')[0] === customer))
     .find(Boolean).cells.map(cell => cell.text);
-  assert.deepStrictEqual(rowOf(slides[4], 'D社'), ['D社\n物流改善', '未入力', '未入力', '未入力', '10/12 打ち合わせ', '未入力'],
-    'P3：ステータス・期待値・受注月・責任者');
+  assert.deepStrictEqual(rowOf(slides[4], 'D社'), ['D社\n物流改善', 'データ\nなし', '未入力', '未入力', '未入力', '10/12 打ち合わせ', 'データ\nなし', 'データ\nなし'],
+    'P3：ステータス・期待値・受注月（シナリオ・先方部門・役職はテストのシートに列が無いので「データなし」）');
   assert.deepStrictEqual(rowOf(slides[5], 'D社').slice(1, 6), ['未入力\n未入力', '未入力\n100日以上', '未入力', '10/12 打ち合わせ', '未入力'],
     '期待値上位：期待値・想定売上・ステータス・受注月・課題');
   const focusCell = slides[5].elements.find(el => el.type === 'table').rows.find(r => /^D社/.test(r.cells[0].text)).cells[1];
@@ -796,7 +803,7 @@ test('作れないところ（列・記録が無い）は、資料の型を変�
   const c = gas.get('MTG_OPTIONS').colors;
   const s = summarize(g, '新FMT');
   assert.deepStrictEqual(Object.keys(plain(s.gaps)), ['changes', 'amount', 'weighted', 'orderMonth', 'activity', 'issue', 'owner', 'nextAction', 'record',
-    'stalled']);
+    'clientDept', 'clientTitle', 'stalled']);
   assert.strictEqual(s.gaps.changes, '「変更履歴_差分」シートに変更の記録が無い');
   assert.strictEqual(s.gaps.amount, 'シートに「想定売上規模（百万）」の列が無い');
   assert.strictEqual(s.gaps.stalled, '変更の記録も「最終更新日時」の列も無く、ステータスが同じ日数が分からない');
@@ -3460,4 +3467,26 @@ test('RXシナリオのポートフォリオ：列が無い・進行中の案件
   const S4 = gas4.get('MTG_SLIDE');
   const plot = {x0: S4.x + 40, x1: S4.x + S4.w - 236 - 36, y0: S4.top + 10, y1: S4.top + 10 + 240};
   roleOf(edge, 'map-bubble').forEach(b => assert.ok(b.x >= plot.x0 - 0.01 && b.x + b.w <= plot.x1 + 0.01 && b.y >= plot.y0 - 0.01 && b.y + b.h <= plot.y1 + 0.01, '図の中'));
+});
+
+test('前回から変化のある案件：責任者の列の代わりに先方部門・先方役職（名前は出さない）。得意先／案件名の次にシナリオの番号だけを並べる', () => {
+  const {gas, g} = setup();
+  const s = plain(summarize(g, '新FMT', {trackedSince: Date.now() - 100 * 86400000}));
+  assert.deepStrictEqual(['01-04.顧客情報活用パッケージ', '01-05.バックオフィス業務PF', '１２－３．全角', 'ID-POS分析', ''].map(g.mtgScenarioNumber_),
+    ['01-04', '01-05', '12-3', 'ID-POS分析', ''], '番号が無い名前はそのまま');
+  // シートに列がある（シナリオ・先方部門・役職）サブインダストリーの形にする
+  const changes = s.changes.map((ch, i) => Object.assign({}, ch, {clientDept: i === 0 ? 'デジタル推進本部 マーケティング部' : '',
+    clientTitle: i === 0 ? '部長' : '', scenarios: i === 0 ? ['01-04.顧客情報活用パッケージ', '01-05.バックオフィス業務PF'] : []}));
+  const gaps = Object.assign({}, s.gaps);
+  delete gaps.clientDept;
+  delete gaps.clientTitle;
+  const slide = plain(g.mtgMovesSlide_(Object.assign({}, s, {changes, gaps, scenarioColumn: true})));
+  const table = slide.elements.find(el => el.type === 'table');
+  const first = table.rows[1].cells.map(cell => cell.text);
+  assert.strictEqual(first[1], '01-04\n01-05', 'シナリオは番号だけを縦に並べる');
+  assert.strictEqual(first[6].replace(/\n/g, ''), 'デジタル推進本部 マーケティング部', '先方部門（入らなければ小さく・3行まで）');
+  assert.strictEqual(first[7], '部長');
+  assert.ok(!table.rows[0].cells.some(cell => /責任者|氏名/.test(cell.text)), '責任者・担当の名前の列は無い');
+  assert.deepStrictEqual(table.rows[2].cells.map(cell => cell.text).filter((_, i) => i === 1 || i === 6 || i === 7), ['未入力', '未入力', '未入力'], '空は「未入力」');
+  assert.strictEqual(table.columns.reduce((a, b) => a + b, 0), gas.get('MTG_SLIDE').w);
 });
