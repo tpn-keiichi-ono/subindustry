@@ -271,6 +271,8 @@ const MTG_OPTIONS = {
     unsetLabel: '未設定',
     salesYears: 3,               // 何年度分の売上を使うか（今年度から。3 なら FY26・FY27・FY28。② は年度ごとの列、③ は合計。2026/11/04 から）
     heatRows: 13,                // ヒートマップに出す得意先の数
+    // ヒートマップの色（白 → この色）。表の見出し・列の緑と見分けられるように青（③ の「刈り取り」と同じ系統。2026/11/04 に緑から変えた）
+    heatColor: '#2F5597',
     heatColumns: 7,              // ヒートマップに出すシナリオの数（未設定を除く。年度ごとに列を分けるので少なめ。多ければ、売上の小さいほうを「ほか N シナリオ」にまとめる）
     // ポートフォリオ図の軸と点線（決まった目標が無いあいだは、次の根拠で引く。目標が決まったら salesLine・progressLine に入れる）
     //   横軸「確度」：案件のステータスの期待値率（「定義_ステータス」の期待値。B-クロージング中 70%・C-提案中〜稟議対応中 50%・D 20%・創注 10%）を、
@@ -4619,9 +4621,9 @@ function mtgPortfolioProgressSlide_(p, t, pt) {
   return Object.assign({title, lead, elements: el}, t.multi ? {note: '※ 按分のため、シナリオの値を足しても合計と合わないことがあります'} : {});
 }
 
-/** 白 → 濃い緑（greenDark）の間の色。ratio は 0〜1 */
+/** ヒートマップの色：白 → portfolio.heatColor（濃い青）の間の色。ratio は 0〜1 */
 function mtgHeatColor_(ratio) {
-  const to = mtgRgb_(MTG_OPTIONS.colors.greenDark);
+  const to = mtgRgb_(MTG_OPTIONS.portfolio.heatColor || MTG_OPTIONS.colors.greenDark);
   const k = Math.max(0, Math.min(1, ratio));
   const hex = v => ('0' + Math.round(255 + (v * 255 - 255) * k).toString(16)).slice(-2);
   return ('#' + hex(to.red) + hex(to.green) + hex(to.blue)).toUpperCase();
