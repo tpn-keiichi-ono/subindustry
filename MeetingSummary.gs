@@ -5230,12 +5230,13 @@ function mtgMovesSlide_(s, withAppendix) {
   const moves = s.changes.filter(ch => ch.category !== 'updated');
   // 列：得意先／案件名・シナリオ（番号だけ）・ステータス・期待値・受注月・活動状況・先方部門・先方役職（2026/11/04 に責任者の列を外し、シナリオと得意先の部署・役職を足した。
   // 担当の名前は出さない）。ステータスの列は「C-稟議対応中(50%) ▶」「B-クロージング中(70%)」が1行ずつ入る幅。残りは活動状況
-  const columns = mtgColumns_([116, 52, 126, 60, 76, 132, 60, 54], 5);   // シナリオ・先方役職は「01-04」・見出しが1行に入る幅。期待値・受注月は前と同じ幅
+  const columns = mtgColumns_([116, 52, 126, 60, 76, 122, 70, 54], 5);   // シナリオ・先方役職は「01-04」・見出しが1行に入る幅。期待値・受注月は前と同じ幅
   const rows = [mtgHeadRow_(columns, ['得意先／案件名', 'シナリオ', 'ステータス\n' + mtgFromWord_(s) + '▶今回', '期待値\n' + mtgFromWord_(s) + '▶今回',
     '受注月\n' + mtgFromWord_(s) + '▶今回', '活動状況（最新）', '先方部門', '先方役職'])];
-  // シナリオは番号だけを縦に並べる（列が無いシートは「データなし」、空は「未入力」）
+  // シナリオは番号だけを縦に並べる（選んだものをすべて。列が無いシートは「データなし」、空は「未入力」）
   const scenarioCell = ch => (s.scenarioColumn ? {text: ch.scenarios.length ? ch.scenarios.map(mtgScenarioNumber_).join('\n') : MTG_OPTIONS.blankText,
-    lines: 3, fill: c.white, align: 'CENTER', color: ch.scenarios.length ? c.body : c.muted} : mtgGapCell_({lines: 2, fill: c.white, align: 'CENTER'}));
+    lines: Math.max(1, ch.scenarios.length), fill: c.white, align: 'CENTER', color: ch.scenarios.length ? c.body : c.muted}
+    : mtgGapCell_({lines: 2, fill: c.white, align: 'CENTER'}));
   // 上から mainRows.changes 件まで、ページに入る分だけ（行の高さは中身で変わる）
   const top = [];
   moves.slice(0, MTG_OPTIONS.mainRows.changes).some(ch => {
@@ -5247,8 +5248,9 @@ function mtgMovesSlide_(s, withAppendix) {
       mtgFieldCell_(s, 'orderMonth', mtgMonthMove_(ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       // 長い文は小さくして入れる（本編は件数を優先して行は伸ばさない。全文は Appendix ①）
       mtgFieldCell_(s, 'activity', ch.activity, {lines: 3, fill: c.white, fit: true}),
-      mtgFieldCell_(s, 'clientDept', ch.clientDept, {lines: 3, fill: c.white, align: 'CENTER', fit: true}),
-      mtgFieldCell_(s, 'clientTitle', ch.clientTitle, {lines: 2, fill: c.white, align: 'CENTER', fit: true})
+      // 先方部門・役職は全文（入らなければ小さくし、それでも入らなければ行を伸ばす）
+      mtgFieldCell_(s, 'clientDept', ch.clientDept, {lines: 3, fill: c.white, align: 'CENTER', fit: true, grow: true}),
+      mtgFieldCell_(s, 'clientTitle', ch.clientTitle, {lines: 2, fill: c.white, align: 'CENTER', fit: true, grow: true})
     ]);
     if (S.top + rows.reduce((sum, r) => sum + r.h, 0) + row.h > S.bottom) return true;
     rows.push(row);

@@ -667,7 +667,7 @@ test('空欄は推定で補わず「未入力」と書く（「—」や 0 に�
   const slides = plain(g.mtgSlides_(s));
   const rowOf = (slide, customer) => slide.elements.filter(el => el.type === 'table').map(t => t.rows.find(r => r.cells[0].text.split('\n')[0] === customer))
     .find(Boolean).cells.map(cell => cell.text);
-  assert.deepStrictEqual(rowOf(slides[4], 'D社'), ['D社\n物流改善', 'データ\nなし', '未入力', '未入力', '未入力', '10/12 打ち合わせ', 'データ\nなし', 'データ\nなし'],
+  assert.deepStrictEqual(rowOf(slides[4], 'D社'), ['D社\n物流改善', 'データ\nなし', '未入力', '未入力', '未入力', '10/12 打ち合わせ', 'データなし', 'データ\nなし'],
     'P3：ステータス・期待値・受注月（シナリオ・先方部門・役職はテストのシートに列が無いので「データなし」）');
   assert.deepStrictEqual(rowOf(slides[5], 'D社').slice(1, 6), ['未入力\n未入力', '未入力\n100日以上', '未入力', '10/12 打ち合わせ', '未入力'],
     '期待値上位：期待値・想定売上・ステータス・受注月・課題');
@@ -3489,4 +3489,14 @@ test('前回から変化のある案件：責任者の列の代わりに先方�
   assert.ok(!table.rows[0].cells.some(cell => /責任者|氏名/.test(cell.text)), '責任者・担当の名前の列は無い');
   assert.deepStrictEqual(table.rows[2].cells.map(cell => cell.text).filter((_, i) => i === 1 || i === 6 || i === 7), ['未入力', '未入力', '未入力'], '空は「未入力」');
   assert.strictEqual(table.columns.reduce((a, b) => a + b, 0), gas.get('MTG_SLIDE').w);
+  // 長い部門名・役職も全文（小さくし、それでも入らなければ行を伸ばす）。シナリオは選んだものをすべて
+  const long = changes.map((ch, i) => (i ? ch : Object.assign({}, ch, {clientDept: 'ジャパンマーケティング部インストアメディア推進グループ',
+    clientTitle: 'シニアマネージャー兼グループリーダー',
+    scenarios: ['01-01.製品・サービス開発支援', '01-03.次世代RX店舗', '01-04.顧客情報活用パッケージ', '01-05.バックオフィス業務PF', '01-09.顧客分析パッケージ']})));
+  const longTable = plain(g.mtgMovesSlide_(Object.assign({}, s, {changes: long, gaps, scenarioColumn: true}))).elements.find(el => el.type === 'table');
+  const cells = longTable.rows[1].cells;
+  assert.strictEqual(cells[1].text, '01-01\n01-03\n01-04\n01-05\n01-09', 'シナリオは5つとも');
+  assert.strictEqual(cells[6].text.replace(/\n/g, ''), 'ジャパンマーケティング部インストアメディア推進グループ', '部門名は全文（「…」で切らない）');
+  assert.strictEqual(cells[7].text.replace(/\n/g, ''), 'シニアマネージャー兼グループリーダー', '役職は全文');
+  assert.ok(!cells.some(cell => /…/.test(cell.text)));
 });
