@@ -3573,6 +3573,18 @@ test('RXシナリオのポートフォリオの前回比：前回の時点コピ
   assert.match(pLead(heat2), /売上の合計は前回比 \+53。/);
   // ③ 前回の位置の点線の円（前回にあったシナリオで、位置が変わったもの）と、表の前回比（売上の増減。前回に無ければ「新規」）
   assert.ok(roleOf(map, 'map-prev').length >= 1 && roleOf(map, 'map-prev').every(el => el.dash && !el.fill && el.shape === 'ELLIPSE'));
+  // 前回の位置から今の円への矢印（前回の円に灰色の番号）。矢印の先は今の円のふち
+  const moves = roleOf(map, 'map-move');
+  assert.ok(moves.length >= 1 && moves.every(m => m.type === 'line' && m.arrow && m.x2 != null));
+  const bubbles = roleOf(map, 'map-bubble').map(b => ({cx: b.x + b.w / 2, cy: b.y + b.h / 2, r: b.w / 2}));
+  moves.forEach(m => assert.ok(bubbles.some(b => Math.abs(Math.hypot(m.x2 - b.cx, m.y2 - b.cy) - (b.r + 1)) < 0.01), '矢印の先は今の円のふち'));
+  assert.strictEqual(roleOf(map, 'map-prev-number').length, roleOf(map, 'map-prev').length);
+  // 斜めの線は Slides API では箱を裏返して引く（左・上へ向かう線は倍率 -1）
+  const req = g.mtgSlideRequests_({title: 'x', elements: [{type: 'line', x: 100, y: 100, x2: 60, y2: 40, color: '#595959', weight: 1, arrow: true}]}, 'pageMove1', 0);
+  const created = req.find(r => r.createLine).createLine.elementProperties;
+  assert.deepStrictEqual([created.size.width.magnitude, created.size.height.magnitude, created.transform.scaleX, created.transform.scaleY,
+    created.transform.translateX, created.transform.translateY], [40, 60, -1, -1, 100, 100]);
+  assert.strictEqual(req.find(r => r.updateLineProperties).updateLineProperties.lineProperties.endArrow, 'FILL_ARROW');
   assert.deepStrictEqual(roleOf(map, 'map-table-head').map(el => el.text), ['No.', 'シナリオ', 'FY26〜27', '前回比', '確度', '件数']);
   assert.deepStrictEqual(roleOf(map, 'map-table-delta').map(el => el.text), ['+35', '+10', '新規']);
   roleOf(map, 'map-table-head').forEach(el => assert.ok(g.mtgTextWidth_(el.text, el.size) <= el.w - S.padX, '表の見出しは1行：' + el.text));

@@ -4897,7 +4897,8 @@ function mtgPortfolioMapSlide_(p, t, prevT) {
     const r = mtgBubbleRadius_(pt.count, maxCount);
     return {pt, r, n: numberOf.get(pt.key), cx: Math.max(X0 + r, Math.min(X0 + W - r, px(pt.progress))), cy: Math.max(Y0 + r, Math.min(Y0 + H - r, py(pt.sales)))};
   });
-  // 前回の位置：点線の円（塗らない。前回の件数の大きさ）。今の円の下に描く。位置が変わらなければ描かない
+  // 前回の位置：点線の円（塗らない。前回の件数の大きさ）。今の円の下に描く。位置が変わらなければ描かない。矢印は円の上に描く（moves）
+  const moves = [];
   circles.forEach(b => {
     const prev = prevOf(b.pt);
     if (!prev || !prev.count) return;
@@ -4906,10 +4907,22 @@ function mtgPortfolioMapSlide_(p, t, prevT) {
     const cy = Math.max(Y0 + r, Math.min(Y0 + H - r, py(prev.sales)));
     if (Math.abs(cx - b.cx) < 1 && Math.abs(cy - b.cy) < 1 && Math.abs(r - b.r) < 0.5) return;
     el.push({type: 'box', x: cx - r, y: cy - r, w: r * 2, h: r * 2, line: c.dark, lineWeight: 0.75, dash: true, shape: 'ELLIPSE', role: 'map-prev'});
+    // 前回の円にも同じ番号（灰色）。矢印が交わっても、どのシナリオの前回の位置か分かるように
+    el.push(mtgBox_(cx - 15, cy - 7, 30, 14, String(b.n), {size: 7.5, color: c.faint, align: 'CENTER', role: 'map-prev-number'}));
+    // 前回の位置から今の円への矢印（前回の円のふちから、今の円のふちまで。円が重なっていれば前回の円の真ん中から。ほとんど動いていなければ引かない）
+    const dist = Math.sqrt((b.cx - cx) * (b.cx - cx) + (b.cy - cy) * (b.cy - cy));
+    if (dist < b.r + 6) return;
+    const ux = (b.cx - cx) / dist;
+    const uy = (b.cy - cy) / dist;
+    const from = dist - r - b.r >= 10 ? r : 0;
+    // 補助線なので目立たせない（細い・薄い灰色。矢印の大きさも線の太さに合わせて小さくなる）
+    moves.push({type: 'line', x: cx + ux * from, y: cy + uy * from, x2: b.cx - ux * (b.r + 1), y2: b.cy - uy * (b.r + 1), color: c.down, weight: 0.75,
+      arrow: true, role: 'map-move'});
   });
   // 大きい円を先に描き、小さい円を上に重ねる（小さい円が隠れないように）
   circles.slice().sort((a, b) => b.r - a.r).forEach(b => el.push({type: 'box', x: b.cx - b.r, y: b.cy - b.r, w: b.r * 2, h: b.r * 2, fill: c.green,
     alpha: 0.75, line: c.greenText, lineWeight: 1, shape: 'ELLIPSE', role: 'map-bubble'}));
+  el.push.apply(el, moves);
   const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
   const onCircle = r => circles.some(b => b.cx + b.r > r.x && b.cx - b.r < r.x + r.w && b.cy + b.r > r.y && b.cy - b.r < r.y + r.h);
   // 横の点線の名前：線の右端の上 → 右端の下 → 左端の上 → 左端の下 のうち、円と重ならない場所
@@ -5022,7 +5035,7 @@ function mtgPortfolioMapSlide_(p, t, prevT) {
     sx += r * 2 + 22;
   });
   if (prevT) {
-    el.push(mtgBox_(lx - 7.2, base + 13, tw, 12, '点線の円＝' + p.vs.replace(/比$/, '') + 'の位置（売上・確度・件数）', {size: 7.5, color: c.sub,
+    el.push(mtgBox_(lx - 7.2, base + 13, tw, 12, '点線の円＝' + p.vs.replace(/比$/, '') + 'の位置（売上・確度・件数）。矢印はそこから今の位置へ', {size: 7.5, color: c.sub,
       role: 'map-legend-prev'}));
   }
   const fallback = pts.filter(pt => pt.basis !== 'sales');
@@ -6556,12 +6569,22 @@ function mtgSlideRequests_(slide, pageId, index, options) {
       return;
     }
     if (el.type === 'line') {
-      // 直線（color・weight・dash で点線）。幅か高さが 0 の線は作れないことがあるので、ごくわずかな大きさにする（見た目は水平・垂直）
-      elementProperties.size.width = pt(Math.max(width, 0.01));
-      elementProperties.size.height = pt(Math.max(height, 0.01));
+      // 直線（color・weight・dash で点線）。幅か高さが 0 の線は作れないことがあるので、ごくわずかな大きさにする（見た目は水平・垂直）。
+      // x2・y2 があれば (x, y) から (x2, y2) への線（斜めも。線は箱の左上から右下に引かれるので、左・上へ向かうときは箱を裏返す（倍率を -1 にする））。
+      // arrow なら終わりに矢印
+      if (el.x2 != null) {
+        const dx = el.x2 - el.x;
+        const dy = el.y2 - el.y;
+        elementProperties.size = {width: pt(Math.max(Math.abs(dx), 0.01)), height: pt(Math.max(Math.abs(dy), 0.01))};
+        elementProperties.transform = Object.assign({}, elementProperties.transform, {scaleX: dx < 0 ? -1 : 1, scaleY: dy < 0 ? -1 : 1});
+      } else {
+        elementProperties.size.width = pt(Math.max(width, 0.01));
+        elementProperties.size.height = pt(Math.max(height, 0.01));
+      }
       requests.push({createLine: {objectId: id, lineCategory: 'STRAIGHT', elementProperties}});
-      requests.push({updateLineProperties: {objectId: id, lineProperties: {lineFill: {solidFill: {color: {rgbColor: mtgRgb_(el.color)}}},
-        weight: pt(el.weight || 0.75), dashStyle: el.dash ? 'DASH' : 'SOLID'}, fields: 'lineFill,weight,dashStyle'}});
+      const lineProperties = {lineFill: {solidFill: {color: {rgbColor: mtgRgb_(el.color)}}}, weight: pt(el.weight || 0.75), dashStyle: el.dash ? 'DASH' : 'SOLID'};
+      if (el.arrow) lineProperties.endArrow = 'FILL_ARROW';
+      requests.push({updateLineProperties: {objectId: id, lineProperties, fields: 'lineFill,weight,dashStyle' + (el.arrow ? ',endArrow' : '')}});
       return;
     }
     requests.push({createShape: {objectId: id, shapeType: el.shape || 'TEXT_BOX', elementProperties}});
