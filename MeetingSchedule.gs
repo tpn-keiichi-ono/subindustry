@@ -195,9 +195,10 @@ function getMeetingRunData(kind, final) {
 
 /**
  * 手順ごとの時間を測る（lap(名前) でそこまでの時間を記録、text() で「名前 1.2秒・…（合計 3.4秒）」）。
- * name を渡すと、始めたときと手順が終わるたびにすぐ実行ログに書く（途中で止まっても、どこまで進んだかが実行数のログで分かる）
+ * name を渡すと、始めたときと手順が終わるたびにすぐ実行ログに書く（途中で止まっても、どこまで進んだかが実行数のログで分かる）。
+ * progress なら、「作成する」の控え（mschRunState_）にも書く（mschRunProgress_）
  */
-function mschTimer_(name) {
+function mschTimer_(name, progress) {
   const began = Date.now();
   let last = began;
   const laps = [];
@@ -209,6 +210,8 @@ function mschTimer_(name) {
       laps.push(label + ' ' + sec(now - last));
       if (name) console.log('[' + name + '] ' + label + '：済み（' + sec(now - last) + '）');
       last = now;
+      // progress：「作成する」の控えにも、済んだ手順を書く（6分の上限で止められても、画面にどこまで進んだかを出せるように）
+      if (progress) mschRunProgress_(name, laps.join('・'));
     },
     text: () => laps.join('・') + '（合計 ' + sec(Date.now() - began) + '）',
     laps
@@ -299,7 +302,9 @@ function runMeetingMaterials(kind, final, meeting, names, cancelJob, point) {
     mschRunStateSave_(Object.assign({status: 'done', message, finishedAt: Date.now()}, base));
     return {message};
   } catch (error) {
-    mschRunStateSave_(Object.assign({status: 'error', message: String(error && error.message || error), finishedAt: Date.now()}, base));
+    const current = mschRunState_();
+    mschRunStateSave_(Object.assign({status: 'error', message: String(error && error.message || error), finishedAt: Date.now(),
+      progress: current && current.progress || null}, base));
     throw error;
   }
 }
@@ -313,7 +318,9 @@ function getMeetingRunState(kind) {
   const state = mschRunState_();
   if (!state || state.kind !== kind) return null;
   const time = ms => ms ? Utilities.formatDate(new Date(ms), Session.getScriptTimeZone(), 'H:mm') : '';
-  return {status: state.status, final: !!state.final, meeting: state.meeting || '', message: state.message || '', started: time(state.at), finished: time(state.finishedAt)};
+  // 作れなかったときは、どこまで進んだか（済んだ手順と時間）も出す（6分の上限で止められたときは、mschRunState_ が文に足している）
+  const message = (state.message || '') + (state.status === 'error' && !/止まる前に済んだ手順/.test(state.message || '') ? mschRunProgressText_(state) : '');
+  return {status: state.status, final: !!state.final, meeting: state.meeting || '', message, started: time(state.at), finished: time(state.finishedAt)};
 }
 
 /**
@@ -334,9 +341,29 @@ function mschRunState_() {
   if (state.status === 'running') {
     if (now - state.at <= o.runningMinutes * 60000) return state;
     state = Object.assign({}, state, {status: 'error', finishedAt: state.at + o.runningMinutes * 60000,
-      message: '資料を作っている途中で止まったようです（1回の実行の上限の6分を過ぎた・画面を閉じた など）。作られた資料は、出力先のフォルダで確かめてください。'});
+      message: '資料を作っている途中で止まったようです（1回の実行の上限の6分を過ぎた など）。作られた資料は、出力先のフォルダで確かめてください。' +
+        mschRunProgressText_(state)});
   }
   return now - (state.finishedAt || state.at) <= o.resultMinutes * 60000 ? state : null;
+}
+
+/** 作っている途中の「作成する」の控えに、済んだ手順と時間を書く（name ごとに上書き。作っていなければ何もしない） */
+function mschRunProgress_(name, text) {
+  try {
+    const value = PropertiesService.getUserProperties().getProperty(MSCH_OPTIONS.runStateKey);
+    const state = value ? JSON.parse(value) : null;
+    if (!state || state.status !== 'running') return;
+    state.progress = Object.assign({}, state.progress, {[name]: text});
+    mschRunStateSave_(state);
+  } catch (error) {
+    console.warn('作成の進み具合を控えられませんでした：' + (error && error.message || error));
+  }
+}
+
+/** 控えの済んだ手順と時間の文（無ければ空） */
+function mschRunProgressText_(state) {
+  const entries = Object.entries(state && state.progress || {});
+  return entries.length ? '\n\n止まる前に済んだ手順と時間：\n' + entries.map(([name, text]) => '・' + name + '：' + text).join('\n') : '';
 }
 
 /** 「作成する」の控えを保存する（控えが書けなくても資料作りは止めない） */

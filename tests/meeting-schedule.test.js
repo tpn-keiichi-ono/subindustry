@@ -210,11 +210,15 @@ test('「作成する」の途中・結果を控え、画面が読み込み直�
   assert.throws(() => g.runMeetingMaterials('business', false, y + '/10/23', ['新FMT'], false, ''), /から資料を作っている途中です。終わるまでお待ちください/);
   assert.strictEqual(JSON.parse(props.getProperty(key)).at, now - 60000, '途中の控えはそのまま');
 
-  // 途中のまま7分を過ぎたら、止まったとみなす（また作れる）
+  // 途中のまま7分を過ぎたら、止まったとみなす（また作れる）。済んだ手順と時間も出す
   props.setProperty(key, JSON.stringify({status: 'running', kind: 'business', final: false, meeting: y + '/10/23', at: now - 8 * 60000}));
+  const timer = g.mschTimer_('資料の中身を作る（新FMT）', true);
+  timer.lap('変更の記録（3件）');
+  timer.lap('「新FMT」のシートを読んでまとめる');
   const stopped = g.getMeetingRunState('business');
   assert.strictEqual(stopped.status, 'error');
   assert.match(stopped.message, /途中で止まったようです/);
+  assert.match(stopped.message, /止まる前に済んだ手順と時間：\n・資料の中身を作る（新FMT）：変更の記録（3件） [\d.]+秒・「新FMT」のシートを読んでまとめる [\d.]+秒/);
   assert.ok(!g.runMeetingMaterials('business', false, y + '/10/23', ['新FMT'], false, '').error);
 
   // 作れなかったときも控え、エラーはそのまま画面に返す
@@ -225,7 +229,9 @@ test('「作成する」の途中・結果を控え、画面が読み込み直�
   } finally {
     g.mtgRunStart_ = real;
   }
-  assert.deepStrictEqual([g.getMeetingRunState('business').status, g.getMeetingRunState('business').message], ['error', 'テストの失敗']);
+  const failed = g.getMeetingRunState('business');
+  assert.strictEqual(failed.status, 'error');
+  assert.match(failed.message, /^テストの失敗/);
 
   // 終えてから30分を過ぎた結果は出さない
   props.setProperty(key, JSON.stringify({status: 'done', kind: 'business', final: false, meeting: y + '/10/23', at: now - 40 * 60000, finishedAt: now - 31 * 60000, message: '済み'}));

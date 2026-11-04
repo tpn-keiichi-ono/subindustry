@@ -790,7 +790,7 @@ function mtgJobRun_(ss, job, started) {
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
       const summary = summaries[i];
-      const deckTimer = mschTimer_('スライドと PDF（' + summary.name + '）');
+      const deckTimer = mschTimer_('スライドと PDF（' + summary.name + '）', true);
       const out = mtgExportDeck_(mtgFileName_(summary.name, job.meeting, job.final), mtgSlides_(summary), folder);
       deckTimer.lap('スライドを作って PDF に保存');
       // 試作：その会議日の最初の試作の、入力内容のチェックの結果を覚える（同じ会議日の資料で、解消した件数を出す）
@@ -1594,7 +1594,7 @@ function mtgSummaries_(ss, names, now, final, meeting, point) {
   const windowStart = new Date(Math.min.apply(null,
     plans.map(p => p.since.getTime()).concat([now.getTime() - o.lookbackDays * 86400000])));
   // 手順ごとの時間を実行ログに残す（大勢が編集している間は、シートを読むたびに待たされる。どこで時間がかかったかを「実行数」のログで確かめる）
-  const timer = mschTimer_('資料の中身を作る（' + names.join('・') + '）');
+  const timer = mschTimer_('資料の中身を作る（' + names.join('・') + '）', true);
   timer.lap('前回の資料の記録');
   const context = {now, meeting, windowStart};
   context.trackedSince = mtgLogStart_(ss);
