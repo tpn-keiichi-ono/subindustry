@@ -3775,3 +3775,26 @@ test('createBusinessMtgSummaries（readMode: api）：本番の時点コピー�
   assert.strictEqual(copySheet.getRange(3, COL.weighted).getFormula(), '=G3*0.5', '期待値の列は数式のまま');
   assert.match(gas.alerts[gas.alerts.length - 1].message, /時点コピーの、数式で出している列は、元のスプレッドシートの値にしました（新FMT のT列（見込金額））。/);
 });
+
+test('Sheets API は sheetsPerRead シートずつ読む（全シートを一度に読むとメモリが足りない）。記録のシートは同じ実行の中で1回だけ読む。中身は一度に読んだときと同じ', () => {
+  const run = perRead => {
+    const {gas, g} = setup();
+    const o = gas.get('MTG_OPTIONS');
+    o.run.readMode = 'api';
+    o.run.sheetsPerRead = perRead;
+    gas.enableSheetsApi();
+    gas.promptAnswers = ['1,2', '10/23'];
+    g.previewBusinessMtgSummaries();
+    const message = gas.alerts[gas.alerts.length - 1].message.replace(/https:\/\/\S+/g, 'URL');
+    const grids = gas.sheetsApiCalls.filter(c => c.args && c.args.includeGridData).map(c => c.args.ranges.filter(r => /新FMT/.test(r)).join(','));
+    const records = gas.sheetsApiCalls.filter(c => c.method === 'batchGet').length;
+    return {message, grids, records};
+  };
+  const one = run(1);
+  const all = run(3);
+  assert.deepStrictEqual(one.grids, ["'新FMT'", "'新FMT2'"], '1シートずつ読む');
+  assert.deepStrictEqual(all.grids, ["'新FMT','新FMT2'"]);
+  assert.deepStrictEqual([one.records, all.records], [2, 2], '記録のシートは「次へ（確かめる）」で1回・作るときに1回だけ（シートを分けて読んでも増えない）');
+  assert.strictEqual(one.message, all.message);
+  assert.match(one.message, /「新FMT」：.*\n[\s\S]*「新FMT2」：/);
+});

@@ -53,7 +53,8 @@ function mtgTrackedNames_(ss) {
  * このスプレッドシートを Sheets API で読んだ入れ物（読むだけ。SpreadsheetApp のスプレッドシートと同じ使い方）。
  * names の追跡シートとステータスの定義は、値・表示の文字・数式・書式の種類・入力規則まで1回で読む。options.records が false でなければ、
  * 記録のシート（変更履歴_差分・変更時点スナップショット。クレデンシャルを使っていれば クレデンシャル履歴_記録）を値だけもう1回で読む。
- * options.grid が false なら、追跡シートは読まない（記録のシートだけ）。手順ごとの時間を実行ログに書く
+ * options.grid が false なら、追跡シートは読まない（記録のシートだけ）。options.cache（オブジェクト）を渡すと、記録のシートはそこに置いて次からは読まない。
+ * 手順ごとの時間を実行ログに書く
  */
 function mtgApiBook_(ss, names, options) {
   const opt = options || {};
@@ -76,7 +77,13 @@ function mtgApiBook_(ss, names, options) {
   if (grid.length) mtgApiLoadGrid_(book, grid);
   if (opt.records !== false) {
     const records = [DIFF_OPTIONS.logSheet, DIFF_OPTIONS.rowSnapshotSheet].concat(credEnabled_() ? [CRED_OPTIONS.logSheet] : []).filter(exists);
-    if (records.length) mtgApiLoadValues_(book, records);
+    // options.cache：同じ実行の中で何度か読むとき（シートを分けて読む）、記録のシートは1回だけ読んで使い回す
+    const cache = opt.cache && opt.cache.records && opt.cache.records.id === id ? opt.cache.records : null;
+    if (cache) records.forEach(name => { if (cache.sheets[name]) book.sheets[name] = cache.sheets[name]; });
+    else if (records.length) {
+      mtgApiLoadValues_(book, records);
+      if (opt.cache) opt.cache.records = {id, sheets: records.reduce((m, name) => Object.assign(m, {[name]: book.sheets[name]}), {})};
+    }
   }
   return mtgApiBookObject_(book);
 }

@@ -485,6 +485,9 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   大勢が編集している間は、SpreadsheetApp でこのスプレッドシートに触れる（シートを探すだけでも）たびに数式の計算を待たされ、1シートでも6分を超えた。
   Sheets API は同じ時間帯に 1/8 ほど（`diagnoseMeetingRead()`）。途中で試した「スプレッドシートをコピーして読む」は、作ったばかりのコピーを初めて開くと
   計算し直しで 274秒かかり、IMPORTRANGE が 0 になったのでやめた。
+  - 一度に読む追跡シートは `run.sheetsPerRead`（3）まで。`includeGridData` は1セルの情報が多く、11シートを一度に読むとメモリ不足で止まった（2026/11/04）。
+    `mtgJobRun_` は3シートずつ読んで資料を作り、次の3シートを読む（`while`。時間が足りなければ区切る）。記録のシートは同じ実行の中で1回だけ読む（`job.apiCache`。保存しない）。
+    統合版（`mtgCombinedStart_`）も3シートずつ読んで中身を作る。時点コピーを直すのも3シートずつ。
   - 読み方：シートの一覧（`Spreadsheets.get`。速い）→ 追跡シートとステータスの定義を `includeGridData` で1回（`formattedValue`・`effectiveValue`・`userEnteredValue`・
     書式の種類・入力規則）→ 記録のシートを `Values.batchGet`（`UNFORMATTED_VALUE`・`SERIAL_NUMBER`。見出しに「日時」を含む列は日時に）で1回。
     日時はシリアル値（スプレッドシートのタイムゾーン）から Date に（ミリ秒まで）。読んでいないシート（プルダウンの範囲のシートなど）は、開こうとしたときに読む。
