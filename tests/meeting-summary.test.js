@@ -557,7 +557,7 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
         assert.ok(el.columns.every(cw => cw >= 32), (i + 1) + '枚目：Slides API は 32pt より狭い列をエラーにする ' + el.columns.join(','));
         el.rows.forEach(r => r.cells.forEach((cell, col) => {
           const lines = String(cell.text).split('\n');
-          assert.strictEqual(g.mtgWrap_(cell.text, el.columns[col], cell.size, 99).length, lines.length, '折り返し済み：' + cell.text);
+          assert.strictEqual(g.mtgWrap_(cell.text, g.mtgCellWidth_(el.columns[col]), cell.size, 99).length, lines.length, '折り返し済み：' + cell.text);
           assert.ok(g.mtgTextHeight_(lines, cell.size, cell.spans) <= r.h + 0.01, '行の高さ：' + cell.text);
         }));
       }
@@ -667,7 +667,7 @@ test('空欄は推定で補わず「未入力」と書く（「—」や 0 に�
   const slides = plain(g.mtgSlides_(s));
   const rowOf = (slide, customer) => slide.elements.filter(el => el.type === 'table').map(t => t.rows.find(r => r.cells[0].text.split('\n')[0] === customer))
     .find(Boolean).cells.map(cell => cell.text);
-  assert.deepStrictEqual(rowOf(slides[4], 'D社'), ['D社\n物流改善', 'データ\nなし', '未入力', '未入力', '未入力', '10/12 打ち合わせ', 'データなし', 'データ\nなし'],
+  assert.deepStrictEqual(rowOf(slides[4], 'D社'), ['D社\n物流改善', 'データ\nなし', '未入力', '未入力', '未入力', '10/12 打ち合わせ', 'データなし', 'データなし'],
     'P3：ステータス・期待値・受注月（シナリオ・先方部門・役職はテストのシートに列が無いので「データなし」）');
   assert.deepStrictEqual(rowOf(slides[5], 'D社').slice(1, 6), ['未入力\n未入力', '未入力\n100日以上', '未入力', '10/12 打ち合わせ', '未入力'],
     '期待値上位：期待値・想定売上・ステータス・受注月・課題');
@@ -969,7 +969,7 @@ test('該当事項：当てはまる状況が3つでも、判定の中身の文�
   const slide = plain(g.mtgSlides_(Object.assign({}, s, {focus})))[5];
   const table = slide.elements.find(el => el.type === 'table');
   const cell = table.rows[1].cells[6];
-  assert.deepStrictEqual(cell.text.replace(/\n/g, ''), plain(g.mtgFlagTexts_(focus[0])).join(''), '「…」で切らない');
+  assert.deepStrictEqual(cell.text.replace(/\s/g, ''), plain(g.mtgFlagTexts_(focus[0])).join('').replace(/\s/g, ''), '「…」で切らない');
   assert.ok(/^ステータスが 60日以上 変わっていない/.test(cell.text.replace(/\n/g, '')));
   assert.ok(table.rows[1].h >= g.mtgTextHeight_(cell.text.split('\n'), cell.size), '行は中身の高さ');
   assert.ok(table.y + table.rows.reduce((sum, r) => sum + r.h, 0) <= S.bottom, '表が下にはみ出さない');
