@@ -146,7 +146,7 @@ function mschOpenRunDialog_(kind, final) {
 function getMeetingRunData(kind, final) {
   mschCheckKind_(kind);
   // どこで時間がかかったかを実行ログに残す（画面が「読み込んでいます…」から進まないときに、実行数のログで確かめる）
-  const timer = mschTimer_();
+  const timer = mschTimer_('資料を作る画面の読み込み');
   const service = kind === 'service';
   const meetingName = mschKindName_(service ? 'service' : 'business');
   const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy/MM/dd');
@@ -184,16 +184,21 @@ function getMeetingRunData(kind, final) {
     color: service ? SMTG_OPTIONS.colors.green : MTG_OPTIONS.colors.cover, meetings, selected, sheets, points, canPickTime: !service, job};
 }
 
-/** 手順ごとの時間を測る（lap(名前) でそこまでの時間を記録、text() で「名前 1.2秒・…（合計 3.4秒）」） */
-function mschTimer_() {
+/**
+ * 手順ごとの時間を測る（lap(名前) でそこまでの時間を記録、text() で「名前 1.2秒・…（合計 3.4秒）」）。
+ * name を渡すと、始めたときと手順が終わるたびにすぐ実行ログに書く（途中で止まっても、どこまで進んだかが実行数のログで分かる）
+ */
+function mschTimer_(name) {
   const began = Date.now();
   let last = began;
   const laps = [];
   const sec = ms => (Math.round(ms / 100) / 10) + '秒';
+  if (name) console.log('[' + name + '] 開始');
   return {
     lap: label => {
       const now = Date.now();
       laps.push(label + ' ' + sec(now - last));
+      if (name) console.log('[' + name + '] ' + label + '：済み（' + sec(now - last) + '）');
       last = now;
     },
     text: () => laps.join('・') + '（合計 ' + sec(Date.now() - began) + '）',
@@ -215,7 +220,7 @@ function diagnoseMeetingRunDialog() {
   } catch (error) {
     lines.push('✗ 読み込めませんでした：' + (error && error.message || error) + '（' + timer.text() + '）');
   }
-  const t2 = mschTimer_();
+  const t2 = mschTimer_('時点コピーの保存先');
   const folder = mtgCopyFolder_(SpreadsheetApp.getActiveSpreadsheet(), true);
   t2.lap('時点コピーの保存先を開く');
   let count = 0;
