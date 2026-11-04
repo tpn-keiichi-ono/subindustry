@@ -158,3 +158,29 @@ test('資料を作る画面の読み込みは、手順ごとの時間を実行�
     g.console.log = original;
   }
 });
+
+test('会議日程は「INDEX_会議資料」の控え（ドキュメントのプロパティ）から読む。スクリプトが書いたら控えも直し、手で直したら refreshMeetingIndexCache() で読み直す', () => {
+  const {gas, g} = setup();
+  const y = g.mtgParseDate_('1/1', new Date()).slice(0, 4);
+  const sheet = gas.addSheet('INDEX_会議資料', [['日付', '会議名', '全サブインダストリー', '新FMT'], [y + '/10/23', 'RX Business Meeting', '', ''],
+    [y + '/10/09', 'RX Business Meeting', '', '資料']]);
+  const dates = () => plain(g.mtgIndexMeetings_('RX Business Meeting')).map(m => [m.date, m.filled]);
+  assert.deepStrictEqual(dates(), [[y + '/10/09', true], [y + '/10/23', false]], '控えが無ければシートから読んで控えを作る');
+  const key = gas.get('MTG_OPTIONS').index.cacheKey;
+  const props = g.PropertiesService.getDocumentProperties();
+  assert.ok(JSON.parse(props.getProperty(key)).rows.length === 2);
+  // 控えがあればシートのセルは読まない（手で足した行は、読み直すまで出ない）
+  gas.asUser(() => sheet.appendRow([y + '/11/06', 'RX Business Meeting', '', '']));
+  assert.deepStrictEqual(dates().map(d => d[0]), [y + '/10/09', y + '/10/23']);
+  g.refreshMeetingIndexCache();
+  assert.deepStrictEqual(dates().map(d => d[0]), [y + '/10/09', y + '/10/23', y + '/11/06'], 'refreshMeetingIndexCache() で読み直す');
+  // スクリプトが書いたら控えも直す（カレンダーから足した行・資料を書いたセル）。シートは読み直さない
+  assert.ok(!g.mtgIndexEnsureRows_([{date: y + '/11/20', kind: 'RX Business Meeting'}]).error);
+  const stored = {file: {getUrl: () => 'https://drive.google.com/file/d/PDF00001/view', getName: () => '20261023_新FMT_RX Business Meeting用資料.pdf',
+    getId: () => 'PDF00001'}};
+  g.mtgWriteIndex_('新FMT', y + '/10/23', stored);
+  assert.deepStrictEqual(dates(), [[y + '/10/09', true], [y + '/10/23', true], [y + '/11/06', false], [y + '/11/20', false]]);
+  // 読み直しても同じ（控えとシートが合っている）
+  g.refreshMeetingIndexCache();
+  assert.deepStrictEqual(dates(), [[y + '/10/09', true], [y + '/10/23', true], [y + '/11/06', false], [y + '/11/20', false]]);
+});

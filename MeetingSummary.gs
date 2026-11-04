@@ -126,7 +126,11 @@ const MTG_OPTIONS = {
     fontSize: 9,                     // 字（太字・黒・上下中央）
     rowHeight: 38,                   // 会議日の行の高さ（px）
     tabColor: '#000000',
-    widths: {date: 83, kind: 119, combined: 158, sheet: 138}   // 列の幅（px）
+    widths: {date: 83, kind: 119, combined: 158, sheet: 138},   // 列の幅（px）
+    // 会議日の行の控え（ドキュメントのプロパティ。資料を作る画面などは、シートのセルを読まずにこれを読む。大勢が編集している間は、セルを読むたびに
+    // スプレッドシートの再計算を待たされ、画面の読み込みに数分かかったため。2026/11/04）。スクリプトがインデックスに書くたびに控えも直す。
+    // 手でインデックスの行を足した・消したときは refreshMeetingIndexCache() で読み直す
+    cacheKey: 'MTG_INDEX_CACHE'
   },
   // 時点コピー：スプレッドシート全体を別のスプレッドシート（タイトルは保存した日時と、いつ保存したか）にコピーする。保存するのは、本番の資料を作ったとき
   // （資料作成時）・基準を記録したとき（基準）・毎日（日次。installDailySheetCopy() で始める）。次の資料の「前回からの変化」は、前回の資料作成時の
@@ -2025,6 +2029,7 @@ function mtgWriteIndex_(name, meeting, stored, kind) {
         sheet.getRange(row, col).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText(fileName).setLinkUrl(url)
           .setTextStyle(SpreadsheetApp.newTextStyle().setForegroundColor('#000000').setUnderline(false).build()).build()]]);   // 黒・下線なし
       }
+      mtgIndexCacheUpdate_(meeting, rowKind, true);
       return {url: ss.getUrl() + '#gid=' + sheet.getSheetId(), title: o.sheet, chip};
     } finally {
       lock.releaseLock();
@@ -2106,7 +2111,10 @@ function mtgIndexEnsureRows_(entries) {
       const ss = SpreadsheetApp.getActiveSpreadsheet();
       const {sheet, layout} = mtgIndexPrepare_(ss);
       let added = 0;
-      entries.forEach(e => { if (mtgIndexRow_(sheet, layout, e.date, e.kind).added) added++; });
+      entries.forEach(e => {
+        if (mtgIndexRow_(sheet, layout, e.date, e.kind).added) added++;
+        mtgIndexCacheUpdate_(e.date, e.kind, false);
+      });
       return {added, existing: entries.length - added, url: ss.getUrl() + '#gid=' + sheet.getSheetId()};
     } finally {
       lock.releaseLock();
@@ -2118,27 +2126,87 @@ function mtgIndexEnsureRows_(entries) {
 
 /**
  * インデックスにある、会議名 kind の会議日（読むだけ）。[{date: 'yyyy/MM/dd', filled: その行に資料が書いてあるか}]（会議日の古い順。同じ日は1つ）。
- * 会議名が空の行（会議名の列ができる前の行）は RX Business Meeting の行とみなす。シートが無い・前の形式なら空
+ * 会議名が空の行（会議名の列ができる前の行）は RX Business Meeting の行とみなす。シートが無い・前の形式なら空。
+ * 会議日の行の控え（index.cacheKey）があればそれを読み、無ければシートから読んで控えを作る（シートのセルを読むと、大勢が編集している間は待たされるため）
  */
 function mtgIndexMeetings_(kind) {
   const o = MTG_OPTIONS.index;
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(o.sheet);
+  const cache = mtgIndexCacheRead_();
+  const rows = cache ? cache.rows : mtgIndexCacheSave_(mtgIndexRowsFromSheet_());
+  const kinds = mtgIndexKinds_(kind);
+  const byDate = new Map();
+  rows.forEach(r => {
+    if (r.kind ? kinds.indexOf(r.kind) < 0 : kind !== o.kind) return;
+    byDate.set(r.date, (byDate.get(r.date) || false) || !!r.filled);
+  });
+  return Array.from(byDate.keys()).sort().map(date => ({date, filled: byDate.get(date)}));
+}
+
+/** インデックスのシートの会議日の行 [{date, kind: 会議名の列の値（空もある）, filled}]（シートのセルを読む。シートが無い・前の形式なら空） */
+function mtgIndexRowsFromSheet_() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(MTG_OPTIONS.index.sheet);
   if (!sheet || sheet.getLastRow() < 2) return [];
   const layout = mtgIndexLayout_(sheet);
   if (!layout) return [];
-  const kinds = mtgIndexKinds_(kind);
   const width = Math.max(sheet.getLastColumn(), layout.date, layout.kind || 1);
   const lines = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
   const shown = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getDisplayValues();
-  const byDate = new Map();
+  const rows = [];
   lines.forEach((line, i) => {
     const date = mtgIndexDate_(line[layout.date - 1]);
-    const name = layout.kind ? String(line[layout.kind - 1] == null ? '' : line[layout.kind - 1]).trim() : '';
-    if (!date || (name ? kinds.indexOf(name) < 0 : kind !== o.kind)) return;
+    if (!date) return;
+    const kind = layout.kind ? String(line[layout.kind - 1] == null ? '' : line[layout.kind - 1]).trim() : '';
     const filled = shown[i].some((v, c) => c + 1 !== layout.date && c + 1 !== layout.kind && String(v).trim() !== '');
-    byDate.set(date, (byDate.get(date) || false) || filled);
+    rows.push({date, kind, filled});
   });
-  return Array.from(byDate.keys()).sort().map(date => ({date, filled: byDate.get(date)}));
+  return rows;
+}
+
+/** 会議日の行の控え {at, rows}（無い・読めなければ null） */
+function mtgIndexCacheRead_() {
+  try {
+    const value = PropertiesService.getDocumentProperties().getProperty(MTG_OPTIONS.index.cacheKey);
+    const cache = value ? JSON.parse(value) : null;
+    return cache && Array.isArray(cache.rows) ? cache : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** 会議日の行の控えを保存する（rows をそのまま返す） */
+function mtgIndexCacheSave_(rows) {
+  PropertiesService.getDocumentProperties().setProperty(MTG_OPTIONS.index.cacheKey, JSON.stringify({at: Date.now(), rows}));
+  return rows;
+}
+
+/**
+ * スクリプトがインデックスに書いたときに、控えも同じように直す（シートは読まない）。会議日 date・会議名 kind の行（前の版の会議名・空の行も同じ行）を、
+ * 今の会議名にし、filled なら資料ありにする。無ければ足す。控えが無ければ何もしない（次に読むときにシートから作る）
+ */
+function mtgIndexCacheUpdate_(date, kind, filled) {
+  const cache = mtgIndexCacheRead_();
+  if (!cache) return;
+  const kinds = mtgIndexKinds_(kind);
+  const row = cache.rows.find(r => r.date === date && (!r.kind || kinds.indexOf(r.kind) >= 0));
+  if (row) {
+    row.kind = kind;
+    row.filled = !!row.filled || !!filled;
+  } else {
+    cache.rows.push({date, kind, filled: !!filled});
+  }
+  mtgIndexCacheSave_(cache.rows);
+}
+
+/**
+ * 会議日の行の控えを、インデックスのシートから読み直す（エディタから実行する。インデックスの行を手で足した・消した・会議名を直したときに）。
+ * 資料を作る画面の会議日程・比べる時点は、この控えを読む
+ */
+function refreshMeetingIndexCache() {
+  const rows = mtgIndexCacheSave_(mtgIndexRowsFromSheet_());
+  const message = '「' + MTG_OPTIONS.index.sheet + '」の会議日の行（' + rows.length + '行）を読み直しました。資料を作る画面の会議日程は、これを使います。';
+  console.log(message);
+  const ui = mtgUiOrNull_();
+  if (ui) ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
 }
 
 /**
@@ -2234,6 +2302,7 @@ function rebuildBusinessMtgIndex() {
     return '・' + name + '：' + (found.decks.length ? found.decks.length + '件（' + found.decks.map(d => d.meeting).join('・') + '）' : '資料なし') +
       (errors.length ? '\n　※ ' + errors.join('\n　※ ') : '');
   });
+  mtgIndexCacheSave_(mtgIndexRowsFromSheet_());   // 作り直したシートから、会議日の行の控えも読み直す
   const message = '「' + o.sheet + '」シートに、資料のファイルを ' + written + '件書きました。' + (index ? index.url : '') + '\n\n' + lines.join('\n');
   console.log(message);
   ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);

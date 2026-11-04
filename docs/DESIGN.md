@@ -554,6 +554,10 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   RXシナリオ構成の列（`columns.scenario`）があれば、案件名の下に選んだシナリオを小さく出します（`scenarioColumn`。列が無いシートは今のまま）。
 - **列の見出しの別名と、資料に含めない列**（2026/10/29 から）：見出しが変わった列は `MTG_OPTIONS.columnAliases` の見出しでも探します（`mtgColumnIndex_`。必須項目は `mtgHeaderIndex_`）。
   変更の記録の列名も `mtgCanonicalLabel_` で `columns` の見出しにそろえてから読むので、見出しが変わる前後の記録をつなげて数えられます（受注月 → 受注月(yy/mm) の延期など）。
+  会議資料のインデックスの会議日の行は、ドキュメントのプロパティの控え（`index.cacheKey`。`mtgIndexMeetings_` が読む）を正とし、シートのセルは控えが無いときと
+  `refreshMeetingIndexCache()`・`rebuildBusinessMtgIndex()` のときだけ読む。書くとき（`mtgWriteIndex_`・`mtgIndexEnsureRows_`）は控えも同じように直す
+  （`mtgIndexCacheUpdate_`。シートは読み直さない）。大勢が編集している間は、セルの値を読むたびにスプレッドシートの再計算を待たされ（1回 80秒ほど）、
+  資料を作る画面の読み込みが4分を超えたため（シートの一覧などの情報は待たされない）。
   `MTG_OPTIONS.ignoreHeaders`（正規表現。今は FY別の売上）に当たる列の変更は、`mtgHistory_` で読み飛ばし、時点コピーとの比較（`mtgTrackedLabels_`）にも使いません。
   差分追跡は記録の仕組みなので、資料に出さない列も記録します（記録は書き換えない決まりのため、資料の側で除く）。
 - **RXシナリオ構成別の期待値**（`createBusinessMtgScenarioSummary()`。構成が未確定のあいだは事前資料とは別の試作の資料）：I列（2026/10/26 から。見出しはシートによって「RXシナリオ構成」か「RXシナリオ構成（サービス）」で、`columnAliases` でどちらも読む）はプルダウンの複数選択（「A, B」）なので、
