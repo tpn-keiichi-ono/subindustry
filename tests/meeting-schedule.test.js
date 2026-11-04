@@ -187,3 +187,47 @@ test('会議日程は「INDEX_会議資料」の控え（ドキュメントの�
   g.refreshMeetingIndexCache();
   assert.deepStrictEqual(dates(), [[y + '/10/09', true], [y + '/10/23', true], [y + '/11/06', false], [y + '/11/20', false]]);
 });
+
+test('「作成する」の途中・結果を控え、画面が読み込み直されても待って結果を出す（同じ人は作っている途中にもう一度作らない。止まったもの・古い結果は出さない）', () => {
+  const {gas, g} = setup();
+  const y = g.mtgParseDate_('1/1', new Date()).slice(0, 4);
+  gas.addSheet('INDEX_会議資料', [['日付', '会議名', '全サブインダストリー', '新FMT'], [y + '/10/23', 'RX Business Meeting', '', '']]);
+  const key = gas.get('MSCH_OPTIONS').runStateKey;
+  const props = g.PropertiesService.getUserProperties();
+  assert.strictEqual(g.getMeetingRunData('business', false).run, null, '作っていなければ何も出さない');
+
+  // 作り終えたら結果を控え、画面を開き直すと出す（ほかの種類の画面には出さない）
+  const result = g.runMeetingMaterials('business', false, y + '/10/23', ['新FMT'], false, '');
+  const run = plain(g.getMeetingRunData('business', false).run);
+  assert.deepStrictEqual([run.status, run.final, run.meeting, run.message], ['done', false, y + '/10/23', result.message]);
+  assert.match(run.started, /^\d{1,2}:\d{2}$/);
+  assert.strictEqual(g.getMeetingRunState('service'), null);
+
+  // 作っている途中（ほかの画面で押した・画面が読み込み直された）：もう一度押しても作らない。画面は途中の知らせを受け取って待つ
+  const now = Date.now();
+  props.setProperty(key, JSON.stringify({status: 'running', kind: 'business', final: false, meeting: y + '/10/23', at: now - 60000}));
+  assert.strictEqual(g.getMeetingRunData('business', false).run.status, 'running');
+  assert.throws(() => g.runMeetingMaterials('business', false, y + '/10/23', ['新FMT'], false, ''), /から資料を作っている途中です。終わるまでお待ちください/);
+  assert.strictEqual(JSON.parse(props.getProperty(key)).at, now - 60000, '途中の控えはそのまま');
+
+  // 途中のまま7分を過ぎたら、止まったとみなす（また作れる）
+  props.setProperty(key, JSON.stringify({status: 'running', kind: 'business', final: false, meeting: y + '/10/23', at: now - 8 * 60000}));
+  const stopped = g.getMeetingRunState('business');
+  assert.strictEqual(stopped.status, 'error');
+  assert.match(stopped.message, /途中で止まったようです/);
+  assert.ok(!g.runMeetingMaterials('business', false, y + '/10/23', ['新FMT'], false, '').error);
+
+  // 作れなかったときも控え、エラーはそのまま画面に返す
+  const real = g.mtgRunStart_;
+  g.mtgRunStart_ = () => { throw new Error('テストの失敗'); };
+  try {
+    assert.throws(() => g.runMeetingMaterials('business', false, y + '/10/23', ['新FMT'], false, ''), /テストの失敗/);
+  } finally {
+    g.mtgRunStart_ = real;
+  }
+  assert.deepStrictEqual([g.getMeetingRunState('business').status, g.getMeetingRunState('business').message], ['error', 'テストの失敗']);
+
+  // 終えてから30分を過ぎた結果は出さない
+  props.setProperty(key, JSON.stringify({status: 'done', kind: 'business', final: false, meeting: y + '/10/23', at: now - 40 * 60000, finishedAt: now - 31 * 60000, message: '済み'}));
+  assert.strictEqual(g.getMeetingRunState('business'), null);
+});

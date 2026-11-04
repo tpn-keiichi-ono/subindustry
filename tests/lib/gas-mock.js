@@ -65,8 +65,8 @@ function formatDate(date, timeZone, format) {
     hour: '2-digit', minute: '2-digit', second: '2-digit'
   }).formatToParts(date).forEach(p => { parts[p.type] = p.value; });
   const map = {yyyy: parts.year, yy: parts.year.slice(-2), MM: parts.month, M: String(Number(parts.month)), dd: parts.day, d: String(Number(parts.day)),
-    HH: parts.hour, mm: parts.minute, ss: parts.second};
-  return String(format).replace(/yyyy|yy|MM|M|dd|d|HH|mm|ss/g, t => map[t]);
+    HH: parts.hour, H: String(Number(parts.hour)), mm: parts.minute, ss: parts.second};
+  return String(format).replace(/yyyy|yy|MM|M|dd|d|HH|H|mm|ss/g, t => map[t]);
 }
 
 /* ---------------- RichTextValue / TextStyle ---------------- */

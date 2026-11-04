@@ -790,7 +790,9 @@ function mtgJobRun_(ss, job, started) {
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
       const summary = summaries[i];
+      const deckTimer = mschTimer_('スライドと PDF（' + summary.name + '）');
       const out = mtgExportDeck_(mtgFileName_(summary.name, job.meeting, job.final), mtgSlides_(summary), folder);
+      deckTimer.lap('スライドを作って PDF に保存');
       // 試作：その会議日の最初の試作の、入力内容のチェックの結果を覚える（同じ会議日の資料で、解消した件数を出す）
       if (!job.final && !plans[i].draft) {
         props.setProperty(o.draftKeyPrefix + summary.name, JSON.stringify({meeting: job.meeting, at: job.now, keys: summary.alerts.map(a => mtgHash_(a.key))}));
@@ -1591,22 +1593,31 @@ function mtgSummaries_(ss, names, now, final, meeting, point) {
   });
   const windowStart = new Date(Math.min.apply(null,
     plans.map(p => p.since.getTime()).concat([now.getTime() - o.lookbackDays * 86400000])));
-  const context = {
-    now,
-    meeting,
-    windowStart,
-    trackedSince: mtgLogStart_(ss),
-    log: mtgReadLog_(ss, windowStart),
-    snapshots: mtgReadSnapshots_(ss, windowStart),
-    statusTable: mtgReadStatusTable_(ss),
-    credentials: hsCredentialIndex_(ss)
-  };
+  // 手順ごとの時間を実行ログに残す（大勢が編集している間は、シートを読むたびに待たされる。どこで時間がかかったかを「実行数」のログで確かめる）
+  const timer = mschTimer_('資料の中身を作る（' + names.join('・') + '）');
+  timer.lap('前回の資料の記録');
+  const context = {now, meeting, windowStart};
+  context.trackedSince = mtgLogStart_(ss);
+  context.log = mtgReadLog_(ss, windowStart);
+  timer.lap('変更の記録（' + context.log.length + '件）');
+  context.snapshots = mtgReadSnapshots_(ss, windowStart);
+  timer.lap('変更時点スナップショット');
+  context.statusTable = mtgReadStatusTable_(ss);
+  timer.lap('ステータスの定義');
+  context.credentials = hsCredentialIndex_(ss);
+  timer.lap('クレデンシャル');
   // 前回の時点コピーがあれば、前回からの変化はそれと比べる（開けなければ、変更の記録から出して知らせる）
   const copies = plans.map(p => (p.previous && p.previous.copy ? mtgOpenCopy_(p.previous.copy, p.name) : null));
-  const summaries = plans.map((p, i) => mtgSummarize_(ss, p.name, Object.assign({
-    since: p.since, previous: p.previous, legacy: p.legacy, baseline: p.baseline, draft: p.draft, final,
-    copy: copies[i] && copies[i].table ? copies[i] : null, copyError: copies[i] && copies[i].error || ''
-  }, context)));
+  timer.lap('前回の時点コピー');
+  const summaries = plans.map((p, i) => {
+    const summary = mtgSummarize_(ss, p.name, Object.assign({
+      since: p.since, previous: p.previous, legacy: p.legacy, baseline: p.baseline, draft: p.draft, final,
+      copy: copies[i] && copies[i].table ? copies[i] : null, copyError: copies[i] && copies[i].error || ''
+    }, context));
+    timer.lap('「' + p.name + '」のシートを読んでまとめる');
+    return summary;
+  });
+  console.log('資料の中身を作る：' + timer.text());
   return {plans, summaries};
 }
 

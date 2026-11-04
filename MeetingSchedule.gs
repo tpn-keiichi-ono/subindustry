@@ -25,7 +25,13 @@ const MSCH_OPTIONS = {
   },
   excludeWords: ['中止', 'キャンセル'],   // 予定の名前にこの言葉を含む予定は読まない（会議が無くなったとき）
   dialogTemplate: 'MeetingRunDialog',
-  dialogSize: {width: 640, height: 600}
+  dialogSize: {width: 640, height: 600},
+  // 画面の「作成する」の状態（作っている途中・結果）を、作った人のユーザーのプロパティに控える。画面が読み込み直されて初めの画面に戻っても、
+  // 作っている途中なら待って結果を出し、終わっていれば結果を出す（同じ資料を2回作らないように）
+  runStateKey: 'MSCH_RUN_STATE',
+  runningMinutes: 7,       // 作り始めてからこの分数を過ぎても「作っている途中」のままなら、止まったとみなす（1回の実行は6分まで）
+  resultMinutes: 30,       // 作り終えてからこの分数のあいだは、画面を開くと結果を出す
+  pollSeconds: 10          // 作っている途中のとき、画面が結果を問い合わせる間隔
 };
 
 /* ---------------- エディタから実行する ---------------- */
@@ -180,8 +186,11 @@ function getMeetingRunData(kind, final) {
   }
   console.log('資料を作る画面の読み込み：' + timer.text());
   const titles = {business: '会議サマリ（' + meetingName + '）', combined: '統合版（' + MTG_OPTIONS.combined.name + '）', service: meetingName + ' の事前資料'};
+  // 直前の「作成する」（画面が読み込み直されたとき・開き直したときに、作っている途中なら待ち、終わっていれば結果を出す）
+  const run = getMeetingRunState(kind);
   return {kind, final: !!final, title: titles[kind] + (final ? 'を作る' : 'を試しに作る'), meetingName,
-    color: service ? SMTG_OPTIONS.colors.green : MTG_OPTIONS.colors.cover, meetings, selected, sheets, points, canPickTime: !service, job};
+    color: service ? SMTG_OPTIONS.colors.green : MTG_OPTIONS.colors.cover, meetings, selected, sheets, points, canPickTime: !service, job,
+    run, pollSeconds: MSCH_OPTIONS.pollSeconds};
 }
 
 /**
@@ -265,12 +274,76 @@ function checkMeetingRun(kind, final, meeting, names, point) {
   return {text: mtgRunCheckText_(!!final, names, date, resolved)};
 }
 
-/** 資料を作る（google.script.run から呼ぶ。画面の「作成する」）。cancelJob なら作っている途中の仕事をやめて作る。{message: 終わりの知らせ} */
+/**
+ * 資料を作る（google.script.run から呼ぶ。画面の「作成する」）。cancelJob なら作っている途中の仕事をやめて作る。{message: 終わりの知らせ}。
+ * 作っている途中・結果を控える（mschRunState_）。同じ人が作っている途中なら作らない（画面が読み込み直されたあとに、もう一度押されても2回作らない）
+ */
 function runMeetingMaterials(kind, final, meeting, names, cancelJob, point) {
   mschCheckKind_(kind);
   const date = mschCheckInput_(kind, meeting, names);
-  if (kind === 'service') return {message: smtgRunStart_(!!final, date, names, !!cancelJob, smtgCheckPoint_(point))};
-  const resolved = mtgResolvePoint_(point);
-  if (kind === 'combined') return {message: mtgCombinedStart_(date, resolved)};
-  return {message: mtgRunStart_(!!final, date, names, !!cancelJob, resolved)};
+  const running = mschRunState_();
+  if (running && running.status === 'running') {
+    throw new Error(Utilities.formatDate(new Date(running.at), Session.getScriptTimeZone(), 'H:mm') +
+      ' から資料を作っている途中です。終わるまでお待ちください（画面を開き直すと、作っている途中の知らせか結果が出ます）。');
+  }
+  const base = {kind, final: !!final, meeting: date, at: Date.now()};
+  mschRunStateSave_(Object.assign({status: 'running'}, base));
+  try {
+    let message;
+    if (kind === 'service') {
+      message = smtgRunStart_(!!final, date, names, !!cancelJob, smtgCheckPoint_(point));
+    } else {
+      const resolved = mtgResolvePoint_(point);
+      message = kind === 'combined' ? mtgCombinedStart_(date, resolved) : mtgRunStart_(!!final, date, names, !!cancelJob, resolved);
+    }
+    mschRunStateSave_(Object.assign({status: 'done', message, finishedAt: Date.now()}, base));
+    return {message};
+  } catch (error) {
+    mschRunStateSave_(Object.assign({status: 'error', message: String(error && error.message || error), finishedAt: Date.now()}, base));
+    throw error;
+  }
+}
+
+/**
+ * 画面が結果を問い合わせる（google.script.run から呼ぶ。読み込み直された画面が、作っている途中のときに MSCH_OPTIONS.pollSeconds ごとに）。
+ * その資料の種類の控え（mschRunState_）を {status, final, meeting, message, started: 作り始めた時刻「H:mm」, finished: 終えた時刻} にしたもの。無ければ null
+ */
+function getMeetingRunState(kind) {
+  mschCheckKind_(kind);
+  const state = mschRunState_();
+  if (!state || state.kind !== kind) return null;
+  const time = ms => ms ? Utilities.formatDate(new Date(ms), Session.getScriptTimeZone(), 'H:mm') : '';
+  return {status: state.status, final: !!state.final, meeting: state.meeting || '', message: state.message || '', started: time(state.at), finished: time(state.finishedAt)};
+}
+
+/**
+ * 「作成する」の控え {status: 'running'|'done'|'error', kind, final, meeting, at: 作り始めた時刻, message, finishedAt}（作った人のユーザーのプロパティ）。
+ * 作っている途中のまま runningMinutes を過ぎたものは error（1回の実行の上限で止まった）にし、終わってから resultMinutes を過ぎたものは null
+ */
+function mschRunState_() {
+  const o = MSCH_OPTIONS;
+  let state = null;
+  try {
+    const value = PropertiesService.getUserProperties().getProperty(o.runStateKey);
+    state = value ? JSON.parse(value) : null;
+  } catch (_) {
+    return null;
+  }
+  if (!state || !state.at) return null;
+  const now = Date.now();
+  if (state.status === 'running') {
+    if (now - state.at <= o.runningMinutes * 60000) return state;
+    state = Object.assign({}, state, {status: 'error', finishedAt: state.at + o.runningMinutes * 60000,
+      message: '資料を作っている途中で止まったようです（1回の実行の上限の6分を過ぎた・画面を閉じた など）。作られた資料は、出力先のフォルダで確かめてください。'});
+  }
+  return now - (state.finishedAt || state.at) <= o.resultMinutes * 60000 ? state : null;
+}
+
+/** 「作成する」の控えを保存する（控えが書けなくても資料作りは止めない） */
+function mschRunStateSave_(state) {
+  try {
+    PropertiesService.getUserProperties().setProperty(MSCH_OPTIONS.runStateKey, JSON.stringify(state));
+  } catch (error) {
+    console.warn('作成の状態を控えられませんでした：' + (error && error.message || error));
+  }
 }
