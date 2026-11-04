@@ -3534,7 +3534,7 @@ function mtgAlerts_(table, context, info) {
   const active = deals.filter(d => d.kind === 'active');
   const out = [];
   const push = (type, d, text) => out.push({type, key: type + '|' + d.key, dealKey: d.key, customer: d.customer, project: d.project,
-    text, amount: d.amount, owner: d.owner || ''});
+    text, amount: d.amount, owner: d.owner || '', scenarios: d.scenarios || []});
   const month = mtgMonthIndex_(mtgMonth_(today));
   const label = m => m.y + '/' + m.m;
 
@@ -5801,19 +5801,13 @@ function mtgFocusSlide_(s) {
   // 活動状況の列を広く（長い文は小さくし、それでも入らなければ行を伸ばして次のページへ。全文を載せる）
   // 該当事項は判定の中身を文で書く（単語のラベルだけでは何を見て判定したか分からないため。2026/10/19 から）ので広く
   const columns = mtgColumns_([106, 62, 96, 62, 120, 104, 120], 4);
-  const head = mtgHeadRow_(columns, ['得意先／案件名', '期待値／\n想定売上', 'ステータス\n（滞留日数）', '受注月', '活動状況', '活動における課題',
+  const head = mtgHeadRow_(columns, [mtgDealHead_(s), '期待値／\n想定売上', 'ステータス\n（滞留日数）', '受注月', '活動状況', '活動における課題',
     '該当事項']);
   const rows = [head];
   const G = MTG_OPTIONS.gapText;
   const lack = s.gaps || {};
-  // RXシナリオ構成の列があれば、案件名の下に小さな字で（複数は「・」でつなぐ）
-  const dealCell = d => {
-    const cell = mtgDealCell_(d, columns[0]);
-    if (!s.scenarioColumn) return cell;
-    const line = d.scenarios && d.scenarios.length ? d.scenarios.join('・') : 'RXシナリオ：' + MTG_OPTIONS.blankText;
-    return Object.assign(cell, {text: cell.text + '\n' + mtgWrap_(line, columns[0], 7.5, 1)[0], lines: 3,
-      parts: cell.parts.concat([{size: 7.5, color: c.muted}])});
-  };
+  // RXシナリオ構成の列があれば、案件名の下に小さな字でシナリオの番号（mtgDealScenarioCell_）
+  const dealCell = d => mtgDealScenarioCell_(s, d, columns[0]);
   s.focus.forEach(d => rows.push(mtgRow_(columns, [
     dealCell(d),
     // 期待値は大きな緑の字。空なら「未入力」を本文の大きさ・グレーで（数のように見せない）。列が無ければ灰色のセルに「データなし」
@@ -6121,9 +6115,9 @@ function mtgAppendixStalled_(s) {
         (lack.amount ? G : mtgAmount_(k.stalledAmount) + '百万円') + (blankAmount ? '。想定売上未入力の ' + blankAmount + '件を除く' : '') + '）。\n' +
         mtgQuietLabel_(s) + ' ' + k.stalledQuiet + '件。' + (pending ? 'ほかの案件は、' + pending : ''),
     columns,
-    head: ['得意先／案件名', '想定\n売上', '期待値', 'ステータス', '滞留日数', '受注月', '延期\n回数', '責任者', '活動における課題', '活動状況（最新）'],
+    head: [mtgDealHead_(s), '想定\n売上', '期待値', 'ステータス', '滞留日数', '受注月', '延期\n回数', '責任者', '活動における課題', '活動状況（最新）'],
     rows: s.stalled.map(d => [
-      mtgDealCell_(d, columns[0], MTG_SLIDE.appendixSize),
+      mtgDealScenarioCell_(s, d, columns[0], MTG_SLIDE.appendixSize),
       mtgFieldCell_(s, 'amount', mtgAmount_(d.amount), {fill: c.white, align: 'END'}),
       mtgFieldCell_(s, 'weighted', mtgAmount_(d.weighted), {fill: c.white, align: 'END'}),
       {text: mtgStatusLines_(d.status || MTG_OPTIONS.blankText, columns[3], MTG_SLIDE.appendixSize), lines: 2, fill: c.white},
@@ -6253,7 +6247,7 @@ function mtgAppendixAlerts_(s) {
       });
       rows.push([
         {text: owner, lines: 2, bold: true, color: c.ink, fill: c.greenSoft, align: 'CENTER'},
-        Object.assign(mtgDealCell_(list[0], columns[1], size), {fill: c.white}),
+        Object.assign(mtgDealScenarioCell_(s, list[0], columns[1], size), {fill: c.white}),
         {text: types.join('\n'), lines: types.length, bold: true, color: c.ink, fill: c.white},
         {text: texts.join('\n'), lines: texts.length, fill: c.white},
         {text: list[0].dealKey === '' ? '—' : mtgAmount_(list[0].amount), fill: c.white, align: 'END'}   // 得意先の予定は案件の金額が無い（対象外）
@@ -6264,7 +6258,7 @@ function mtgAppendixAlerts_(s) {
     title: MTG_TITLES.alerts,
     lead: '入力内容の確認事項は ' + s.alerts.length + '項目' + (s.alerts.length ? '（' + s.kpi.alertDeals + '案件）' : '') + '。',
     columns,
-    head: ['責任者', '得意先／案件名', '項目', '内容', '想定\n売上'],
+    head: ['責任者', mtgDealHead_(s), '項目', '内容', '想定\n売上'],
     rows,
     empty: {kind: 'none'}
   });
@@ -6426,6 +6420,26 @@ function mtgDealCell_(item, width, size) {
   const project = item.project || (item.dealKey === '' ? '（得意先の予定）' : '（案件名未入力）');
   return {text: mtgWrap_(item.customer || '（得意先未入力）', width, pt, 1)[0] + '\n' + mtgWrap_(project, width, pt, 1)[0],
     size: pt, parts: [{bold: true}, {}], lines: 2, color: c.ink, fill: c.greenSoft};
+}
+
+/** 得意先／案件名の列の見出し（RXシナリオ構成の列があれば「／シナリオNo」も。案件名の下にシナリオの番号を書く表） */
+function mtgDealHead_(s) {
+  return s.scenarioColumn ? '得意先／案件名／\nシナリオNo' : '得意先／案件名';
+}
+
+/**
+ * 得意先・案件名のセルの3行目に、選んだシナリオの番号を小さな字で（「01-05・01-09」。名前は長いので番号だけ。2026/11/04）。
+ * RXシナリオ構成の列が無ければ2行のまま。シナリオが空なら「未入力」。得意先の予定（案件に結び付かない）は書かない
+ */
+function mtgDealScenarioCell_(s, d, width, size) {
+  const c = MTG_OPTIONS.colors;
+  const cell = mtgDealCell_(d, width, size);
+  if (!s.scenarioColumn || d.dealKey === '') return cell;
+  const small = Math.min(7.5, (size || MTG_SLIDE.bodySize) - 1);
+  const numbers = (d.scenarios || []).map(mtgScenarioNumber_);
+  const line = numbers.length ? numbers.join('・') : MTG_OPTIONS.blankText;
+  return Object.assign(cell, {text: cell.text + '\n' + mtgWrap_(line, width, small, 1)[0], lines: 3,
+    parts: cell.parts.concat([{size: small, color: c.muted}])});
 }
 
 /**

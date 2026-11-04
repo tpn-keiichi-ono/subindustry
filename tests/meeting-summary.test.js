@@ -3074,7 +3074,7 @@ test('createBusinessMtgScenarioSummary：シートを選び、確かめてから
   assert.strictEqual(props.getProperty('MTG_MEETINGS_新FMT'), before, '会議日の記録は変えない');
 });
 
-test('期待値上位案件：RXシナリオ構成の列があれば、案件名の下に小さく選んだシナリオ（空なら「RXシナリオ：未入力」）。列が無ければ今のまま', () => {
+test('期待値上位案件・Appendix（停滞案件・入力内容のチェック）：RXシナリオ構成の列があれば、案件名の下に小さくシナリオの番号（空なら「未入力」）と、見出しに「／シナリオNo」。列が無ければ今のまま', () => {
   const {gas, g} = setup({edits: false});
   const page = s => plain(g.mtgSlides_(s)).find(sl => sl.title === '期待値上位案件の状況・課題').elements.find(el => el.type === 'table');
   const before = page(summarize(g, '新FMT'));
@@ -3085,7 +3085,26 @@ test('期待値上位案件：RXシナリオ構成の列があれば、案件名
   const cells = page(s).rows.slice(1).map(r => r.cells[0]);
   const line = customer => cells.find(cell => cell.text.startsWith(customer)).text.split('\n')[2];
   assert.deepStrictEqual([line('E社'), line('A社'), line('C社')], ['Y・Z', 'X・Y', 'X']);
-  assert.strictEqual(line('F社'), 'RXシナリオ：未入力', '列の幅に入る短さ');
+  assert.strictEqual(line('F社'), '未入力');
+  assert.strictEqual(page(s).rows[0].cells[0].text, '得意先／案件名／\nシナリオNo', '見出しにも「／シナリオNo」');
+  assert.strictEqual(before.rows[0].cells[0].text, '得意先／案件名', '列が無ければ見出しも今のまま');
+  // 番号だけ（「01-05.バックオフィス業務PF」→「01-05」）
+  assert.deepStrictEqual(['01-05.バックオフィス業務PF', '01-04.顧客情報活用パッケージ'].map(g.mtgScenarioNumber_), ['01-05', '01-04']);
+  const cell = g.mtgDealScenarioCell_(s, {customer: 'ユニクロ', project: 'チラシ制作事務局', scenarios: ['01-05.バックオフィス業務PF', '01-09.顧客分析パッケージ']}, 120);
+  assert.strictEqual(cell.text, 'ユニクロ\nチラシ制作事務局\n01-05・01-09');
+  // Appendix：停滞案件・入力内容のチェックの表も同じ
+  const slides = plain(g.mtgSlides_(s));
+  const T = gas.get('MTG_TITLES');
+  let checked = 0;
+  [T.stalled, T.alerts].forEach(title => {
+    const table = slides.filter(sl => String(sl.title).indexOf(title) === 0).map(sl => sl.elements.find(el => el.type === 'table')).filter(t => t && t.rows.length > 1)[0];
+    if (!table) return;
+    checked++;
+    const k = table.rows[0].cells.findIndex(x => /^得意先／案件名/.test(x.text));
+    assert.strictEqual(table.rows[0].cells[k].text, '得意先／案件名／\nシナリオNo', title + 'の見出し');
+    table.rows.slice(1).forEach(r => assert.strictEqual(r.cells[k].text.split('\n').length, 3, title + 'の行：' + r.cells[k].text));
+  });
+  assert.ok(checked >= 1, 'Appendix の表を確かめた');
 });
 
 /* ---------------- 出力先（スクリプトのプロパティ） ---------------- */
