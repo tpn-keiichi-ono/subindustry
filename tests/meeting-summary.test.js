@@ -3338,9 +3338,10 @@ test('RXシナリオのポートフォリオのスライド：パイプライン
   [progress, heat, map].forEach(slide => assert.ok(inside(slide), slide.title + '：中身は見出しの下から出典の線の上まで'));
 
   // ① 期待値の横棒（確度別）。期待値の大きい順（未設定は最後）・列は 想定売上・期待値・シナリオ金額・件数・得意先・確度A・B（期待値のうち A・B）
-  assert.deepStrictEqual(roleOf(progress, 'portfolio-head').map(el => el.text), ['想定売上', '期待値', 'シナリオ金額', '件数', '得意先', '確度A・B']);
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-head').map(el => el.text), ['想定売上', '期待値', '前回比', 'シナリオ金額', '件数', '得意先', '確度A・B']);
   assert.deepStrictEqual(roleOf(progress, 'portfolio-name').map(el => el.text), ['ID-POS分析', 'サイネージ', '物流・SCM', '未設定']);
   assert.deepStrictEqual(roleOf(progress, 'portfolio-value').slice(0, 6).map(el => el.text), ['130', '105', '50', '2件', '1社', '86%']);
+  assert.ok(roleOf(progress, 'portfolio-delta').every(el => el.text === 'データなし'), '比べる時点コピーが無ければ前回比は「データなし」');
   assert.strictEqual(roleOf(progress, 'portfolio-value')[5].color, o.colors.greenText, '確度A・B が 50% 以上は緑の字');
   assert.ok(roleOf(progress, 'portfolio-value')[1].bold, '期待値の列は太字（横棒と同じ値）');
   // 値のプロット：棒の右に期待値の合計、棒の中に確度ごとの期待値（入る幅のときだけ。A・B の上は白の字）
@@ -3349,13 +3350,13 @@ test('RXシナリオのポートフォリオのスライド：パイプライン
   assert.deepStrictEqual(segs.slice(0, 2).map(el => [el.text, el.color]), [['90', o.colors.white], ['15', o.colors.ink]]);
   const bars = roleOf(progress, 'portfolio-bar');
   assert.ok(Math.abs(bars[0].w / bars[1].w - 90 / 15) < 0.01, '棒の長さは期待値');
-  assert.match(pLead(progress), /^進行中の期待値 163百万円（想定売上 250百万円）・案件 5件を、RXシナリオ構成ごとに確度別に表示（期待値の大きい順）。最大は ID-POS分析（105）/);
-  assert.match(pLead(progress), /複数のシナリオを選んだ 1件は選んだ数で等分。未設定は 1件。$/);
+  assert.match(pLead(progress), /^進行中の期待値 163百万円・案件 5件を、RXシナリオ構成ごとに確度別に表示（期待値の大きい順）。最大は ID-POS分析（105）/);
+  assert.match(pLead(progress), /複数のシナリオを選んだ 1件は選んだ数で等分。未設定は 1件。前回比はデータなし（比べる時点コピーが無い）。$/);
   assert.strictEqual(progress.note, '※ 按分のため、シナリオの値を足しても合計と合わないことがあります');
 
   // ② 行：売上の大きい順に2社と「その他 N社」（色を付けない）。列：シナリオ（売上の大きい順）と未設定、その下に年度（FY26・FY27）。セルの確度は書かない
   assert.deepStrictEqual(roleOf(heat, 'heat-head').map(el => el.text.replace(/\n/g, '')), ['得意先', 'ID-POS分析', 'サイネージ', '物流・SCM', '未設定',
-    '合計FY26〜27／シナリオ金額']);
+    '合計FY26〜27／シナリオ金額', '前回比（FY26〜27）']);
   assert.deepStrictEqual(roleOf(heat, 'heat-year').map(el => el.text), ['FY26', 'FY27', 'FY26', 'FY27', 'FY26', 'FY27', 'FY26', 'FY27']);
   assert.deepStrictEqual(roleOf(heat, 'heat-name').map(el => el.text), ['A社', 'C社', 'その他 2社']);
   // A社：ID-POS分析 FY26 60・FY27 5、サイネージ FY26 10（FY27 は 0 なので数は書かず色だけ）。C社：未設定 FY26 5
@@ -3375,11 +3376,11 @@ test('RXシナリオのポートフォリオのスライド：パイプライン
   assert.deepStrictEqual(roleOf(heat, 'heat-foot-amount').map(el => el.text), ['50', '20', '5', '0']);
   assert.strictEqual(roleOf(heat, 'heat-foot-name')[0].text, '合計（按分）\nシナリオ金額');
   assert.strictEqual(roleOf(heat, 'heat-foot-total')[0].text, '83／75');
-  assert.match(pLead(heat), /^得意先 × RXシナリオ構成の年度別売上（FY26・FY27。進行中・按分）。上位 2社と、その他 2社。空白のセルは、.*合計の右はシナリオ金額（サービスパッケージ合算）。$/);
+  assert.match(pLead(heat), /^得意先 × RXシナリオ構成の年度別売上（FY26〜27。進行中・按分）。上位 2社と、その他 2社。空白のセルは、.*合計の右はシナリオ金額（サービスパッケージ合算）。前回比はデータなし（比べる時点コピーが無い）。$/);
   // 凡例：色の濃さ（少ない → 多い（いちばん大きい値））と、セルの値の意味（シナリオごとの売上）
   assert.deepStrictEqual(roleOf(heat, 'heat-legend').map(el => el.text), ['少ない', '多い（60）']);
   assert.strictEqual(roleOf(heat, 'heat-legend-swatch').length, 5);
-  assert.match(roleOf(heat, 'heat-note')[0].text, /^セルの値＝その得意先・シナリオの売上（FY26・FY27の前半期＋後半期。複数シナリオは按分。百万円）。.*「その他」の行は色を付けない/);
+  assert.match(roleOf(heat, 'heat-note')[0].text, /^セルの値＝その得意先・シナリオの売上（各年度の前半期＋後半期。複数シナリオは按分。百万円）。空白は案件の無い組み合わせ。「その他」は色なし。$/);
 
   // ③ 象限の背景（4色）・名前・点線・円（件数）・右の表（見出しと象限の帯）・円の大きさの凡例。未設定は図に含めない
   const Q = gas.get('MTG_QUADRANTS');
@@ -3390,7 +3391,9 @@ test('RXシナリオのポートフォリオのスライド：パイプライン
   assert.deepStrictEqual(roleOf(map, 'map-bubble').map(el => el.shape), ['ELLIPSE', 'ELLIPSE', 'ELLIPSE']);
   // 円には番号（今年度の売上の大きい順）だけを書き、名前は右の表に全文（名前どうしが図の中で重ならないように）
   assert.deepStrictEqual(roleOf(map, 'map-number').map(el => el.text), ['1', '2', '3']);
-  assert.deepStrictEqual(roleOf(map, 'map-table-head').map(el => el.text), ['No.', 'シナリオ', 'FY26〜27', '確度', '件数']);
+  assert.deepStrictEqual(roleOf(map, 'map-table-head').map(el => el.text), ['No.', 'シナリオ', 'FY26〜27', '前回比', '確度', '件数']);
+  assert.ok(roleOf(map, 'map-table-delta').every(el => el.text === 'データなし'));
+  assert.match(map.note, /※ 前回比はデータなし（比べる時点コピーが無い）/);
   assert.ok(roleOf(map, 'map-table-head').every(el => !el.fill), '見出しは塗らない（上下の罫線）');
   assert.deepStrictEqual(roleOf(map, 'map-table-quadrant').map(el => el.text), ['伸ばす', 'てこ入れ', '刈り取り', '見直し']);
   assert.deepStrictEqual(roleOf(map, 'map-table-band').map(el => el.fill), plain(Q.map(q => q.bg)), '帯は図の背景と同じ色');
@@ -3473,7 +3476,7 @@ test('RXシナリオのポートフォリオ：列が無い・進行中の案件
   const full = plain(gas5.global.mtgPortfolioSlides_(gas5.global.mtgPortfolioOf_(table5.deals, new Date('2026-11-04T12:00:00+09:00'), table5)));
   const joined = el => el.text.replace(/\n/g, '');
   assert.deepStrictEqual(roleOf(full[0], 'portfolio-name').map(joined).sort(), long.slice().sort(), '① の名前');
-  assert.deepStrictEqual(roleOf(full[1], 'heat-head').slice(1, -1).map(joined).sort(), long.slice().sort(), '② の見出し');
+  assert.deepStrictEqual(roleOf(full[1], 'heat-head').slice(1, -2).map(joined).sort(), long.slice().sort(), '② の見出し');
   assert.deepStrictEqual(roleOf(full[2], 'map-table-cell').filter((el, i, list) => long.indexOf(joined(el)) >= 0).map(joined).sort(), long.slice().sort(), '③ の表');
   assert.ok(!full.some(sl => sl.elements.some(el => /…/.test(el.text || ''))), 'どこも「…」で切らない');
   // 2行にするときは、区切り（「.」・中黒）の後ろで分けて両方が1行に入るなら、そこで分ける
@@ -3530,4 +3533,55 @@ test('前回から変化のある案件：責任者の列の代わりに先方�
   assert.strictEqual(aRow[7].text.replace(/\n/g, ''), 'ジャパンマーケティング部インストアメディア推進グループ', '部門名は全文');
   assert.strictEqual(aRow[8].text.replace(/\n/g, ''), 'シニアマネージャー兼グループリーダー', '役職は全文');
   assert.strictEqual(at.columns.reduce((a, b) => a + b, 0), gas.get('MTG_SLIDE').w);
+});
+
+test('RXシナリオのポートフォリオの前回比：前回の時点コピーの案件と比べる。① 期待値の前回比と棒の印、② 得意先の前回比と増えた組み合わせの枠、③ 前回の位置の点線の円と表の前回比', () => {
+  const gas = createGas();
+  const g = gas.global;
+  const S = gas.get('MTG_SLIDE');
+  const o = gas.get('MTG_OPTIONS');
+  const now = new Date('2026-11-04T12:00:00+09:00');
+  const sheet = portfolioSheet(gas, PORTFOLIO_DEALS.concat([['E社', '物流・SCM', 'B-選定中(70%)', '20', '14', '5', '3', '', '']]));
+  const table = g.mtgReadDeals_(sheet, gas.get('DIFF_RULES')['新FMT']);
+  // 前回（時点コピー）：A社の ID-POS分析だけ（期待値 60・売上 FY26 30）と、B社のサイネージ（期待値 8）。今は ID-POS分析・サイネージ・物流・SCM・未設定
+  const gasPrev = createGas();
+  const prevSheet = portfolioSheet(gasPrev, [['A社', 'ID-POS分析', 'A-クロージング(90%)', '100', '60', '40', '20', '10', ''],
+    ['B社', 'サイネージ', 'D-初期提案(20%)', '40', '8', '10', '', '', '']]);
+  const prevTable = gasPrev.global.mtgReadDeals_(prevSheet, gasPrev.get('DIFF_RULES')['新FMT']);
+  const p = g.mtgPortfolioWithPrevious_(g.mtgPortfolioOf_(table.deals, now, table), {table: prevTable}, {previous: null, now, copyError: ''}, null);
+  assert.deepStrictEqual([p.vs, p.previousGap, plain(p.previous.years)], ['前回比', '', ['26', '27']], '前回も今と同じ年度で数える');
+  const [progress, heat, map] = plain(g.mtgPortfolioSlides_(p));
+  const inside = slide => slide.elements.every(el => el.x >= 0 && el.x + (el.w || 0) <= S.width + 0.01 && el.y >= S.top - 30 && el.y + (el.h || 0) <= S.bottom + 0.01);
+  [progress, heat, map].forEach(slide => assert.ok(inside(slide), slide.title));
+  // ① 期待値の前回比：ID-POS分析 105 − 60 = +45、サイネージ 23 − 8 = +15、前回に無いシナリオは「新規」。前回の期待値の印（細い縦線）
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-delta').map(el => [el.text, el.color]), [['+45', o.colors.greenText], ['+15', o.colors.greenText],
+    ['新規', o.colors.greenText], ['新規', o.colors.greenText]]);
+  assert.strictEqual(roleOf(progress, 'portfolio-prev').length, 2, '前回にあったシナリオだけ印');
+  const bars = roleOf(progress, 'portfolio-bar');
+  const idposPrev = roleOf(progress, 'portfolio-prev')[0];
+  assert.ok(Math.abs((idposPrev.x + 0.75 - bars[0].x) / (bars[0].w + bars[1].w) - 60 / 105) < 0.01, '印の位置は前回の期待値');
+  assert.match(pLead(progress), /^進行中の期待値 163百万円（前回比 \+95）・案件 5件/);
+  assert.ok(roleOf(progress, 'legend').some(el => el.text === '前回の期待値'));
+  // ② 得意先の前回比（売上の合計の増減）と、前回から増えた組み合わせ（A社のサイネージ・C社の未設定は前回に無い）の枠
+  o.portfolio.heatRows = 2;
+  const heat2 = plain(g.mtgPortfolioHeatmapSlide_(p, g.mtgPortfolioTotals_(p), g.mtgPortfolioTotals_(p.previous)));
+  assert.deepStrictEqual(roleOf(heat2, 'heat-delta').map(el => el.text), ['+45', '+5', '+3'], 'A社 75 − 30、C社 5 − 0、その他（B社・E社）3 − 0');
+  assert.strictEqual(roleOf(heat2, 'heat-foot-delta')[0].text, '+53');
+  assert.strictEqual(roleOf(heat2, 'heat-new').length, 2, 'A社のサイネージ・C社の未設定（上位の得意先だけ）');
+  assert.ok(roleOf(heat2, 'heat-new').every(el => el.line === gas.get('MTG_NEW_COLOR') && !el.fill));
+  assert.match(roleOf(heat2, 'heat-note')[0].text, /オレンジの枠は前回から増えた組み合わせ/);
+  assert.match(pLead(heat2), /売上の合計は前回比 \+53。/);
+  // ③ 前回の位置の点線の円（前回にあったシナリオで、位置が変わったもの）と、表の前回比（売上の増減。前回に無ければ「新規」）
+  assert.ok(roleOf(map, 'map-prev').length >= 1 && roleOf(map, 'map-prev').every(el => el.dash && !el.fill && el.shape === 'ELLIPSE'));
+  assert.deepStrictEqual(roleOf(map, 'map-table-head').map(el => el.text), ['No.', 'シナリオ', 'FY26〜27', '前回比', '確度', '件数']);
+  assert.deepStrictEqual(roleOf(map, 'map-table-delta').map(el => el.text), ['+35', '+10', '新規']);
+  roleOf(map, 'map-table-head').forEach(el => assert.ok(g.mtgTextWidth_(el.text, el.size) <= el.w - S.padX, '表の見出しは1行：' + el.text));
+  assert.match(roleOf(map, 'map-legend-prev')[0].text, /^点線の円＝前回の位置/);
+  // 比べる時点が基準・選んだ時点なら、列の見出しは「10/17比」など
+  const chosen = g.mtgPortfolioWithPrevious_(g.mtgPortfolioOf_(table.deals, now, table), {table: prevTable},
+    {previous: {baseline: true, cutoff: new Date('2026-10-17T10:00:00+09:00').getTime()}, now, copyError: ''}, null);
+  assert.strictEqual(chosen.vs, '10/17比');
+  // 時点コピーを開けないときは、理由を書く
+  const failed = g.mtgPortfolioWithPrevious_(g.mtgPortfolioOf_(table.deals, now, table), null, {previous: null, now, copyError: '開けない'}, null);
+  assert.deepStrictEqual([failed.previous, failed.previousGap], [null, '時点コピーを開けない']);
 });

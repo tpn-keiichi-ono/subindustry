@@ -3001,7 +3001,7 @@ function mtgSummarize_(ss, name, context) {
     stages: mtgStages_(deals, table.statusOrder),
     quarters: mtgQuarters_(active, context.now),
     plan: mtgPlanOf_(deals, name, context.now, table.has),
-    portfolio: mtgPortfolioOf_(deals, context.now, table, statusTable),
+    portfolio: mtgPortfolioWithPrevious_(mtgPortfolioOf_(deals, context.now, table, statusTable), copy, context, statusTable),
     changes,
     stalled,
     focus,
@@ -4255,6 +4255,9 @@ function mtgBridgeSlide_(s) {
 
 /* ---------------- RXシナリオのポートフォリオ（パイプラインの変化の次の3枚） ---------------- */
 
+/** 前回から増えたもの（ヒートマップの組み合わせ）の印の色 */
+const MTG_NEW_COLOR = '#ED7D31';
+
 /** 象限（ポートフォリオ図）：名前・説明・背景（薄い色）・文字の色。図の背景・象限の名前・右の表の帯で同じ色を使う */
 const MTG_QUADRANTS = [
   {key: 'grow', label: '伸ばす', note: '大きく・進んでいる', bg: '#EAF3E3', fg: '#38761D'},
@@ -4282,12 +4285,13 @@ function mtgFiscalYearKey_(now) {
  *  deals: [{customer, scenarios, rank, ratio: ステータスの期待値率（%。定義のシートに無ければ null）, amount, weighted, scenarioAmount,
  *  salesByYear: {年度: 売上}, sales: years の売上の合計}]（金額は空なら null）}
  */
-function mtgPortfolioOf_(deals, now, table, statusTable) {
+function mtgPortfolioOf_(deals, now, table, statusTable, sameYears) {
   const o = MTG_OPTIONS;
   const year = mtgFiscalYearKey_(now);
-  // 今年度から salesYears 年度分（FY26・FY27・FY28）。シートに列のある年度だけ使う
+  // 今年度から salesYears 年度分（FY26・FY27・FY28）。シートに列のある年度だけ使う（前回の時点コピーは、今と同じ年度で比べる：sameYears）
   const wanted = [];
   for (let i = 0; i < Math.max(1, o.portfolio.salesYears || 1); i++) wanted.push(('0' + (Number(year) + i) % 100).slice(-2));
+  if (sameYears) wanted.splice(0, wanted.length, ...sameYears);
   const years = wanted.filter(y => (table.salesYears || []).indexOf(y) >= 0);
   const column = key => 'シートに「' + String(o.columns[key]).replace(/\s+/g, '') + '」の列が無い';
   const gaps = {};
@@ -4392,10 +4396,49 @@ function mtgPortfolioTotals_(p) {
   };
 }
 
-/** RXシナリオのポートフォリオの3枚（① 進捗・② 売上ヒートマップ・③ ポートフォリオ図）。p は summary.portfolio */
+/**
+ * 前回との比較を足す：前回の時点コピー（copy。比べる時点のコピー）の案件で、同じ年度のポートフォリオを作って p.previous に入れる。
+ * p.vs は列の見出し（「前回比」。基準・選んだ時点なら「10/17比」）、p.previousGap は比べられない理由（時点コピーが無い・開けない）
+ */
+function mtgPortfolioWithPrevious_(p, copy, context, statusTable) {
+  p.vs = mtgFromWord_({previous: context.previous}) + '比';
+  if (copy && copy.table) {
+    p.previous = mtgPortfolioOf_(copy.table.deals, context.now, copy.table, statusTable, p.years);
+    p.previousGap = '';
+  } else {
+    p.previous = null;
+    p.previousGap = context.copyError ? MTG_OPTIONS.copyName + 'を開けない' : '比べる' + MTG_OPTIONS.copyName + 'が無い';
+  }
+  return p;
+}
+
+/** 増減の表示（100 以上は整数、それより小さければ小数1桁。「+12.5」「▲3」「±0」） */
+function mtgSignedCompact_(value) {
+  const v = value || 0;
+  return mtgSigned_(Math.abs(v) >= 100 ? Math.round(v) : v);
+}
+
+/** 増減の文字の色（増えたら緑、減ったら濃いグレー、変わらなければ薄いグレー） */
+function mtgDeltaColor_(value) {
+  const c = MTG_OPTIONS.colors;
+  const r = Math.round((value || 0) * 10) / 10;
+  return r > 0 ? c.greenText : r < 0 ? c.dark : c.faint;
+}
+
+/** RXシナリオのポートフォリオの3枚（① 進捗・② 売上ヒートマップ・③ ポートフォリオ図）。p は summary.portfolio（前回の比較は p.previous） */
 function mtgPortfolioSlides_(p) {
+  // 前回との比較を足していない中身（mtgPortfolioWithPrevious_ を通していない）は、比べる時点コピーが無いものとして作る
+  if (!p.vs) Object.assign(p, {vs: '前回比', previous: null, previousGap: '比べる' + MTG_OPTIONS.copyName + 'が無い'});
   const t = mtgPortfolioTotals_(p);
-  return [mtgPortfolioProgressSlide_(p, t), mtgPortfolioHeatmapSlide_(p, t), mtgPortfolioMapSlide_(p, t)];
+  const pt = p.previous ? mtgPortfolioTotals_(p.previous) : null;
+  return [mtgPortfolioProgressSlide_(p, t, pt), mtgPortfolioHeatmapSlide_(p, t, pt), mtgPortfolioMapSlide_(p, t, pt)];
+}
+
+/** 前回のシナリオ（キーで探す。未設定は unset）。前回に無ければ null */
+function mtgPrevItem_(pt, item) {
+  if (!pt) return null;
+  if (item.unset) return pt.unset;
+  return pt.items.find(x => x.key === item.key) || null;
 }
 
 /**
@@ -4468,7 +4511,7 @@ function mtgCompact_(value) {
  * ① RXシナリオ別の進捗：シナリオごとの期待値を確度で塗り分けた横棒（期待値の大きい順。未設定は最後に灰色）。棒の中に確度ごとの期待値
  * （入る幅のときだけ）、棒の右に期待値の合計を書く。右に想定売上・期待値・シナリオ金額・件数・得意先の数・確度A・B の割合（期待値のうち A・B。50% 以上は緑の字）
  */
-function mtgPortfolioProgressSlide_(p, t) {
+function mtgPortfolioProgressSlide_(p, t, pt) {
   const S = MTG_SLIDE;
   const o = MTG_OPTIONS;
   const c = o.colors;
@@ -4483,18 +4526,21 @@ function mtgPortfolioProgressSlide_(p, t) {
   const w = S.w;
   const y = S.top;
   const el = [mtgBox_(x, y - 2, 420, 20, heading, {size: 10.5, bold: true, color: c.ink})];
-  // 凡例：確度の色（右端を表の右端にそろえる）
-  const legend = ranks.map(r => ({label: r.key, color: r.color}));
+  // 凡例：確度の色と、前回の期待値の印（細い縦線。前回と比べられるときだけ）。右端を表の右端にそろえる
+  const prevWord = p.vs.replace(/比$/, '');
+  const legend = ranks.map(r => ({label: r.key, color: r.color})).concat(pt ? [{label: prevWord + 'の期待値', color: c.ink, thin: true}] : []);
   legend.forEach(item => { item.bw = mtgTextWidth_(item.label, 8.5) + 16; });
   let lx = x + w - legend.reduce((sum, item) => sum + 6 + item.bw, 0) - (legend.length - 1) * (8 - 7.2 - 1.6);
   legend.forEach(item => {
-    el.push({type: 'box', x: lx, y: y + 5, w: 7, h: 7, fill: item.color, shape: 'RECTANGLE', role: 'legend'});
+    el.push(item.thin ? {type: 'box', x: lx + 2.5, y: y + 3, w: 1.5, h: 11, fill: item.color, shape: 'RECTANGLE', role: 'legend'}
+      : {type: 'box', x: lx, y: y + 5, w: 7, h: 7, fill: item.color, shape: 'RECTANGLE', role: 'legend'});
     el.push(mtgBox_(lx + 6, y - 1, item.bw, 18, item.label, {size: 8.5, color: c.sub, role: 'legend'}));
     lx += 6 + item.bw + (8 - 7.2 - 1.6);
   });
-  const nameW = 150;
-  const cols = [{label: '想定売上', w: 52}, {label: '期待値', w: 48}, {label: 'シナリオ金額', w: 60}, {label: '件数', w: 32}, {label: '得意先', w: 34},
-    {label: '確度A・B', w: 46}];
+  const nameW = 140;
+  // 期待値の右に、前回からの増減（前回比。比べる時点コピーが無ければ「データなし」）
+  const cols = [{label: '想定売上', w: 52}, {label: '期待値', w: 48}, {label: p.vs, w: 50}, {label: 'シナリオ金額', w: 60}, {label: '件数', w: 32},
+    {label: '得意先', w: 34}, {label: '確度A・B', w: 46}];
   const colsW = cols.reduce((sum, col) => sum + col.w, 0);
   const barX = x + nameW + 6;
   const barW = w - nameW - 6 - colsW - 8;
@@ -4507,8 +4553,8 @@ function mtgPortfolioProgressSlide_(p, t) {
   });
   const rowH = Math.max(12, Math.min(34, (S.bottom - headY - 16) / Math.max(rows.length, 1)));
   const size = rowH < 16 ? 7.5 : 9;
-  // 棒の右に合計を書く分（36pt）をあけて目盛りを決める
-  const max = Math.max.apply(null, [1].concat(rows.map(item => item.weighted)));
+  // 棒の右に合計を書く分（36pt）をあけて目盛りを決める（前回の期待値の印も入るように）
+  const max = Math.max.apply(null, [1].concat(rows.map(item => item.weighted), rows.map(item => (mtgPrevItem_(pt, item) || {}).weighted || 0)));
   const scale = (barW - 36) / max;
   rows.forEach((item, i) => {
     const ry = headY + 16 + rowH * i;
@@ -4535,32 +4581,43 @@ function mtgPortfolioProgressSlide_(p, t) {
       }
       level += v;
     });
+    // 前回の期待値の印（棒の上下に少しはみ出す細い縦線）
+    const prev = mtgPrevItem_(pt, item);
+    if (prev && prev.weighted > 0) {
+      el.push({type: 'box', x: barX + prev.weighted * scale - 0.75, y: ry + (rowH - bh) / 2 - 3, w: 1.5, h: bh + 6, fill: c.ink, shape: 'RECTANGLE',
+        role: 'portfolio-prev'});
+    }
     // 棒の右に期待値の合計
-    el.push(mtgBox_(barX + level * scale + 2 - S.padX / 2, ry, 36 + S.padX, rowH, mtgCompact_(item.weighted), {size: labelSize + 0.5, bold: true, color: c.ink,
-      role: 'portfolio-bar-total'}));
+    el.push(mtgBox_(barX + Math.max(level, prev ? prev.weighted : 0) * scale + 2 - S.padX / 2, ry, 36 + S.padX, rowH, mtgCompact_(item.weighted),
+      {size: labelSize + 0.5, bold: true, color: c.ink, role: 'portfolio-bar-total'}));
     const good = !item.unset && item.sure != null && item.sure >= 0.5;
+    // 前回比：前回に無かったシナリオは「新規」
+    const delta = !pt ? G : prev ? mtgSignedCompact_(item.weighted - prev.weighted) : '新規';
     [
       mtgShare_(item.amount),
       p.has.weighted ? mtgShare_(item.weighted) : G,
+      delta,
       p.has.scenarioAmount ? mtgShare_(item.scenarioAmount) : G,
       item.count + '件',
       item.customers + '社',
       item.unset || item.sure == null ? '—' : Math.round(item.sure * 100) + '%'
     ].forEach((text, k) => {
       const gap = text === G;
-      el.push(mtgBox_(cols[k].x - S.padX / 2, ry, cols[k].w + S.padX, rowH, text, {size: gap ? 7.5 : size, bold: k === 1,
-        color: gap ? c.muted : k === 5 && good ? c.greenText : c.ink, align: 'END', role: 'portfolio-value'}));
+      const color = gap ? c.muted : k === 2 ? (prev ? mtgDeltaColor_(item.weighted - prev.weighted) : c.greenText) : k === 6 && good ? c.greenText : c.ink;
+      el.push(mtgBox_(cols[k].x - S.padX / 2, ry, cols[k].w + S.padX, rowH, text, {size: gap ? 7 : size, bold: k === 1 || (k === 2 && !gap),
+        color, align: 'END', role: k === 2 ? 'portfolio-delta' : 'portfolio-value'}));
     });
   });
   const named = t.items.filter(item => item.sure != null);
   const best = named.slice().sort((a, b) => b.sure - a.sure)[0];
   const top = t.items[0];
-  const lead = '進行中の期待値 ' + mtgAmount_(t.total.weighted) + '百万円（想定売上 ' + mtgAmount_(t.total.amount) + '百万円）・案件 ' + t.total.count +
-    '件を、RXシナリオ構成ごとに確度別に表示（期待値の大きい順）。\n' +
+  const lead = '進行中の期待値 ' + mtgAmount_(t.total.weighted) + '百万円' + (pt ? '（' + p.vs + ' ' + mtgSignedCompact_(t.total.weighted - pt.total.weighted) + '）' : '') +
+    '・案件 ' + t.total.count + '件を、RXシナリオ構成ごとに確度別に表示（期待値の大きい順）。\n' +
     (top ? '最大は ' + top.key + '（' + mtgShare_(top.weighted) + '）' + (best ? '、確度A・B の割合が最も高いのは ' + best.key + '（' + Math.round(best.sure * 100) + '%）' : '') + '。'
       : 'RXシナリオ構成を選んだ案件なし。') +
     (t.multi ? '複数のシナリオを選んだ ' + t.multi + '件は選んだ数で等分。' : '') +
-    (t.unset ? o.portfolio.unsetLabel + 'は ' + t.unset.count + '件。' : '');
+    (t.unset ? o.portfolio.unsetLabel + 'は ' + t.unset.count + '件。' : '') +
+    (pt ? '' : p.vs + 'は' + G + '（' + p.previousGap + '）。');
   return Object.assign({title, lead, elements: el}, t.multi ? {note: '※ 按分のため、シナリオの値を足しても合計と合わないことがあります'} : {});
 }
 
@@ -4576,10 +4633,11 @@ function mtgHeatColor_(ratio) {
  * ② 得意先 × RXシナリオ 売上ヒートマップ：行は得意先（売上（年度の合計）の大きい順に portfolio.heatRows 社。残りは「その他 N社」の1行で、色を付けない）、
  * 列はシナリオ（売上の大きい順。多ければ残りを「ほか N シナリオ」にまとめる。未設定は最後）ごとに年度（FY26・FY27・FY28）の列を分ける。
  * セルはその得意先・シナリオ・年度の売上（按分。濃いほど大きい。案件はあるが売上が 0 のセルは薄い色だけ）。空白のセルは、その得意先にそのシナリオの案件が
- * 無い組み合わせ（クロスセルの候補）。右に得意先ごとの合計（売上の合計／シナリオ金額）、下にシナリオ・年度ごとの合計とシナリオ金額、いちばん下に色の凡例。
+ * 無い組み合わせ（クロスセルの候補）。右に得意先ごとの合計（売上の合計／シナリオ金額）と前回比（売上の合計の増減）、下にシナリオ・年度ごとの合計とシナリオ金額、
+ * いちばん下に色の凡例。前回から増えた組み合わせ（前回はその得意先にそのシナリオの案件が無かった）のセルは、オレンジの枠で囲む。
  * 列が細いので、セルの色の箱と文字の箱を分ける（文字の箱は左右の余白の分だけ広くし、色は付けない）
  */
-function mtgPortfolioHeatmapSlide_(p, t) {
+function mtgPortfolioHeatmapSlide_(p, t, pt) {
   const S = MTG_SLIDE;
   const o = MTG_OPTIONS;
   const P = o.portfolio;
@@ -4607,10 +4665,15 @@ function mtgPortfolioHeatmapSlide_(p, t) {
   };
   const topN = t.customers.slice(0, P.heatRows);
   const others = t.customers.slice(P.heatRows);
-  const rows = topN.map(cu => ({name: cu.name, cells: groups.map(gr => cellOf([cu], gr)), sales: cu.sales, scenarioAmount: cu.scenarioAmount}));
+  // 前回の得意先（名前で探す）。前回比は売上（年度の合計）の増減、前回から増えた組み合わせは前回そのシナリオの案件が無かったセル
+  const prevOf = name => (pt ? pt.customers.find(cu => cu.name === name) || null : null);
+  const isNew = (cu, gr) => !!pt && !gr.keys.some(k => (prevOf(cu.name) || {cells: {}}).cells[k]);
+  const rows = topN.map(cu => ({name: cu.name, cells: groups.map(gr => cellOf([cu], gr)), news: groups.map(gr => isNew(cu, gr)), sales: cu.sales,
+    scenarioAmount: cu.scenarioAmount, prevSales: pt ? (prevOf(cu.name) || {sales: 0}).sales : null}));
   if (others.length) {
-    rows.push({other: true, name: 'その他 ' + others.length + '社', cells: groups.map(gr => cellOf(others, gr)), sales: mtgSum_(others, 'sales'),
-      scenarioAmount: mtgSum_(others, 'scenarioAmount')});
+    rows.push({other: true, name: 'その他 ' + others.length + '社', cells: groups.map(gr => cellOf(others, gr)), news: groups.map(() => false),
+      sales: mtgSum_(others, 'sales'), scenarioAmount: mtgSum_(others, 'scenarioAmount'),
+      prevSales: pt ? others.reduce((a, cu) => a + (prevOf(cu.name) || {sales: 0}).sales, 0) : null});
   }
   // 色の濃さ：上位の得意先のセルのいちばん大きい値を基準に（その他の行は対象外）
   const values = [];
@@ -4622,8 +4685,9 @@ function mtgPortfolioHeatmapSlide_(p, t) {
   const x = S.x;
   const top = S.top - 6;
   const nameW = 84;
-  const totW = 82;
-  const groupW = (S.w - nameW - totW) / groups.length;
+  const totW = 76;
+  const dW = 44;   // 前回比の列
+  const groupW = (S.w - nameW - totW - dW) / groups.length;
   const sw = groupW / Math.max(years.length, 1);
   const heads = groups.map(gr => mtgFitText_(gr.label, groupW, [8, 7.5, 7, 6.5], 3));
   const th1 = Math.max(18, Math.max.apply(null, heads.map(f => f.lines.length * f.size * S.lineFactor)) + 5);
@@ -4651,9 +4715,15 @@ function mtgPortfolioHeatmapSlide_(p, t) {
     });
   });
   const tx = x + nameW + groups.length * groupW;
+  const dx = tx + totW;
   const totalHead = '合計\n' + p.fy + '／シナリオ金額';
   rect(tx, top, totW, th, c.green, c.white, 'heat-head-cell');
-  text(tx, top, totW, th, totalHead, {size: 7, bold: true, color: c.white, spans: [{start: 3, end: totalHead.length, bold: false, size: 6.5}], role: 'heat-head'});
+  text(tx, top, totW, th, totalHead, {size: 7, bold: true, color: c.white, spans: [{start: 3, end: totalHead.length, bold: false, size: 6}], role: 'heat-head'});
+  const deltaHead = p.vs + '\n（' + p.fy + '）';
+  rect(dx, top, dW, th, c.green, c.white, 'heat-head-cell');
+  text(dx, top, dW, th, deltaHead, {size: 7, bold: true, color: c.white, spans: [{start: p.vs.length + 1, end: deltaHead.length, bold: false, size: 6}],
+    role: 'heat-head'});
+  const deltaCell = (cur, prev) => (prev == null ? {text: G, size: 6, color: c.muted} : {text: mtgSignedCompact_(cur - prev), color: mtgDeltaColor_(cur - prev)});
   // 行
   const totalText = (sales, scen) => {
     const a = mtgCompact_(sales);
@@ -4679,10 +4749,17 @@ function mtgPortfolioHeatmapSlide_(p, t) {
             role: r.other ? 'heat-other' : 'heat-value'});
         }
       });
+      // 前回から増えた組み合わせ：シナリオの年度の列をまとめてオレンジの枠で囲む
+      if (cell && r.news[i]) {
+        el.push({type: 'box', x: x + nameW + i * groupW + 0.75, y: ry + 0.75, w: groupW - 1.5, h: rh - 1.5, line: MTG_NEW_COLOR, lineWeight: 1.5,
+          shape: 'RECTANGLE', role: 'heat-new'});
+      }
     });
     const tt = totalText(r.sales, r.scenarioAmount);
     el.push(mtgBox_(tx, ry, totW, rh, tt.value, {size, color: c.ink, align: 'END', spans: tt.spans, role: 'heat-total'}));
-    rect(tx, ry + rh - 0.5, totW, 0.5, c.line, null, 'heat-rule');
+    const dc = deltaCell(r.sales, r.prevSales);
+    el.push(mtgBox_(dx, ry, dW, rh, dc.text, {size: dc.size || size, bold: r.prevSales != null, color: dc.color, align: 'END', role: 'heat-delta'}));
+    rect(tx, ry + rh - 0.5, totW + dW, 0.5, c.line, null, 'heat-rule');
   });
   // シナリオの区切り（縦の線）
   const bodyBottom = top + th + rows.length * rh;
@@ -4703,17 +4780,24 @@ function mtgPortfolioHeatmapSlide_(p, t) {
   });
   const ft = totalText(t.total.sales, t.total.scenarioAmount);
   el.push(mtgBox_(tx, fy, totW, fh, ft.value, {size, color: c.ink, align: 'END', spans: ft.spans, role: 'heat-foot-total'}));
+  const fd = deltaCell(t.total.sales, pt ? pt.total.sales : null);
+  el.push(mtgBox_(dx, fy, dW, fh, fd.text, {size: fd.size || size, bold: !!pt, color: fd.color, align: 'END', role: 'heat-foot-delta'}));
   // 凡例：色の濃さ（0 → いちばん大きい値）と、セルの値の意味
   const ly = fy + fh + 3;
   el.push(mtgBox_(x - S.padX / 2, ly - 2, 30 + S.padX, 12, '少ない', {size: 6.5, color: c.muted, align: 'END', role: 'heat-legend'}));
   [0.08, 0.3, 0.5, 0.75, 1].forEach((k, i) => rect(x + 32 + i * 12, ly + 1, 12, 7, mtgHeatColor_(k), null, 'heat-legend-swatch'));
   el.push(mtgBox_(x + 94 - S.padX / 2, ly - 2, 80 + S.padX, 12, '多い（' + mtgCompact_(max) + '）', {size: 6.5, color: c.muted, role: 'heat-legend'}));
   const yearText = years.map(y => 'FY' + y).join('・');
-  el.push(mtgBox_(x + 170 - S.padX / 2, ly - 2, S.w - 170 + S.padX, 12, 'セルの値＝その得意先・シナリオの売上（' + yearText + 'の前半期＋後半期。複数シナリオは按分。百万円）。' +
-    '空白は案件の無い組み合わせ' + (others.length ? '。「その他」の行は色を付けない' : '') + '。', {size: 6.5, color: c.muted, role: 'heat-note'}));
-  const lead = '得意先 × RXシナリオ構成の年度別売上（' + yearText + '。進行中・按分）。' + (others.length ? '上位 ' + topN.length + '社と、その他 ' + others.length + '社。'
+  // セルの値の意味（1行に入る大きさまで小さくする）
+  const noteText = 'セルの値＝その得意先・シナリオの売上（各年度の前半期＋後半期。複数シナリオは按分。百万円）。空白は案件の無い組み合わせ' +
+    (pt ? '、オレンジの枠は' + p.vs.replace(/比$/, '') + 'から増えた組み合わせ' : '') + (others.length ? '。「その他」は色なし' : '') + '。';
+  const noteFit = mtgFitText_(noteText, S.w - 170 + S.padX, [6.5, 6, 5.5], 1);
+  el.push(mtgBox_(x + 170 - S.padX / 2, ly - 2, S.w - 170 + S.padX, 12, noteFit.lines[0], {size: noteFit.size, color: c.muted, role: 'heat-note'}));
+  const lead = '得意先 × RXシナリオ構成の年度別売上（' + p.fy + '。進行中・按分）。' + (others.length ? '上位 ' + topN.length + '社と、その他 ' + others.length + '社。'
     : topN.length + '社。') + (t.total.sales > 0 ? '' : p.fy + '売上がまだ入っていないため、セルは色だけ（得意先は想定売上の大きい順）。') +
-    '\n空白のセルは、その得意先にまだそのシナリオの案件が無い組み合わせ。合計の右はシナリオ金額（' + mtgScenarioAmountName_() + '）。';
+    (pt ? '売上の合計は' + p.vs + ' ' + mtgSignedCompact_(t.total.sales - pt.total.sales) + '。' : '') +
+    '\n空白のセルは、その得意先にまだそのシナリオの案件が無い組み合わせ。合計の右はシナリオ金額（' + mtgScenarioAmountName_() + '）。' +
+    (pt ? '' : p.vs + 'は' + G + '（' + p.previousGap + '）。');
   return Object.assign({title, lead, elements: el}, t.multi ? {note: '※ 按分のため、シナリオの値を足しても合計と合わないことがあります'} : {});
 }
 
@@ -4734,7 +4818,7 @@ function mtgBubbleRadius_(n, max) {
  * 円の大きさを件数にする。点線（確度 portfolio.progressLine% と、シナリオの今年度の売上の平均）で4つの象限に分け、象限ごとに薄い色を背景に付ける。
  * 右に象限ごとのシナリオの表（シナリオ・今年度の売上・確度・件数）と、円の大きさの凡例
  */
-function mtgPortfolioMapSlide_(p, t) {
+function mtgPortfolioMapSlide_(p, t, prevT) {
   const S = MTG_SLIDE;
   const o = MTG_OPTIONS;
   const P = o.portfolio;
@@ -4755,8 +4839,8 @@ function mtgPortfolioMapSlide_(p, t) {
       mtgBox_(S.x, S.top - 2, 420, 20, 'RXシナリオ構成ごとの ' + p.fy + '売上と確度の進み具合', {size: 10.5, bold: true, color: c.ink}),
       mtgEmptyBox_(S.x, S.top + 26, 360, 64, 'none', text)]};
   }
-  // 図（左）と表（右）。表はシナリオの名前を全文入れるので広めにとる
-  const tw = 236;
+  // 図（左）と表（右）。表はシナリオの名前を全文入れ、前回比の列もあるので広めにとる
+  const tw = 256;
   const lx = S.x + S.w - tw;
   const X0 = S.x + 40;
   const Y0 = S.top + 10;
@@ -4766,7 +4850,9 @@ function mtgPortfolioMapSlide_(p, t) {
   const salesTotal = mtgSum_(pts, 'sales');
   const fixed = P.salesLine != null && P.salesLine !== '';
   const ymid = fixed ? Number(P.salesLine) : salesTotal / pts.length;
-  const ymax = mtgNiceMax_(Math.max.apply(null, pts.map(pt => pt.sales).concat([ymid])));
+  // 前回の値（同じシナリオ。前回に無ければ null）。前回の位置の円も図に入るように目盛りを決める
+  const prevOf = item => mtgPrevItem_(prevT, item);
+  const ymax = mtgNiceMax_(Math.max.apply(null, pts.map(pt => pt.sales).concat([ymid], pts.map(pt => (prevOf(pt) || {}).sales || 0))));
   const line = P.progressLine;
   const px = v => X0 + Math.max(0, Math.min(100, v)) / 100 * W;
   const py = v => Y0 + H - Math.max(0, Math.min(ymax, v)) / ymax * H;
@@ -4810,6 +4896,16 @@ function mtgPortfolioMapSlide_(p, t) {
   const circles = ordered.map(pt => {
     const r = mtgBubbleRadius_(pt.count, maxCount);
     return {pt, r, n: numberOf.get(pt.key), cx: Math.max(X0 + r, Math.min(X0 + W - r, px(pt.progress))), cy: Math.max(Y0 + r, Math.min(Y0 + H - r, py(pt.sales)))};
+  });
+  // 前回の位置：点線の円（塗らない。前回の件数の大きさ）。今の円の下に描く。位置が変わらなければ描かない
+  circles.forEach(b => {
+    const prev = prevOf(b.pt);
+    if (!prev || !prev.count) return;
+    const r = mtgBubbleRadius_(Math.min(prev.count, maxCount), maxCount);
+    const cx = Math.max(X0 + r, Math.min(X0 + W - r, px(prev.progress)));
+    const cy = Math.max(Y0 + r, Math.min(Y0 + H - r, py(prev.sales)));
+    if (Math.abs(cx - b.cx) < 1 && Math.abs(cy - b.cy) < 1 && Math.abs(r - b.r) < 0.5) return;
+    el.push({type: 'box', x: cx - r, y: cy - r, w: r * 2, h: r * 2, line: c.dark, lineWeight: 0.75, dash: true, shape: 'ELLIPSE', role: 'map-prev'});
   });
   // 大きい円を先に描き、小さい円を上に重ねる（小さい円が隠れないように）
   circles.slice().sort((a, b) => b.r - a.r).forEach(b => el.push({type: 'box', x: b.cx - b.r, y: b.cy - b.r, w: b.r * 2, h: b.r * 2, fill: c.green,
@@ -4862,10 +4958,11 @@ function mtgPortfolioMapSlide_(p, t) {
   });
   // 右：象限ごとのシナリオの表（見出しは塗らずに上下の罫線。象限の帯は図の背景と同じ色）。番号は図の円の番号。名前は全文（小さくする → 2行）
   // 売上の列の見出しは年度の名前だけ（「FY26〜28」。「売上」を付けると1行に入らない）
-  const tc = [{label: 'No.', w: 24, align: 'CENTER'}, {label: 'シナリオ', w: tw - 24 - 58 - 32 - 32, align: 'START'}, {label: p.fy, w: 58, align: 'END'},
-    {label: '確度', w: 32, align: 'END'}, {label: '件数', w: 32, align: 'END'}];
+  // 売上の右に前回比（売上の増減。前回に無かったシナリオは「新規」）。見出しの箱は列より 6pt 広い（1行に入る幅）
+  const tc = [{label: 'No.', w: 24, align: 'CENTER'}, {label: 'シナリオ', w: tw - 24 - 52 - 44 - 30 - 30, align: 'START'}, {label: p.fy, w: 52, align: 'END'},
+    {label: p.vs, w: 44, align: 'END'}, {label: '確度', w: 30, align: 'END'}, {label: '件数', w: 30, align: 'END'}];
   const groups = MTG_QUADRANTS.map(q => ({q, list: pts.filter(pt => quadOf(pt) === q.key).sort((a, b) => numberOf.get(a.key) - numberOf.get(b.key))}));
-  const legendH = 12 + 16 + mtgBubbleRadius_(maxCount, maxCount) * 2 + 14;
+  const legendH = 12 + 16 + mtgBubbleRadius_(maxCount, maxCount) * 2 + 14 + (prevT ? 12 : 0);
   const room = S.bottom - Y0 - 14 - legendH;
   // 文字の大きさと行の高さ：入るまで小さくする（7.5pt・行 13 → 7pt・12 → 6.5pt・10）
   const layout = [[7.5, 13], [7, 12], [6.5, 10]].map(([size, rowH]) => {
@@ -4892,13 +4989,17 @@ function mtgPortfolioMapSlide_(p, t) {
     (list.length ? list : [null]).forEach(pt => {
       const info = pt ? L.fits.get(pt.key) : null;
       const rowH = info ? info.h : L.rowH;
-      const vals = pt ? [String(numberOf.get(pt.key)), info.fit.lines.join('\n'), mtgShare_(pt.sales), Math.round(pt.progress) + '%', pt.count + '件']
-        : ['', 'なし', '', '', ''];
+      const prev = pt ? prevOf(pt) : null;
+      const delta = !pt ? '' : !prevT ? o.gapText : prev ? mtgSignedCompact_(pt.sales - prev.sales) : '新規';
+      const vals = pt ? [String(numberOf.get(pt.key)), info.fit.lines.join('\n'), mtgShare_(pt.sales), delta, Math.round(pt.progress) + '%', pt.count + '件']
+        : ['', 'なし', '', '', '', ''];
       let cx = lx;
       tc.forEach((col, i) => {
         if (vals[i] !== '') {
-          el.push(mtgBox_(cx - 3, ly, col.w + 6, rowH, vals[i], {size: i === 1 && info ? info.fit.size : L.size, bold: i === 0, color: pt ? c.ink : c.faint,
-            align: col.align, role: 'map-table-cell'}));
+          const gap = i === 3 && !prevT;
+          const color = !pt ? c.faint : i !== 3 ? c.ink : gap ? c.muted : prev ? mtgDeltaColor_(pt.sales - prev.sales) : c.greenText;
+          el.push(mtgBox_(cx - 3, ly, col.w + 6, rowH, vals[i], {size: i === 1 && info ? info.fit.size : gap ? 6 : L.size, bold: i === 0 || (i === 3 && !gap),
+            color, align: col.align, role: i === 3 ? 'map-table-delta' : 'map-table-cell'}));
         }
         if (i < tc.length - 1) el.push({type: 'box', x: cx + col.w, y: ly, w: 0.5, h: rowH, fill: c.rule, shape: 'RECTANGLE'});
         cx += col.w;
@@ -4920,13 +5021,18 @@ function mtgPortfolioMapSlide_(p, t) {
     el.push(mtgBox_(sx + r - 20, base, 40, 13, n + '件', {size: 7.5, color: c.sub, align: 'CENTER', role: 'map-legend-label'}));
     sx += r * 2 + 22;
   });
+  if (prevT) {
+    el.push(mtgBox_(lx - 7.2, base + 13, tw, 12, '点線の円＝' + p.vs.replace(/比$/, '') + 'の位置（売上・確度・件数）', {size: 7.5, color: c.sub,
+      role: 'map-legend-prev'}));
+  }
   const fallback = pts.filter(pt => pt.basis !== 'sales');
   const lead = 'RXシナリオ構成ごとに、' + p.fy + '売上（縦）と確度（横）を置いた図。円の大きさは件数、円の中の数字は右の表の No.。\n' +
     '縦の点線は確度 ' + line + '%（C の期待値率。右は提案以降まで進み、左は D・創注が中心）、横の点線は' +
     (fixed ? '目標の ' + p.fy + '売上（' + mtgShare_(ymid) + '）。' : ' ' + p.fy + '売上を各シナリオに均等に分けた額（' + mtgShare_(salesTotal) + '÷' + pts.length + '＝' + mtgShare_(ymid) + '）。') +
     (t.unset ? P.unsetLabel + '（' + t.unset.count + '件）は図に含めない。' : '');
-  return Object.assign({title, lead, elements: el},
-    fallback.length ? {note: '※ ' + p.fy + '売上が無いシナリオ（' + fallback.length + '）の確度は想定売上（無ければ件数）で重み付け'} : {});
+  const notes = (fallback.length ? ['※ ' + p.fy + '売上が無いシナリオ（' + fallback.length + '）の確度は想定売上（無ければ件数）で重み付け'] : [])
+    .concat(prevT ? [] : ['※ ' + p.vs + 'は' + o.gapText + '（' + p.previousGap + '）']);
+  return Object.assign({title, lead, elements: el}, notes.length ? {note: notes.join('　')} : {});
 }
 
 /* ---------------- 計画に対する積み上げ ---------------- */
