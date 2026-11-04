@@ -3380,7 +3380,7 @@ test('RXシナリオのポートフォリオのスライド：パイプライン
   // 凡例：色の濃さ（少ない → 多い（いちばん大きい値））と、セルの値の意味（シナリオごとの売上）
   assert.deepStrictEqual(roleOf(heat, 'heat-legend').map(el => el.text), ['少ない', '多い（60）']);
   assert.strictEqual(roleOf(heat, 'heat-legend-swatch').length, 5);
-  assert.match(roleOf(heat, 'heat-note')[0].text, /^セルの値＝その得意先・シナリオの売上（各年度の前半期＋後半期。複数シナリオは按分。百万円）。空白は案件の無い組み合わせ。「その他」は色なし。$/);
+  assert.match(roleOf(heat, 'heat-note')[0].text, /^セルの値＝その得意先・シナリオの売上（各年度の前半期＋後半期。按分。百万円）。空白は案件の無い組み合わせ。「その他」は色なし。$/);
 
   // ③ 象限の背景（4色）・名前・点線・円（件数）・右の表（見出しと象限の帯）・円の大きさの凡例。未設定は図に含めない
   const Q = gas.get('MTG_QUADRANTS');
@@ -3556,20 +3556,69 @@ test('RXシナリオのポートフォリオの前回比：前回の時点コピ
   // ① 期待値の前回比：ID-POS分析 105 − 60 = +45、サイネージ 23 − 8 = +15、前回に無いシナリオは「新規」。前回の期待値の印（細い縦線）
   assert.deepStrictEqual(roleOf(progress, 'portfolio-delta').map(el => [el.text, el.color]), [['+45', o.colors.greenText], ['+15', o.colors.greenText],
     ['新規', o.colors.greenText], ['新規', o.colors.greenText]]);
-  assert.strictEqual(roleOf(progress, 'portfolio-prev').length, 2, '前回にあったシナリオだけ印');
+  // 前回の期待値は、0 から前回の期待値までの点線の箱（前回の棒の輪郭。塗らない）。前回にあったシナリオだけ
+  const boxes = roleOf(progress, 'portfolio-prev');
+  assert.strictEqual(boxes.length, 2, '前回にあったシナリオだけ');
+  assert.ok(boxes.every(b => b.dash && !b.fill && b.shape === 'RECTANGLE'));
   const bars = roleOf(progress, 'portfolio-bar');
-  const idposPrev = roleOf(progress, 'portfolio-prev')[0];
-  assert.ok(Math.abs((idposPrev.x + 0.75 - bars[0].x) / (bars[0].w + bars[1].w) - 60 / 105) < 0.01, '印の位置は前回の期待値');
+  const unit = (bars[0].w + bars[1].w) / 105;
+  assert.ok(Math.abs(boxes[0].x - bars[0].x) < 0.01 && Math.abs(boxes[0].w - 60 * unit) < 0.01, '0 から前回の期待値（60）まで');
   assert.match(pLead(progress), /^進行中の期待値 163百万円（前回比 \+95）・案件 5件/);
   assert.ok(roleOf(progress, 'legend').some(el => el.text === '前回の期待値'));
+  // 減ったとき：点線の箱（前回）が今の棒より長い。期待値の合計は今の棒の右（0 なら棒の左端）
+  const down = g.mtgPortfolioWithPrevious_(g.mtgPortfolioOf_(prevTable.deals, now, prevTable), {table: table}, {previous: null, now, copyError: ''}, null);
+  const downSlide = plain(g.mtgPortfolioSlides_(down))[0];
+  const dBars = roleOf(downSlide, 'portfolio-bar');
+  const dBox = roleOf(downSlide, 'portfolio-prev')[0];
+  assert.ok(Math.abs(dBox.x - dBars[0].x) < 0.01 && dBox.w > dBars.filter(b => b.y === dBars[0].y).reduce((a, b) => a + b.w, 0), '点線の箱は 0 から。今の棒より長い');
+  const zero = Object.assign({}, plain(down), {deals: plain(down).deals.map(d => Object.assign({}, d, {weighted: 0}))});
+  const zeroSlide = plain(g.mtgPortfolioSlides_(zero))[0];
+  const barX = roleOf(zeroSlide, 'portfolio-prev')[0].x;
+  roleOf(zeroSlide, 'portfolio-bar-total').forEach(el => {
+    assert.strictEqual(el.text, '0');
+    assert.ok(el.x + S.padX / 2 - barX < 6, '期待値が 0 なら棒の左端（前回の位置まで飛ばさない）');
+  });
   // ② 得意先の前回比（売上の合計の増減）と、前回から増えた組み合わせ（A社のサイネージ・C社の未設定は前回に無い）の枠
   o.portfolio.heatRows = 2;
   const heat2 = plain(g.mtgPortfolioHeatmapSlide_(p, g.mtgPortfolioTotals_(p), g.mtgPortfolioTotals_(p.previous)));
   assert.deepStrictEqual(roleOf(heat2, 'heat-delta').map(el => el.text), ['+45', '+5', '+3'], 'A社 75 − 30、C社 5 − 0、その他（B社・E社）3 − 0');
   assert.strictEqual(roleOf(heat2, 'heat-foot-delta')[0].text, '+53');
-  assert.strictEqual(roleOf(heat2, 'heat-new').length, 2, 'A社のサイネージ・C社の未設定（上位の得意先だけ）');
-  assert.ok(roleOf(heat2, 'heat-new').every(el => el.line === gas.get('MTG_NEW_COLOR') && !el.fill));
-  assert.match(roleOf(heat2, 'heat-note')[0].text, /オレンジの枠は前回から増えた組み合わせ/);
+  // 前回から変わったセルは、数字の下に小さく増減「(+30)」（オレンジの字・枠は使わない）。A社の ID-POS分析（FY26 30 → 60、FY27 0 → 5）・
+  // サイネージ（前回なし → FY26 10）、C社の未設定（前回なし → FY26 5）
+  const values2 = roleOf(heat2, 'heat-value');
+  assert.deepStrictEqual(values2.map(el => el.text), ['60\n(+30)', '5\n(+5)', '10\n(+10)', '5\n(+5)']);
+  assert.ok(values2.every(el => el.spans && el.spans[0].size === 5 && el.spans[0].start === el.text.indexOf('\n') + 1 && el.lineSpacing === 85));
+  assert.ok(!heat2.elements.some(el => el.line === '#ED7D31' || el.color === '#C55A11'), 'オレンジの枠・字は使わない');
+  assert.match(roleOf(heat2, 'heat-legend-changed')[0].text, /^\(\+10\)＝前回からの増減（変わったセルだけ）$/);
+  // 見切れない：シナリオが多く（年度の列が細い）、数字が大きく（4桁）、得意先が多くても、数字・増減は列の幅に入り、2行のセルの行は 14pt 以上
+  const scen = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
+  const many = [];
+  for (let i = 0; i < 20; i++) many.push(['得意先' + i, scen[i % 6] + ', ' + scen[(i + 1) % 6], 'C-提案中(50%)', '3000', '1500', '100', String(1000 + i * 37), '999', '1234']);
+  const gasM = createGas();
+  gasM.get('MTG_OPTIONS').portfolio.heatColumns = 9;
+  const tM = gasM.global.mtgReadDeals_(portfolioSheet(gasM, many), gasM.get('DIFF_RULES')['新FMT']);
+  const prevM = gasM.global.mtgReadDeals_(portfolioSheet(createGas(), many.map(d => d.slice(0, 6).concat(['500', '', '']))), gasM.get('DIFF_RULES')['新FMT']);
+  const pM = gasM.global.mtgPortfolioWithPrevious_(gasM.global.mtgPortfolioOf_(tM.deals, now, tM), {table: prevM}, {previous: null, now, copyError: ''}, null);
+  const heatM = plain(gasM.global.mtgPortfolioSlides_(pM))[1];
+  const valuesM = roleOf(heatM, 'heat-value').concat(roleOf(heatM, 'heat-foot-value'), roleOf(heatM, 'heat-year'));
+  assert.ok(valuesM.length > 10);
+  valuesM.forEach(el => {
+    const [main, sub] = el.text.split('\n');
+    const colW = el.w - S.padX;
+    assert.ok(gasM.global.mtgTextWidth_(main, el.size) <= colW, '数字が列に入る：' + main + ' ' + el.size + 'pt');
+    if (sub) assert.ok(gasM.global.mtgTextWidth_(sub, el.spans[0].size) <= colW, '増減が列に入る：' + sub);
+  });
+  const rowH = roleOf(heatM, 'heat-name-cell').map(el => el.h);
+  assert.ok(rowH.every(h => h >= 14), '2行のセルの行は 14pt 以上（入らなければ上位の得意先を減らす）');
+  assert.ok(heatM.elements.every(el => el.y + (el.h || 0) <= S.bottom + 0.01), 'ページの下に見切れない');
+  // 0 になったセルも「0」と増減を書く
+  const dropped = g.mtgPortfolioWithPrevious_(g.mtgPortfolioOf_(prevTable.deals, now, prevTable), {table}, {previous: null, now, copyError: ''}, null);
+  const droppedHeat = plain(g.mtgPortfolioHeatmapSlide_(dropped, g.mtgPortfolioTotals_(dropped), g.mtgPortfolioTotals_(dropped.previous)));
+  assert.ok(roleOf(droppedHeat, 'heat-value').some(el => /^0\n\(▲5\)$/.test(el.text)), 'A社の ID-POS分析 FY27：5 → 0');
+  // 変わっていなければ今までの色（前回と同じ案件）
+  const same = g.mtgPortfolioWithPrevious_(g.mtgPortfolioOf_(table.deals, now, table), {table}, {previous: null, now, copyError: ''}, null);
+  const sameHeat = plain(g.mtgPortfolioHeatmapSlide_(same, g.mtgPortfolioTotals_(same), g.mtgPortfolioTotals_(same.previous)));
+  assert.deepStrictEqual(roleOf(sameHeat, 'heat-value').map(el => el.text), ['60', '5', '10', '5'], '変わっていなければ数字だけ');
   assert.match(pLead(heat2), /売上の合計は前回比 \+53。/);
   // ③ 前回の位置の点線の円（前回にあったシナリオで、位置が変わったもの）と、表の前回比（売上の増減。前回に無ければ「新規」）
   assert.ok(roleOf(map, 'map-prev').length >= 1 && roleOf(map, 'map-prev').every(el => el.dash && !el.fill && el.shape === 'ELLIPSE'));
