@@ -809,6 +809,9 @@ function mtgJobRun_(ss, job, started) {
     if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const props = PropertiesService.getDocumentProperties();
     const source = mtgJobSource_(ss, job);
+    // 作ったばかりのコピーを初めて開くと、数式の計算し直しで数分かかることがある（2026/11/04 に 274秒）。残りの時間が足りなければここで区切り、
+    // 続き（約1分後）で同じコピーを開いて読む（2回目からは計算が済んでいて速い）
+    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const {plans, summaries} = mtgSummaries_(source, job.names.slice(job.items.length), new Date(job.now), job.final, job.meeting, job.point);
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
@@ -865,21 +868,156 @@ function mtgJobSource_(ss, job) {
     mtgSourceCleanup_(ss);
     try {
       const copy = job.final ? mtgSaveCopy_(ss, new Date(job.now), mtgCopyNote_('meeting', job.meeting)) : mtgSaveSourceCopy_(ss, new Date(job.now));
-      job.source = {id: copy.id, title: copy.title, url: copy.url, keep: !!job.final};
+      job.source = {id: copy.id, title: copy.title, url: copy.url, keep: !!job.final, aligned: copy.aligned};
     } catch (error) {
       job.sourceError = String(error && error.message || error);
     }
     timer.lap('スプレッドシートをコピー');
   }
   if (!job.source) return ss;
+  let book;
   try {
-    const book = SpreadsheetApp.openById(job.source.id);
+    book = SpreadsheetApp.openById(job.source.id);
     timer.lap('コピーを開く');
-    return book;
   } catch (error) {
     job.sourceError = '「' + job.source.title + '」を開けませんでした（' + (error && error.message || error) + '）';
     return ss;
   }
+  return book;
+}
+
+/**
+ * スプレッドシートのコピー（時点コピー・作成用のコピー。copyId）の値を、元のスプレッドシート ss とすべてそろえる（コピーを作った直後に呼ぶ）。
+ * Drive のファイルのコピーは、値・数式・書式をそのまま写すが、数式はコピーの中で計算し直される。ほかのファイルを読む数式（IMPORTRANGE など。
+ * コピーには読む許可が無い）・今の日時の数式などは、元と違う値（0・エラー）になる（2026/11/04 に、シナリオによる見込金額（J列）がすべて 0 になった）。
+ * そこで、すべてのシートの数式のセルを元の値と比べ（表示の文字で）、違うセルは元の値（数式ではなく値）にする。数式の無いセルは、コピーでも元と同じ値。
+ * 記録のシート（変更履歴_差分・変更時点スナップショット・比較用シート・クレデンシャル履歴_記録）は、スクリプトが値だけを書くので比べない。
+ * 元の値は Sheets API（拡張サービス）で、数式のある列だけをまとめて読む（このスプレッドシートを SpreadsheetApp で読むより待たされにくい。使えなければ SpreadsheetApp）。
+ * 追跡シートの見出しより下の行は、得意先・案件名で元の行を探す（コピーを作ったあとに行を足した・消した・並べ替えたときに、ほかの行の値を入れない。
+ * 同じ得意先・案件名の行が元に無い・2つ以上あれば、直さずに数える）。
+ * 戻り値 {cells: 直したセルの数, columns: 直した列の説明, unmatched: 元の行が見つからなかったセルの数, error: 元の値を読めなかった理由}
+ */
+function mtgCopyAlign_(ss, copyId) {
+  const out = {cells: 0, columns: [], unmatched: 0, error: ''};
+  const timer = mschTimer_('コピーの値をそろえる', true);
+  try {
+    const book = SpreadsheetApp.openById(copyId);
+    // 作ったばかりのコピーを初めて読むときは、数式の計算し直しを待つため数分かかることがある
+    book.getSheets()[0].getLastRow();
+    timer.lap('コピーを開く');
+    const records = [DIFF_OPTIONS.logSheet, DIFF_OPTIONS.rowSnapshotSheet, CRED_OPTIONS.logSheet];
+    const plans = [];
+    book.getSheets().forEach(sheet => {
+      const name = sheet.getName();
+      if (records.indexOf(name) >= 0 || name.indexOf(DIFF_OPTIONS.snapshotPrefix) === 0) return;
+      const rows = sheet.getLastRow();
+      const width = sheet.getLastColumn();
+      if (rows < 1 || width < 1) return;
+      const formulas = sheet.getRange(1, 1, rows, width).getFormulas();
+      const cols = [];
+      for (let c = 0; c < width; c++) {
+        if (formulas.some(line => String(line[c] || '').trim())) cols.push(c);
+      }
+      if (!cols.length) return;
+      // 追跡シート：見出しより下の行は、得意先・案件名で元の行を探す
+      const rule = DIFF_RULES[name];
+      const headers = sheet.getRange(rule && rule.headerRow <= rows ? rule.headerRow : 1, 1, 1, width).getDisplayValues()[0];
+      const keys = rule ? ['customer', 'project'].map(key => mtgColumnIndex_(headers, key)).filter(c => c >= 0) : [];
+      plans.push({name, sheet, rows, formulas, cols, keys, headerRow: rule && keys.length ? rule.headerRow : rows, headers});
+    });
+    timer.lap('数式のセルを探す');
+    if (!plans.length) return out;
+    const live = name => ss.getSheetByName(name);
+    // 元の値（数式のある列と、行を探す列）：表示の文字（比べる）と値（書く）。元の行数はコピーと違うことがあるので、コピーより少し多めに読む
+    const ranges = [];
+    plans.forEach(plan => {
+      const sheet = live(plan.name);
+      plan.liveRows = sheet ? Math.max(sheet.getLastRow(), 1) : 0;
+      plan.at = ranges.length;
+      if (!plan.liveRows) return;
+      plan.cols.concat(plan.keys).forEach(c => {
+        const letter = diffColumnLetter_(c + 1);
+        ranges.push("'" + plan.name.replace(/'/g, "''") + "'!" + letter + '1:' + letter + plan.liveRows);
+      });
+    });
+    let shown = [];
+    let raw = [];
+    if (ranges.length) {
+      if (typeof Sheets !== 'undefined' && Sheets.Spreadsheets && Sheets.Spreadsheets.Values) {
+        const get = option => (Sheets.Spreadsheets.Values.batchGet(ss.getId(), {ranges, majorDimension: 'COLUMNS', valueRenderOption: option,
+          dateTimeRenderOption: 'SERIAL_NUMBER'}).valueRanges || []).map(r => ((r.values || [])[0] || []));
+        shown = get('FORMATTED_VALUE');
+        raw = get('UNFORMATTED_VALUE');
+      } else {
+        plans.forEach(plan => {
+          if (!plan.liveRows) return;
+          plan.cols.concat(plan.keys).forEach(c => {
+            const range = live(plan.name).getRange(1, c + 1, plan.liveRows, 1);
+            shown.push(range.getDisplayValues().map(line => line[0]));
+            raw.push(range.getValues().map(line => line[0]));
+          });
+        });
+      }
+    }
+    timer.lap('元の値を読む（' + (typeof Sheets !== 'undefined' && Sheets.Spreadsheets ? 'Sheets API' : 'SpreadsheetApp') + '）');
+    const cell = (list, i) => (list && i < list.length && list[i] != null ? list[i] : '');
+    plans.forEach(plan => {
+      if (!plan.liveRows) return;
+      const copyShown = plan.sheet.getRange(1, 1, plan.rows, plan.sheet.getLastColumn()).getDisplayValues();
+      // コピーの行 r → 元の行（見出しまでは同じ行。見出しより下は、得意先・案件名が同じ行。同じ位置にあればそれ、無ければ1つだけある行）
+      const keyOf = (get, r) => plan.keys.map(c => String(get(c, r)).trim()).join('\u0001');
+      const liveKey = r => keyOf((c, i) => cell(shown[plan.at + plan.cols.length + plan.keys.indexOf(c)], i), r);
+      const index = new Map();
+      for (let r = plan.headerRow; r < plan.liveRows; r++) {
+        const k = liveKey(r);
+        index.set(k, (index.get(k) || []).concat([r]));
+      }
+      const source = r => {
+        if (r < plan.headerRow) return r;
+        const k = keyOf((c, i) => copyShown[i][c], r);
+        if (r < plan.liveRows && liveKey(r) === k) return r;
+        const found = index.get(k) || [];
+        return found.length === 1 ? found[0] : -1;
+      };
+      plan.cols.forEach((c, n) => {
+        const liveShown = shown[plan.at + n];
+        const liveRaw = raw[plan.at + n];
+        const fix = [];
+        for (let r = 0; r < plan.rows; r++) {
+          if (!String(plan.formulas[r][c] || '').trim()) continue;
+          const from = source(r);
+          if (from < 0) {
+            out.unmatched++;
+            continue;
+          }
+          if (String(copyShown[r][c]) === String(cell(liveShown, from))) continue;
+          let value = cell(liveRaw, from);
+          if (typeof value === 'string' && /^[=+\-@]/.test(value)) value = "'" + value;   // 値が数式にならないように
+          fix.push([r, value]);
+        }
+        // 続いている行はまとめて書く
+        for (let i = 0; i < fix.length;) {
+          let j = i;
+          while (j + 1 < fix.length && fix[j + 1][0] === fix[j][0] + 1) j++;
+          plan.sheet.getRange(fix[i][0] + 1, c + 1, j - i + 1, 1).setValues(fix.slice(i, j + 1).map(f => [f[1]]));
+          i = j + 1;
+        }
+        if (fix.length) {
+          out.cells += fix.length;
+          const header = String(plan.headers[c] || '').replace(/\s+/g, '');
+          out.columns.push(plan.name + ' の' + diffColumnLetter_(c + 1) + '列' + (header ? '（' + header + '）' : '') + ' ' + fix.length + '件');
+        }
+      });
+    });
+    if (out.cells) SpreadsheetApp.flush();
+    timer.lap('違うセルを元の値にする（' + out.cells + '件）');
+  } catch (error) {
+    out.error = 'コピーの値を、元のスプレッドシートの値とそろえられませんでした（' + (error && error.message || error) + '）';
+    console.warn(out.error);
+  }
+  console.log('コピーの値をそろえる：数式のセル ' + out.cells + '件を元の値に' + (out.columns.length ? '（' + out.columns.join('・') + '）' : '') +
+    (out.unmatched ? '。元の行が見つからないセル ' + out.unmatched + '件' : '') + (out.error ? '。' + out.error : ''));
+  return out;
 }
 
 /** 試作・統合版の中身を読むためのコピー（sourceName_日時。時点コピーの保存先に作る。比べる時点の一覧には出ない）。{id, title, url} */
@@ -887,7 +1025,7 @@ function mtgSaveSourceCopy_(ss, now) {
   const title = MTG_OPTIONS.run.sourceName + '_' + Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm') + '（作り終えたら消します）';
   try {
     const file = DriveApp.getFileById(ss.getId()).makeCopy(title, mtgCopyFolder_(ss));
-    return {id: file.getId(), title, url: file.getUrl()};
+    return {id: file.getId(), title, url: file.getUrl(), aligned: mtgCopyAlign_(ss, file.getId())};
   } catch (error) {
     throw new Error('資料を作るためのコピーを作れませんでした（' + (error && error.message || error) + '）');
   }
@@ -1000,11 +1138,19 @@ function mtgJobMessage_(job, done) {
   return lines.join('\n');
 }
 
-/** コピーを作れず、このスプレッドシートから読んだときの知らせ（無ければ空） */
+/** コピーを作れず、このスプレッドシートから読んだとき・コピーの数式の値をそろえたときの知らせ（無ければ空） */
 function mtgSourceNote_(job) {
-  return job && job.sourceError
-    ? ['※ ' + job.sourceError + '。資料は、このスプレッドシートから直接読んで作りました（大勢が編集している間は時間がかかります）。']
-    : [];
+  if (!job) return [];
+  if (job.sourceError) return ['※ ' + job.sourceError + '。資料は、このスプレッドシートから直接読んで作りました（大勢が編集している間は時間がかかります）。'];
+  const aligned = job.source && job.source.aligned;
+  if (aligned && aligned.error) {
+    return ['※ ' + aligned.error + '。ほかのファイルを読む数式（IMPORTRANGE など）は、コピーで計算し直した値になっていることがあります。'];
+  }
+  return [].concat(aligned && aligned.cells
+    ? ['※ コピーの中で計算し直すと元と違う値になる数式のセルは、元のスプレッドシートの値にそろえて作りました（' + aligned.columns.join('・') + '）。']
+    : [], aligned && aligned.unmatched
+    ? ['※ コピーを作ったあとに行が変わったため、元の値とそろえられなかった数式のセルが ' + aligned.unmatched + '件あります（その行はコピーで計算した値）。']
+    : []);
 }
 
 /** 仕事を保存し（スクリプトのプロパティ。資料ごとの知らせは別のキー）、続きのトリガーを1つだけ作る。false を返す */
@@ -1799,7 +1945,7 @@ function mtgCombinedStart_(meeting, point) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const names = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
   // 中身は作り始めたときのコピーから読む（mtgJobSource_。統合版は時点コピーを残さないので、試作と同じく作り終えたら消す）
-  const job = {final: false, now: Date.now(), meeting, source: null, sourceError: ''};
+  const job = {final: false, now: Date.now(), meeting, names, source: null, sourceError: ''};
   let message;
   try {
     const source = mtgJobSource_(ss, job);
@@ -2597,7 +2743,7 @@ function mtgSaveCopy_(ss, now, note) {
   const folder = mtgCopyFolder_(ss);
   try {
     const file = DriveApp.getFileById(ss.getId()).makeCopy(title, folder);
-    return {id: file.getId(), title, url: file.getUrl()};
+    return {id: file.getId(), title, url: file.getUrl(), aligned: mtgCopyAlign_(ss, file.getId())};
   } catch (error) {
     throw new Error('時点コピーを保存できませんでした（' + (error && error.message || error) + '）。もう一度お試しください。');
   }
@@ -2909,7 +3055,8 @@ function mtgReadDeals_(sheet, rule) {
   const count = sheet.getLastRow() - headerRow;
   if (count < 1) return out;
   // 期待値の列が数式（想定売上 × ステータスの率など）なら、変更の記録に残らないので、前回の値はスナップショットから取る
-  if (has.weighted) out.weightedFormula = !!String(sheet.getRange(headerRow + 1, cols.weighted + 1).getFormula() || '').trim();
+  // （時点コピーでは、元と違う値になった数式のセルを値にしている（mtgCopyAlign_）ので、列のどこかに数式があれば数式の列とみなす）
+  if (has.weighted) out.weightedFormula = sheet.getRange(headerRow + 1, cols.weighted + 1, count, 1).getFormulas().some(line => !!String(line[0] || '').trim());
   // ステータスのプルダウンの選択肢（一覧でも、定義のシートの範囲でも）
   out.statusOrder = mtgListOptions_(sheet.getRange(headerRow + 1, cols.status + 1).getDataValidation()) || [];
   const range = sheet.getRange(headerRow + 1, 1, count, width);
@@ -4721,8 +4868,13 @@ function mtgPortfolioProgressSlide_(p, t, pt) {
   // 行：シナリオ（と未設定）と、いちばん下に合計の行
   const rowH = Math.max(12, Math.min(34, (S.bottom - top) / Math.max(rows.length + 1, 1)));
   const size = rowH < 16 ? 7.5 : 9;
-  // 棒の右に合計を書く分（36pt）をあけて目盛りを決める（前回の期待値の印も入るように）
-  const max = Math.max.apply(null, [1].concat(rows.map(item => item.weighted), rows.map(item => (mtgPrevItem_(pt, item) || {}).weighted || 0)));
+  // 目盛り：棒の右に合計を書く分（36pt）をあけ、今の期待値のいちばん大きい棒が幅いっぱいになるように決める。
+  // 前回の期待値（点線の箱）は、今の最大の prevScaleLimit 倍までなら全体が入るように目盛りに含める。それより大きい（未設定がシナリオに振り分けられて
+  // 大きく減ったなど）ときは含めず、点線の箱を棒の幅の端で切って「前回 650」と書く（前回に合わせると、今の棒が小さくなって読めなかったため。2026/11/04）
+  const prevScaleLimit = 1.5;
+  const curMax = Math.max.apply(null, [1].concat(rows.map(item => item.weighted || 0)));
+  const prevMax = Math.max.apply(null, [0].concat(rows.map(item => (mtgPrevItem_(pt, item) || {}).weighted || 0)));
+  const max = prevMax <= curMax * prevScaleLimit ? Math.max(curMax, prevMax) : curMax;
   const scale = (barW - 36) / max;
   rows.forEach((item, i) => {
     const ry = top + rowH * i;
@@ -4752,8 +4904,15 @@ function mtgPortfolioProgressSlide_(p, t, pt) {
     // 前回の期待値：0 から前回の期待値までの点線の箱（前回の棒の輪郭。塗らない）。今の棒がはみ出せば増えた分、届かなければ減った分
     const prev = mtgPrevItem_(pt, item);
     if (prev && (prev.weighted || 0) * scale >= 1) {
-      el.push({type: 'box', x: barX, y: ry + (rowH - bh) / 2 - 2, w: prev.weighted * scale, h: bh + 4, line: c.dark, lineWeight: 0.75, dash: true,
+      const room = barW - 4;
+      const clipped = prev.weighted * scale > room;
+      el.push({type: 'box', x: barX, y: ry + (rowH - bh) / 2 - 2, w: clipped ? room : prev.weighted * scale, h: bh + 4, line: c.dark, lineWeight: 0.75, dash: true,
         shape: 'RECTANGLE', role: 'portfolio-prev'});
+      // 目盛りに入らない前回の期待値：箱は棒の幅の端までにし、端に前回の値を書く
+      if (clipped) {
+        el.push(mtgBox_(barX + room - 70 - S.padX / 2, ry, 66 + S.padX, rowH, prevWord + ' ' + mtgCompact_(prev.weighted) + ' ›',
+          {size: 6.5, color: c.sub, align: 'END', role: 'portfolio-prev-clipped'}));
+      }
     }
     // 今の棒の右に期待値の合計（期待値が 0 なら棒の左端。減った分の点線の箱の中に重なってもよい）
     const down = prev && (prev.weighted || 0) - (item.weighted || 0) > 0 ? 3 : 0;   // 減った分の点線の箱の中なら、枠線から少し離す

@@ -3739,3 +3739,54 @@ test('readFromCopy：資料の中身は作り始めたときのスプレッド�
   assert.strictEqual(failed.length, 1);
   assert.ok(gas.trashed.indexOf(failed[0].id) >= 0);
 });
+
+test('mtgCopyAlign_：コピーの数式のセルは、元と違う値になれば元の値にする（すべてのシート。行は得意先・案件名で探す。記録のシートは比べない。Sheets API でも同じ）', () => {
+  const run = useApi => {
+    const {gas, g, sheet} = setup({edits: false});
+    // 元：想定売上の列（G列）と、ほかのシートのセルが数式（値は元のスプレッドシートで計算したもの）。期待値（H列）も数式
+    const formula = (target, row, col, f, v) => { const cell = target.cell(row, col, true); cell.f = f; cell.v = v; };
+    const deals = sheet.getLastRow();
+    for (let r = 3; r <= deals; r++) {
+      formula(sheet, r, COL.amount, '=IMPORTRANGE("other","x!A' + r + '")', 100 + r);
+      formula(sheet, r, COL.weighted, '=G' + r + '*0.5', (100 + r) / 2);
+    }
+    const other = gas.addSheet('定義_サービス', [['サービス', '価格'], ['A', 10]]);
+    formula(other, 2, 2, '=IMPORTRANGE("other","y!B2")', 10);
+    const log = gas.ss.getSheetByName('変更履歴_差分');
+    if (useApi) {
+      // Sheets API（拡張サービス）：元のスプレッドシートの、範囲ごとの列の値（表示の文字・値）
+      g.Sheets = {Spreadsheets: {Values: {batchGet(id, args) {
+        assert.strictEqual(id, gas.ss.getId());
+        return {valueRanges: args.ranges.map(a1 => {
+          const m = /^'(.+)'!([A-Z]+)(\d+):[A-Z]+(\d+)$/.exec(a1);
+          const range = gas.ss.getSheetByName(m[1].replace(/''/g, "'")).getRange(m[2] + m[3] + ':' + m[2] + m[4]);
+          const list = (args.valueRenderOption === 'FORMATTED_VALUE' ? range.getDisplayValues() : range.getValues()).map(line => line[0]);
+          return {range: a1, values: [list]};
+        })};
+      }}}};
+    }
+    const copy = g.mtgSaveSourceCopy_(gas.ss, new Date());
+    const book = g.SpreadsheetApp.openById(copy.id);
+    assert.strictEqual(copy.aligned.cells, 0, 'コピーした直後は、元と同じ値なら直さない');
+    // コピーの中で計算し直されて値が変わった（ほかのファイルを読めず 0）。コピーを作ったあとに、元のシートの上に行が足された
+    const csheet = book.getSheetByName('新FMT');
+    for (let r = 3; r <= deals; r++) csheet.cell(r, COL.amount, true).v = 0;
+    book.getSheetByName('定義_サービス').cell(2, 2, true).v = 0;
+    gas.asUser(() => sheet.insertRowBefore(3));
+    const aligned = g.mtgCopyAlign_(gas.ss, copy.id);
+    assert.strictEqual(aligned.error, '');
+    assert.strictEqual(aligned.cells, deals - 2 + 1, '追跡シートのすべての案件と、ほかのシートの数式のセル');
+    for (let r = 3; r <= deals; r++) {
+      assert.strictEqual(csheet.getRange(r, COL.amount).getValue(), 100 + r, '得意先・案件名で元の行を探す（' + r + '行目）');
+      assert.strictEqual(csheet.getRange(r, COL.amount).getFormula(), '', '値にする');
+      assert.ok(csheet.getRange(r, COL.weighted).getFormula(), '元と同じ値の数式はそのまま');
+    }
+    assert.strictEqual(book.getSheetByName('定義_サービス').getRange(2, 2).getValue(), 10, '追跡シートのほかのシートも');
+    assert.deepStrictEqual(plain(aligned.columns), ['新FMT のG列（想定売上規模（百万）） ' + (deals - 2) + '件', '定義_サービス のB列（価格） 1件']);
+    assert.ok(log, '記録のシートはある（比べない）');
+    // 資料を読むと、期待値の列は数式の列のまま
+    assert.strictEqual(g.mtgReadDeals_(csheet, gas.get('DIFF_RULES')['新FMT']).weightedFormula, true);
+  };
+  run(false);
+  run(true);
+});

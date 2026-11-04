@@ -245,6 +245,63 @@ function diagnoseMeetingRunDialog() {
   svcShowLines_(['資料を作る画面の読み込みの確かめ'].concat(lines));
 }
 
+/**
+ * 資料の中身の読み方ごとの時間を比べる（エディタから実行する。読むだけ。大勢が編集している時間帯に実行する）。
+ * ① このスプレッドシートを Sheets API（拡張サービス）で読む ② このスプレッドシートを SpreadsheetApp で読む（前の版の読み方）。
+ * 読むのは、いちばん初めの追跡シート（見出しの行から最後の行まで）と、変更履歴_差分の最後の 5,000行。
+ * 作り始めたときのコピーは、作ったばかりのものを初めて開くと数式の計算し直しで数分かかったため（2026/11/04 に 274秒）、コピーを作らずに読めるかを確かめる
+ */
+function diagnoseMeetingRead() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const name = Object.keys(DIFF_RULES).find(n => ss.getSheetByName(n));
+  const lines = [];
+  if (!name) {
+    svcShowLines_(['資料の読み方の確かめ', '追跡シートがありません。']);
+    return;
+  }
+  const quote = n => "'" + n.replace(/'/g, "''") + "'";
+  const logRows = 5000;
+  // ① Sheets API
+  const t1 = mschTimer_('読み方の確かめ：Sheets API');
+  try {
+    if (typeof Sheets === 'undefined' || !Sheets.Spreadsheets) throw new Error('Sheets API（拡張サービス）が使えません');
+    const meta = Sheets.Spreadsheets.get(ss.getId(), {fields: 'sheets.properties(title,gridProperties(rowCount,columnCount))'});
+    const size = title => ((meta.sheets || []).find(x => x.properties.title === title) || {properties: {gridProperties: {}}}).properties.gridProperties;
+    t1.lap('シートの大きさ');
+    const deals = Sheets.Spreadsheets.Values.batchGet(ss.getId(), {ranges: [quote(name) + '!A' + DIFF_RULES[name].headerRow + ':' + diffColumnLetter_(size(name).columnCount || 26)],
+      valueRenderOption: 'FORMATTED_VALUE'});
+    const dealRows = ((deals.valueRanges || [])[0].values || []).length;
+    t1.lap('「' + name + '」' + dealRows + '行');
+    const total = size(DIFF_OPTIONS.logSheet).rowCount || 0;
+    const from = Math.max(1, total - logRows + 1);
+    const log = Sheets.Spreadsheets.Values.batchGet(ss.getId(), {ranges: [quote(DIFF_OPTIONS.logSheet) + '!A' + from + ':I' + total], valueRenderOption: 'FORMATTED_VALUE'});
+    t1.lap('「' + DIFF_OPTIONS.logSheet + '」' + (((log.valueRanges || [])[0] || {}).values || []).length + '行');
+    lines.push('① Sheets API：' + t1.text());
+  } catch (error) {
+    lines.push('① Sheets API：✗ ' + (error && error.message || error) + '（' + t1.text() + '）');
+  }
+  // ② SpreadsheetApp（前の版の読み方）
+  const t2 = mschTimer_('読み方の確かめ：SpreadsheetApp');
+  try {
+    const sheet = ss.getSheetByName(name);
+    const rule = DIFF_RULES[name];
+    const rows = Math.max(sheet.getLastRow() - rule.headerRow + 1, 1);
+    sheet.getRange(rule.headerRow, 1, rows, sheet.getLastColumn()).getDisplayValues();
+    t2.lap('「' + name + '」' + rows + '行');
+    const log = ss.getSheetByName(DIFF_OPTIONS.logSheet);
+    if (log) {
+      const total = log.getLastRow();
+      const from = Math.max(1, total - logRows + 1);
+      log.getRange(from, 1, total - from + 1, log.getLastColumn()).getValues();
+      t2.lap('「' + DIFF_OPTIONS.logSheet + '」' + (total - from + 1) + '行');
+    }
+    lines.push('② SpreadsheetApp：' + t2.text());
+  } catch (error) {
+    lines.push('② SpreadsheetApp：✗ ' + (error && error.message || error) + '（' + t2.text() + '）');
+  }
+  svcShowLines_(['資料の読み方の確かめ（このスプレッドシートを、コピーを作らずに読む時間）'].concat(lines));
+}
+
 /** 画面の「カレンダーから読み込む」（google.script.run から呼ぶ）。{message, data: getMeetingRunData と同じ形} */
 function importMeetingSchedulesFromDialog(kind, final) {
   const result = mschImport_();

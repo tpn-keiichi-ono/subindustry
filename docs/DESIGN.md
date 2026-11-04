@@ -488,6 +488,15 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   `sourceKeepHours` より古いものを移す（`mtgSourceCleanup_`。続けている途中の仕事のコピーは残す）。コピーを作れない・開けないときは、このスプレッドシートから読み、
   `job.sourceError` を知らせる（`mtgSourceNote_`）。リンク（`mtgFolder_` など）・書き込みは、このスプレッドシートのまま。
   テストのモックでは `readFromCopy` を `false` にしている（ほかのテストの Drive のコピーの数・ID を変えないため。本物の設定は `tests/project.test.js`）。
+- **コピーの値をそろえる**（`mtgCopyAlign_`。`mtgSaveCopy_`・`mtgSaveSourceCopy_` がコピーを作った直後に呼ぶ）：コピーの数式は計算し直されるので、IMPORTRANGE など
+  ほかのファイルを読む数式は 0・エラーになる（2026/11/04 にシナリオによる見込金額が 0 になった）。記録のシート以外のすべてのシートで、数式のセルを元の表示の文字と比べ、
+  違えば元の値（`UNFORMATTED_VALUE`。日付はシリアル値で、セルの書式で日付に見える）を書く（数式は消える。続く行はまとめて `setValues`）。元の値は Sheets API の
+  `Values.batchGet`（数式のある列と、得意先・案件名の列だけ。`majorDimension: COLUMNS`）。無ければ SpreadsheetApp。追跡シートの見出しより下は得意先・案件名で元の行を探す
+  （同じ位置 → 1つだけある行。無い・2つ以上は直さずに `unmatched`）。期待値の列は一部が値になっても、`mtgReadDeals_` は列のどこかに数式があれば数式の列とみなす。
+- 作ったばかりのコピーの `openById` は数式の計算し直しで数分かかることがある（274秒。2回目からは速い：前回の時点コピーは 4.6秒）。`mtgJobRun_` はコピーを開いたあと
+  `fits(summaryMs + deckMs)` を見て、足りなければ区切る（続きは同じコピー）。`diagnoseMeetingRead()` で、コピーを作らずに Sheets API で読む時間を測る。
+- ① の目盛り：今の期待値の最大で決め、前回の期待値は今の最大の 1.5倍までなら目盛りに含める。それより大きければ点線の箱を棒の幅の端で切り、端に「前回 650 ›」
+  （`portfolio-prev-clipped`。前回の未設定が大きく、今の棒が小さくなって読めなかったため）。
 - **会議資料のインデックス**（`mtgWriteIndex_`）：格納できたら、このスプレッドシートの `MTG_OPTIONS.index.sheet`（`INDEX_会議資料`）の
   行＝会議日（A列「日付」。日付の値で、表示形式 `yyyy/m/d`。B列「会議名」は `RX Business Meeting`・`RX Service Meeting`。2026/10/17 に見出しを「種別」から改めた。前の見出し（`formerKindHeaders`）は `mtgIndexPrepare_` が書き換える）・列＝サブインダストリー（1行目の見出しがシート名。
   `formerNames` の前の名前も今の名前とみなす）のセルに、PDF（`link: 'folder'` なら会議のフォルダ）をスマートチップで書きます

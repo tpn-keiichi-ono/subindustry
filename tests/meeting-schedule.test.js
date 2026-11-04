@@ -237,3 +237,14 @@ test('「作成する」の途中・結果を控え、画面が読み込み直�
   props.setProperty(key, JSON.stringify({status: 'done', kind: 'business', final: false, meeting: y + '/10/23', at: now - 40 * 60000, finishedAt: now - 31 * 60000, message: '済み'}));
   assert.strictEqual(g.getMeetingRunState('business'), null);
 });
+
+test('diagnoseMeetingRead：コピーを作らずに読む時間を、Sheets API と SpreadsheetApp で比べて出す（読むだけ。Sheets API が無ければ ✗ と理由）', () => {
+  const {gas, g} = setup();
+  gas.addSheet('変更履歴_差分', [['記録日時', 'イベントID', '編集者メールアドレス', 'シート', 'セル', '列名', '種類', '変更前', '変更後']]);
+  const writes = gas.writes.length;
+  g.diagnoseMeetingRead();
+  const message = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(message, /① Sheets API：✗ Sheets API（拡張サービス）が使えません/);
+  assert.match(message, /② SpreadsheetApp：「新FMT」\d+行 [\d.]+秒・「変更履歴_差分」1行 [\d.]+秒（合計 [\d.]+秒）/);
+  assert.strictEqual(gas.writes.length, writes, '読むだけ');
+});
