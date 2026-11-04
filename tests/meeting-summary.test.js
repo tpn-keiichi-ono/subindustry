@@ -3356,7 +3356,12 @@ test('RXシナリオのポートフォリオのスライド：パイプライン
 
   // ② 行：売上の大きい順に2社と「その他 N社」（色を付けない）。列：シナリオ（売上の大きい順）と未設定、その下に年度（FY26・FY27）。セルの確度は書かない
   assert.deepStrictEqual(roleOf(heat, 'heat-head').map(el => el.text.replace(/\n/g, '')), ['得意先', 'ID-POS分析', 'サイネージ', '物流・SCM', '未設定',
-    '合計FY26〜27／シナリオ金額', '前回比（FY26〜27）']);
+    '合計FY26〜27／シナリオ金額', '前回比']);
+  // 列の見出しの文字の大きさはそろえる（② は見出し・年度がすべて同じ大きさ。①・③ も portfolio.headSize）
+  const headSizes = roleOf(heat, 'heat-head').concat(roleOf(heat, 'heat-year')).map(el => el.size);
+  assert.ok(headSizes.every(v => v === headSizes[0]) && !roleOf(heat, 'heat-head').some(el => el.spans), '② の見出しは同じ大きさ：' + headSizes.join(','));
+  assert.ok(roleOf(progress, 'portfolio-head').concat(roleOf(map, 'map-table-head')).every(el => el.size === o.portfolio.headSize), '①・③ の見出しも同じ大きさ');
+  assert.strictEqual(headSizes[0], o.portfolio.headSize, '入るときは①・③ と同じ大きさ');
   assert.deepStrictEqual(roleOf(heat, 'heat-year').map(el => el.text), ['FY26', 'FY27', 'FY26', 'FY27', 'FY26', 'FY27', 'FY26', 'FY27']);
   assert.deepStrictEqual(roleOf(heat, 'heat-name').map(el => el.text), ['A社', 'C社', 'その他 2社']);
   // A社：ID-POS分析 FY26 60・FY27 5、サイネージ FY26 10（FY27 は 0 なので数は書かず色だけ）。C社：未設定 FY26 5
@@ -3608,6 +3613,9 @@ test('RXシナリオのポートフォリオの前回比：前回の時点コピ
     assert.ok(gasM.global.mtgTextWidth_(main, el.size) <= colW, '数字が列に入る：' + main + ' ' + el.size + 'pt');
     if (sub) assert.ok(gasM.global.mtgTextWidth_(sub, el.spans[0].size) <= colW, '増減が列に入る：' + sub);
   });
+  const hsM = roleOf(heatM, 'heat-head').concat(roleOf(heatM, 'heat-year')).map(el => el.size);
+  assert.ok(hsM.every(v => v === hsM[0]), '列が細くても見出しは同じ大きさ（そろって小さくなる）');
+  assert.ok(!roleOf(heatM, 'heat-head').some(el => /…/.test(el.text)), '見出しは全文');
   const rowH = roleOf(heatM, 'heat-name-cell').map(el => el.h);
   assert.ok(rowH.every(h => h >= 14), '2行のセルの行は 14pt 以上（入らなければ上位の得意先を減らす）');
   assert.ok(heatM.elements.every(el => el.y + (el.h || 0) <= S.bottom + 0.01), 'ページの下に見切れない');

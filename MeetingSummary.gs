@@ -273,6 +273,8 @@ const MTG_OPTIONS = {
     heatRows: 13,                // ヒートマップに出す得意先の数
     // ヒートマップの色（白 → この色）。表の見出し・列の緑と見分けられるように青（③ の「刈り取り」と同じ系統。2026/11/04 に緑から変えた）
     heatColor: '#2F5597',
+    // 表の列の見出しの文字の大きさ（3枚で同じ。ヒートマップは入らなければ、すべての見出しを同じだけ小さくする）
+    headSize: 7.5,
     heatColumns: 7,              // ヒートマップに出すシナリオの数（未設定を除く。年度ごとに列を分けるので少なめ。多ければ、売上の小さいほうを「ほか N シナリオ」にまとめる）
     // ポートフォリオ図の軸と点線（決まった目標が無いあいだは、次の根拠で引く。目標が決まったら salesLine・progressLine に入れる）
     //   横軸「確度」：案件のステータスの期待値率（「定義_ステータス」の期待値。B-クロージング中 70%・C-提案中〜稟議対応中 50%・D 20%・創注 10%）を、
@@ -4546,7 +4548,7 @@ function mtgPortfolioProgressSlide_(p, t, pt) {
   const headY = y + 20;
   let cx = barX + barW + 8;
   cols.forEach(col => {
-    el.push(mtgBox_(cx - S.padX / 2, headY, col.w + S.padX, 14, col.label, {size: 8, color: c.sub, align: 'END', role: 'portfolio-head'}));
+    el.push(mtgBox_(cx - S.padX / 2, headY, col.w + S.padX, 14, col.label, {size: o.portfolio.headSize, color: c.sub, align: 'END', role: 'portfolio-head'}));
     col.x = cx;
     cx += col.w;
   });
@@ -4670,9 +4672,29 @@ function mtgPortfolioHeatmapSlide_(p, t, pt) {
   const dW = 44;   // 前回比の列
   const groupW = (S.w - nameW - totW - dW) / groups.length;
   const sw = groupW / Math.max(years.length, 1);
-  const heads = groups.map(gr => mtgFitText_(gr.label, groupW, [8, 7.5, 7, 6.5], 3));
-  const th1 = Math.max(18, Math.max.apply(null, heads.map(f => f.lines.length * f.size * S.lineFactor)) + 5);
-  const th2 = 12;
+  // 列の見出しは、すべて同じ大きさ（portfolio.headSize から 0.5pt ずつ、どの見出しも全文が入るまで小さくする。長い名前は大きさを変えずに行を分ける）
+  const whole = (label, width, size, max) => {
+    const f = mtgFitText_(label, width + S.padX, [size], max);
+    const last = f.lines[f.lines.length - 1] || '';
+    return f.size === size && !/…$/.test(last) && f.lines.join('').replace(/\s/g, '') === String(label).replace(/\s/g, '') ? f.lines : null;
+  };
+  const yearFits = size => years.every(y => mtgTextWidth_('FY' + y, size) <= sw * S.fit - 1);
+  const totalLabel = p.fy + '／シナリオ金額';
+  const layoutHeads = size => {
+    const groupLines = groups.map(gr => whole(gr.label, groupW, size, 3));
+    const totalLines = whole(totalLabel, totW, size, 2);
+    const ok = groupLines.every(Boolean) && totalLines && whole('得意先', nameW, size, 1) && whole(p.vs, dW, size, 1) && yearFits(size);
+    return ok ? {size, groupLines, totalLines} : null;
+  };
+  const headSizes = [P.headSize, P.headSize - 0.5, P.headSize - 1, P.headSize - 1.5, P.headSize - 2].filter(v => v >= 5);
+  const H = headSizes.map(layoutHeads).find(Boolean) || {size: headSizes[headSizes.length - 1],
+    groupLines: groups.map(gr => mtgFitText_(gr.label, groupW + S.padX, [headSizes[headSizes.length - 1]], 3).lines),
+    totalLines: mtgFitText_(totalLabel, totW + S.padX, [headSizes[headSizes.length - 1]], 2).lines};
+  const hs = H.size;
+  const lineH = hs * S.lineFactor;
+  const th2 = Math.max(12, lineH + 3);
+  // 合計の見出し（「合計」と「FY26〜28／シナリオ金額」）は、シナリオと年度の見出しを合わせた高さに入れる
+  const th1 = Math.max(18, Math.max.apply(null, H.groupLines.map(lines => lines.length)) * lineH + 5, (1 + H.totalLines.length) * lineH + 5 - th2);
   const th = th1 + th2;
   const fh = 26;
   const legendH = 14;
@@ -4720,25 +4742,24 @@ function mtgPortfolioHeatmapSlide_(p, t, pt) {
   const text = (bx, by, bw, bh, value, style) => el.push(mtgBox_(bx - S.padX / 2, by, bw + S.padX, bh, value, Object.assign({align: 'CENTER'}, style)));
   // 見出し：得意先・シナリオ（その下に年度）・合計
   rect(x, top, nameW, th, c.green, c.white, 'heat-head-cell');
-  text(x, top, nameW, th, '得意先', {size: 8, bold: true, color: c.white, role: 'heat-head'});
+  text(x, top, nameW, th, '得意先', {size: hs, bold: true, color: c.white, role: 'heat-head'});
   groups.forEach((gr, i) => {
     const gx = x + nameW + i * groupW;
     rect(gx, top, groupW, th1, c.green, c.white, 'heat-head-cell');
-    text(gx, top, groupW, th1, heads[i].lines.join('\n'), {size: heads[i].size, bold: true, color: c.white, role: 'heat-head'});
+    text(gx, top, groupW, th1, H.groupLines[i].join('\n'), {size: hs, bold: true, color: c.white, role: 'heat-head'});
     years.forEach((y, k) => {
       rect(gx + k * sw, top + th1, sw, th2, c.greenDeep, c.white, 'heat-year-cell');
-      text(gx + k * sw, top + th1, sw, th2, 'FY' + y, {size: fitSize('FY' + y, 6.5), bold: true, color: c.white, role: 'heat-year'});
+      text(gx + k * sw, top + th1, sw, th2, 'FY' + y, {size: hs, bold: true, color: c.white, role: 'heat-year'});
     });
   });
   const tx = x + nameW + groups.length * groupW;
   const dx = tx + totW;
-  const totalHead = '合計\n' + p.fy + '／シナリオ金額';
+  // 合計（その下に年度と「／シナリオ金額」）・前回比（合計の売上の増減。年度は合計の見出しにある）。どれも同じ大きさ
+  const totalHead = ['合計'].concat(H.totalLines).join('\n');
   rect(tx, top, totW, th, c.green, c.white, 'heat-head-cell');
-  text(tx, top, totW, th, totalHead, {size: 7, bold: true, color: c.white, spans: [{start: 3, end: totalHead.length, bold: false, size: 6}], role: 'heat-head'});
-  const deltaHead = p.vs + '\n（' + p.fy + '）';
+  text(tx, top, totW, th, totalHead, {size: hs, bold: true, color: c.white, role: 'heat-head'});
   rect(dx, top, dW, th, c.green, c.white, 'heat-head-cell');
-  text(dx, top, dW, th, deltaHead, {size: 7, bold: true, color: c.white, spans: [{start: p.vs.length + 1, end: deltaHead.length, bold: false, size: 6}],
-    role: 'heat-head'});
+  text(dx, top, dW, th, p.vs, {size: hs, bold: true, color: c.white, role: 'heat-head'});
   const deltaCell = (cur, prev) => (prev == null ? {text: G, size: 6, color: c.muted} : {text: mtgSignedCompact_(cur - prev), color: mtgDeltaColor_(cur - prev)});
   // 行
   const totalText = (sales, scen) => {
@@ -5022,7 +5043,7 @@ function mtgPortfolioMapSlide_(p, t, prevT) {
   el.push({type: 'box', x: lx, y: ly, w: tw, h: 1, fill: c.ink, shape: 'RECTANGLE'});
   let tx = lx;
   tc.forEach(col => {
-    el.push(mtgBox_(tx - 3, ly, col.w + 6, 14, col.label, {size: 7.5, bold: true, color: c.sub, align: col.align, role: 'map-table-head'}));
+    el.push(mtgBox_(tx - 3, ly, col.w + 6, 14, col.label, {size: P.headSize, bold: true, color: c.sub, align: col.align, role: 'map-table-head'}));
     tx += col.w;
   });
   ly += 14;
