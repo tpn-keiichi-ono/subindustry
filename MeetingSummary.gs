@@ -4282,6 +4282,40 @@ function mtgPortfolioEmpty_(p, t, title, heading, needs) {
   return {title, lead: '進行中の案件なし。', elements: [head, mtgEmptyBox_(S.x, S.top + 26, 360, 64, 'none', '進行中の案件なし')]};
 }
 
+/**
+ * 文を幅 width（pt）の箱に全文入れる、文字の大きさと行。sizes（大きい順）で1行に入るか → 2行 → … max 行まで試す（2行からは行の長さをそろえる）。
+ * どれでも入らなければ、いちばん小さい大きさで max 行（最後は「…」）。戻り値 {size, lines}
+ */
+function mtgFitText_(text, width, sizes, max) {
+  const value = String(text == null ? '' : text);
+  // 2行にするときは、区切り（「01-03.次世代RX店舗」の「.」・中黒・空白など）の後ろで分けられれば、そこで分ける（言葉の途中で切らない）
+  const split = size => {
+    const fits = part => part && mtgWrap_(part, width, size, 99).length === 1;
+    const cands = [];
+    Array.from(value).forEach((ch, i, chars) => {
+      if (/[.．・･／/\s]/.test(ch) && i > 0 && i < chars.length - 1) cands.push(chars.slice(0, i + 1).join('').trim());
+    });
+    const best = cands.map(head => [head, value.slice(head.length).trim()]).filter(([h, t]) => fits(h) && fits(t))
+      .sort((x, y) => Math.abs(mtgTextWidth_(x[0], size) - mtgTextWidth_(x[1], size)) - Math.abs(mtgTextWidth_(y[0], size) - mtgTextWidth_(y[1], size)))[0];
+    return best || null;
+  };
+  for (let n = 1; n <= max; n++) {
+    // 2行は、区切りで分けられる大きさを先に探す（無ければ、行の長さをそろえて分ける）
+    if (n === 2) {
+      for (const size of sizes) {
+        const parts = split(size);
+        if (parts) return {size, lines: parts};
+      }
+    }
+    for (const size of sizes) {
+      if (mtgWrap_(value, width, size, 99).length > n) continue;
+      return {size, lines: n === 1 ? mtgWrap_(value, width, size, 1) : mtgBalance_(value, width, size, n)};
+    }
+  }
+  const size = sizes[sizes.length - 1];
+  return {size, lines: mtgBalance_(value, width, size, max)};
+}
+
 /** 按分した金額の表示（小数1桁） */
 function mtgShare_(value) {
   return mtgAmount_(Math.round((value || 0) * 10) / 10);
@@ -4320,7 +4354,7 @@ function mtgPortfolioProgressSlide_(p, t) {
     el.push(mtgBox_(lx + 6, y - 1, item.bw, 18, item.label, {size: 8.5, color: c.sub, role: 'legend'}));
     lx += 6 + item.bw + (8 - 7.2 - 1.6);
   });
-  const nameW = 106;
+  const nameW = 150;
   const cols = [{label: '想定売上', w: 52}, {label: '期待値', w: 48}, {label: 'シナリオ金額', w: 60}, {label: '件数', w: 32}, {label: '得意先', w: 34},
     {label: '確度A・B', w: 46}];
   const colsW = cols.reduce((sum, col) => sum + col.w, 0);
@@ -4341,7 +4375,9 @@ function mtgPortfolioProgressSlide_(p, t) {
     const ry = headY + 16 + rowH * i;
     if (item.unset) el.push({type: 'box', x, y: ry, w, h: 0.75, fill: c.line, shape: 'RECTANGLE'});
     else if (i % 2 === 1) el.push({type: 'box', x, y: ry, w, h: rowH, fill: c.greenSoft, alpha: 0.35, shape: 'RECTANGLE', role: 'portfolio-band'});
-    el.push(mtgBox_(x, ry, nameW, rowH, mtgWrap_(item.key, nameW, size, 1)[0], {size, bold: true, color: item.unset ? c.muted : c.ink, role: 'portfolio-name'}));
+    // シナリオの名前は全文（1行に入らなければ小さく、それでも入らなければ2行。行の高さに入る分だけ）
+    const fit = mtgFitText_(item.key, nameW, [size, size - 0.5, size - 1].filter(pt => pt >= 7), rowH >= 22 ? 2 : 1);
+    el.push(mtgBox_(x, ry, nameW, rowH, fit.lines.join('\n'), {size: fit.size, bold: true, color: item.unset ? c.muted : c.ink, role: 'portfolio-name'}));
     let level = 0;
     const bh = Math.max(Math.min(rowH - 14, 20), 5);
     ranks.forEach(r => {
@@ -4430,24 +4466,21 @@ function mtgPortfolioHeatmapSlide_(p, t) {
 
   const x = S.x;
   const top = S.top - 6;
-  const th = 24;
   const fh = 24;
   const nameW = 96;
   const totW = 92;
   const cw = (S.w - nameW - totW) / columns.length;
+  const headSize = cw < 60 ? 7 : 8;
+  // シナリオの名前は全文（1行に入る大きさ → 2行 → 3行。見出しの行は、いちばん行の多い名前に合わせて高くする）
+  const heads = columns.map(col => mtgFitText_(col.label, cw, [headSize, 7.5, 7, 6.5].filter(pt => pt <= headSize), 3));
+  const th = Math.max(24, Math.max.apply(null, heads.map(f => f.lines.length * f.size * S.lineFactor)) + 6);
   const rh = Math.max(11, Math.min(16, (S.bottom - 14 - top - th - fh) / Math.max(rows.length, 1)));
   const size = rh < 14 ? 7 : 8;
-  const headSize = cw < 60 ? 7 : 8;
   const el = [];
   const head = (hx, w, text, extra) => el.push(mtgBox_(hx, top, w, th, text, Object.assign({size: headSize, bold: true, color: c.white, fill: c.green,
     line: c.white, lineWeight: 1, shape: 'RECTANGLE', align: 'CENTER', role: 'heat-head'}, extra || {})));
   head(x, nameW, '得意先');
-  // シナリオの名前は1行に入る大きさ（8pt から 6.5pt まで）。入らなければ2行に分ける（言葉の途中で切らないように行の長さをそろえる）
-  columns.forEach((col, i) => {
-    const one = [headSize, 7.5, 7, 6.5].filter(pt => pt <= headSize).find(pt => mtgWrap_(col.label, cw, pt, 2).length === 1);
-    const pt = one || Math.min(headSize, 7);
-    head(x + nameW + i * cw, cw, (one ? mtgWrap_(col.label, cw, pt, 1) : mtgBalance_(col.label, cw, pt, 2)).join('\n'), {size: pt});
-  });
+  columns.forEach((col, i) => head(x + nameW + i * cw, cw, heads[i].lines.join('\n'), {size: heads[i].size}));
   const totalHead = '合計\n' + p.fy + '／シナリオ金額';
   head(x + nameW + columns.length * cw, totW, totalHead, {spans: [{start: 3, end: totalHead.length, bold: false, size: 7}]});
   const totalText = (sales, scen) => {
@@ -4504,9 +4537,9 @@ function mtgNiceMax_(v) {
   return [1, 2, 2.5, 5, 10].map(k => k * mag).find(n => n >= v - 1e-9);
 }
 
-/** ポートフォリオ図の円の半径（pt）。件数 n、いちばん多い件数 max。凡例も同じ計算（いちばん大きい円は 18pt） */
+/** ポートフォリオ図の円の半径（pt）。件数 n、いちばん多い件数 max。凡例も同じ計算（いちばん大きい円は 18pt。小さい円にも番号が入るように 7pt から） */
 function mtgBubbleRadius_(n, max) {
-  return 4 + 14 * Math.sqrt(Math.max(n, 0) / Math.max(max, 1));
+  return 7 + 11 * Math.sqrt(Math.max(n, 0) / Math.max(max, 1));
 }
 
 /**
@@ -4535,9 +4568,12 @@ function mtgPortfolioMapSlide_(p, t) {
       mtgBox_(S.x, S.top - 2, 420, 20, 'RXシナリオ構成ごとの ' + p.fy + '売上と確度の進み具合', {size: 10.5, bold: true, color: c.ink}),
       mtgEmptyBox_(S.x, S.top + 26, 360, 64, 'none', text)]};
   }
-  const X0 = S.x + 48;
+  // 図（左）と表（右）。表はシナリオの名前を全文入れるので広めにとる
+  const tw = 236;
+  const lx = S.x + S.w - tw;
+  const X0 = S.x + 40;
   const Y0 = S.top + 10;
-  const W = 420;
+  const W = lx - X0 - 36;
   const H = 240;
   const ymax = mtgNiceMax_(Math.max.apply(null, pts.map(pt => pt.sales)));
   const ymid = mtgSum_(pts, 'sales') / pts.length;
@@ -4549,10 +4585,15 @@ function mtgPortfolioMapSlide_(p, t) {
   const Q = {};
   MTG_QUADRANTS.forEach(q => { Q[q.key] = q; });
   const quadOf = pt => (pt.progress >= line ? (pt.sales >= ymid ? 'grow' : 'harvest') : (pt.sales >= ymid ? 'push' : 'review'));
+  // シナリオの番号（今年度の売上の大きい順に 1 から）。図の円には番号だけを書き、名前は右の表に全文で書く（名前どうしが重ならないように）
+  const ordered = pts.slice().sort((a, b) => (b.sales - a.sales) || (b.count - a.count));
+  const numberOf = new Map(ordered.map((pt, i) => [pt.key, i + 1]));
   const el = [];
   // 象限の背景（薄い色）
-  [['push', X0, Y0, midX - X0, midY - Y0], ['grow', midX, Y0, X0 + W - midX, midY - Y0], ['review', X0, midY, midX - X0, Y0 + H - midY],
-    ['harvest', midX, midY, X0 + W - midX, Y0 + H - midY]].forEach(([k, qx, qy, qw, qh]) => {
+  const rects = {push: [X0, Y0, midX - X0, midY - Y0], grow: [midX, Y0, X0 + W - midX, midY - Y0], review: [X0, midY, midX - X0, Y0 + H - midY],
+    harvest: [midX, midY, X0 + W - midX, Y0 + H - midY]};
+  ['push', 'grow', 'review', 'harvest'].forEach(k => {
+    const [qx, qy, qw, qh] = rects[k];
     if (qw > 0.1 && qh > 0.1) el.push({type: 'box', x: qx, y: qy, w: qw, h: qh, fill: Q[k].bg, shape: 'RECTANGLE', role: 'map-quadrant'});
   });
   // 軸と点線
@@ -4560,89 +4601,111 @@ function mtgPortfolioMapSlide_(p, t) {
   el.push({type: 'box', x: X0, y: Y0 + H - 1, w: W, h: 1, fill: c.sub, shape: 'RECTANGLE'});
   el.push({type: 'line', x: midX, y: Y0, w: 0, h: H, color: c.faint, weight: 1, dash: true, role: 'map-line'});
   el.push({type: 'line', x: X0, y: midY, w: W, h: 0, color: c.faint, weight: 1, dash: true, role: 'map-line'});
-  // 象限の名前（四隅。円と重なりにくいように）
-  const qName = k => Q[k].label + '（' + Q[k].note + '）';
-  const names = [];
-  [['push', X0, Y0 + 1, 'START'], ['grow', X0 + W - 210, Y0 + 1, 'END'], ['review', X0, Y0 + H - 17, 'START'], ['harvest', X0 + W - 210, Y0 + H - 17, 'END']]
-    .forEach(([k, qx, qy, align]) => {
-      el.push(mtgBox_(qx, qy, 210, 16, qName(k), {size: 8, bold: true, color: Q[k].fg, align, role: 'map-quadrant-name'}));
-      const nw = mtgTextWidth_(qName(k), 8);
-      names.push({x: align === 'END' ? qx + 210 - S.padX / 2 - nw : qx + S.padX / 2, y: qy + 2, w: nw, h: 12});
-    });
   // 目盛り
   [0, 25, 50, 75, 100].forEach(v => el.push(mtgBox_(px(v) - 24, Y0 + H + 1, 48, 13, v + '%', {size: 7.5, color: c.sub, align: 'CENTER', role: 'map-tick'})));
   [0, ymax / 2, ymax].forEach(v => el.push(mtgBox_(X0 - 50, py(v) - 7, 48, 14, mtgAmount_(v), {size: 7.5, color: c.sub, align: 'END', role: 'map-tick'})));
   const scoreText = Object.keys(P.scores).map(k => k + '=' + P.scores[k]).join('・');
-  el.push(mtgBox_(X0 - 20, Y0 + H + 13, W + 40, 14, '確度の進み具合（' + p.fy + '売上で重み付けした確度の平均。' + scoreText + '）',
+  el.push(mtgBox_(X0 - 30, Y0 + H + 13, W + 60, 14, '確度の進み具合（' + p.fy + '売上で重み付けした確度の平均。' + scoreText + '）',
     {size: 7.5, color: c.sub, align: 'CENTER', role: 'map-axis'}));
   el.push(mtgBox_(S.x - 7.2, Y0 - 18, 200, 14, yName, {size: 8, color: c.sub, role: 'map-axis'}));
-  // 円（件数）と名前（右・左・下・上の順に、ほかの円・名前と重ならない場所）
+  // 円（件数）。図の中に収める（端の円は、半径の分だけ内側に寄せる）
   const maxCount = Math.max.apply(null, pts.map(pt => pt.count));
-  // 円は図の中に収める（端の円は、半径の分だけ内側に寄せる）
-  const circles = pts.map(pt => {
+  const circles = ordered.map(pt => {
     const r = mtgBubbleRadius_(pt.count, maxCount);
-    return {pt, r, cx: Math.max(X0 + r, Math.min(X0 + W - r, px(pt.progress))), cy: Math.max(Y0 + r, Math.min(Y0 + H - r, py(pt.sales)))};
+    return {pt, r, n: numberOf.get(pt.key), cx: Math.max(X0 + r, Math.min(X0 + W - r, px(pt.progress))), cy: Math.max(Y0 + r, Math.min(Y0 + H - r, py(pt.sales)))};
   });
-  circles.forEach(b => el.push({type: 'box', x: b.cx - b.r, y: b.cy - b.r, w: b.r * 2, h: b.r * 2, fill: c.green, alpha: 0.75, line: c.greenText,
-    lineWeight: 1, shape: 'ELLIPSE', role: 'map-bubble'}));
+  // 大きい円を先に描き、小さい円を上に重ねる（小さい円が隠れないように）
+  circles.slice().sort((a, b) => b.r - a.r).forEach(b => el.push({type: 'box', x: b.cx - b.r, y: b.cy - b.r, w: b.r * 2, h: b.r * 2, fill: c.green,
+    alpha: 0.75, line: c.greenText, lineWeight: 1, shape: 'ELLIPSE', role: 'map-bubble'}));
+  const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  const onCircle = r => circles.some(b => b.cx + b.r > r.x && b.cx - b.r < r.x + r.w && b.cy + b.r > r.y && b.cy - b.r < r.y + r.h);
+  // 象限の名前：その象限の四隅のうち、円と重ならない隅に置く（どこも重なれば、図の外側の隅）
+  const qName = k => Q[k].label + '（' + Q[k].note + '）';
+  const names = [];
+  [['push', 'START'], ['grow', 'END'], ['review', 'START'], ['harvest', 'END']].forEach(([k, outer]) => {
+    const [qx, qy, qw, qh] = rects[k];
+    const nw = mtgTextWidth_(qName(k), 8) + 2;
+    const left = qx + 3;
+    const right = qx + qw - nw - 3;
+    const top = qy + 3;
+    const bottom = qy + qh - 15;
+    const outerY = k === 'push' || k === 'grow' ? top : bottom;
+    const outerX = outer === 'START' ? left : right;
+    const spots = [[outerX, outerY], [outer === 'START' ? right : left, outerY], [outerX, outerY === top ? bottom : top], [outer === 'START' ? right : left, outerY === top ? bottom : top]]
+      .filter(([nx, ny]) => nx >= qx && ny >= qy && nx + nw <= qx + qw + 0.5 && ny + 12 <= qy + qh + 0.5);
+    const spot = spots.find(([nx, ny]) => !onCircle({x: nx, y: ny, w: nw, h: 12})) || spots[0] || [outerX, outerY];
+    names.push({x: spot[0], y: spot[1], w: nw, h: 12});
+    el.push(mtgBox_(spot[0] - S.padX / 2, spot[1] - 2, nw + S.padX, 16, qName(k), {size: 8, bold: true, color: Q[k].fg, role: 'map-quadrant-name'}));
+  });
+  // 円の番号：円の真ん中（白の太字）。ほかの番号と重なるときは、円の右・左・下・上の重ならない場所（黒の太字）
   const placed = names.slice();
-  const hits = (bx, by, bw, bh) => circles.some(b => b.cx + b.r > bx && b.cx - b.r < bx + bw && b.cy + b.r > by && b.cy - b.r < by + bh) ||
-    placed.some(q => q.x < bx + bw && q.x + q.w > bx && q.y < by + bh && q.y + q.h > by);
   circles.forEach(b => {
-    const name = mtgWrap_(b.pt.key, 140, 8, 1)[0];
-    const count = ' ' + b.pt.count + '件';
-    const lw = mtgTextWidth_(name, 8) + mtgTextWidth_(count, 8) + S.padX + 4;
-    const lh = 14;
-    const inside = (bx, by) => bx >= X0 - 2 && bx + lw <= X0 + W + 30 && by >= Y0 - 4 && by + lh <= Y0 + H + 4;
-    const cands = [[b.cx + b.r - 4, b.cy - lh / 2], [b.cx - b.r - lw + 4, b.cy - lh / 2], [b.cx - lw / 2, b.cy + b.r], [b.cx - lw / 2, b.cy - b.r - lh]];
-    // どこも重なるときは、右・左の上下にずらした場所も試す
-    [1, -1, 2, -2].forEach(k => cands.push([b.cx + b.r - 4, b.cy - lh / 2 + k * lh], [b.cx - b.r - lw + 4, b.cy - lh / 2 + k * lh]));
-    const spot = cands.find(([bx, by]) => inside(bx, by) && !hits(bx + 6, by + 2, lw - 12, lh - 4)) || cands.find(([bx, by]) => inside(bx, by)) || cands[0];
-    placed.push({x: spot[0] + 6, y: spot[1] + 2, w: lw - 12, h: lh - 4});
-    el.push(mtgBox_(spot[0], spot[1], lw, lh, name + count, {size: 8, bold: true, color: c.ink,
-      spans: [{start: name.length, end: name.length + count.length, bold: false, color: c.muted}], role: 'map-label'}));
+    const label = String(b.n);
+    const lw = mtgTextWidth_(label, 8) + 3;
+    const lh = 10;
+    const center = {x: b.cx - lw / 2, y: b.cy - lh / 2, w: lw, h: lh};
+    const around = [[b.cx + b.r + 1, b.cy - lh / 2], [b.cx - b.r - 1 - lw, b.cy - lh / 2], [b.cx - lw / 2, b.cy + b.r + 1], [b.cx - lw / 2, b.cy - b.r - 1 - lh],
+      [b.cx + b.r * 0.7, b.cy - b.r * 0.7 - lh], [b.cx + b.r * 0.7, b.cy + b.r * 0.7], [b.cx - b.r * 0.7 - lw, b.cy - b.r * 0.7 - lh], [b.cx - b.r * 0.7 - lw, b.cy + b.r * 0.7]]
+      .map(([nx, ny]) => ({x: nx, y: ny, w: lw, h: lh}));
+    const free = r => !placed.some(q => overlaps(q, r));
+    const inPlot = r => r.x >= X0 && r.x + r.w <= X0 + W + 20 && r.y >= Y0 - 6 && r.y + r.h <= Y0 + H + 2;
+    const inside = free(center);
+    const spot = inside ? center : around.find(r => inPlot(r) && free(r)) || around.find(inPlot) || center;
+    placed.push(spot);
+    el.push(mtgBox_(spot.x + spot.w / 2 - 15, spot.y + spot.h / 2 - 7, 30, 14, label, {size: 8, bold: true, color: spot === center ? c.white : c.ink,
+      align: 'CENTER', role: 'map-number'}));
   });
-  // 右：象限ごとのシナリオの表（見出しは塗らずに上下の罫線。象限の帯は図の背景と同じ色）
-  const lx = S.x + S.w - 186;
-  const tw = 186;
-  const tc = [{label: 'シナリオ', w: 72, align: 'START'}, {label: p.fy + '売上', w: 46, align: 'END'}, {label: '確度', w: 34, align: 'END'},
-    {label: '件数', w: 34, align: 'END'}];
-  const groups = MTG_QUADRANTS.map(q => ({q, list: pts.filter(pt => quadOf(pt) === q.key).sort((a, b) => b.sales - a.sales)}));
-  const legendH = 16 + 36 + 14;
-  const lines = groups.reduce((sum, g) => sum + 1 + Math.max(g.list.length, 1), 0);
-  const rhT = Math.max(10, Math.min(13, (S.bottom - Y0 - 14 - 12 - legendH) / lines));
-  const tSize = rhT < 12 ? 7 : 7.5;
+  // 右：象限ごとのシナリオの表（見出しは塗らずに上下の罫線。象限の帯は図の背景と同じ色）。番号は図の円の番号。名前は全文（小さくする → 2行）
+  const tc = [{label: 'No.', w: 24, align: 'CENTER'}, {label: 'シナリオ', w: tw - 24 - 50 - 32 - 32, align: 'START'}, {label: p.fy + '売上', w: 50, align: 'END'},
+    {label: '確度', w: 32, align: 'END'}, {label: '件数', w: 32, align: 'END'}];
+  const groups = MTG_QUADRANTS.map(q => ({q, list: pts.filter(pt => quadOf(pt) === q.key).sort((a, b) => numberOf.get(a.key) - numberOf.get(b.key))}));
+  const legendH = 12 + 16 + mtgBubbleRadius_(maxCount, maxCount) * 2 + 14;
+  const room = S.bottom - Y0 - 14 - legendH;
+  // 文字の大きさと行の高さ：入るまで小さくする（7.5pt・行 13 → 7pt・12 → 6.5pt・10）
+  const layout = [[7.5, 13], [7, 12], [6.5, 10]].map(([size, rowH]) => {
+    const fits = pts.map(pt => mtgFitText_(pt.key, tc[1].w, [size, size - 0.5].filter(v => v >= 6.5), 2));
+    const heights = fits.map(f => Math.max(rowH, f.lines.length * f.size * S.lineFactor + 3));
+    const total = groups.length * rowH + groups.reduce((sum, g) => sum + (g.list.length ? 0 : rowH), 0) + heights.reduce((a, b) => a + b, 0);
+    return {size, rowH, fits: new Map(pts.map((pt, i) => [pt.key, {fit: fits[i], h: heights[i]}])), total};
+  });
+  const L = layout.find(l => l.total <= room) || layout[layout.length - 1];
   let ly = Y0;
   el.push(mtgBox_(lx - 7.2, ly - 18, tw, 14, '象限ごとのシナリオ', {size: 9, bold: true, color: c.ink, role: 'map-table-title'}));
   el.push({type: 'box', x: lx, y: ly, w: tw, h: 1, fill: c.ink, shape: 'RECTANGLE'});
   let tx = lx;
   tc.forEach(col => {
-    el.push(mtgBox_(tx, ly, col.w, 14, col.label, {size: tSize, bold: true, color: c.sub, align: col.align, role: 'map-table-head'}));
+    el.push(mtgBox_(tx - 3, ly, col.w + 6, 14, col.label, {size: 7.5, bold: true, color: c.sub, align: col.align, role: 'map-table-head'}));
     tx += col.w;
   });
   ly += 14;
   el.push({type: 'box', x: lx, y: ly - 1, w: tw, h: 1, fill: c.sub, shape: 'RECTANGLE'});
   groups.forEach(({q, list}) => {
-    el.push({type: 'box', x: lx, y: ly, w: tw, h: rhT, fill: q.bg, shape: 'RECTANGLE', role: 'map-table-band'});
-    el.push({type: 'box', x: lx, y: ly, w: 2.5, h: rhT, fill: q.fg, shape: 'RECTANGLE'});
-    el.push(mtgBox_(lx + 2, ly, tw - 2, rhT, q.label, {size: tSize + 0.5, bold: true, color: q.fg, role: 'map-table-quadrant'}));
-    ly += rhT;
+    el.push({type: 'box', x: lx, y: ly, w: tw, h: L.rowH, fill: q.bg, shape: 'RECTANGLE', role: 'map-table-band'});
+    el.push({type: 'box', x: lx, y: ly, w: 2.5, h: L.rowH, fill: q.fg, shape: 'RECTANGLE'});
+    el.push(mtgBox_(lx + 2, ly, tw - 2, L.rowH, q.label, {size: L.size + 0.5, bold: true, color: q.fg, role: 'map-table-quadrant'}));
+    ly += L.rowH;
     (list.length ? list : [null]).forEach(pt => {
-      const vals = pt ? [mtgWrap_(pt.key, tc[0].w, tSize, 1)[0], mtgShare_(pt.sales), Math.round(pt.progress) + '%', pt.count + '件'] : ['なし', '', '', ''];
+      const info = pt ? L.fits.get(pt.key) : null;
+      const rowH = info ? info.h : L.rowH;
+      const vals = pt ? [String(numberOf.get(pt.key)), info.fit.lines.join('\n'), mtgShare_(pt.sales), Math.round(pt.progress) + '%', pt.count + '件']
+        : ['', 'なし', '', '', ''];
       let cx = lx;
       tc.forEach((col, i) => {
-        if (vals[i] !== '') el.push(mtgBox_(cx, ly, col.w, rhT, vals[i], {size: tSize, color: pt ? c.ink : c.faint, align: col.align, role: 'map-table-cell'}));
-        if (i < tc.length - 1) el.push({type: 'box', x: cx + col.w, y: ly, w: 0.5, h: rhT, fill: c.rule, shape: 'RECTANGLE'});
+        if (vals[i] !== '') {
+          el.push(mtgBox_(cx - 3, ly, col.w + 6, rowH, vals[i], {size: i === 1 && info ? info.fit.size : L.size, bold: i === 0, color: pt ? c.ink : c.faint,
+            align: col.align, role: 'map-table-cell'}));
+        }
+        if (i < tc.length - 1) el.push({type: 'box', x: cx + col.w, y: ly, w: 0.5, h: rowH, fill: c.rule, shape: 'RECTANGLE'});
         cx += col.w;
       });
-      el.push({type: 'box', x: lx, y: ly + rhT - 0.5, w: tw, h: 0.5, fill: c.rule, shape: 'RECTANGLE'});
-      ly += rhT;
+      el.push({type: 'box', x: lx, y: ly + rowH - 0.5, w: tw, h: 0.5, fill: c.rule, shape: 'RECTANGLE'});
+      ly += rowH;
     });
   });
   el.push({type: 'box', x: lx, y: ly - 0.75, w: tw, h: 0.75, fill: c.sub, shape: 'RECTANGLE'});
   // 円の大きさの凡例（図の円と同じ計算）
   ly += 12;
-  el.push(mtgBox_(lx - 7.2, ly, tw, 14, '円の大きさ＝案件の件数', {size: 8, bold: true, color: c.ink, role: 'map-legend-title'}));
+  el.push(mtgBox_(lx - 7.2, ly, tw, 14, '円の大きさ＝案件の件数（円の中の数字は表の No.）', {size: 8, bold: true, color: c.ink, role: 'map-legend-title'}));
   const samples = [Math.max(1, Math.round(maxCount / 6)), Math.max(1, Math.round(maxCount / 2)), maxCount].filter((n, i, list) => list.indexOf(n) === i);
   const base = ly + 16 + mtgBubbleRadius_(maxCount, maxCount) * 2;
   let sx = lx + 6;
@@ -4653,7 +4716,7 @@ function mtgPortfolioMapSlide_(p, t) {
     sx += r * 2 + 22;
   });
   const fallback = pts.filter(pt => pt.basis !== 'sales');
-  const lead = 'RXシナリオ構成ごとに、' + p.fy + '売上（縦）と確度の進み具合（横）を置いた図。円の大きさは件数。\n' +
+  const lead = 'RXシナリオ構成ごとに、' + p.fy + '売上（縦）と確度の進み具合（横）を置いた図。円の大きさは件数、円の中の数字は右の表の No.。\n' +
     '点線は確度 ' + line + '% と、シナリオの ' + p.fy + '売上の平均（' + mtgShare_(ymid) + '）。右上ほど大きく進んでいる。' +
     (t.unset ? P.unsetLabel + '（' + t.unset.count + '件）は図に含めない。' : '');
   return Object.assign({title, lead, elements: el},

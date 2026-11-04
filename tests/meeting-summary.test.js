@@ -3361,14 +3361,15 @@ test('RXシナリオのポートフォリオのスライド：パイプライン
     '見直し（小さく・進んでいない）', '刈り取り（小さいが進んでいる）']);
   assert.strictEqual(roleOf(map, 'map-line').filter(el => el.dash).length, 2);
   assert.deepStrictEqual(roleOf(map, 'map-bubble').map(el => el.shape), ['ELLIPSE', 'ELLIPSE', 'ELLIPSE']);
-  assert.deepStrictEqual(roleOf(map, 'map-label').map(el => el.text), ['ID-POS分析 2件', 'サイネージ 2件', '物流・SCM 1件']);
-  assert.deepStrictEqual(roleOf(map, 'map-table-head').map(el => el.text), ['シナリオ', 'FY26売上', '確度', '件数']);
+  // 円には番号（今年度の売上の大きい順）だけを書き、名前は右の表に全文（名前どうしが図の中で重ならないように）
+  assert.deepStrictEqual(roleOf(map, 'map-number').map(el => el.text), ['1', '2', '3']);
+  assert.deepStrictEqual(roleOf(map, 'map-table-head').map(el => el.text), ['No.', 'シナリオ', 'FY26売上', '確度', '件数']);
   assert.ok(roleOf(map, 'map-table-head').every(el => !el.fill), '見出しは塗らない（上下の罫線）');
   assert.deepStrictEqual(roleOf(map, 'map-table-quadrant').map(el => el.text), ['伸ばす', 'てこ入れ', '刈り取り', '見直し']);
   assert.deepStrictEqual(roleOf(map, 'map-table-band').map(el => el.fill), plain(Q.map(q => q.bg)), '帯は図の背景と同じ色');
   // ID-POS分析（60・進み具合 91.7%）は平均（(60+10+3)/3）より大きく進んでいる → 伸ばす。サイネージ（10・(10×50+0×20)/10=50%）は 50% 以上で平均未満 → 刈り取り
   const cellsText = roleOf(map, 'map-table-cell').map(el => el.text);
-  assert.deepStrictEqual(cellsText.slice(0, 4), ['ID-POS分析', '60', '92%', '2件']);
+  assert.deepStrictEqual(cellsText.slice(0, 5), ['1', 'ID-POS分析', '60', '92%', '2件']);
   assert.ok(cellsText.indexOf('なし') >= 0, '該当の無い象限は「なし」');
   const legend = roleOf(map, 'map-legend');
   assert.deepStrictEqual(roleOf(map, 'map-legend-label').map(el => el.text), ['1件', '2件']);
@@ -3421,10 +3422,27 @@ test('RXシナリオのポートフォリオ：列が無い・進行中の案件
   assert.deepStrictEqual(roleOf(blank[1], 'heat-name').map(el => el.text), ['A社', 'B社', 'C社'], '想定売上の大きい順');
   assert.deepStrictEqual([roleOf(blank[2], 'empty').length, roleOf(blank[2], 'map-bubble').length], [1, 0]);
   assert.match(pLead(blank[2]), /^FY26売上が入っていないため、ポートフォリオ図は描けない/);
+  // 長いシナリオの名前（本物の「01-04.顧客情報活用パッケージ」など）は、表・① の名前・② の見出しで切らずに全文（小さくする → 区切りで2行）
+  const long = ['01-01.製品・サービス開発支援', '01-03.次世代RX店舗', '01-04.顧客情報活用パッケージ', '01-05.バックオフィス業務PF', '01-08.メーカー商談変革支援',
+    '01-09.顧客分析パッケージ'];
+  const gas5 = createGas();
+  const sheet5 = portfolioSheet(gas5, long.map((name, i) => ['得意先' + i, name, 'C-提案中(50%)', String(10 + i), '5', '3', String(i + 1), '1', '']));
+  const table5 = gas5.global.mtgReadDeals_(sheet5, gas5.get('DIFF_RULES')['新FMT']);
+  const full = plain(gas5.global.mtgPortfolioSlides_(gas5.global.mtgPortfolioOf_(table5.deals, new Date('2026-11-04T12:00:00+09:00'), table5)));
+  const joined = el => el.text.replace(/\n/g, '');
+  assert.deepStrictEqual(roleOf(full[0], 'portfolio-name').map(joined).sort(), long.slice().sort(), '① の名前');
+  assert.deepStrictEqual(roleOf(full[1], 'heat-head').slice(1, -1).map(joined).sort(), long.slice().sort(), '② の見出し');
+  assert.deepStrictEqual(roleOf(full[2], 'map-table-cell').filter((el, i, list) => long.indexOf(joined(el)) >= 0).map(joined).sort(), long.slice().sort(), '③ の表');
+  assert.ok(!full.some(sl => sl.elements.some(el => /…/.test(el.text || ''))), 'どこも「…」で切らない');
+  const head03 = roleOf(full[1], 'heat-head').find(el => joined(el) === '01-03.次世代RX店舗');
+  assert.strictEqual(head03.text, '01-03.\n次世代RX店舗', '2行にするときは区切り（.）の後ろで分ける');
+  const S5 = gas5.get('MTG_SLIDE');
+  roleOf(full[2], 'map-table-head').forEach(el => assert.ok(gas5.global.mtgWrap_(el.text, el.w, el.size, 9).length === 1 && el.text.indexOf('\n') < 0 &&
+    gas5.global.mtgTextWidth_(el.text, el.size) <= el.w - S5.padX, '表の見出しは1行に入る：' + el.text));
   // 端の円（確度 100%・売上 0）も図の中に収める
   const edge = plain(gas4.global.mtgPortfolioMapSlide_({fy: 'FY26', gaps: {}, has: {weighted: true, scenarioAmount: true}, deals: []},
     {items: [{key: 'X', count: 3, sales: 0, progress: 100}, {key: 'Y', count: 1, sales: 50, progress: 0}], unset: null, total: {count: 4}, multi: 0, customers: []}));
   const S4 = gas4.get('MTG_SLIDE');
-  const plot = {x0: S4.x + 48, x1: S4.x + 48 + 420, y0: S4.top + 10, y1: S4.top + 10 + 240};
+  const plot = {x0: S4.x + 40, x1: S4.x + S4.w - 236 - 36, y0: S4.top + 10, y1: S4.top + 10 + 240};
   roleOf(edge, 'map-bubble').forEach(b => assert.ok(b.x >= plot.x0 - 0.01 && b.x + b.w <= plot.x1 + 0.01 && b.y >= plot.y0 - 0.01 && b.y + b.h <= plot.y1 + 0.01, '図の中'));
 });
