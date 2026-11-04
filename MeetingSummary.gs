@@ -4733,8 +4733,7 @@ function mtgPortfolioMapSlide_(p, t) {
   el.push({type: 'box', x: lx, y: ly - 1, w: tw, h: 1, fill: c.sub, shape: 'RECTANGLE'});
   groups.forEach(({q, list}) => {
     el.push({type: 'box', x: lx, y: ly, w: tw, h: L.rowH, fill: q.bg, shape: 'RECTANGLE', role: 'map-table-band'});
-    el.push({type: 'box', x: lx, y: ly, w: 2.5, h: L.rowH, fill: q.fg, shape: 'RECTANGLE'});
-    el.push(mtgBox_(lx + 2, ly, tw - 2, L.rowH, q.label, {size: L.size + 0.5, bold: true, color: q.fg, role: 'map-table-quadrant'}));
+    el.push(mtgBox_(lx, ly, tw, L.rowH, q.label, {size: L.size + 0.5, bold: true, color: q.fg, role: 'map-table-quadrant'}));
     ly += L.rowH;
     (list.length ? list : [null]).forEach(pt => {
       const info = pt ? L.fits.get(pt.key) : null;
