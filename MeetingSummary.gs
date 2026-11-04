@@ -267,8 +267,17 @@ const MTG_OPTIONS = {
     unsetLabel: '未設定',
     heatRows: 13,                // ヒートマップに出す得意先の数
     heatColumns: 9,              // ヒートマップに出すシナリオの列の数（未設定を除く。多ければ、売上の小さいほうを「ほか N シナリオ」の列にまとめる）
-    scores: {A: 100, B: 70, C: 50, D: 20, '創注': 10},   // ポートフォリオ図の横軸：確度の点数（どれでもない確度は 0）
-    progressLine: 50             // ポートフォリオ図の縦の点線（確度の進み具合 %）
+    // ポートフォリオ図の軸と点線（決まった目標が無いあいだは、次の根拠で引く。目標が決まったら salesLine・progressLine に入れる）
+    //   横軸「確度」：案件のステータスの期待値率（「定義_ステータス」の期待値。B-クロージング中 70%・C-提案中〜稟議対応中 50%・D 20%・創注 10%）を、
+    //     今年度の売上で重み付けした平均。期待値の計算と同じ率なので、資料のほかのページと同じ物差しになる。定義のシートに無いステータスは scores（確度ごとの率）
+    //   縦の点線 progressLine（%）：50 ＝ C（提案中〜稟議対応中）の期待値率。右は、売上の大きい案件が平均して提案以降まで進んでいる。
+    //     左は D（ヒアリング・課題整理）・創注が中心で、まだ提案に至っていない
+    //   横の点線 salesLine（百万円）：null なら均等ライン（今年度の売上の合計 ÷ シナリオの数。どのシナリオにも同じだけ売上があるとしたときの1シナリオ分）。
+    //     上は、そのシナリオが均等以上に売上を担っている。シナリオごとの目標が決まったら、その値（全シナリオ共通）を入れる
+    scores: {A: 100, B: 70, C: 50, D: 20, '創注': 10},   // 確度ごとの率（%。定義のシートに無いステータスに使う。どれでもない確度は 0）
+    progressLine: 50,
+    progressLineLabel: 'C＝提案以降',   // 縦の点線の横に書く意味
+    salesLine: null
   },
   // 読む列の見出し（改行・空白、全角・半角の違いは無視。customer・project・status はどのシートにも必要。ほかは無ければ使わない。空なら読まない）
   columns: {
@@ -2908,7 +2917,7 @@ function mtgSummarize_(ss, name, context) {
     stages: mtgStages_(deals, table.statusOrder),
     quarters: mtgQuarters_(active, context.now),
     plan: mtgPlanOf_(deals, name, context.now, table.has),
-    portfolio: mtgPortfolioOf_(deals, context.now, table),
+    portfolio: mtgPortfolioOf_(deals, context.now, table, statusTable),
     changes,
     stalled,
     focus,
@@ -4165,6 +4174,13 @@ const MTG_QUADRANTS = [
   {key: 'review', label: '見直し', note: '小さく・進んでいない', bg: '#F0F0F0', fg: '#595959'}
 ];
 
+/** ステータスの期待値率（%）。定義のシート（「定義_ステータス」の期待値。0.5 か 50 の形）に無ければ null */
+function mtgPortfolioRatio_(statusTable, status) {
+  const r = mtgStatusRatio_(statusTable, status);
+  if (r == null) return null;
+  return r <= 1.5 ? r * 100 : r;
+}
+
 /** 今年度（MTG_OPTIONS.fiscalStartMonth から）の年度の下2桁（2026/11 なら '26'）。年度別の売上の列（portfolio.salesHeader）を選ぶ */
 function mtgFiscalYearKey_(now) {
   return String(mtgMonthOf_(mtgFiscalStart_(now)).y).slice(-2);
@@ -4173,9 +4189,9 @@ function mtgFiscalYearKey_(now) {
 /**
  * RXシナリオのポートフォリオの中身（1つのシート）。進行中の案件の、シナリオ・確度・金額（今年度の売上は年度別の売上の列から）。
  * 戻り値 {fy: 'FY26', year: '26', gaps: {scenario, amount, sales}（作れない理由。シートに列が無い）, has: {weighted, scenarioAmount},
- *  deals: [{customer, scenarios, rank, amount, weighted, scenarioAmount, sales}]（金額は空なら null）}
+ *  deals: [{customer, scenarios, rank, ratio: ステータスの期待値率（%。定義のシートに無ければ null）, amount, weighted, scenarioAmount, sales}]（金額は空なら null）}
  */
-function mtgPortfolioOf_(deals, now, table) {
+function mtgPortfolioOf_(deals, now, table, statusTable) {
   const o = MTG_OPTIONS;
   const year = mtgFiscalYearKey_(now);
   const column = key => 'シートに「' + String(o.columns[key]).replace(/\s+/g, '') + '」の列が無い';
@@ -4192,6 +4208,7 @@ function mtgPortfolioOf_(deals, now, table) {
       customer: d.customer || '（得意先未入力）',
       scenarios: d.scenarios || [],
       rank: mtgPlanRank_(d.status),
+      ratio: mtgPortfolioRatio_(statusTable, d.status),
       amount: d.amount,
       weighted: d.weighted,
       scenarioAmount: d.scenarioAmount,
@@ -4220,7 +4237,8 @@ function mtgPortfolioTotals_(p) {
     const list = d.scenarios.length ? d.scenarios : [null];
     if (list.length > 1) multi++;
     const part = v => (v || 0) / list.length;
-    const score = P.scores[d.rank] || 0;
+    // 確度：ステータスの期待値率（定義のシート）。無ければ確度ごとの率（portfolio.scores）
+    const score = d.ratio != null ? d.ratio : P.scores[d.rank] || 0;
     ['amount', 'weighted', 'scenarioAmount', 'sales'].forEach(k => { total[k] += d[k] || 0; });
     if (!customers.has(d.customer)) customers.set(d.customer, {name: d.customer, amount: 0, sales: 0, scenarioAmount: 0, cells: {}});
     const cu = customers.get(d.customer);
@@ -4575,8 +4593,11 @@ function mtgPortfolioMapSlide_(p, t) {
   const Y0 = S.top + 10;
   const W = lx - X0 - 36;
   const H = 240;
-  const ymax = mtgNiceMax_(Math.max.apply(null, pts.map(pt => pt.sales)));
-  const ymid = mtgSum_(pts, 'sales') / pts.length;
+  // 横の点線：目標（salesLine）が無ければ均等ライン（今年度の売上の合計 ÷ シナリオの数）
+  const salesTotal = mtgSum_(pts, 'sales');
+  const fixed = P.salesLine != null && P.salesLine !== '';
+  const ymid = fixed ? Number(P.salesLine) : salesTotal / pts.length;
+  const ymax = mtgNiceMax_(Math.max.apply(null, pts.map(pt => pt.sales).concat([ymid])));
   const line = P.progressLine;
   const px = v => X0 + Math.max(0, Math.min(100, v)) / 100 * W;
   const py = v => Y0 + H - Math.max(0, Math.min(ymax, v)) / ymax * H;
@@ -4601,11 +4622,21 @@ function mtgPortfolioMapSlide_(p, t) {
   el.push({type: 'box', x: X0, y: Y0 + H - 1, w: W, h: 1, fill: c.sub, shape: 'RECTANGLE'});
   el.push({type: 'line', x: midX, y: Y0, w: 0, h: H, color: c.faint, weight: 1, dash: true, role: 'map-line'});
   el.push({type: 'line', x: X0, y: midY, w: W, h: 0, color: c.faint, weight: 1, dash: true, role: 'map-line'});
+  // 点線の名前（何の線か）：縦の点線は図の上、横の点線は右端の線の上
+  const vText = '確度 ' + line + '%（' + P.progressLineLabel + '）';
+  const hText = fixed ? '目標 ' + mtgShare_(ymid) : '均等 ' + mtgShare_(ymid) + '（' + mtgShare_(salesTotal) + '÷' + pts.length + '）';
+  const vw = mtgTextWidth_(vText, 7.5) + 2;
+  const hw = mtgTextWidth_(hText, 7.5) + 2;
+  const lineNames = [{x: Math.max(X0, Math.min(X0 + W - vw, midX - vw / 2)), y: Y0 - 13, w: vw, h: 11},
+    {x: X0 + W - hw - 3, y: Math.max(Y0 + 1, midY - 12), w: hw, h: 11}];
+  // 円の上に重ねて描く（円を描いたあとに足す）
+  const lineNameBoxes = [vText, hText].map((text, i) => mtgBox_(lineNames[i].x - S.padX / 2, lineNames[i].y - 2, lineNames[i].w + S.padX, 14, text,
+    {size: 7.5, bold: true, color: c.dark, role: 'map-line-name'}));
   // 目盛り
   [0, 25, 50, 75, 100].forEach(v => el.push(mtgBox_(px(v) - 24, Y0 + H + 1, 48, 13, v + '%', {size: 7.5, color: c.sub, align: 'CENTER', role: 'map-tick'})));
   [0, ymax / 2, ymax].forEach(v => el.push(mtgBox_(X0 - 50, py(v) - 7, 48, 14, mtgAmount_(v), {size: 7.5, color: c.sub, align: 'END', role: 'map-tick'})));
-  const scoreText = Object.keys(P.scores).map(k => k + '=' + P.scores[k]).join('・');
-  el.push(mtgBox_(X0 - 30, Y0 + H + 13, W + 60, 14, '確度の進み具合（' + p.fy + '売上で重み付けした確度の平均。' + scoreText + '）',
+  const scoreText = Object.keys(P.scores).filter(k => k !== 'A').map(k => k + ' ' + P.scores[k] + '%').join('・');
+  el.push(mtgBox_(X0 - 30, Y0 + H + 13, W + 60, 14, '確度（ステータスの期待値率を ' + p.fy + '売上で重み付けした平均。' + scoreText + '）',
     {size: 7.5, color: c.sub, align: 'CENTER', role: 'map-axis'}));
   el.push(mtgBox_(S.x - 7.2, Y0 - 18, 200, 14, yName, {size: 8, color: c.sub, role: 'map-axis'}));
   // 円（件数）。図の中に収める（端の円は、半径の分だけ内側に寄せる）
@@ -4617,6 +4648,7 @@ function mtgPortfolioMapSlide_(p, t) {
   // 大きい円を先に描き、小さい円を上に重ねる（小さい円が隠れないように）
   circles.slice().sort((a, b) => b.r - a.r).forEach(b => el.push({type: 'box', x: b.cx - b.r, y: b.cy - b.r, w: b.r * 2, h: b.r * 2, fill: c.green,
     alpha: 0.75, line: c.greenText, lineWeight: 1, shape: 'ELLIPSE', role: 'map-bubble'}));
+  el.push.apply(el, lineNameBoxes);
   const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
   const onCircle = r => circles.some(b => b.cx + b.r > r.x && b.cx - b.r < r.x + r.w && b.cy + b.r > r.y && b.cy - b.r < r.y + r.h);
   // 象限の名前：その象限の四隅のうち、円と重ならない隅に置く（どこも重なれば、図の外側の隅）
@@ -4633,12 +4665,13 @@ function mtgPortfolioMapSlide_(p, t) {
     const outerX = outer === 'START' ? left : right;
     const spots = [[outerX, outerY], [outer === 'START' ? right : left, outerY], [outerX, outerY === top ? bottom : top], [outer === 'START' ? right : left, outerY === top ? bottom : top]]
       .filter(([nx, ny]) => nx >= qx && ny >= qy && nx + nw <= qx + qw + 0.5 && ny + 12 <= qy + qh + 0.5);
-    const spot = spots.find(([nx, ny]) => !onCircle({x: nx, y: ny, w: nw, h: 12})) || spots[0] || [outerX, outerY];
+    const spot = spots.find(([nx, ny]) => !onCircle({x: nx, y: ny, w: nw, h: 12}) && !lineNames.some(q => overlaps(q, {x: nx, y: ny, w: nw, h: 12}))) ||
+      spots.find(([nx, ny]) => !onCircle({x: nx, y: ny, w: nw, h: 12})) || spots[0] || [outerX, outerY];
     names.push({x: spot[0], y: spot[1], w: nw, h: 12});
     el.push(mtgBox_(spot[0] - S.padX / 2, spot[1] - 2, nw + S.padX, 16, qName(k), {size: 8, bold: true, color: Q[k].fg, role: 'map-quadrant-name'}));
   });
   // 円の番号：円の真ん中（白の太字）。ほかの番号と重なるときは、円の右・左・下・上の重ならない場所（黒の太字）
-  const placed = names.slice();
+  const placed = names.concat(lineNames);
   circles.forEach(b => {
     const label = String(b.n);
     const lw = mtgTextWidth_(label, 8) + 3;
@@ -4716,8 +4749,9 @@ function mtgPortfolioMapSlide_(p, t) {
     sx += r * 2 + 22;
   });
   const fallback = pts.filter(pt => pt.basis !== 'sales');
-  const lead = 'RXシナリオ構成ごとに、' + p.fy + '売上（縦）と確度の進み具合（横）を置いた図。円の大きさは件数、円の中の数字は右の表の No.。\n' +
-    '点線は確度 ' + line + '% と、シナリオの ' + p.fy + '売上の平均（' + mtgShare_(ymid) + '）。右上ほど大きく進んでいる。' +
+  const lead = 'RXシナリオ構成ごとに、' + p.fy + '売上（縦）と確度（横）を置いた図。円の大きさは件数、円の中の数字は右の表の No.。\n' +
+    '縦の点線は確度 ' + line + '%（C の期待値率。右は提案以降まで進み、左は D・創注が中心）、横の点線は' +
+    (fixed ? '目標の ' + p.fy + '売上（' + mtgShare_(ymid) + '）。' : ' ' + p.fy + '売上を各シナリオに均等に分けた額（' + mtgShare_(salesTotal) + '÷' + pts.length + '＝' + mtgShare_(ymid) + '）。') +
     (t.unset ? P.unsetLabel + '（' + t.unset.count + '件）は図に含めない。' : '');
   return Object.assign({title, lead, elements: el},
     fallback.length ? {note: '※ ' + p.fy + '売上が無いシナリオ（' + fallback.length + '）の確度は想定売上（無ければ件数）で重み付け'} : {});

@@ -3374,7 +3374,22 @@ test('RXシナリオのポートフォリオのスライド：パイプライン
   const legend = roleOf(map, 'map-legend');
   assert.deepStrictEqual(roleOf(map, 'map-legend-label').map(el => el.text), ['1件', '2件']);
   assert.strictEqual(legend[legend.length - 1].w, Math.max.apply(null, roleOf(map, 'map-bubble').map(el => el.w)), '凡例のいちばん大きい円は図のいちばん大きい円と同じ');
-  assert.match(pLead(map), /点線は確度 50% と、シナリオの FY26売上の平均（24\.3）。右上ほど大きく進んでいる。未設定（1件）は図に含めない。$/);
+  // 4象限の線と根拠：縦は確度 50%（C の期待値率）、横は均等ライン（今年度の売上の合計 ÷ シナリオの数）。図の上・線の右端に何の線かを書く
+  assert.match(pLead(map), /縦の点線は確度 50%（C の期待値率。右は提案以降まで進み、左は D・創注が中心）、横の点線は FY26売上を各シナリオに均等に分けた額（73÷3＝24\.3）。未設定（1件）は図に含めない。$/);
+  assert.deepStrictEqual(roleOf(map, 'map-line-name').map(el => el.text), ['確度 50%（C＝提案以降）', '均等 24.3（73÷3）']);
+  assert.match(roleOf(map, 'map-axis').map(el => el.text).join('／'), /確度（ステータスの期待値率を FY26売上で重み付けした平均。B 70%・C 50%・D 20%・創注 10%）/);
+  // 目標が決まったら（salesLine）、横の点線は目標の値
+  o.portfolio.salesLine = 40;
+  const target = plain(g.mtgPortfolioMapSlide_(p, g.mtgPortfolioTotals_(p)));
+  assert.match(pLead(target), /横の点線は目標の FY26売上（40）。/);
+  assert.strictEqual(roleOf(target, 'map-line-name')[1].text, '目標 40');
+  assert.deepStrictEqual(roleOf(target, 'map-table-quadrant').map(el => el.text), ['伸ばす', 'てこ入れ', '刈り取り', '見直し']);
+  o.portfolio.salesLine = null;
+  // 確度は「定義_ステータス」の期待値率を使う（定義に無いステータスは portfolio.scores）
+  const rated = plain(g.mtgPortfolioOf_(table.deals, new Date('2026-11-04T12:00:00+09:00'), table,
+    [{status: 'A-クロージング(90%)', ratio: 0.9}, {status: 'C-提案中(50%)', ratio: 0.5}]));
+  assert.deepStrictEqual(rated.deals.map(d => d.ratio), [90, 50, null, null, null]);
+  assert.strictEqual(Math.round(plain(g.mtgPortfolioTotals_(rated)).items[0].progress * 10) / 10, Math.round((50 * 90 + 10 * 50) / 60 * 10) / 10);
 
   // 資料の並び：パイプラインの変化の次に3枚（portfolio.enabled。本物は true）
   const {gas: gas2, g: g2} = setup({edits: false});
