@@ -3338,7 +3338,9 @@ test('RXシナリオのポートフォリオのスライド：パイプライン
   [progress, heat, map].forEach(slide => assert.ok(inside(slide), slide.title + '：中身は見出しの下から出典の線の上まで'));
 
   // ① 期待値の横棒（確度別）。期待値の大きい順（未設定は最後）・列は 想定売上・期待値・シナリオ金額・件数・得意先・確度A・B（期待値のうち A・B）
-  assert.deepStrictEqual(roleOf(progress, 'portfolio-head').map(el => el.text), ['想定売上', '期待値', '前回比', 'シナリオ金額', '件数', '得意先', '確度A・B']);
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-head').map(el => el.text), ['想定売上', '期待値', '前回比', 'シナリオによる見込金額', '件数', '得意先', '確度A・B']);
+  const amountHead = roleOf(progress, 'portfolio-head')[3];
+  assert.ok(g.mtgWrap_(amountHead.text, amountHead.w, amountHead.size, 9).length === 1, '「シナリオによる見込金額」の見出しは1行に入る');
   assert.deepStrictEqual(roleOf(progress, 'portfolio-name').map(el => el.text), ['ID-POS分析', 'サイネージ', '物流・SCM', '未設定']);
   assert.deepStrictEqual(roleOf(progress, 'portfolio-value').slice(0, 6).map(el => el.text), ['130', '105', '50', '2件', '1社', '86%']);
   assert.ok(roleOf(progress, 'portfolio-delta').every(el => el.text === 'データなし'), '比べる時点コピーが無ければ前回比は「データなし」');
@@ -3373,7 +3375,7 @@ test('RXシナリオのポートフォリオのスライド：パイプライン
 
   // ② 行：売上の大きい順に2社と「その他 N社」（色を付けない）。列：シナリオ（売上の大きい順）と未設定、その下に年度（FY26・FY27）。セルの確度は書かない
   assert.deepStrictEqual(roleOf(heat, 'heat-head').map(el => el.text.replace(/\n/g, '')), ['得意先', 'ID-POS分析', 'サイネージ', '物流・SCM', '未設定',
-    '合計FY26〜27／シナリオ金額', '前回比']);
+    '合計FY26〜27／シナリオによる見込金額', '前回比']);
   // 列の見出しの文字の大きさはそろえる（② は見出し・年度がすべて同じ大きさ。①・③ も portfolio.headSize）
   const headSizes = roleOf(heat, 'heat-head').concat(roleOf(heat, 'heat-year')).map(el => el.size);
   assert.ok(headSizes.every(v => v === headSizes[0]) && !roleOf(heat, 'heat-head').some(el => el.spans), '② の見出しは同じ大きさ：' + headSizes.join(','));
@@ -3396,9 +3398,9 @@ test('RXシナリオのポートフォリオのスライド：パイプライン
   // 合計の行：上に年度ごとの売上、下にシナリオ金額（行の名前の2行目に「シナリオ金額」）
   assert.deepStrictEqual(roleOf(heat, 'heat-foot-value').map(el => el.text), ['60', '5', '10', '0', '3', '0', '5', '0']);
   assert.deepStrictEqual(roleOf(heat, 'heat-foot-amount').map(el => el.text), ['50', '20', '5', '0']);
-  assert.strictEqual(roleOf(heat, 'heat-foot-name')[0].text, '合計（按分）\nシナリオ金額');
+  assert.strictEqual(roleOf(heat, 'heat-foot-name')[0].text, '合計（按分）\nシナリオによる見込金額');
   assert.strictEqual(roleOf(heat, 'heat-foot-total')[0].text, '83／75');
-  assert.match(pLead(heat), /^得意先 × RXシナリオ構成の年度別売上（FY26〜27。進行中・按分）。上位 2社と、その他 2社。空白のセルは、.*合計の右はシナリオ金額（サービスパッケージ合算）。前回比はデータなし（比べる時点コピーが無い）。$/);
+  assert.match(pLead(heat), /^得意先 × RXシナリオ構成の年度別売上（FY26〜27。進行中・按分）。上位 2社と、その他 2社。空白のセルは、.*合計の右はシナリオによる見込金額（サービスパッケージ合算）。前回比はデータなし（比べる時点コピーが無い）。$/);
   // 凡例：色の濃さ（少ない → 多い（いちばん大きい値））と、セルの値の意味（シナリオごとの売上）
   assert.deepStrictEqual(roleOf(heat, 'heat-legend').map(el => el.text), ['少ない', '多い（60）']);
   assert.strictEqual(roleOf(heat, 'heat-legend-swatch').length, 5);

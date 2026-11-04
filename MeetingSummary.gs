@@ -277,6 +277,8 @@ const MTG_OPTIONS = {
     pages: ['progress'],
     // ① の表の列の見出しの下に小さく書く、値の出どころ（空なら書かない）
     columnNotes: {amount: '（手動入力）', weighted: '（自動算出）', scenarioAmount: '（自動算出）'},
+    // J列（columns.scenarioAmount）の資料での名前（列の見出し・データなしの項目。2026/11/04 に「シナリオ金額」から改めた）
+    scenarioAmountLabel: 'シナリオによる見込金額',
     salesHeader: '^FY(\\d+)(前|後)半期売上',   // 年度別の売上の列の見出し（正規表現。全角・半角と空白の違いは無視。1つ目のかっこが年度の下2桁）
     unsetLabel: '未設定',
     salesYears: 3,               // 何年度分の売上を使うか（今年度から。3 なら FY26・FY27・FY28。② は年度ごとの列、③ は合計。2026/11/04 から）
@@ -314,7 +316,7 @@ const MTG_OPTIONS = {
     clientDept: '先方部門',               // 得意先の部署（前回から変化のある案件の列）
     clientTitle: '先方担当役職',          // 得意先の担当の役職（同じ。名前（先方担当氏名）は資料に出さない）
     nextAction: '次回アクション',
-    scenarioAmount: 'サービスパッケージ合算（百万円）',   // J列。資料では「シナリオ金額」（RXシナリオのポートフォリオ）
+    scenarioAmount: 'サービスパッケージ合算（百万円）',   // J列。資料では「シナリオによる見込金額」（portfolio.scenarioAmountLabel）
     scenario: 'RXシナリオ構成',           // I列。複数選んだときは「A, B」の形（プルダウンの複数選択）。無ければ使わない（ほかの見出しは columnAliases）
     // デリバリー担当：新FMT にはこの列が無いので空（入力内容のチェック「デリバリー担当未設定」を出さない）。列を作ったら、その見出しを書く
     delivery: '',
@@ -4693,7 +4695,10 @@ function mtgPortfolioProgressSlide_(p, t, pt) {
   });
   const nameW = 140;
   // 期待値の右に、前回からの増減（前回比。比べる時点コピーが無ければ「データなし」）
-  const cols = [{label: '想定売上', w: 52}, {label: '期待値', w: 48}, {label: p.vs, w: 50}, {label: 'シナリオ金額', w: 60}, {label: '件数', w: 32},
+  // シナリオによる見込金額（J列）の列は、見出しが1行に入る幅にする（見出しの文字の大きさはほかの列と同じ）
+  const amountLabel = o.portfolio.scenarioAmountLabel;
+  const cols = [{label: '想定売上', w: 52}, {label: '期待値', w: 48}, {label: p.vs, w: 50},
+    {label: amountLabel, w: Math.max(60, Math.ceil(mtgTextWidth_(amountLabel, o.portfolio.headSize) / S.fit) + 8)}, {label: '件数', w: 32},
     {label: '得意先', w: 34}, {label: '確度A・B', w: 46}];
   const colsW = cols.reduce((sum, col) => sum + col.w, 0);
   const barX = x + nameW + 6;
@@ -4862,7 +4867,7 @@ function mtgPortfolioHeatmapSlide_(p, t, pt) {
     return f.size === size && !/…$/.test(last) && f.lines.join('').replace(/\s/g, '') === String(label).replace(/\s/g, '') ? f.lines : null;
   };
   const yearFits = size => years.every(y => mtgTextWidth_('FY' + y, size) <= sw * S.fit - 1);
-  const totalLabel = p.fy + '／シナリオ金額';
+  const totalLabel = p.fy + '／' + P.scenarioAmountLabel;
   const layoutHeads = size => {
     const groupLines = groups.map(gr => whole(gr.label, groupW, size, 3));
     const totalLines = whole(totalLabel, totW, size, 2);
@@ -4995,7 +5000,7 @@ function mtgPortfolioHeatmapSlide_(p, t, pt) {
   const fy = bodyBottom;
   rect(x, fy, S.w, fh, c.greenSoft, null, 'heat-foot');
   rect(x, fy, S.w, 1, c.green, null, 'heat-foot-rule');
-  const footName = '合計（按分）\nシナリオ金額';
+  const footName = '合計（按分）\n' + P.scenarioAmountLabel;
   el.push(mtgBox_(x, fy, nameW, fh, footName, {size, bold: true, color: c.ink, spans: [{start: 7, end: footName.length, bold: false, size: 6.5, color: c.muted}],
     role: 'heat-foot-name'}));
   groups.forEach((gr, i) => {
@@ -5032,7 +5037,7 @@ function mtgPortfolioHeatmapSlide_(p, t, pt) {
   const lead = '得意先 × RXシナリオ構成の年度別売上（' + p.fy + '。進行中・按分）。' + (others.length ? '上位 ' + topN.length + '社と、その他 ' + others.length + '社。'
     : topN.length + '社。') + (t.total.sales > 0 ? '' : p.fy + '売上がまだ入っていないため、セルは色だけ（得意先は想定売上の大きい順）。') +
     (pt ? '売上の合計は' + p.vs + ' ' + mtgSignedCompact_(t.total.sales - pt.total.sales) + '。' : '') +
-    '\n空白のセルは、その得意先にまだそのシナリオの案件が無い組み合わせ。合計の右はシナリオ金額（' + mtgScenarioAmountName_() + '）。' +
+    '\n空白のセルは、その得意先にまだそのシナリオの案件が無い組み合わせ。合計の右は' + P.scenarioAmountLabel + '（' + mtgScenarioAmountName_() + '）。' +
     (pt ? '' : p.vs + 'は' + G + '（' + p.previousGap + '）。');
   return Object.assign({title, lead, elements: el}, t.multi ? {note: '※ 按分のため、シナリオの値を足しても合計と合わないことがあります'} : {});
 }
@@ -6342,7 +6347,7 @@ function mtgMonthLabel_(text) {
 function mtgShortHeader_(header) {
   const names = {customer: '得意先', project: '案件名', status: 'ステータス', amount: '想定売上', weighted: '期待値', orderMonth: '受注月',
     startMonth: '売上開始月', activity: '活動状況', issue: '課題', owner: '責任者', delivery: 'デリバリー担当', nextAction: '次回アクション',
-    scenario: 'RXシナリオ構成', scenarioAmount: 'シナリオ金額', record: '商談記録', clientDept: '先方部門', clientTitle: '先方役職'};
+    scenario: 'RXシナリオ構成', scenarioAmount: MTG_OPTIONS.portfolio.scenarioAmountLabel, record: '商談記録', clientDept: '先方部門', clientTitle: '先方役職'};
   const key = Object.keys(names).find(k => mtgColumnIndex_([header], k) === 0);
   return key ? names[key] : String(header).replace(/\s+/g, '');
 }
