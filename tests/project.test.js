@@ -151,7 +151,9 @@ test('本物のシートの見出し（2026/10/29 のスーパー・GMS の2行�
   // RXシナリオのポートフォリオ（本物は使う）：シナリオ金額は J列、今年度（FY26）の売上は P・Q列（FY27 からは R・S列）
   assert.strictEqual(mtg.portfolio.enabled, true);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(mtg.portfolio.pages)), ['progress'], '② ヒートマップ・③ ポートフォリオ図は一旦出さない（2026/11/04）');
-  assert.strictEqual(mtg.run.readFromCopy, true, '資料の中身は、作り始めたときのスプレッドシートのコピーから読む（大勢が編集していても待たされない）');
+  assert.strictEqual(mtg.run.readMode, 'api', '資料の中身は Sheets API でまとめて読む（大勢が編集していても待たされにくい）');
+  const manifest = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'appsscript.json'), 'utf8'));
+  assert.ok(manifest.dependencies.enabledAdvancedServices.some(x => x.serviceId === 'sheets' && x.userSymbol === 'Sheets'), 'Sheets API（拡張サービス）を使う');
   assert.strictEqual(g.mtgColumnIndex_(headers, 'scenarioAmount'), 9, 'シナリオ金額（サービスパッケージ合算）は J列');
   const pattern = new RegExp(mtg.portfolio.salesHeader);
   const sales = year => headers.map((h, i) => ((pattern.exec(g.credNormalize_(h)) || [])[1] === year ? i : -1)).filter(i => i >= 0);

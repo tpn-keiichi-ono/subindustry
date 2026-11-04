@@ -167,7 +167,7 @@ function getMeetingRunData(kind, final) {
   if (kind === 'business') {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const props = PropertiesService.getDocumentProperties();
-    sheets = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name)).map(name => {
+    sheets = mtgTrackedNames_(ss).map(name => {
       const last = mtgMeetings_(props, name).filter(m => !m.baseline).pop();
       return {name, checked: true, note: last ? '前回の資料 ' + mtgShortDate_(last.date) : '前回の資料なし'};
     });
@@ -273,9 +273,8 @@ function diagnoseMeetingRead() {
       valueRenderOption: 'FORMATTED_VALUE'});
     const dealRows = ((deals.valueRanges || [])[0].values || []).length;
     t1.lap('「' + name + '」' + dealRows + '行');
-    const total = size(DIFF_OPTIONS.logSheet).rowCount || 0;
-    const from = Math.max(1, total - logRows + 1);
-    const log = Sheets.Spreadsheets.Values.batchGet(ss.getId(), {ranges: [quote(DIFF_OPTIONS.logSheet) + '!A' + from + ':I' + total], valueRenderOption: 'FORMATTED_VALUE'});
+    // 変更履歴_差分は全行（シートの行数は、記録の無い行も数えるため、最後の何行かを指定すると空になることがある）
+    const log = Sheets.Spreadsheets.Values.batchGet(ss.getId(), {ranges: [quote(DIFF_OPTIONS.logSheet) + '!A1:I'], valueRenderOption: 'UNFORMATTED_VALUE'});
     t1.lap('「' + DIFF_OPTIONS.logSheet + '」' + (((log.valueRanges || [])[0] || {}).values || []).length + '行');
     lines.push('① Sheets API：' + t1.text());
   } catch (error) {
@@ -427,7 +426,7 @@ function mschCheckInput_(kind, meeting, names) {
   if (kind === 'combined') return date;
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const allowed = kind === 'service' ? svcSourceSheets_().filter(name => ss.getSheetByName(name)).concat([MTG_OPTIONS.combined.name])
-    : Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
+    : mtgTrackedNames_(ss);
   if (!Array.isArray(names) || !names.length) throw new Error('作るシート（サブインダストリー）を1つ以上選んでください。');
   names.forEach(name => { if (allowed.indexOf(name) < 0) throw new Error('「' + name + '」は選べません。'); });
   return date;

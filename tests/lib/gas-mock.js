@@ -1278,6 +1278,119 @@ function createGas(options) {
   gas.Date = vm.runInContext('Date', context);
   gas.global = context;
 
+  /**
+   * Sheets API（拡張サービス）のモック（使うテストだけで gas.enableSheetsApi() を呼ぶ。ふだんは無い＝前の版と同じく SpreadsheetApp で読む）。
+   * Spreadsheets.get（シートの一覧・ranges の includeGridData）・Values.batchGet（UNFORMATTED_VALUE / FORMATTED_VALUE・SERIAL_NUMBER）・
+   * Values.batchUpdate（RAW）。モックのシートのセル（値・数式・表示・入力規則）から作る。呼んだ記録は gas.sheetsApiCalls。
+   * cell.spill が true のセルは、配列の数式が広げた値（入力した値が無い）として返す
+   */
+  gas.enableSheetsApi = () => {
+    gas.sheetsApiCalls = [];
+    const bookOf = id => (id === gas.ss.getId() ? gas.ss : gas.created.find(b => b.getId() === id));
+    const parse = a1 => {
+      const m = /^'((?:[^']|'')+)'(?:!(.+))?$/.exec(a1);
+      return {name: m[1].replace(/''/g, "'"), a1: m[2] || ''};
+    };
+    const isDate = v => v && typeof v.getTime === 'function';
+    const serial = (date, tz) => {
+      const t = formatDate(date, tz, 'yyyy/MM/dd HH:mm:ss').split(/[\/ :]/).map(Number);
+      return (Date.UTC(t[0], t[1] - 1, t[2], t[3], t[4], t[5]) + ((date.getTime() % 1000) + 1000) % 1000) / 86400000 + 25569;
+    };
+    const rangeOf = (sheet, a1) => (a1 ? sheet.getRange(a1)
+      : sheet.getLastRow() ? sheet.getRange(1, 1, sheet.getLastRow(), Math.max(sheet.getLastColumn(), 1)) : null);
+    const each = (sheet, range, fn) => {
+      const rows = [];
+      if (!range) return rows;
+      for (let i = 0; i < range.getNumRows(); i++) {
+        const line = [];
+        for (let j = 0; j < range.getNumColumns(); j++) line.push(fn(sheet.cell(range.getRow() + i, range.getColumn() + j, false)));
+        rows.push(line);
+      }
+      return rows;
+    };
+    const gridCell = (cell, tz) => {
+      if (!cell) return {};
+      const out = {};
+      const v = cell.v;
+      const shown = gas.display(cell);
+      if (shown !== '') out.formattedValue = shown;
+      if (isDate(v)) {
+        out.effectiveValue = {numberValue: serial(v, tz)};
+        out.effectiveFormat = {numberFormat: {type: 'DATE_TIME'}};
+      } else if (typeof v === 'number') out.effectiveValue = {numberValue: v};
+      else if (typeof v === 'boolean') out.effectiveValue = {boolValue: v};
+      else if (v !== '' && v != null) out.effectiveValue = {stringValue: String(v)};
+      if (cell.f) out.userEnteredValue = {formulaValue: cell.f};
+      else if (out.effectiveValue && !cell.spill) out.userEnteredValue = Object.assign({}, out.effectiveValue);
+      const rule = cell.validation;
+      if (rule) {
+        const type = rule.getCriteriaType();
+        const values = rule.getCriteriaValues();
+        if (type === DataValidationCriteria.VALUE_IN_LIST) out.dataValidation = {condition: {type: 'ONE_OF_LIST', values: values[0].map(x => ({userEnteredValue: String(x)}))}};
+        if (type === DataValidationCriteria.VALUE_IN_RANGE) {
+          out.dataValidation = {condition: {type: 'ONE_OF_RANGE', values: [{userEnteredValue: "='" + values[0].getSheet().getName() + "'!" + values[0].getA1Notation()}]}};
+        }
+      }
+      return out;
+    };
+    context.Sheets = {Spreadsheets: {
+      get(id, args) {
+        gas.sheetsApiCalls.push({method: 'get', id, args});
+        const book = bookOf(id);
+        const tz = book.timeZone || gas.ss.timeZone;
+        const out = {properties: {title: book.getName(), timeZone: tz}};
+        if (!(args && args.includeGridData)) {
+          out.sheets = book.getSheets().map((sheet, index) => ({properties: {sheetId: sheet.getSheetId(), title: sheet.getName(), index,
+            gridProperties: {rowCount: sheet.getMaxRows(), columnCount: sheet.getMaxColumns()}}}));
+          return out;
+        }
+        out.sheets = (args.ranges || []).map(a1 => {
+          const p = parse(a1);
+          const sheet = book.getSheetByName(p.name);
+          const range = rangeOf(sheet, p.a1);
+          return {properties: {title: p.name}, data: [{startRow: range ? range.getRow() - 1 : 0, startColumn: range ? range.getColumn() - 1 : 0,
+            rowData: each(sheet, range, cell => gridCell(cell, tz)).map(values => ({values}))}]};
+        });
+        return out;
+      },
+      Values: {
+        batchGet(id, args) {
+          gas.sheetsApiCalls.push({method: 'batchGet', id, args});
+          const book = bookOf(id);
+          const tz = book.timeZone || gas.ss.timeZone;
+          return {valueRanges: (args.ranges || []).map(a1 => {
+            const p = parse(a1);
+            const sheet = book.getSheetByName(p.name);
+            const rows = each(sheet, rangeOf(sheet, p.a1), cell => {
+              if (!cell || cell.v === '' || cell.v == null) return '';
+              if (args.valueRenderOption === 'FORMATTED_VALUE') return gas.display(cell);
+              return isDate(cell.v) ? serial(cell.v, tz) : cell.v;
+            });
+            const values = args.majorDimension === 'COLUMNS' ? (rows[0] || []).map((_, c) => rows.map(line => line[c])) : rows;
+            return {range: a1, values};
+          })};
+        },
+        batchUpdate(body, id) {
+          gas.sheetsApiCalls.push({method: 'batchUpdate', id, body});
+          const book = bookOf(id);
+          (body.data || []).forEach(item => {
+            const p = parse(item.range);
+            const range = book.getSheetByName(p.name).getRange(p.a1);
+            const rows = item.majorDimension === 'COLUMNS' ? item.values[0].map((_, r) => item.values.map(col => col[r])) : item.values;
+            rows.forEach((line, r) => line.forEach((value, c) => {
+              const cell = range.getSheet().cell(range.getRow() + r, range.getColumn() + c, true);
+              cell.f = '';
+              cell.spill = false;
+              cell.v = value;
+            }));
+          });
+          return {};
+        }
+      }
+    }};
+    return gas;
+  };
+
   const files = options.files ||
     fs.readdirSync(ROOT).filter(name => name.endsWith('.gs')).sort();
   files.forEach(name => {
@@ -1309,9 +1422,9 @@ function createGas(options) {
         MTG_OPTIONS.portfolio.enabled = false;
         // ② ③ は本物では一旦出さない（pages: ['progress']）が、作る処理は残すので、テストでは3枚とも作って確かめる
         MTG_OPTIONS.portfolio.pages = ['progress', 'heatmap', 'map'];
-        // 作り始めたときのコピーから読む（readFromCopy）のも、そのテストだけで使う（ほかのテストの Drive のコピーの数・ファイルの ID を変えないように。
+        // 資料の中身を Sheets API で読む（readMode: 'api'）のは、そのテストだけで使う（モックの Sheets API は gas.enableSheetsApi() で用意する。
         // 本物の設定は tests/project.test.js で確かめる）
-        MTG_OPTIONS.run.readFromCopy = false;
+        MTG_OPTIONS.run.readMode = 'sheet';
       }
       // デリバリー担当の列は、本物（新FMT）には無いので使わない設定（空）。チェック「デリバリー担当なし」のテストのため、テストでは使う状態にする
       // （使わない状態は gas.get('MTG_OPTIONS').columns.delivery = '' で確かめる）

@@ -3674,119 +3674,85 @@ test('RXシナリオのポートフォリオの前回比：前回の時点コピ
   assert.deepStrictEqual([failed.previous, failed.previousGap], [null, '時点コピーを開けない']);
 });
 
-test('readFromCopy：資料の中身は作り始めたときのスプレッドシートのコピーから読む（試作は作り終えたら消す・本番はそのまま時点コピーにする・作れなければ直接読む・残ったものは片付ける）', () => {
+
+test('Sheets API で読む（readMode: api）：SpreadsheetApp で読んだときと同じ中身になる（値・日時・表示・数式・入力規則（一覧・範囲））。元のシートは SpreadsheetApp で読まない', () => {
   const {gas, g} = setup();
-  gas.get('MTG_OPTIONS').run.readFromCopy = true;
-  const sources = [];
-  const real = g.mtgSummaries_;
-  g.mtgSummaries_ = function (ss) {
-    sources.push(ss.getId());
-    return real.apply(null, arguments);
-  };
-  const copyFiles = pattern => gas.driveFiles.filter(f => pattern.test(f.name));
-
-  // 試作：「資料作成用コピー_日時」を作って読み、作り終えたらゴミ箱に移す（比べる時点の一覧には出ない）
-  gas.promptAnswers = ['1', '10/23'];
-  g.previewBusinessMtgSummaries();
-  const preview = copyFiles(/^資料作成用コピー_\d{4}-\d{2}-\d{2} \d{2}:\d{2}（作り終えたら消します）$/);
-  assert.strictEqual(preview.length, 1);
-  assert.deepStrictEqual(sources, [preview[0].id], '中身はコピーから読む');
-  assert.ok(gas.trashed.indexOf(preview[0].id) >= 0, '作り終えたらゴミ箱に移す');
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /（変化のある案件 4・停滞 0・確認事項 3）/, '元のスプレッドシートから読んだときと同じ中身');
-  assert.strictEqual(g.mtgListCopies_().length, 0, '時点コピーではない');
-
-  // 本番：時点コピーの名前でコピーを作って読み、そのまま今回の時点コピーにする（もう一度はコピーしない）
-  const before = gas.driveCopies.length;
-  gas.promptAnswers = ['1', '10/23'];
-  g.createBusinessMtgSummaries();
-  assert.strictEqual(gas.driveCopies.length, before + 1, 'コピーは1回だけ');
-  const final = copyFiles(/^時点コピー_.*（資料作成時・会議日 \d{4}-10-23）$/);
-  assert.strictEqual(final.length, 1);
-  assert.strictEqual(sources[1], final[0].id);
-  assert.ok(gas.trashed.indexOf(final[0].id) < 0, '本番のコピーは残す');
-  const props = g.PropertiesService.getDocumentProperties();
-  assert.deepStrictEqual(plain(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT'))[0].copy), {id: final[0].id, sheet: '新FMT'});
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /にコピーしました（資料はこのコピーの値で作りました。次の会議の資料はこれと比べます）/);
-
-  // コピーを作れないとき：元のスプレッドシートから読んで作り、知らせる
-  gas.copyErrors = [g.mtgCopyFolder_(gas.ss).getId()];
-  gas.promptAnswers = ['1', '10/23'];
-  g.previewBusinessMtgSummaries();
-  assert.strictEqual(sources[2], gas.ss.getId());
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /※ 資料を作るためのコピーを作れませんでした（Access denied: DriveApp\.）。資料は、このスプレッドシートから直接読んで作りました/);
-  gas.copyErrors = [];
-
-  // 途中で止まって残った作成用のコピー（sourceKeepHours より古いもの）は、次に作るときに片付ける。新しいものは残す
-  const folder = g.mtgCopyFolder_(gas.ss);
-  const file = g.DriveApp.getFileById(gas.ss.getId());
-  const old = file.makeCopy('資料作成用コピー_2020-01-01 09:00（作り終えたら消します）', folder);
-  const fresh = file.makeCopy('資料作成用コピー_' + g.Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm') + '（作り終えたら消します）', folder);
-  gas.promptAnswers = ['1', '10/23'];
-  g.previewBusinessMtgSummaries();
-  assert.ok(gas.trashed.indexOf(old.getId()) >= 0, '古いものは片付ける');
-  assert.ok(gas.trashed.indexOf(fresh.getId()) < 0, '新しいもの（ほかの人が作っている途中かもしれない）は残す');
-
-  // 本番で途中で止まったとき：まだ時点コピーとして記録していないコピーは残さない（比べる時点の一覧に、資料の無い時点コピーを出さない）
-  const realExport = g.mtgExportDeck_;
-  g.mtgExportDeck_ = () => { throw new Error('テストの失敗'); };
-  const count = gas.driveFiles.length;
-  try {
-    assert.throws(() => g.runMeetingMaterials('business', true, g.mtgParseDate_('10/30', new Date()), ['新FMT'], false, ''), /テストの失敗/);
-  } finally {
-    g.mtgExportDeck_ = realExport;
-  }
-  const failed = gas.driveFiles.slice(count).filter(f => /^時点コピー_/.test(f.name));
-  assert.strictEqual(failed.length, 1);
-  assert.ok(gas.trashed.indexOf(failed[0].id) >= 0);
+  const names = ['新FMT', '新FMT2'];
+  // 新FMT2 のステータスのプルダウンは、ほかのシートの範囲から（定義の範囲）
+  const list = gas.addSheet('選択肢', STATUSES.map(st => [st]));
+  const sheet2 = gas.ss.getSheetByName('新FMT2');
+  gas.asUser(() => sheet2.getRange('F3:F20').setDataValidation(g.SpreadsheetApp.newDataValidation().requireValueInRange(list.getRange('A1:A6'), true).build()));
+  // 期待値の列を数式にした行（数式かどうかで前回の値の取り方が変わる）
+  const cell = gas.ss.getSheetByName('新FMT').cell(3, COL.weighted, true);
+  cell.f = '=G3*0.5';
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  const now = new Date();
+  const live = plain(g.mtgSummaries_(gas.ss, names, now, false, meeting).summaries);
+  gas.enableSheetsApi();
+  gas.reads.length = 0;
+  const book = g.mtgApiBook_(gas.ss, names);
+  const api = plain(g.mtgSummaries_(book, names, now, false, meeting).summaries);
+  assert.deepStrictEqual(api, live);
+  assert.deepStrictEqual(gas.reads.filter(r => names.concat(['変更履歴_差分', '変更時点スナップショット', '選択肢']).indexOf(r.sheet) >= 0), [],
+    '元のシートは SpreadsheetApp で読まない');
+  // 呼び出しは、シートの一覧・追跡シートとステータスの定義（1回）・記録のシート（1回）・プルダウンの範囲のシート（読んでいなかったので、そのときに1回）
+  assert.deepStrictEqual(gas.sheetsApiCalls.map(c => c.method + (c.args && c.args.includeGridData ? '(grid ' + c.args.ranges.join(',') + ')' : '')),
+    ["get", "get(grid '新FMT','新FMT2')", 'batchGet', "get(grid '選択肢')"]);
+  const table = g.mtgReadDeals_(book.getSheetByName('新FMT2'), gas.get('DIFF_RULES')['新FMT2']);
+  assert.deepStrictEqual(plain(table.statusOrder), STATUSES, '範囲のプルダウンの選択肢も読む');
+  assert.strictEqual(g.mtgReadDeals_(book.getSheetByName('新FMT'), gas.get('DIFF_RULES')['新FMT']).weightedFormula, true);
 });
 
-test('mtgCopyAlign_：コピーの数式のセルは、元と違う値になれば元の値にする（すべてのシート。行は得意先・案件名で探す。記録のシートは比べない。Sheets API でも同じ）', () => {
-  const run = useApi => {
-    const {gas, g, sheet} = setup({edits: false});
-    // 元：想定売上の列（G列）と、ほかのシートのセルが数式（値は元のスプレッドシートで計算したもの）。期待値（H列）も数式
-    const formula = (target, row, col, f, v) => { const cell = target.cell(row, col, true); cell.f = f; cell.v = v; };
-    const deals = sheet.getLastRow();
-    for (let r = 3; r <= deals; r++) {
-      formula(sheet, r, COL.amount, '=IMPORTRANGE("other","x!A' + r + '")', 100 + r);
-      formula(sheet, r, COL.weighted, '=G' + r + '*0.5', (100 + r) / 2);
-    }
-    const other = gas.addSheet('定義_サービス', [['サービス', '価格'], ['A', 10]]);
-    formula(other, 2, 2, '=IMPORTRANGE("other","y!B2")', 10);
-    const log = gas.ss.getSheetByName('変更履歴_差分');
-    if (useApi) {
-      // Sheets API（拡張サービス）：元のスプレッドシートの、範囲ごとの列の値（表示の文字・値）
-      g.Sheets = {Spreadsheets: {Values: {batchGet(id, args) {
-        assert.strictEqual(id, gas.ss.getId());
-        return {valueRanges: args.ranges.map(a1 => {
-          const m = /^'(.+)'!([A-Z]+)(\d+):[A-Z]+(\d+)$/.exec(a1);
-          const range = gas.ss.getSheetByName(m[1].replace(/''/g, "'")).getRange(m[2] + m[3] + ':' + m[2] + m[4]);
-          const list = (args.valueRenderOption === 'FORMATTED_VALUE' ? range.getDisplayValues() : range.getValues()).map(line => line[0]);
-          return {range: a1, values: [list]};
-        })};
-      }}}};
-    }
-    const copy = g.mtgSaveSourceCopy_(gas.ss, new Date());
-    const book = g.SpreadsheetApp.openById(copy.id);
-    assert.strictEqual(copy.aligned.cells, 0, 'コピーした直後は、元と同じ値なら直さない');
-    // コピーの中で計算し直されて値が変わった（ほかのファイルを読めず 0）。コピーを作ったあとに、元のシートの上に行が足された
-    const csheet = book.getSheetByName('新FMT');
-    for (let r = 3; r <= deals; r++) csheet.cell(r, COL.amount, true).v = 0;
-    book.getSheetByName('定義_サービス').cell(2, 2, true).v = 0;
-    gas.asUser(() => sheet.insertRowBefore(3));
-    const aligned = g.mtgCopyAlign_(gas.ss, copy.id);
-    assert.strictEqual(aligned.error, '');
-    assert.strictEqual(aligned.cells, deals - 2 + 1, '追跡シートのすべての案件と、ほかのシートの数式のセル');
-    for (let r = 3; r <= deals; r++) {
-      assert.strictEqual(csheet.getRange(r, COL.amount).getValue(), 100 + r, '得意先・案件名で元の行を探す（' + r + '行目）');
-      assert.strictEqual(csheet.getRange(r, COL.amount).getFormula(), '', '値にする');
-      assert.ok(csheet.getRange(r, COL.weighted).getFormula(), '元と同じ値の数式はそのまま');
-    }
-    assert.strictEqual(book.getSheetByName('定義_サービス').getRange(2, 2).getValue(), 10, '追跡シートのほかのシートも');
-    assert.deepStrictEqual(plain(aligned.columns), ['新FMT のG列（想定売上規模（百万）） ' + (deals - 2) + '件', '定義_サービス のB列（価格） 1件']);
-    assert.ok(log, '記録のシートはある（比べない）');
-    // 資料を読むと、期待値の列は数式の列のまま
-    assert.strictEqual(g.mtgReadDeals_(csheet, gas.get('DIFF_RULES')['新FMT']).weightedFormula, true);
+test('previewBusinessMtgSummaries（readMode: api）：Sheets API でまとめて読んで作る（中身は SpreadsheetApp で読んだときと同じ）。Sheets API が無ければ SpreadsheetApp で読んで知らせる', () => {
+  const run = api => {
+    const {gas, g} = setup();
+    gas.get('MTG_OPTIONS').run.readMode = 'api';
+    if (api) gas.enableSheetsApi();
+    gas.reads.length = 0;
+    gas.promptAnswers = ['1', '10/23'];
+    g.previewBusinessMtgSummaries();
+    return {gas, message: gas.alerts[gas.alerts.length - 1].message};
   };
-  run(false);
-  run(true);
+  const withApi = run(true);
+  assert.match(withApi.message, /「新FMT」：.*（変化のある案件 4・停滞 0・確認事項 3）/);
+  assert.doesNotMatch(withApi.message, /※ Sheets API/);
+  assert.ok(withApi.gas.sheetsApiCalls.some(c => c.args && c.args.includeGridData), 'Sheets API で読む');
+  assert.deepStrictEqual(withApi.gas.reads.filter(r => ['新FMT', '変更履歴_差分', '変更時点スナップショット'].indexOf(r.sheet) >= 0).map(r => r.sheet), [],
+    '確かめ・作成で、元のシートを SpreadsheetApp で読まない');
+  const without = run(false);
+  assert.match(without.message, /（変化のある案件 4・停滞 0・確認事項 3）/);
+  assert.match(without.message, /※ Sheets API（拡張サービス）が使えません。資料は、このスプレッドシートを SpreadsheetApp で読んで作りました/);
+});
+
+test('createBusinessMtgSummaries（readMode: api）：本番の時点コピーの、数式で出している列（数式と、配列の数式が広げたセル）を元の値にする（期待値の列は数式のまま）', () => {
+  const {gas, g} = setup();
+  gas.get('MTG_OPTIONS').run.readMode = 'api';
+  gas.enableSheetsApi();
+  const sheet = gas.ss.getSheetByName('新FMT');
+  const last = sheet.getLastRow();
+  const col = 20;   // 配列の数式の列（先頭の行だけに数式があり、下の行は広げた値）
+  for (let r = 3; r <= last; r++) {
+    const c = sheet.cell(r, col, true);
+    c.v = 10 * r;
+    if (r === 3) c.f = '=ARRAYFORMULA(IMPORTRANGE("x","y!A3:A"))';
+    else c.spill = true;
+  }
+  sheet.cell(2, col, true).v = '見込金額';
+  const weighted = sheet.cell(3, COL.weighted, true);
+  weighted.f = '=G3*0.5';
+  // コピーの中では計算し直されて 0 になる（ほかのファイルを読めない）
+  const save = g.mtgSaveCopy_;
+  g.mtgSaveCopy_ = function () {
+    const copy = save.apply(null, arguments);
+    const book = g.SpreadsheetApp.openById(copy.id).getSheetByName('新FMT');
+    for (let r = 3; r <= last; r++) book.cell(r, col, true).v = 0;
+    return copy;
+  };
+  gas.promptAnswers = ['1', '10/23'];
+  g.createBusinessMtgSummaries();
+  const copySheet = gas.created[gas.created.length - 1].getSheetByName('新FMT');
+  for (let r = 3; r <= last; r++) assert.strictEqual(copySheet.getRange(r, col).getValue(), 10 * r, r + '行目は元の値');
+  assert.strictEqual(copySheet.getRange(3, col).getFormula(), '', '値にする');
+  assert.strictEqual(copySheet.getRange(3, COL.weighted).getFormula(), '=G3*0.5', '期待値の列は数式のまま');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /時点コピーの、数式で出している列は、元のスプレッドシートの値にしました（新FMT のT列（見込金額））。/);
 });

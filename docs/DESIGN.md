@@ -21,6 +21,7 @@
 | サービス管理 | `ServiceManagement.gs`・`RequestPickerView.html`・`RequestListDialog.html` | 新FMT のリクエストを選択パネル（サイドバー）で選んで「リクエスト」シートに登録し、リクエストをもとにサービス案を考えて名前でまとめる・棄却する |
 | タスク管理 | `TaskManagement.gs` | 別のシート「タスク管理」で、サービス案ごとの検討の進捗をタスクで管理する |
 | 会議サマリ（RX Business Meeting） | `MeetingSummary.gs` | RX Business Meeting（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ってドライブに保存する（サマリー・計画に対する積み上げ・パイプラインの変化・RXシナリオのポートフォリオ・前回から変化のある案件・期待値上位案件の状況・課題、扉、Appendix。書くのは事実だけ）。サブインダストリーごとの Google チャットに、管理フォーマットの更新のお願いと事前資料のご案内を送る（webhook。`remindBusinessMtgUpdate()`・`notifySubBusinessMtgSummaries()`） |
+| 会議資料の中身を読む | `MeetingRead.gs` | 会議サマリの中身（追跡シート・変更の記録など）を Sheets API でまとめて読み、SpreadsheetApp と同じ使い方ができる入れ物にする（大勢が編集している間も待たされにくい） |
 | 会議の日程と資料を作る画面 | `MeetingSchedule.gs`・`MeetingRunDialog.html` | Google カレンダーから RX Business Meeting・RX Service Meeting の日程を読み、`INDEX_会議資料` に会議日と会議名の行を先に出す。資料を作る関数は画面を開き、その一覧から会議日程をプルダウンで選んで作る |
 | RX Service Meeting の事前資料 | `ServiceMeeting.gs` | RX Service Meeting（サービス改善）の事前資料（16:9 の Google スライドと PDF。紫）を、リクエスト・タスク管理のシートから、サブインダストリーごと（と全サブインダストリー）に作る。スライドの部品・ひな形・保存・インデックスは会議サマリと共通 |
 
@@ -478,23 +479,24 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   `continueAfterMs`（60秒）後に1つだけ作る）。続き（`continueBusinessMtgSummaries`）は、残りの仕事を同じように進め、終われば知らせを `MTG_JOB_RESULT_n`（2,000文字ずつ）に保存して
   仕事とトリガーを消します（`showBusinessMtgSummariesResult()` で出す）。資料の中身は、作り始めた時刻（`job.now`）で数え、本番の会議日の記録もその時刻にします。
   時刻は `mtgNow_()`（テストで差し替える）。
-- **読む先は作り始めたときのコピー**（`mtgJobSource_`。`MTG_OPTIONS.run.readFromCopy`。2026/11/04）：`mtgSummaries_` に渡すスプレッドシートを、このスプレッドシートではなく
-  Drive のファイルのコピー（`makeCopy`。時点コピーと同じ）を `SpreadsheetApp.openById` で開いたものにする（`mtgSummarize_` 以下はすべて渡されたスプレッドシートから読む）。
-  大勢が編集している間は、このスプレッドシートを読むたびに、編集と差分追跡（`recordDiffEdit` の書き込みと flush）の順番待ちになり、1シートでも6分を超えた。
-  コピーは誰も編集しない別のファイルなので待たされない。コピーは `job.source` に残し、区切って続けるときも同じものを読む（全シートが同じ時点）。
-  本番は時点コピーの名前（`mtgSaveCopy_`）で作って `keep` にし、資料のあとの「時点コピーと会議日の記録」でそのまま `job.copy` にする（もう一度はコピーしない）。
-  試作・統合版（`mtgCombinedStart_`）は `run.sourceName` の名前（`mtgSaveSourceCopy_`。`mtgParseCopyTitle_` に合わないので比べる時点に出ない）で作り、
-  終わったら・止まったらゴミ箱へ（`mtgJobDropSource_`。本番でも、止まって `job.copy` がまだならゴミ箱へ）。6分の上限で止められて残ったものは、次に作るときに
-  `sourceKeepHours` より古いものを移す（`mtgSourceCleanup_`。続けている途中の仕事のコピーは残す）。コピーを作れない・開けないときは、このスプレッドシートから読み、
-  `job.sourceError` を知らせる（`mtgSourceNote_`）。リンク（`mtgFolder_` など）・書き込みは、このスプレッドシートのまま。
-  テストのモックでは `readFromCopy` を `false` にしている（ほかのテストの Drive のコピーの数・ID を変えないため。本物の設定は `tests/project.test.js`）。
-- **コピーの値をそろえる**（`mtgCopyAlign_`。`mtgSaveCopy_`・`mtgSaveSourceCopy_` がコピーを作った直後に呼ぶ）：コピーの数式は計算し直されるので、IMPORTRANGE など
-  ほかのファイルを読む数式は 0・エラーになる（2026/11/04 にシナリオによる見込金額が 0 になった）。記録のシート以外のすべてのシートで、数式のセルを元の表示の文字と比べ、
-  違えば元の値（`UNFORMATTED_VALUE`。日付はシリアル値で、セルの書式で日付に見える）を書く（数式は消える。続く行はまとめて `setValues`）。元の値は Sheets API の
-  `Values.batchGet`（数式のある列と、得意先・案件名の列だけ。`majorDimension: COLUMNS`）。無ければ SpreadsheetApp。追跡シートの見出しより下は得意先・案件名で元の行を探す
-  （同じ位置 → 1つだけある行。無い・2つ以上は直さずに `unmatched`）。期待値の列は一部が値になっても、`mtgReadDeals_` は列のどこかに数式があれば数式の列とみなす。
-- 作ったばかりのコピーの `openById` は数式の計算し直しで数分かかることがある（274秒。2回目からは速い：前回の時点コピーは 4.6秒）。`mtgJobRun_` はコピーを開いたあと
-  `fits(summaryMs + deckMs)` を見て、足りなければ区切る（続きは同じコピー）。`diagnoseMeetingRead()` で、コピーを作らずに Sheets API で読む時間を測る。
+- **読み方は Sheets API**（`mtgJobSource_`・`MeetingRead.gs`。`MTG_OPTIONS.run.readMode: 'api'`。2026/11/04）：`mtgSummaries_` に渡すスプレッドシートを、
+  Sheets API で読んだ入れ物（`mtgApiBook_`。読むだけで、SpreadsheetApp のスプレッドシート・シート・範囲と同じ使い方：`getSheetByName`・`getLastRow`・`getRange`・
+  `getValues`・`getDisplayValues`・`getFormulas`・`getDataValidation` など）にする。`mtgSummarize_` 以下は変えない。
+  大勢が編集している間は、SpreadsheetApp でこのスプレッドシートに触れる（シートを探すだけでも）たびに数式の計算を待たされ、1シートでも6分を超えた。
+  Sheets API は同じ時間帯に 1/8 ほど（`diagnoseMeetingRead()`）。途中で試した「スプレッドシートをコピーして読む」は、作ったばかりのコピーを初めて開くと
+  計算し直しで 274秒かかり、IMPORTRANGE が 0 になったのでやめた。
+  - 読み方：シートの一覧（`Spreadsheets.get`。速い）→ 追跡シートとステータスの定義を `includeGridData` で1回（`formattedValue`・`effectiveValue`・`userEnteredValue`・
+    書式の種類・入力規則）→ 記録のシートを `Values.batchGet`（`UNFORMATTED_VALUE`・`SERIAL_NUMBER`。見出しに「日時」を含む列は日時に）で1回。
+    日時はシリアル値（スプレッドシートのタイムゾーン）から Date に（ミリ秒まで）。読んでいないシート（プルダウンの範囲のシートなど）は、開こうとしたときに読む。
+  - 範囲のプルダウン（`ONE_OF_RANGE`）は、範囲のシートを読んで SpreadsheetApp と同じ形（`VALUE_IN_RANGE` と範囲）で返す。
+  - テスト：`tests/lib/gas-mock.js` の `gas.enableSheetsApi()` がモックのシートから API の形を作る。SpreadsheetApp で読んだときと同じ中身になることを確かめている。
+    モックの既定は `readMode: 'sheet'`（本物の設定は `tests/project.test.js`）。
+  - 資料を作る画面のシートの一覧・比べる時点・確かめの文も、シートの有無は `mtgTrackedNames_`（Sheets API のシートの一覧）、変更の記録は `mtgRecordsBook_` で読む。
+  - Sheets API が無い・読めないときは SpreadsheetApp で読み、`job.sourceError` を知らせる（`mtgSourceNote_`）。読んだ入れ物は `job.book`（保存しない）。
+- **本番の時点コピーを直す**（`mtgApiFixCopy_`。`mtgJobRun_` の「時点コピーと会議日の記録」のあと、`copyFixMs` で区切れる）：時点コピーは Drive のファイルのコピーなので、
+  数式はコピーの中で計算し直され、IMPORTRANGE などは 0 になる。追跡シートの、数式のセルがある列と、配列の数式が広げた列（API で、入力した値が無いのに値があるセル）を、
+  見出しの下の行すべて、読んだ元の値で書く（`Values.batchUpdate`・`RAW`。日時はシリアル値。配列の数式は先頭のセルにしか数式が無いので、列ごと値にする）。
+  期待値の列は数式のまま（同じファイルの中で計算する。`mtgReadDeals_` が数式かどうかで前回の値の取り方を変えるため）。結果は `job.copyFix`。
 - ① の目盛り：今の期待値の最大で決め、前回の期待値は今の最大の 1.5倍までなら目盛りに含める。それより大きければ点線の箱を棒の幅の端で切り、端に「前回 650 ›」
   （`portfolio-prev-clipped`。前回の未設定が大きく、今の棒が小さくなって読めなかったため）。
 - **会議資料のインデックス**（`mtgWriteIndex_`）：格納できたら、このスプレッドシートの `MTG_OPTIONS.index.sheet`（`INDEX_会議資料`）の
