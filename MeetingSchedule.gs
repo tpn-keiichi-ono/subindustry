@@ -319,6 +319,101 @@ function diagnoseMeetingRead() {
   svcShowLines_(['資料の読み方の確かめ（このスプレッドシートを、コピーを作らずに読む時間）'].concat(lines));
 }
 
+/**
+ * スプレッドシートの計算を重くしている数式・書式を探す（エディタから実行する。読むだけ）。
+ * diagnoseMeetingRead() で、225行のシートを読むだけでもどの読み方でも約100秒かかった（2026/11/04）。読み方ではなく、スプレッドシートの数式の計算を
+ * 待たされている。どの数式が重いかを、計算の済んだいちばん新しい時点コピーで調べる（このスプレッドシートを読むと、それ自体を待たされるため）。
+ * シートごとのセル・数式・条件付き書式の数と、重くなりやすい数式（ほかのファイルを読む・編集のたびに計算し直す・範囲の広い計算・列全体の参照・
+ * 記録のシートを参照）の数と、例のセルを出す
+ */
+function diagnoseSpreadsheetLoad() {
+  const timer = mschTimer_('計算の重さの確かめ');
+  const copies = mtgListCopies_();
+  let book = null;
+  let where = '';
+  for (let i = 0; i < copies.length && !book; i++) {
+    try {
+      book = SpreadsheetApp.openById(copies[i].id);
+      where = '「' + copies[i].title + '」（いちばん新しい時点コピー。中身はこのスプレッドシートと同じ）';
+    } catch (_) {}
+  }
+  if (!book) {
+    book = SpreadsheetApp.getActiveSpreadsheet();
+    where = 'このスプレッドシート（時点コピーが無いため。読むのに時間がかかります）';
+  }
+  timer.lap('開く');
+  const kinds = [
+    {label: 'ほかのファイルを読む（コピーでは 0・エラーになる）', names: ['IMPORTRANGE', 'IMPORTDATA', 'IMPORTXML', 'IMPORTHTML', 'IMPORTFEED', 'GOOGLEFINANCE', 'IMAGE']},
+    {label: '編集のたびに計算し直す', names: ['NOW', 'TODAY', 'RAND', 'RANDBETWEEN', 'RANDARRAY', 'INDIRECT', 'OFFSET', 'CELL', 'INFO']},
+    {label: '範囲の広い計算', names: ['ARRAYFORMULA', 'QUERY', 'FILTER', 'SORT', 'SORTN', 'UNIQUE', 'VLOOKUP', 'HLOOKUP', 'XLOOKUP', 'LOOKUP', 'MATCH', 'XMATCH',
+      'SUMIF', 'SUMIFS', 'COUNTIF', 'COUNTIFS', 'AVERAGEIF', 'AVERAGEIFS', 'SUMPRODUCT', 'MAP', 'BYROW', 'BYCOL', 'LAMBDA', 'REGEXMATCH', 'REGEXEXTRACT', 'SPLIT', 'TEXTJOIN']}
+  ];
+  const records = [DIFF_OPTIONS.logSheet, DIFF_OPTIONS.rowSnapshotSheet, DIFF_OPTIONS.snapshotPrefix];
+  const found = {};   // 関数 → {count, sheets: {シート: 件数}, example}
+  const note = (key, sheet, a1) => {
+    const f = found[key] = found[key] || {count: 0, sheets: {}, example: ''};
+    f.count++;
+    f.sheets[sheet] = (f.sheets[sheet] || 0) + 1;
+    if (!f.example) f.example = sheet + '!' + a1;
+  };
+  const sheets = [];
+  let cells = 0;
+  book.getSheets().forEach(sheet => {
+    const name = sheet.getName();
+    const size = sheet.getMaxRows() * sheet.getMaxColumns();
+    cells += size;
+    const rows = sheet.getLastRow();
+    const width = sheet.getLastColumn();
+    let formulas = 0;
+    const distinct = new Set();
+    if (rows > 0 && width > 0) {
+      sheet.getRange(1, 1, rows, width).getFormulas().forEach((line, r) => line.forEach((f, c) => {
+        if (!f) return;
+        formulas++;
+        const text = String(f).toUpperCase();
+        distinct.add(text.replace(/\d+/g, '#'));   // 同じ形の数式（行だけ違う）は1種類と数える
+        const a1 = diffColumnLetter_(c + 1) + (r + 1);
+        (text.match(/[A-Z][A-Z0-9.]*(?=\s*\()/g) || []).filter((fn, i, list) => list.indexOf(fn) === i)
+          .forEach(fn => { if (kinds.some(k => k.names.indexOf(fn) >= 0)) note(fn, name, a1); });
+        if (/(^|[^A-Z$])\$?[A-Z]{1,3}:\$?[A-Z]{1,3}(?![0-9A-Z])/.test(text)) note('列全体の参照（A:A など）', name, a1);
+        if (records.some(n => String(f).indexOf(n) >= 0)) note('記録のシートを参照', name, a1);
+      }));
+    }
+    let rules = 0;
+    let custom = 0;
+    try {
+      const list = sheet.getConditionalFormatRules();
+      rules = list.length;
+      custom = list.filter(rule => { try { return !!rule.getBooleanCondition() && String(rule.getBooleanCondition().getCriteriaType()) === 'CUSTOM_FORMULA'; } catch (_) { return false; } }).length;
+    } catch (_) {}
+    sheets.push({name, size, rows, width, formulas, distinct: distinct.size, rules, custom});
+  });
+  timer.lap('数式と書式を数える');
+  const lines = ['調べたファイル：' + where,
+    'セルの数（空のセルを含む）：' + cells.toLocaleString() + '（上限 10,000,000）・シート ' + sheets.length + '枚', '', '▼ シートごと（数式の多い順）'];
+  sheets.filter(x => x.formulas || x.rules).sort((a, b) => b.formulas - a.formulas || b.rules - a.rules).forEach(x => {
+    lines.push('・' + x.name + '：数式 ' + x.formulas.toLocaleString() + '（形は ' + x.distinct + '種類）・セル ' + x.size.toLocaleString() +
+      '（使っている範囲 ' + x.rows + '行×' + x.width + '列）' + (x.rules ? '・条件付き書式 ' + x.rules + '（数式 ' + x.custom + '）' : ''));
+  });
+  lines.push('', '▼ 重くなりやすい数式（件数・どのシートか・例のセル）');
+  const show = key => {
+    const f = found[key];
+    if (!f || !f.count) return;
+    const where2 = Object.keys(f.sheets).map(n => n + ' ' + f.sheets[n]).join('・');
+    lines.push('・' + key + '：' + f.count.toLocaleString() + '件（' + where2 + '）　例 ' + f.example);
+  };
+  kinds.forEach(k => {
+    if (!k.names.some(n => found[n] && found[n].count)) return;
+    lines.push('〔' + k.label + '〕');
+    k.names.forEach(show);
+  });
+  if (found['列全体の参照（A:A など）'] || found['記録のシートを参照']) lines.push('〔そのほか〕');
+  show('列全体の参照（A:A など）');
+  show('記録のシートを参照');
+  lines.push('', '（' + timer.text() + '）');
+  svcShowLines_(['スプレッドシートの計算の重さの確かめ'].concat(lines));
+}
+
 /** 画面の「カレンダーから読み込む」（google.script.run から呼ぶ）。{message, data: getMeetingRunData と同じ形} */
 function importMeetingSchedulesFromDialog(kind, final) {
   const result = mschImport_();

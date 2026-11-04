@@ -249,3 +249,26 @@ test('diagnoseMeetingRead：コピーを作らずに読む時間を、Sheets API
   assert.match(message, /③ 値だけ（CSV）：/);
   assert.strictEqual(gas.writes.length, writes, '読むだけ');
 });
+
+test('diagnoseSpreadsheetLoad：計算を重くしている数式（ほかのファイルを読む・編集のたびに計算し直す・範囲の広い計算・列全体の参照・記録のシートを参照）をシートごとに数える（読むだけ）', () => {
+  const {gas, g} = setup();
+  const sheet = gas.addSheet('集計', [['a', 'b', 'c']], {rows: 10, columns: 5});
+  gas.asUser(() => {
+    sheet.getRange('A2').setFormula('=IMPORTRANGE("abc","x!A1")');
+    sheet.getRange('A3').setFormula('=IMPORTRANGE("abc","x!A2")');
+    sheet.getRange('B2').setFormula('=TODAY()');
+    sheet.getRange('C2').setFormula('=COUNTIF(D:D,"x")');
+    sheet.getRange('C3').setFormula("=COUNTA('変更履歴_差分'!A2:A100)");
+  });
+  const writes = gas.writes.length;
+  g.diagnoseSpreadsheetLoad();
+  const message = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(message, /調べたファイル：このスプレッドシート（時点コピーが無いため/);
+  assert.match(message, /・集計：数式 5（形は 4種類）/);
+  assert.match(message, /〔ほかのファイルを読む（コピーでは 0・エラーになる）〕\n・IMPORTRANGE：2件（集計 2）　例 集計!A2/);
+  assert.match(message, /〔編集のたびに計算し直す〕\n・TODAY：1件（集計 1）　例 集計!B2/);
+  assert.match(message, /・COUNTIF：1件（集計 1）　例 集計!C2/);
+  assert.match(message, /・列全体の参照（A:A など）：1件（集計 1）　例 集計!C2/);
+  assert.match(message, /・記録のシートを参照：1件（集計 1）　例 集計!C3/);
+  assert.strictEqual(gas.writes.length, writes, '読むだけ');
+});
