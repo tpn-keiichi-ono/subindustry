@@ -3353,6 +3353,23 @@ test('RXシナリオのポートフォリオのスライド：パイプライン
   assert.match(pLead(progress), /^進行中の期待値 163百万円・案件 5件を、RXシナリオ構成ごとに確度別に表示（期待値の大きい順）。最大は ID-POS分析（105）/);
   assert.match(pLead(progress), /複数のシナリオを選んだ 1件は選んだ数で等分。未設定は 1件。前回比はデータなし（比べる時点コピーが無い）。$/);
   assert.strictEqual(progress.note, '※ 按分のため、シナリオの値を足しても合計と合わないことがあります');
+  // 列の見出しの下に値の出どころ（想定売上は手動入力、期待値・シナリオ金額は自動算出）を小さく
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-head-note').map(el => [el.text, el.size]), [['（手動入力）', 6], ['（自動算出）', 6], ['（自動算出）', 6]]);
+  // いちばん下に合計の行（件数・得意先は重ならずに数える。シナリオの行の合計と同じ。横棒は書かない）
+  const totals = plain(g.mtgPortfolioTotals_(p));
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-total-name').map(el => el.text), ['合計']);
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-total').map(el => el.text),
+    [g.mtgShare_(totals.total.amount), '163', 'データなし', g.mtgShare_(totals.total.scenarioAmount), '5件', totals.customers.length + '社',
+      Math.round(totals.items.concat([totals.unset]).reduce((sum, item) => sum + (item.byRankWeighted.A || 0) + (item.byRankWeighted.B || 0), 0) / 163 * 100) + '%']);
+  const rowsSum = key => totals.items.concat([totals.unset]).reduce((sum, item) => sum + item[key], 0);
+  assert.ok(Math.abs(rowsSum('weighted') - totals.total.weighted) < 0.01 && Math.abs(rowsSum('scenarioAmount') - totals.total.scenarioAmount) < 0.01,
+    'シナリオ金額・期待値は、シナリオの行（按分）を足すと合計になる');
+  const lastRow = Math.max.apply(null, roleOf(progress, 'portfolio-name').map(el => el.y));
+  assert.ok(roleOf(progress, 'portfolio-total-name')[0].y > lastRow, '合計の行はいちばん下');
+  // 出すページは portfolio.pages（本物は ① だけ。② ③ の作る処理は残す）
+  o.portfolio.pages = ['progress'];
+  assert.deepStrictEqual(plain(g.mtgPortfolioSlides_(p)).map(slide => slide.title), [T.scenarioProgress]);
+  o.portfolio.pages = ['progress', 'heatmap', 'map'];
 
   // ② 行：売上の大きい順に2社と「その他 N社」（色を付けない）。列：シナリオ（売上の大きい順）と未設定、その下に年度（FY26・FY27）。セルの確度は書かない
   assert.deepStrictEqual(roleOf(heat, 'heat-head').map(el => el.text.replace(/\n/g, '')), ['得意先', 'ID-POS分析', 'サイネージ', '物流・SCM', '未設定',

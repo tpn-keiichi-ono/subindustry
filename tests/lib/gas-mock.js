@@ -1307,6 +1307,8 @@ function createGas(options) {
         // RXシナリオのポートフォリオ（本編の3枚）も、そのテストだけで使う（ほかのテストの資料のページの並び・番号を変えないように。
         // 本物の設定は gas.get('MTG_OPTIONS').portfolio.enabled = true で確かめる）
         MTG_OPTIONS.portfolio.enabled = false;
+        // ② ③ は本物では一旦出さない（pages: ['progress']）が、作る処理は残すので、テストでは3枚とも作って確かめる
+        MTG_OPTIONS.portfolio.pages = ['progress', 'heatmap', 'map'];
         // 作り始めたときのコピーから読む（readFromCopy）のも、そのテストだけで使う（ほかのテストの Drive のコピーの数・ファイルの ID を変えないように。
         // 本物の設定は tests/project.test.js で確かめる）
         MTG_OPTIONS.run.readFromCopy = false;

@@ -691,7 +691,10 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
    ステータス別・受注月別（受注月超過・今の四半期〜4Q・来期以降・受注月未入力）の期待値の横棒のグラフ（件数は名前の右）。
    リード文は「進行中の期待値は A → B百万円（±N）。増加 +N・減少 ▲N（うち受注 ▲N）、内訳の最大は…（N件・±N）。」と、
    補足に「受注月が今期の期待値は N百万円（最大は3Qの N）、受注月超過は N百万円。」。
-   - 続けて RXシナリオのポートフォリオの3枚（`mtgPortfolioSlides_`。`MTG_OPTIONS.portfolio.enabled`。2026/11/04 から）。中身は `mtgPortfolioOf_`（進行中の案件の
+   - 続けて RXシナリオのポートフォリオ（`mtgPortfolioSlides_`。`MTG_OPTIONS.portfolio.enabled`。2026/11/04 から）。出すページは `portfolio.pages` の順
+     （今は ① だけ。② ③ は 2026/11/04 に一旦出さないことにしたが、作る処理とテストは残す。テストのモックは3枚とも作る）。
+     ① は列の見出しの下に値の出どころ（`portfolio.columnNotes`。6pt）と、いちばん下に合計の行（`portfolio-total`。件数・得意先は案件・得意先を重ねずに数える。
+     確度A・B は期待値全体のうち A・B。横棒は書かない）。中身は `mtgPortfolioOf_`（進行中の案件の
      シナリオ・確度・想定売上・期待値・シナリオ金額（`columns.scenarioAmount`。J列）・今年度の売上）、集計は `mtgPortfolioTotals_`（按分）：
      ① RXシナリオ別の進捗（`mtgPortfolioProgressSlide_`。期待値の確度別の横棒（棒の中に確度ごとの値、右に合計）と、想定売上・期待値・シナリオ金額・件数・得意先・確度A・B（期待値のうち））、
      ② 得意先 × RXシナリオ 売上ヒートマップ（`mtgPortfolioHeatmapSlide_`。シナリオごとに年度（FY26〜28）の列。行と列が多いので表ではなく箱で描く。表のセルの余白は API で変えられず、
