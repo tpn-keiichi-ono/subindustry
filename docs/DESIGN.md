@@ -20,7 +20,7 @@
 | サンプルデータ | `サンプルデータ.gs` | 画面の確認用に、選んだ行の得意先へサンプルの履歴を追加する・まとめて削除する |
 | サービス管理 | `ServiceManagement.gs`・`RequestPickerView.html`・`RequestListDialog.html` | 新FMT のリクエストを選択パネル（サイドバー）で選んで「リクエスト」シートに登録し、リクエストをもとにサービス案を考えて名前でまとめる・棄却する |
 | タスク管理 | `TaskManagement.gs` | 別のシート「タスク管理」で、サービス案ごとの検討の進捗をタスクで管理する |
-| 会議サマリ（RX Business Meeting） | `MeetingSummary.gs` | RX Business Meeting（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ってドライブに保存する（サマリー・計画に対する積み上げ・パイプラインの変化・前回から変化のある案件・期待値上位案件の状況・課題、扉、Appendix。書くのは事実だけ）。サブインダストリーごとの Google チャットに、管理フォーマットの更新のお願いと事前資料のご案内を送る（webhook。`remindBusinessMtgUpdate()`・`notifySubBusinessMtgSummaries()`） |
+| 会議サマリ（RX Business Meeting） | `MeetingSummary.gs` | RX Business Meeting（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ってドライブに保存する（サマリー・計画に対する積み上げ・パイプラインの変化・RXシナリオのポートフォリオ・前回から変化のある案件・期待値上位案件の状況・課題、扉、Appendix。書くのは事実だけ）。サブインダストリーごとの Google チャットに、管理フォーマットの更新のお願いと事前資料のご案内を送る（webhook。`remindBusinessMtgUpdate()`・`notifySubBusinessMtgSummaries()`） |
 | 会議の日程と資料を作る画面 | `MeetingSchedule.gs`・`MeetingRunDialog.html` | Google カレンダーから RX Business Meeting・RX Service Meeting の日程を読み、`INDEX_会議資料` に会議日と会議名の行を先に出す。資料を作る関数は画面を開き、その一覧から会議日程をプルダウンで選んで作る |
 | RX Service Meeting の事前資料 | `ServiceMeeting.gs` | RX Service Meeting（サービス改善）の事前資料（16:9 の Google スライドと PDF。紫）を、リクエスト・タスク管理のシートから、サブインダストリーごと（と全サブインダストリー）に作る。スライドの部品・ひな形・保存・インデックスは会議サマリと共通 |
 
@@ -677,6 +677,20 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
    ステータス別・受注月別（受注月超過・今の四半期〜4Q・来期以降・受注月未入力）の期待値の横棒のグラフ（件数は名前の右）。
    リード文は「進行中の期待値は A → B百万円（±N）。増加 +N・減少 ▲N（うち受注 ▲N）、内訳の最大は…（N件・±N）。」と、
    補足に「受注月が今期の期待値は N百万円（最大は3Qの N）、受注月超過は N百万円。」。
+   - 続けて RXシナリオのポートフォリオの3枚（`mtgPortfolioSlides_`。`MTG_OPTIONS.portfolio.enabled`。2026/11/04 から）。中身は `mtgPortfolioOf_`（進行中の案件の
+     シナリオ・確度・想定売上・期待値・シナリオ金額（`columns.scenarioAmount`。J列）・今年度の売上）、集計は `mtgPortfolioTotals_`（按分）：
+     ① RXシナリオ別の進捗（`mtgPortfolioProgressSlide_`。想定売上の確度別の横棒と、想定売上・期待値・シナリオ金額・件数・得意先・確度A・B）、
+     ② 得意先 × RXシナリオ 売上ヒートマップ（`mtgPortfolioHeatmapSlide_`。行と列が多いので表ではなく箱で描く。表のセルの余白は API で変えられず、行が高くなるため）、
+     ③ RXシナリオのポートフォリオ図（`mtgPortfolioMapSlide_`。円は `ELLIPSE` の箱、象限の色は `MTG_QUADRANTS` で、図の背景・象限の名前・右の表の帯で同じ色）。
+   - 今年度の売上は、年度別の売上の列（`portfolio.salesHeader`。「FY26前半期売上（百万）」など）のうち今年度（`fiscalStartMonth` から。`mtgFiscalYearKey_`）の列の合計。
+     年度が変われば次の年度の列を読む（コードを変えない）。この列は `ignoreHeaders` で前回からの変化には使わないが、このページでは今の値を使う。
+   - 複数のシナリオを選んだ案件は、金額を選んだ数で等分する（按分。シナリオの合計が全体と一致し、構成比として読める。満額で数えると合計が全体を超える）。
+     表示は小数1桁に丸めるので、足すと合わないことがある → 出典の行の後ろに「※ 按分のため…」（`note`）。計算は小数のまま。
+   - 確度の進み具合：今年度の売上で重み付けした確度の点数（`portfolio.scores`）の平均。今年度の売上が無いシナリオは想定売上（無ければ件数）で重み付けし、注記する。
+     どのシナリオにも今年度の売上が無いときは、縦軸が作れないので図を描かない（「該当なし」）。端の円は半径の分だけ図の内側に寄せる。
+     円の名前は右・左・下・上（それでも重なれば上下にずらす）の順に、ほかの円・名前・象限の名前と重ならない場所に置く。
+   - 列が無いとき（RXシナリオ構成・想定売上・今年度の売上）は、そのページに「データなし」と理由（`mtgPortfolioEmpty_`。ページの型は変えない）。
+     テストのモックでは `portfolio.enabled` を `false` にしている（ほかのテストのページの並びを変えないため。本物の設定は `tests/project.test.js` で確かめる）。
 3. 前回から変化のある案件：ステータス・期待値・受注月・活動状況に変化のある案件を、今回のステータスの順（`mtgStatusGroups_`。その中は想定売上の大きい順。
    その他更新は後ろ。Appendix ① も同じ順）に `mainRows.changes`（7件）まで、ページに入る分だけ
    （行の高さは中身で変わるので、入る件数を数えてから表にする。補足の「N件を掲載」も入った件数）。

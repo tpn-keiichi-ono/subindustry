@@ -1304,6 +1304,9 @@ function createGas(options) {
         MTG_OPTIONS.meetingFolder = '';
         // PowerPoint の書き出しは、そのテストだけで使う（ほかのテストのファイルの数・UrlFetchApp の記録を変えないように）
         MTG_OPTIONS.exportPptx = false;
+        // RXシナリオのポートフォリオ（本編の3枚）も、そのテストだけで使う（ほかのテストの資料のページの並び・番号を変えないように。
+        // 本物の設定は gas.get('MTG_OPTIONS').portfolio.enabled = true で確かめる）
+        MTG_OPTIONS.portfolio.enabled = false;
       }
       // デリバリー担当の列は、本物（新FMT）には無いので使わない設定（空）。チェック「デリバリー担当なし」のテストのため、テストでは使う状態にする
       // （使わない状態は gas.get('MTG_OPTIONS').columns.delivery = '' で確かめる）

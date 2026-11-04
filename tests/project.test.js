@@ -148,6 +148,12 @@ test('本物のシートの見出し（2026/10/29 のスーパー・GMS の2行�
   assert.deepStrictEqual(JSON.parse(JSON.stringify([rule.headerRow, rule.ranges])), [2, ['D3:AF']]);
   ['customer', 'project', 'status', 'amount', 'weighted', 'orderMonth', 'activity', 'scenario'].forEach(key => assert.ok(g.mtgColumnIndex_(headers, key) + 1 >= 4, key));
   assert.strictEqual(g.mtgColumnIndex_(headers, 'scenario'), 8, 'RXシナリオ構成は I列（案件名の右）');
+  // RXシナリオのポートフォリオ（本物は使う）：シナリオ金額は J列、今年度（FY26）の売上は P・Q列（FY27 からは R・S列）
+  assert.strictEqual(mtg.portfolio.enabled, true);
+  assert.strictEqual(g.mtgColumnIndex_(headers, 'scenarioAmount'), 9, 'シナリオ金額（サービスパッケージ合算）は J列');
+  const pattern = new RegExp(mtg.portfolio.salesHeader);
+  const sales = year => headers.map((h, i) => ((pattern.exec(g.credNormalize_(h)) || [])[1] === year ? i : -1)).filter(i => i >= 0);
+  assert.deepStrictEqual([sales('26'), sales('27'), sales('28')], [[15, 16], [17, 18], [19, 20]]);
   // コンビニ・地方銀行・生協は「RXシナリオ構成（サービス）」（columnAliases で読む）
   assert.strictEqual(g.mtgColumnIndex_(headers.map(h => (h === 'RXシナリオ構成' ? 'RXシナリオ構成（サービス）' : h)), 'scenario'), 8);
   assert.ok(headers.length <= 32, 'AF 列まで（追跡範囲 D3:AF。シートが狭くても、追跡範囲はシートの中まで読む。diffRuleRange_）');

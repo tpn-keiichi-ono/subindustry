@@ -2287,7 +2287,7 @@ test('setBusinessMtgBaseline：今を基準として記録し（はいのとき�
   g.createBusinessMtgSummaries();
   assert.match(lastAlert().message, /「新FMT」：.*（変化のある案件 1・/, '基準より前の変化（貼り付けた G社 など）は数えない');
   const inserted = gas.decks[0].requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
-  assert.match(inserted, /\n対象期間：基準時点（\d{2}\/\d{2} \d{2}:\d{2}）以降\n/, '表紙の期間');
+  assert.match(inserted, /\n対象期間：基準時点（\d{1,2}\/\d{1,2} \d{2}:\d{2}）以降\n/, '表紙の期間（月日は M/d。1桁の日もある）');
   assert.match(gas.alerts.filter(a => /本番の資料を作り/.test(a.message)).pop().message, /・新FMT：基準（\d{1,2}\/\d{1,2} \d{2}:\d{2}）以降/,
     '本番の確認：基準からの変化を出すこと');
   assert.match(inserted, /期待値合計 \d+百万円（\d{1,2}\/\d{1,2}比 /, '前回比ではなく、基準を記録した月日との比（10/17比）');
@@ -3238,4 +3238,193 @@ test('本物の設定（2026/10/29 から）：計画に対する積み上げは
   assert.ok(!Object.keys(s.alertGaps || {}).some(k => k === '月の不整合'));
   // 前の版の設定（売上開始月の列）に戻すこともできる
   assert.strictEqual(gas.get('MTG_OPTIONS').columns.orderMonth, '受注月');
+});
+
+/* ---------------- RXシナリオのポートフォリオ（パイプラインの変化の次の3枚） ---------------- */
+
+/**
+ * ポートフォリオのテスト用のシート（本物と同じ見出し：RXシナリオ構成・サービスパッケージ合算・想定売上・期待値・FY26/FY27 の前半期・後半期の売上）。
+ * deals = [[得意先, シナリオ, ステータス, 想定売上, 期待値, シナリオ金額, FY26前半, FY26後半, FY27前半]]
+ */
+function portfolioSheet(gas, deals, headers) {
+  const head = headers || ['得意先', '案件名', 'RXシナリオ構成', 'サービスパッケージ合算（百万円）', '案件ステータス', '想定売上規模（百万）',
+    '期待値調整済\n想定売上規模（百万）', 'FY26前半期売上（百万）', 'FY26後半期売上（百万）', 'FY27前半期売上（百万）'];
+  const lines = [['新FMT'].concat(head.slice(1).map(() => '')), head].concat(deals.map((d, i) =>
+    [d[0], '案件' + (i + 1), d[1], d[5], d[2], d[3], d[4], d[6], d[7], d[8]].slice(0, head.length)));
+  return gas.addSheet('新FMT', lines, {rows: lines.length + 2, columns: head.length});
+}
+
+/** スライド（ページ番号などを付ける前）のリード文（改行を除く） */
+const pLead = slide => String(slide.lead || '').replace(/\n/g, '');
+
+const PORTFOLIO_DEALS = [
+  ['A社', 'ID-POS分析', 'A-クロージング(90%)', '100', '90', '40', '30', '20', '5'],
+  ['A社', 'ID-POS分析, サイネージ', 'C-提案中(50%)', '60', '30', '20', '10', '10', ''],   // 2つのシナリオ：等分
+  ['B社', 'サイネージ', 'D-初期提案(20%)', '40', '8', '10', '', '', ''],                    // 今年度の売上が空
+  ['C社', '', 'B-選定中(70%)', '30', '21', '', '5', '', ''],                                 // シナリオ未設定
+  ['D社', 'アプリ・CRM', '失注', '80', '0', '30', '40', '', '']                               // 進行中でない（数えない）
+];
+
+test('RXシナリオのポートフォリオ：シナリオ金額（サービスパッケージ合算）と今年度の売上（FY○○前半期・後半期の合計）を読み、進行中の案件をシナリオごとに按分して集計する', () => {
+  const gas = createGas();
+  const g = gas.global;
+  const sheet = portfolioSheet(gas, PORTFOLIO_DEALS);
+  const rule = gas.get('DIFF_RULES')['新FMT'];
+  const table = g.mtgReadDeals_(sheet, rule);
+  assert.deepStrictEqual(plain(table.salesYears), ['26', '27']);
+  assert.deepStrictEqual(plain(table.deals.map(d => [d.scenarioAmount, d.sales])), [
+    [40, {26: 50, 27: 5}], [20, {26: 20}], [10, {}], [null, {26: 5}], [30, {26: 40}]]);
+  // 今年度（4月始まり）の列を読む：2026/11 は FY26、2027/4 からは FY27（年度が変われば次の年度の列）
+  const now = new Date('2026-11-04T12:00:00+09:00');
+  const p = plain(g.mtgPortfolioOf_(table.deals, now, table));
+  assert.deepStrictEqual([p.fy, p.year, p.gaps, p.has], ['FY26', '26', {}, {weighted: true, scenarioAmount: true}]);
+  assert.deepStrictEqual(p.deals.map(d => [d.customer, d.rank, d.sales]), [['A社', 'A', 50], ['A社', 'C', 20], ['B社', 'D', null], ['C社', 'B', 5]], '進行中だけ');
+  assert.strictEqual(g.mtgFiscalYearKey_(new Date('2027-03-31T12:00:00+09:00')), '26');
+  const next = plain(g.mtgPortfolioOf_(table.deals, new Date('2027-04-01T12:00:00+09:00'), table));
+  assert.deepStrictEqual([next.fy, next.deals[0].sales, next.deals[1].sales], ['FY27', 5, null]);
+  assert.deepStrictEqual(plain(g.mtgPortfolioOf_(table.deals, new Date('2028-04-01T12:00:00+09:00'), table).gaps),
+    {sales: 'シートに「FY28前半期売上」「FY28後半期売上」の列が無い'}, '今年度の列が無ければ「データなし」');
+
+  // 集計：2つのシナリオの案件は等分（合計は全体と一致）。未設定は別に
+  const t = plain(g.mtgPortfolioTotals_(p));
+  assert.deepStrictEqual(t.items.map(i => [i.key, i.count, i.customers, i.amount, i.weighted, i.scenarioAmount, i.sales]), [
+    ['ID-POS分析', 2, 1, 130, 105, 50, 60],
+    ['サイネージ', 2, 2, 70, 23, 20, 10]]);
+  assert.deepStrictEqual([t.unset.key, t.unset.count, t.unset.amount, t.unset.sales], ['未設定', 1, 30, 5]);
+  assert.deepStrictEqual(t.total, {count: 4, amount: 230, weighted: 149, scenarioAmount: 70, sales: 75});
+  const sum = key => t.items.reduce((a, i) => a + i[key], 0) + t.unset[key];
+  ['amount', 'weighted', 'scenarioAmount', 'sales'].forEach(key => assert.strictEqual(sum(key), t.total[key], key + ' の按分の合計は全体と一致'));
+  assert.strictEqual(t.multi, 1);
+  // 確度A・B の割合（想定売上）と、確度の進み具合（今年度の売上で重み付け。A=100・C=50）
+  const idpos = t.items[0];
+  assert.deepStrictEqual(idpos.byRank, {A: 100, C: 30});
+  assert.strictEqual(Math.round(idpos.sure * 1000) / 1000, Math.round(100 / 130 * 1000) / 1000);
+  assert.deepStrictEqual([Math.round(idpos.progress * 10) / 10, idpos.basis], [Math.round((50 * 100 + 10 * 50) / 60 * 10) / 10, 'sales']);
+  // 得意先ごと：今年度の売上の大きい順、セルはシナリオごとの按分
+  assert.deepStrictEqual(t.customers.map(cu => [cu.name, cu.sales, cu.scenarioAmount, cu.cells]), [
+    ['A社', 70, 60, {'ID-POS分析': 60, 'サイネージ': 10}], ['C社', 5, 0, {'未設定': 5}], ['B社', 0, 10, {'サイネージ': 0}]]);
+  // 今年度の売上が無いシナリオの進み具合は、想定売上で重み付け（それも無ければ件数）
+  const noSales = plain(g.mtgPortfolioTotals_(Object.assign({}, p, {deals: [{customer: 'X社', scenarios: ['店頭販促DX'], rank: 'B', amount: 10, sales: null},
+    {customer: 'Y社', scenarios: ['店頭販促DX'], rank: 'D', amount: 30, sales: null}]})));
+  assert.deepStrictEqual([noSales.items[0].progress, noSales.items[0].basis], [(10 * 70 + 30 * 20) / 40, 'amount']);
+});
+
+test('RXシナリオのポートフォリオのスライド：パイプラインの変化の次に ① 進捗 ② 売上ヒートマップ ③ ポートフォリオ図。按分の注記・その他の行は色なし・象限の色・円の凡例', () => {
+  const gas = createGas();
+  const g = gas.global;
+  const S = gas.get('MTG_SLIDE');
+  const T = gas.get('MTG_TITLES');
+  const o = gas.get('MTG_OPTIONS');
+  // 得意先が heatRows より多いとき、その他にまとめる（テストでは2社）
+  o.portfolio.heatRows = 2;
+  const sheet = portfolioSheet(gas, PORTFOLIO_DEALS.concat([['E社', '物流・SCM', 'B-選定中(70%)', '20', '14', '5', '3', '', '']]));
+  const table = g.mtgReadDeals_(sheet, gas.get('DIFF_RULES')['新FMT']);
+  const p = g.mtgPortfolioOf_(table.deals, new Date('2026-11-04T12:00:00+09:00'), table);
+  const [progress, heat, map] = plain(g.mtgPortfolioSlides_(p));
+  assert.deepStrictEqual([progress.title, heat.title, map.title], [T.scenarioProgress, T.scenarioHeatmap, T.scenarioMap]);
+  assert.deepStrictEqual([T.scenarioProgress, T.scenarioHeatmap, T.scenarioMap], ['RXシナリオ別の進捗', '得意先 × RXシナリオ 売上ヒートマップ', 'RXシナリオのポートフォリオ図']);
+  const inside = slide => slide.elements.every(el => el.x >= 0 && el.x + (el.w || 0) <= S.width + 0.01 && el.y >= S.top - 30 &&
+    el.y + (el.h || 0) <= S.bottom + 0.01);
+  [progress, heat, map].forEach(slide => assert.ok(inside(slide), slide.title + '：中身は見出しの下から出典の線の上まで'));
+
+  // ① 想定売上の大きい順（未設定は最後）・列は 想定売上・期待値・シナリオ金額・件数・得意先・確度A・B（今年度の売上の列は無い）
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-head').map(el => el.text), ['想定売上', '期待値', 'シナリオ金額', '件数', '得意先', '確度A・B']);
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-name').map(el => el.text), ['ID-POS分析', 'サイネージ', '物流・SCM', '未設定']);
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-value').slice(0, 6).map(el => el.text), ['130', '105', '50', '2件', '1社', '77%']);
+  assert.strictEqual(roleOf(progress, 'portfolio-value')[5].color, o.colors.greenText, '確度A・B が 50% 以上は緑の字');
+  assert.match(pLead(progress), /^進行中の想定売上 250百万円・期待値 163百万円・案件 5件を、RXシナリオ構成ごとに確度別に表示（想定売上の大きい順）。最大は ID-POS分析（130）/);
+  assert.match(pLead(progress), /複数のシナリオを選んだ 1件は選んだ数で等分。未設定は 1件。$/);
+  assert.strictEqual(progress.note, '※ 按分のため、シナリオの値を足しても合計と合わないことがあります');
+
+  // ② 行：今年度の売上の大きい順に2社と「その他 N社」（色を付けない）。列：シナリオ（今年度の売上の大きい順）と未設定。セルの確度は書かない
+  assert.deepStrictEqual(roleOf(heat, 'heat-head').map(el => el.text.replace(/\n/g, '')), ['得意先', 'ID-POS分析', 'サイネージ', '物流・SCM', '未設定',
+    '合計FY26／シナリオ金額']);
+  assert.deepStrictEqual(roleOf(heat, 'heat-name').map(el => el.text), ['A社', 'C社', 'その他 2社']);
+  assert.deepStrictEqual(roleOf(heat, 'heat-cell').map(el => el.text), ['60', '10', '5'], '上位の得意先のセルだけ色を付ける');
+  assert.deepStrictEqual(roleOf(heat, 'heat-other').map(el => [el.text, el.fill]), [['0', o.colors.white], ['3', o.colors.white]], 'その他は白（ヒートマップの対象外）');
+  assert.strictEqual(roleOf(heat, 'heat-blank').length, 3 * 4 - 3 - 2, '案件の無い組み合わせは空白');
+  const cells = roleOf(heat, 'heat-cell');
+  assert.ok(cells[0].fill !== cells[1].fill && cells[0].color === o.colors.white, '大きいほど濃い（濃いセルは白の字）');
+  assert.ok(!roleOf(heat, 'heat-cell').some(el => /[A-D]|創注/.test(el.text)), '確度は書かない');
+  assert.deepStrictEqual(roleOf(heat, 'heat-total').map(el => el.text), ['70／60', '5／0', '3／15']);
+  // 合計の行：上に今年度の売上、下にシナリオ金額（行の名前の2行目に「シナリオ金額」）
+  assert.deepStrictEqual(roleOf(heat, 'heat-foot-value').map(el => el.text), ['60\n50', '10\n20', '3\n5', '5\n0']);
+  assert.strictEqual(roleOf(heat, 'heat-foot-name')[0].text, '合計（按分）\nシナリオ金額');
+  assert.strictEqual(roleOf(heat, 'heat-foot-total')[0].text, '78／75');
+  assert.match(pLead(heat), /^得意先 × RXシナリオ構成の FY26売上（進行中・按分）。上位 2社と、その他 2社。空白のセルは、.*合計の右はシナリオ金額（サービスパッケージ合算）。$/);
+  assert.match(roleOf(heat, 'heat-note')[0].text, /「その他」の行は色を付けない（ヒートマップの対象外）/);
+
+  // ③ 象限の背景（4色）・名前・点線・円（件数）・右の表（見出しと象限の帯）・円の大きさの凡例。未設定は図に含めない
+  const Q = gas.get('MTG_QUADRANTS');
+  assert.deepStrictEqual(roleOf(map, 'map-quadrant').map(el => el.fill).sort(), plain(Q.map(q => q.bg)).sort(), '象限ごとに薄い色');
+  assert.deepStrictEqual(roleOf(map, 'map-quadrant-name').map(el => el.text), ['てこ入れ（大きいが進んでいない）', '伸ばす（大きく・進んでいる）',
+    '見直し（小さく・進んでいない）', '刈り取り（小さいが進んでいる）']);
+  assert.strictEqual(roleOf(map, 'map-line').filter(el => el.dash).length, 2);
+  assert.deepStrictEqual(roleOf(map, 'map-bubble').map(el => el.shape), ['ELLIPSE', 'ELLIPSE', 'ELLIPSE']);
+  assert.deepStrictEqual(roleOf(map, 'map-label').map(el => el.text), ['ID-POS分析 2件', 'サイネージ 2件', '物流・SCM 1件']);
+  assert.deepStrictEqual(roleOf(map, 'map-table-head').map(el => el.text), ['シナリオ', 'FY26売上', '確度', '件数']);
+  assert.ok(roleOf(map, 'map-table-head').every(el => !el.fill), '見出しは塗らない（上下の罫線）');
+  assert.deepStrictEqual(roleOf(map, 'map-table-quadrant').map(el => el.text), ['伸ばす', 'てこ入れ', '刈り取り', '見直し']);
+  assert.deepStrictEqual(roleOf(map, 'map-table-band').map(el => el.fill), plain(Q.map(q => q.bg)), '帯は図の背景と同じ色');
+  // ID-POS分析（60・進み具合 91.7%）は平均（(60+10+3)/3）より大きく進んでいる → 伸ばす。サイネージ（10・(10×50+0×20)/10=50%）は 50% 以上で平均未満 → 刈り取り
+  const cellsText = roleOf(map, 'map-table-cell').map(el => el.text);
+  assert.deepStrictEqual(cellsText.slice(0, 4), ['ID-POS分析', '60', '92%', '2件']);
+  assert.ok(cellsText.indexOf('なし') >= 0, '該当の無い象限は「なし」');
+  const legend = roleOf(map, 'map-legend');
+  assert.deepStrictEqual(roleOf(map, 'map-legend-label').map(el => el.text), ['1件', '2件']);
+  assert.strictEqual(legend[legend.length - 1].w, Math.max.apply(null, roleOf(map, 'map-bubble').map(el => el.w)), '凡例のいちばん大きい円は図のいちばん大きい円と同じ');
+  assert.match(pLead(map), /点線は確度 50% と、シナリオの FY26売上の平均（24\.3）。右上ほど大きく進んでいる。未設定（1件）は図に含めない。$/);
+
+  // 資料の並び：パイプラインの変化の次に3枚（portfolio.enabled。本物は true）
+  const {gas: gas2, g: g2} = setup({edits: false});
+  const s = summarize(g2, '新FMT');
+  const titles = () => plain(g2.mtgSlides_(s)).map(sl => sl.title);
+  const before = titles();
+  gas2.get('MTG_OPTIONS').portfolio.enabled = true;
+  const after = titles();
+  const at = after.indexOf(T.pipeline);
+  assert.deepStrictEqual(after.slice(at, at + 5), [T.pipeline, T.scenarioProgress, T.scenarioHeatmap, T.scenarioMap, T.progress]);
+  assert.strictEqual(after.length, before.length + 3);
+});
+
+test('RXシナリオのポートフォリオ：列が無い・進行中の案件が無いときは、ページの型を変えずに「データなし」と理由・「該当なし」', () => {
+  const {gas, g} = setup({edits: false});
+  const s = plain(summarize(g, '新FMT'));
+  // 新FMT（テスト）には RXシナリオ構成・年度別の売上の列が無い
+  assert.deepStrictEqual(Object.keys(s.portfolio.gaps).sort(), ['sales', 'scenario']);
+  const slides = plain(g.mtgPortfolioSlides_(s.portfolio));
+  assert.deepStrictEqual(slides.map(sl => roleOf(sl, 'gap').length), [1, 1, 1]);
+  assert.match(pLead(slides[0]), /^RXシナリオ別の進捗はデータなし（シートに「RXシナリオ構成」の列が無い）。$/);
+  // シナリオの列はあるが今年度の売上の列が無い：① は作り、②③ は「データなし」
+  const gas2 = createGas();
+  const sheet = portfolioSheet(gas2, PORTFOLIO_DEALS, ['得意先', '案件名', 'RXシナリオ構成', 'サービスパッケージ合算（百万円）', '案件ステータス',
+    '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）']);
+  const table = gas2.global.mtgReadDeals_(sheet, gas2.get('DIFF_RULES')['新FMT']);
+  const p = gas2.global.mtgPortfolioOf_(table.deals, new Date('2026-11-04T12:00:00+09:00'), table);
+  const out = plain(gas2.global.mtgPortfolioSlides_(p));
+  assert.deepStrictEqual(out.map(sl => roleOf(sl, 'gap').length), [0, 1, 1]);
+  assert.match(pLead(out[1]), /（シートに「FY26前半期売上」「FY26後半期売上」の列が無い）。$/);
+  // 進行中の案件が無い（列はそろっている）
+  const gas3 = createGas();
+  const sheet3 = portfolioSheet(gas3, PORTFOLIO_DEALS.filter(d => d[2] === '失注'));
+  const table3 = gas3.global.mtgReadDeals_(sheet3, gas3.get('DIFF_RULES')['新FMT']);
+  const none = plain(gas3.global.mtgPortfolioSlides_(gas3.global.mtgPortfolioOf_(table3.deals, new Date('2026-11-04T12:00:00+09:00'), table3)));
+  assert.deepStrictEqual(none.map(sl => [roleOf(sl, 'empty').length, roleOf(sl, 'gap').length, pLead(sl)]), [[1, 0, '進行中の案件なし。'],
+    [1, 0, '進行中の案件なし。'], [1, 0, '進行中の案件なし。']]);
+  // 今年度の売上がまだ入っていない（列はあるが空）：② はセルを 0 で出し（案件のある組み合わせは分かる）、③ は図を描かずに「該当なし」
+  const gas4 = createGas();
+  const sheet4 = portfolioSheet(gas4, PORTFOLIO_DEALS.map(d => d.slice(0, 6).concat(['', '', ''])));
+  const table4 = gas4.global.mtgReadDeals_(sheet4, gas4.get('DIFF_RULES')['新FMT']);
+  const blank = plain(gas4.global.mtgPortfolioSlides_(gas4.global.mtgPortfolioOf_(table4.deals, new Date('2026-11-04T12:00:00+09:00'), table4)));
+  assert.deepStrictEqual(roleOf(blank[1], 'heat-cell').map(el => el.text), ['0', '0', '0', '0'], 'セルは 0（案件のある組み合わせだけ）');
+  assert.match(pLead(blank[1]), /FY26売上がまだ入っていないため、セルはどれも 0（得意先は想定売上の大きい順）。/);
+  assert.deepStrictEqual(roleOf(blank[1], 'heat-name').map(el => el.text), ['A社', 'B社', 'C社'], '想定売上の大きい順');
+  assert.deepStrictEqual([roleOf(blank[2], 'empty').length, roleOf(blank[2], 'map-bubble').length], [1, 0]);
+  assert.match(pLead(blank[2]), /^FY26売上が入っていないため、ポートフォリオ図は描けない/);
+  // 端の円（確度 100%・売上 0）も図の中に収める
+  const edge = plain(gas4.global.mtgPortfolioMapSlide_({fy: 'FY26', gaps: {}, has: {weighted: true, scenarioAmount: true}, deals: []},
+    {items: [{key: 'X', count: 3, sales: 0, progress: 100}, {key: 'Y', count: 1, sales: 50, progress: 0}], unset: null, total: {count: 4}, multi: 0, customers: []}));
+  const S4 = gas4.get('MTG_SLIDE');
+  const plot = {x0: S4.x + 48, x1: S4.x + 48 + 420, y0: S4.top + 10, y1: S4.top + 10 + 240};
+  roleOf(edge, 'map-bubble').forEach(b => assert.ok(b.x >= plot.x0 - 0.01 && b.x + b.w <= plot.x1 + 0.01 && b.y >= plot.y0 - 0.01 && b.y + b.h <= plot.y1 + 0.01, '図の中'));
 });
