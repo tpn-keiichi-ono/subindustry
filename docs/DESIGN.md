@@ -679,10 +679,12 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
    補足に「受注月が今期の期待値は N百万円（最大は3Qの N）、受注月超過は N百万円。」。
    - 続けて RXシナリオのポートフォリオの3枚（`mtgPortfolioSlides_`。`MTG_OPTIONS.portfolio.enabled`。2026/11/04 から）。中身は `mtgPortfolioOf_`（進行中の案件の
      シナリオ・確度・想定売上・期待値・シナリオ金額（`columns.scenarioAmount`。J列）・今年度の売上）、集計は `mtgPortfolioTotals_`（按分）：
-     ① RXシナリオ別の進捗（`mtgPortfolioProgressSlide_`。想定売上の確度別の横棒と、想定売上・期待値・シナリオ金額・件数・得意先・確度A・B）、
-     ② 得意先 × RXシナリオ 売上ヒートマップ（`mtgPortfolioHeatmapSlide_`。行と列が多いので表ではなく箱で描く。表のセルの余白は API で変えられず、行が高くなるため）、
+     ① RXシナリオ別の進捗（`mtgPortfolioProgressSlide_`。期待値の確度別の横棒（棒の中に確度ごとの値、右に合計）と、想定売上・期待値・シナリオ金額・件数・得意先・確度A・B（期待値のうち））、
+     ② 得意先 × RXシナリオ 売上ヒートマップ（`mtgPortfolioHeatmapSlide_`。シナリオごとに年度（FY26〜28）の列。行と列が多いので表ではなく箱で描く。表のセルの余白は API で変えられず、
+       行が高くなるため。列が細いので、色の箱と文字の箱（余白の分だけ広く、色なし）を分ける。いちばん下に色の凡例とセルの値の意味）、
      ③ RXシナリオのポートフォリオ図（`mtgPortfolioMapSlide_`。円は `ELLIPSE` の箱、象限の色は `MTG_QUADRANTS` で、図の背景・象限の名前・右の表の帯で同じ色）。
-   - 今年度の売上は、年度別の売上の列（`portfolio.salesHeader`。「FY26前半期売上（百万）」など）のうち今年度（`fiscalStartMonth` から。`mtgFiscalYearKey_`）の列の合計。
+   - 売上は、年度別の売上の列（`portfolio.salesHeader`。「FY26前半期売上（百万）」など）の、今年度（`fiscalStartMonth` から。`mtgFiscalYearKey_`）から
+     `portfolio.salesYears`（3）年度分（シートに列のある年度だけ）。案件ごとに年度別（`salesByYear`）と合計（`sales`。③ の縦軸・確度の重み）を持つ。
      年度が変われば次の年度の列を読む（コードを変えない）。この列は `ignoreHeaders` で前回からの変化には使わないが、このページでは今の値を使う。
    - 複数のシナリオを選んだ案件は、金額を選んだ数で等分する（按分。シナリオの合計が全体と一致し、構成比として読める。満額で数えると合計が全体を超える）。
      表示は小数1桁に丸めるので、足すと合わないことがある → 出典の行の後ろに「※ 按分のため…」（`note`）。計算は小数のまま。
