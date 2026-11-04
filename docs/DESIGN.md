@@ -478,6 +478,16 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   `continueAfterMs`（60秒）後に1つだけ作る）。続き（`continueBusinessMtgSummaries`）は、残りの仕事を同じように進め、終われば知らせを `MTG_JOB_RESULT_n`（2,000文字ずつ）に保存して
   仕事とトリガーを消します（`showBusinessMtgSummariesResult()` で出す）。資料の中身は、作り始めた時刻（`job.now`）で数え、本番の会議日の記録もその時刻にします。
   時刻は `mtgNow_()`（テストで差し替える）。
+- **読む先は作り始めたときのコピー**（`mtgJobSource_`。`MTG_OPTIONS.run.readFromCopy`。2026/11/04）：`mtgSummaries_` に渡すスプレッドシートを、このスプレッドシートではなく
+  Drive のファイルのコピー（`makeCopy`。時点コピーと同じ）を `SpreadsheetApp.openById` で開いたものにする（`mtgSummarize_` 以下はすべて渡されたスプレッドシートから読む）。
+  大勢が編集している間は、このスプレッドシートを読むたびに、編集と差分追跡（`recordDiffEdit` の書き込みと flush）の順番待ちになり、1シートでも6分を超えた。
+  コピーは誰も編集しない別のファイルなので待たされない。コピーは `job.source` に残し、区切って続けるときも同じものを読む（全シートが同じ時点）。
+  本番は時点コピーの名前（`mtgSaveCopy_`）で作って `keep` にし、資料のあとの「時点コピーと会議日の記録」でそのまま `job.copy` にする（もう一度はコピーしない）。
+  試作・統合版（`mtgCombinedStart_`）は `run.sourceName` の名前（`mtgSaveSourceCopy_`。`mtgParseCopyTitle_` に合わないので比べる時点に出ない）で作り、
+  終わったら・止まったらゴミ箱へ（`mtgJobDropSource_`。本番でも、止まって `job.copy` がまだならゴミ箱へ）。6分の上限で止められて残ったものは、次に作るときに
+  `sourceKeepHours` より古いものを移す（`mtgSourceCleanup_`。続けている途中の仕事のコピーは残す）。コピーを作れない・開けないときは、このスプレッドシートから読み、
+  `job.sourceError` を知らせる（`mtgSourceNote_`）。リンク（`mtgFolder_` など）・書き込みは、このスプレッドシートのまま。
+  テストのモックでは `readFromCopy` を `false` にしている（ほかのテストの Drive のコピーの数・ID を変えないため。本物の設定は `tests/project.test.js`）。
 - **会議資料のインデックス**（`mtgWriteIndex_`）：格納できたら、このスプレッドシートの `MTG_OPTIONS.index.sheet`（`INDEX_会議資料`）の
   行＝会議日（A列「日付」。日付の値で、表示形式 `yyyy/m/d`。B列「会議名」は `RX Business Meeting`・`RX Service Meeting`。2026/10/17 に見出しを「種別」から改めた。前の見出し（`formerKindHeaders`）は `mtgIndexPrepare_` が書き換える）・列＝サブインダストリー（1行目の見出しがシート名。
   `formerNames` の前の名前も今の名前とみなす）のセルに、PDF（`link: 'folder'` なら会議のフォルダ）をスマートチップで書きます

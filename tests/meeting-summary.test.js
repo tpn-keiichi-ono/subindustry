@@ -3654,3 +3654,69 @@ test('RXシナリオのポートフォリオの前回比：前回の時点コピ
   const failed = g.mtgPortfolioWithPrevious_(g.mtgPortfolioOf_(table.deals, now, table), null, {previous: null, now, copyError: '開けない'}, null);
   assert.deepStrictEqual([failed.previous, failed.previousGap], [null, '時点コピーを開けない']);
 });
+
+test('readFromCopy：資料の中身は作り始めたときのスプレッドシートのコピーから読む（試作は作り終えたら消す・本番はそのまま時点コピーにする・作れなければ直接読む・残ったものは片付ける）', () => {
+  const {gas, g} = setup();
+  gas.get('MTG_OPTIONS').run.readFromCopy = true;
+  const sources = [];
+  const real = g.mtgSummaries_;
+  g.mtgSummaries_ = function (ss) {
+    sources.push(ss.getId());
+    return real.apply(null, arguments);
+  };
+  const copyFiles = pattern => gas.driveFiles.filter(f => pattern.test(f.name));
+
+  // 試作：「資料作成用コピー_日時」を作って読み、作り終えたらゴミ箱に移す（比べる時点の一覧には出ない）
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  const preview = copyFiles(/^資料作成用コピー_\d{4}-\d{2}-\d{2} \d{2}:\d{2}（作り終えたら消します）$/);
+  assert.strictEqual(preview.length, 1);
+  assert.deepStrictEqual(sources, [preview[0].id], '中身はコピーから読む');
+  assert.ok(gas.trashed.indexOf(preview[0].id) >= 0, '作り終えたらゴミ箱に移す');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /（変化のある案件 4・停滞 0・確認事項 3）/, '元のスプレッドシートから読んだときと同じ中身');
+  assert.strictEqual(g.mtgListCopies_().length, 0, '時点コピーではない');
+
+  // 本番：時点コピーの名前でコピーを作って読み、そのまま今回の時点コピーにする（もう一度はコピーしない）
+  const before = gas.driveCopies.length;
+  gas.promptAnswers = ['1', '10/23'];
+  g.createBusinessMtgSummaries();
+  assert.strictEqual(gas.driveCopies.length, before + 1, 'コピーは1回だけ');
+  const final = copyFiles(/^時点コピー_.*（資料作成時・会議日 \d{4}-10-23）$/);
+  assert.strictEqual(final.length, 1);
+  assert.strictEqual(sources[1], final[0].id);
+  assert.ok(gas.trashed.indexOf(final[0].id) < 0, '本番のコピーは残す');
+  const props = g.PropertiesService.getDocumentProperties();
+  assert.deepStrictEqual(plain(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT'))[0].copy), {id: final[0].id, sheet: '新FMT'});
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /にコピーしました（資料はこのコピーの値で作りました。次の会議の資料はこれと比べます）/);
+
+  // コピーを作れないとき：元のスプレッドシートから読んで作り、知らせる
+  gas.copyErrors = [g.mtgCopyFolder_(gas.ss).getId()];
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  assert.strictEqual(sources[2], gas.ss.getId());
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /※ 資料を作るためのコピーを作れませんでした（Access denied: DriveApp\.）。資料は、このスプレッドシートから直接読んで作りました/);
+  gas.copyErrors = [];
+
+  // 途中で止まって残った作成用のコピー（sourceKeepHours より古いもの）は、次に作るときに片付ける。新しいものは残す
+  const folder = g.mtgCopyFolder_(gas.ss);
+  const file = g.DriveApp.getFileById(gas.ss.getId());
+  const old = file.makeCopy('資料作成用コピー_2020-01-01 09:00（作り終えたら消します）', folder);
+  const fresh = file.makeCopy('資料作成用コピー_' + g.Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm') + '（作り終えたら消します）', folder);
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  assert.ok(gas.trashed.indexOf(old.getId()) >= 0, '古いものは片付ける');
+  assert.ok(gas.trashed.indexOf(fresh.getId()) < 0, '新しいもの（ほかの人が作っている途中かもしれない）は残す');
+
+  // 本番で途中で止まったとき：まだ時点コピーとして記録していないコピーは残さない（比べる時点の一覧に、資料の無い時点コピーを出さない）
+  const realExport = g.mtgExportDeck_;
+  g.mtgExportDeck_ = () => { throw new Error('テストの失敗'); };
+  const count = gas.driveFiles.length;
+  try {
+    assert.throws(() => g.runMeetingMaterials('business', true, g.mtgParseDate_('10/30', new Date()), ['新FMT'], false, ''), /テストの失敗/);
+  } finally {
+    g.mtgExportDeck_ = realExport;
+  }
+  const failed = gas.driveFiles.slice(count).filter(f => /^時点コピー_/.test(f.name));
+  assert.strictEqual(failed.length, 1);
+  assert.ok(gas.trashed.indexOf(failed[0].id) >= 0);
+});

@@ -105,6 +105,11 @@ const MTG_OPTIONS = {
   // （deckMs は RXシナリオのポートフォリオの3枚（Slides API のリクエスト 3,000 ほど。年度別のヒートマップが多い）を足した 2026/11/04 に 35000 から増やした）
   run: {limitMs: 320000, summaryMs: 30000, deckMs: 55000, copyMs: 60000, storeMs: 10000, continueAfterMs: 60000,
     handler: 'continueBusinessMtgSummaries', jobKey: 'MTG_JOB', resultKey: 'MTG_JOB_RESULT',
+    // 資料の中身は、作り始めたときのスプレッドシート全体のコピー（Drive のファイルのコピー。時点コピーと同じ）から読む（2026/11/04）。
+    // 大勢が編集している間は、このスプレッドシートを読むたびに編集・差分追跡の書き込みの順番待ちになり、1シートでも6分を超えたため。
+    // 本番はこのコピーをそのまま今回の時点コピーにする（資料と時点コピーが同じ時点になる）。試作・統合版は sourceName のコピーを作り、作り終えたらゴミ箱に移す
+    // （途中で止まって残ったものは、sourceKeepHours を過ぎたら次に作るときに移す）。false なら前の版と同じく、このスプレッドシートから読む
+    readFromCopy: true, sourceName: '資料作成用コピー', sourceKeepHours: 6,
     // 前の版の続きのトリガーの関数（2026/10/17 に関数名を改めた）。残っていれば、区切る・やめる・続けるときに一緒に外す
     legacyHandlers: ['continueMeetingSummaries']},
   // 会議資料のインデックス（このスプレッドシートのシート）。会議のフォルダに格納したら、行＝会議日・列＝サブインダストリー（1行目の見出しがシート名）の
@@ -750,15 +755,24 @@ function mtgRunCheckText_(final, names, meeting, point) {
 function mtgRunStart_(final, meeting, names, cancelJob, point) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  if (mtgJobLoad_()) {
+  const pending = mtgJobLoad_();
+  if (pending) {
     if (!cancelJob) throw new Error(mtgJobPendingText_());
     mtgJobClear_();
     mtgJobDeleteTriggers_();
+    mtgJobDropSource_(pending, true);
   }
   const now = new Date();
   const job = {final, meeting, now: now.getTime(), names, items: [], stored: 0, copy: null, index: null, folderUrl: '',
-    combined: !!MTG_OPTIONS.combined.enabled, point: point || null};
-  const done = mtgJobRun_(ss, job, started);
+    combined: !!MTG_OPTIONS.combined.enabled, point: point || null, source: null, sourceError: ''};
+  let done;
+  try {
+    done = mtgJobRun_(ss, job, started);
+  } catch (error) {
+    mtgJobDropSource_(job, true);
+    throw error;
+  }
+  if (done) mtgJobDropSource_(job);
   const message = mtgJobMessage_(job, done);
   console.log(message);
   return message;
@@ -782,11 +796,13 @@ function mtgJobRun_(ss, job, started) {
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
   job.folderUrl = folder.getUrl();
-  // 資料：残りのシートの中身をまとめて作り、1つずつスライドと PDF にする（中身は作り始めた時刻 job.now で数える）
+  // 資料：残りのシートの中身をまとめて作り、1つずつスライドと PDF にする（中身は作り始めた時刻 job.now で数える）。
+  // 中身は作り始めたときのコピー（mtgJobSource_）から読む（区切って続けるときも同じコピー。どのシートも同じ時点の値になる）
   if (job.items.length < job.names.length) {
     if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const props = PropertiesService.getDocumentProperties();
-    const {plans, summaries} = mtgSummaries_(ss, job.names.slice(job.items.length), new Date(job.now), job.final, job.meeting, job.point);
+    const source = mtgJobSource_(ss, job);
+    const {plans, summaries} = mtgSummaries_(source, job.names.slice(job.items.length), new Date(job.now), job.final, job.meeting, job.point);
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
       const summary = summaries[i];
@@ -797,13 +813,15 @@ function mtgJobRun_(ss, job, started) {
       if (!job.final && !plans[i].draft) {
         props.setProperty(o.draftKeyPrefix + summary.name, JSON.stringify({meeting: job.meeting, at: job.now, keys: summary.alerts.map(a => mtgHash_(a.key))}));
       }
-      job.items.push({name: summary.name, pdf: out.pdf.getId(), line: mtgResultLine_(ss, summary, out.pdf)});
+      job.items.push({name: summary.name, pdf: out.pdf.getId(), line: mtgResultLine_(source, summary, out.pdf)});
     }
   }
   // 本番：今の値を時点コピーに保存し（次の会議の資料はこれと比べる）、会議日を記録する。資料を全部作れてから
+  // 資料を読んだコピー（job.source。本番は時点コピーの名前で作ってある）があれば、それを今回の時点コピーにする（もう一度コピーしない）
   if (job.final && !job.copy) {
-    if (!fits(R.copyMs)) return mtgJobPause_(job);
-    const copy = mtgSaveCopy_(ss, new Date(job.now), mtgCopyNote_('meeting', job.meeting));
+    const kept = job.source && job.source.keep;
+    if (!kept && !fits(R.copyMs)) return mtgJobPause_(job);
+    const copy = kept ? job.source : mtgSaveCopy_(ss, new Date(job.now), mtgCopyNote_('meeting', job.meeting));
     job.copy = {id: copy.id, title: copy.title, url: copy.url};
     const props = PropertiesService.getDocumentProperties();
     job.names.forEach(name => {
@@ -824,6 +842,83 @@ function mtgJobRun_(ss, job, started) {
     job.stored++;
   }
   return true;
+}
+
+/**
+ * 資料の中身を読むスプレッドシート：作り始めたときの、このスプレッドシート全体のコピー（MTG_OPTIONS.run.readFromCopy）。
+ * job.source が無ければ作る（本番は時点コピーの名前で。そのまま今回の時点コピーにする。試作は sourceName の名前で。作り終えたら mtgJobDropSource_）。
+ * 大勢が編集している間も、コピーは誰も編集していない別のファイルなので、読むときに順番待ちにならない。
+ * コピーを作れない・開けないときは、このスプレッドシート（ss）から読み、理由を job.sourceError に残す（知らせに出す）
+ */
+function mtgJobSource_(ss, job) {
+  const R = MTG_OPTIONS.run;
+  if (!R.readFromCopy) return ss;
+  const timer = mschTimer_('作成用のコピー', true);
+  if (!job.source && !job.sourceError) {
+    mtgSourceCleanup_(ss);
+    try {
+      const copy = job.final ? mtgSaveCopy_(ss, new Date(job.now), mtgCopyNote_('meeting', job.meeting)) : mtgSaveSourceCopy_(ss, new Date(job.now));
+      job.source = {id: copy.id, title: copy.title, url: copy.url, keep: !!job.final};
+    } catch (error) {
+      job.sourceError = String(error && error.message || error);
+    }
+    timer.lap('スプレッドシートをコピー');
+  }
+  if (!job.source) return ss;
+  try {
+    const book = SpreadsheetApp.openById(job.source.id);
+    timer.lap('コピーを開く');
+    return book;
+  } catch (error) {
+    job.sourceError = '「' + job.source.title + '」を開けませんでした（' + (error && error.message || error) + '）';
+    return ss;
+  }
+}
+
+/** 試作・統合版の中身を読むためのコピー（sourceName_日時。時点コピーの保存先に作る。比べる時点の一覧には出ない）。{id, title, url} */
+function mtgSaveSourceCopy_(ss, now) {
+  const title = MTG_OPTIONS.run.sourceName + '_' + Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm') + '（作り終えたら消します）';
+  try {
+    const file = DriveApp.getFileById(ss.getId()).makeCopy(title, mtgCopyFolder_(ss));
+    return {id: file.getId(), title, url: file.getUrl()};
+  } catch (error) {
+    throw new Error('資料を作るためのコピーを作れませんでした（' + (error && error.message || error) + '）');
+  }
+}
+
+/**
+ * 作り終えた（止まった）仕事の、試作・統合版のためのコピーをゴミ箱に移す（本番のコピーは時点コピーとして残す。できなくても止めない）。
+ * failed（途中で止まった）なら、本番のコピーも、まだ時点コピーとして記録していなければ移す（比べる時点の一覧に、資料の無い時点コピーを残さない）
+ */
+function mtgJobDropSource_(job, failed) {
+  if (!job || !job.source || (job.source.keep && !(failed && !job.copy))) return;
+  try {
+    DriveApp.getFileById(job.source.id).setTrashed(true);
+  } catch (error) {
+    console.warn('「' + job.source.title + '」をゴミ箱に移せませんでした：' + (error && error.message || error));
+  }
+}
+
+/** 途中で止まって残った、資料を作るためのコピー（sourceKeepHours より古いもの）をゴミ箱に移す（作っている途中の仕事のコピーは残す。できなくても止めない） */
+function mtgSourceCleanup_(ss) {
+  const R = MTG_OPTIONS.run;
+  try {
+    const folder = mtgCopyFolder_(ss, true);
+    if (!folder) return;
+    const pending = mtgJobLoad_();
+    const keepId = pending && pending.source ? pending.source.id : '';
+    const limit = Date.now() - R.sourceKeepHours * 3600000;
+    const files = folder.getFilesByType(MimeType.GOOGLE_SHEETS);
+    while (files.hasNext()) {
+      const file = files.next();
+      const m = new RegExp('^' + R.sourceName + '_(\\d{4})-(\\d{2})-(\\d{2}) (\\d{2}):(\\d{2})').exec(file.getName());
+      if (!m || file.getId() === keepId || file.isTrashed()) continue;
+      const at = Utilities.parseDate(m[1] + '/' + m[2] + '/' + m[3] + ' ' + m[4] + ':' + m[5], Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm').getTime();
+      if (at < limit) DriveApp.getFileById(file.getId()).setTrashed(true);
+    }
+  } catch (error) {
+    console.warn('前に残った' + R.sourceName + 'を片付けられませんでした：' + (error && error.message || error));
+  }
 }
 
 /** 今の時刻（ms。実行時間の上限を見る用。テストで差し替える） */
@@ -886,12 +981,23 @@ function mtgJobMessage_(job, done) {
       lines.push('（スマートチップにできなかったので、ファイル名のリンクで書きました。チップにするには、エディタの「サービス」に Google Sheets API を追加してください）');
     }
   }
-  if (job.copy) lines.push('スプレッドシート全体を「' + job.copy.title + '」にコピーしました（次の会議の資料はこれと比べます）：' + job.copy.url);
+  if (job.copy) {
+    lines.push('スプレッドシート全体を「' + job.copy.title + '」にコピーしました（' + (job.source && job.source.keep ? '資料はこのコピーの値で作りました。' : '') +
+      '次の会議の資料はこれと比べます）：' + job.copy.url);
+  }
+  mtgSourceNote_(job).forEach(line => lines.push(line));
   if (o.keepSlides) lines.push('同じフォルダに、Google スライド（同じ名前）も保存しました。');
   lines.push(job.final
     ? '会議日（' + job.meeting + '）を記録しました。次の会議の資料は、今以降の変化を出します。配るときは、PDF を参加者に共有してください（保存先のフォルダは共有しない）。'
     : '試作のため、会議日は記録していません。');
   return lines.join('\n');
+}
+
+/** コピーを作れず、このスプレッドシートから読んだときの知らせ（無ければ空） */
+function mtgSourceNote_(job) {
+  return job && job.sourceError
+    ? ['※ ' + job.sourceError + '。資料は、このスプレッドシートから直接読んで作りました（大勢が編集している間は時間がかかります）。']
+    : [];
 }
 
 /** 仕事を保存し（スクリプトのプロパティ。資料ごとの知らせは別のキー）、続きのトリガーを1つだけ作る。false を返す */
@@ -954,8 +1060,10 @@ function continueBusinessMtgSummaries() {
   let message;
   try {
     if (!mtgJobRun_(SpreadsheetApp.getActiveSpreadsheet(), job, started)) return;   // また区切った（次を予約した）
+    mtgJobDropSource_(job);
     message = mtgJobMessage_(job, true);
   } catch (error) {
+    mtgJobDropSource_(job, true);
     console.error(error && error.stack || error);
     message = '途中で止まりました：' + (error && error.message || error) + '\ncreateBusinessMtgSummaries()（試作なら previewBusinessMtgSummaries()）で、作り直してください。\n\n' +
       mtgJobMessage_(job, true);
@@ -1683,10 +1791,19 @@ function mtgCombinedStart_(meeting, point) {
   if (check.error) throw new Error(check.error);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const names = Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
-  const {summaries} = mtgSummaries_(ss, names, new Date(), true, meeting, point);
-  mtgRequireSlides_();
-  const folder = mtgFolder_(ss);
-  const message = mtgCombinedLines_(mtgCombinedPlain_(mtgCreateCombined_(summaries, meeting, true, folder))).concat(['', '保存先：' + folder.getUrl()]).join('\n');
+  // 中身は作り始めたときのコピーから読む（mtgJobSource_。統合版は時点コピーを残さないので、試作と同じく作り終えたら消す）
+  const job = {final: false, now: Date.now(), meeting, source: null, sourceError: ''};
+  let message;
+  try {
+    const source = mtgJobSource_(ss, job);
+    const {summaries} = mtgSummaries_(source, names, new Date(job.now), true, meeting, point);
+    mtgRequireSlides_();
+    const folder = mtgFolder_(ss);
+    message = mtgCombinedLines_(mtgCombinedPlain_(mtgCreateCombined_(summaries, meeting, true, folder))).concat(['', '保存先：' + folder.getUrl()],
+      mtgSourceNote_(job)).join('\n');
+  } finally {
+    mtgJobDropSource_(job);
+  }
   console.log(message);
   return message;
 }

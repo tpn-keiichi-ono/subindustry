@@ -1307,6 +1307,9 @@ function createGas(options) {
         // RXシナリオのポートフォリオ（本編の3枚）も、そのテストだけで使う（ほかのテストの資料のページの並び・番号を変えないように。
         // 本物の設定は gas.get('MTG_OPTIONS').portfolio.enabled = true で確かめる）
         MTG_OPTIONS.portfolio.enabled = false;
+        // 作り始めたときのコピーから読む（readFromCopy）のも、そのテストだけで使う（ほかのテストの Drive のコピーの数・ファイルの ID を変えないように。
+        // 本物の設定は tests/project.test.js で確かめる）
+        MTG_OPTIONS.run.readFromCopy = false;
       }
       // デリバリー担当の列は、本物（新FMT）には無いので使わない設定（空）。チェック「デリバリー担当なし」のテストのため、テストでは使う状態にする
       // （使わない状態は gas.get('MTG_OPTIONS').columns.delivery = '' で確かめる）

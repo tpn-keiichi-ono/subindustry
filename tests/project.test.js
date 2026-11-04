@@ -150,6 +150,7 @@ test('本物のシートの見出し（2026/10/29 のスーパー・GMS の2行�
   assert.strictEqual(g.mtgColumnIndex_(headers, 'scenario'), 8, 'RXシナリオ構成は I列（案件名の右）');
   // RXシナリオのポートフォリオ（本物は使う）：シナリオ金額は J列、今年度（FY26）の売上は P・Q列（FY27 からは R・S列）
   assert.strictEqual(mtg.portfolio.enabled, true);
+  assert.strictEqual(mtg.run.readFromCopy, true, '資料の中身は、作り始めたときのスプレッドシートのコピーから読む（大勢が編集していても待たされない）');
   assert.strictEqual(g.mtgColumnIndex_(headers, 'scenarioAmount'), 9, 'シナリオ金額（サービスパッケージ合算）は J列');
   const pattern = new RegExp(mtg.portfolio.salesHeader);
   const sales = year => headers.map((h, i) => ((pattern.exec(g.credNormalize_(h)) || [])[1] === year ? i : -1)).filter(i => i >= 0);
