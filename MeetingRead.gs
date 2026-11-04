@@ -117,7 +117,7 @@ function mtgApiLoadValues_(book, names) {
     book.sheets[names[k]] = mtgApiTrim_(rows);
   });
   book.timer.lap(names.map(n => '「' + n + '」').join('') + 'を読む（' +
-    names.map(n => (book.sheets[n] || []).length + '行').join('・') + '）');
+    names.map(n => Math.max(((book.sheets[n] || {}).lastRow || 1) - 1, 0) + '件').join('・') + '）');
 }
 
 /** API のセル → {v: 値（getValues と同じ型）, d: 表示の文字, f: 数式, u: 入力した値・数式があるか（無ければ配列の数式が広げた値）, dv: 入力規則の条件} */
