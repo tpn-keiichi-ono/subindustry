@@ -247,7 +247,8 @@ function diagnoseMeetingRunDialog() {
 
 /**
  * 資料の中身の読み方ごとの時間を比べる（エディタから実行する。読むだけ。大勢が編集している時間帯に実行する）。
- * ① このスプレッドシートを Sheets API（拡張サービス）で読む ② このスプレッドシートを SpreadsheetApp で読む（前の版の読み方）。
+ * ① このスプレッドシートを Sheets API（拡張サービス）で読む ② このスプレッドシートを SpreadsheetApp で読む（前の版の読み方）
+ * ③ シートの値だけを CSV で書き出して読む（スプレッドシートの書き出し。数式の計算し直しが無い）。
  * 読むのは、いちばん初めの追跡シート（見出しの行から最後の行まで）と、変更履歴_差分の最後の 5,000行。
  * 作り始めたときのコピーは、作ったばかりのものを初めて開くと数式の計算し直しで数分かかったため（2026/11/04 に 274秒）、コピーを作らずに読めるかを確かめる
  */
@@ -298,6 +299,22 @@ function diagnoseMeetingRead() {
     lines.push('② SpreadsheetApp：' + t2.text());
   } catch (error) {
     lines.push('② SpreadsheetApp：✗ ' + (error && error.message || error) + '（' + t2.text() + '）');
+  }
+  // ③ 値だけを CSV で書き出す（シートごと。表示の文字）
+  const t3 = mschTimer_('読み方の確かめ：CSV');
+  try {
+    [name, DIFF_OPTIONS.logSheet].forEach(title => {
+      const sheet = ss.getSheetByName(title);
+      if (!sheet) return;
+      const response = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?format=csv&gid=' + sheet.getSheetId(),
+        {headers: {Authorization: 'Bearer ' + ScriptApp.getOAuthToken()}, muteHttpExceptions: true});
+      if (response.getResponseCode() !== 200) throw new Error('「' + title + '」を書き出せません（' + response.getResponseCode() + '）');
+      const rows = Utilities.parseCsv(response.getContentText()).length;
+      t3.lap('「' + title + '」' + rows + '行');
+    });
+    lines.push('③ 値だけ（CSV）：' + t3.text());
+  } catch (error) {
+    lines.push('③ 値だけ（CSV）：✗ ' + (error && error.message || error) + '（' + t3.text() + '）');
   }
   svcShowLines_(['資料の読み方の確かめ（このスプレッドシートを、コピーを作らずに読む時間）'].concat(lines));
 }

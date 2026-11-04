@@ -246,5 +246,6 @@ test('diagnoseMeetingRead：コピーを作らずに読む時間を、Sheets API
   const message = gas.alerts[gas.alerts.length - 1].message;
   assert.match(message, /① Sheets API：✗ Sheets API（拡張サービス）が使えません/);
   assert.match(message, /② SpreadsheetApp：「新FMT」\d+行 [\d.]+秒・「変更履歴_差分」1行 [\d.]+秒（合計 [\d.]+秒）/);
+  assert.match(message, /③ 値だけ（CSV）：/);
   assert.strictEqual(gas.writes.length, writes, '読むだけ');
 });
