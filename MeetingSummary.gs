@@ -307,7 +307,7 @@ const MTG_OPTIONS = {
     status: '案件ステータス',
     amount: '想定売上規模（百万）',
     weighted: '期待値調整済\n想定売上規模（百万）',
-    orderMonth: '受注月',
+    orderMonth: '受注予定月',            // 2026/11/05 に「受注月」から改めた（前の見出しは columnAliases）
     // 売上開始月：2026/10/29 にシートから無くなったので空（確認事項「売上開始月不整合」を出さない）。列を戻したら見出しを書く
     startMonth: '',
     activity: '活動状況',
@@ -324,13 +324,14 @@ const MTG_OPTIONS = {
   },
   // 同じ列のほかの見出し（シートによって見出しが違うもの。columns の見出しが無ければ、これを順に探す）。
   // 2026/10/26 時点で、I列はシートによって「RXシナリオ構成」と「RXシナリオ構成（サービス）」の2通り。
-  // 2026/10/29 に受注月の見出しが「受注月（改行）(yy/mm)」になった（変更の記録の列名も、ここでそろえて読む。mtgCanonicalLabel_）
-  columnAliases: {scenario: ['RXシナリオ構成（サービス）'], orderMonth: ['受注月(yy/mm)']},
+  // 2026/10/29 に受注月の見出しが「受注月（改行）(yy/mm)」に、2026/11/05 に「受注予定月」になった。前の見出しも同じ列として読む
+  // （シートの見出しのほか、変更の記録の列名・変更時点スナップショット・時点コピー・削除した行の記録も、ここでそろえて読む。mtgCanonicalLabel_）
+  columnAliases: {scenario: ['RXシナリオ構成（サービス）'], orderMonth: ['受注予定月(yy/mm)', '受注月(yy/mm)', '受注月']},
   // 資料に含めない列（見出しの形。正規表現。全角・半角と空白の違いは無視）。その列の変更は、資料の変化・更新項目・時点コピーとの比較に出さない
   // （2026/10/29 に足した P〜U列「FY26前半期売上（百万）」〜「FY28後半期売上（百万）」。年度が変わっても同じ形なら除く）
   ignoreHeaders: ['^FY\\d+(前|後)半期売上'],
   // 必須項目：進行中の案件で空なら、入力内容のチェックの「未入力」に出す（シートに無い見出しは見ない）
-  required: ['案件ステータス', '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '活動状況', 'アカウント責任者'],   // columns の見出しなら columnAliases も
+  required: ['案件ステータス', '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注予定月', '活動状況', 'アカウント責任者'],   // columns の見出しなら columnAliases も
   // ステータスの定義のシート（期待値の率）。ステータスの進み具合（前進・後退）は率の大きい順、率が同じなら定義の下の行ほど進んでいる
   // （C-提案中 → C-選定対応中 → C-稟議対応中）。期待値の列が数式（想定売上 × 率）のとき、前回の期待値を記録から取れない案件はこの率で計算する。
   // シートが無ければ、進み具合はプルダウンの順（下ほど進んでいる）
@@ -2901,7 +2902,7 @@ function mtgTrackedLabels_(sheet, rule, headers) {
     if (!range) return;
     for (let c = range.getColumn(); c <= range.getLastColumn(); c++) {
       const header = String(headers[c - 1] || '');
-      const key = credNormalize_(header);
+      const key = String(header).trim() ? mtgCanonicalLabel_(header) : '';   // 前の見出しの時点コピーとも比べられるように（mtgReadDeals_ の cells と同じキー）
       if (!key || diffNormalizeStampHeader_(header) === stamp || mtgIgnoredHeader_(header) || out.some(x => x.key === key)) continue;
       out.push({key, header});
     }
@@ -2988,9 +2989,10 @@ function mtgReadSnapshots_(ss, since) {
   read.rows.forEach(r => {
     const content = new Map();
     if (i['行の内容'] != null) {
-      diffParseSnapshotContent_(r[i['行の内容']]).forEach(([k, v]) => content.set(credNormalize_(k), v));
+      // 見出しは今の見出しにそろえる（前の見出し（columnAliases）で記録した行も読む）
+      diffParseSnapshotContent_(r[i['行の内容']]).forEach(([k, v]) => { if (!content.has(mtgCanonicalLabel_(k))) content.set(mtgCanonicalLabel_(k), v); });
     }
-    const pick = label => String(content.get(credNormalize_(label)) || '').trim();
+    const pick = label => String(content.get(mtgCanonicalLabel_(label)) || '').trim();
     map.set(mtgCellText_(r[i['イベントID']]) + '#' + Number(r[i['行番号']]), {
       eventId: mtgCellText_(r[i['イベントID']]),
       at: i['記録日時'] != null ? mtgTime_(r[i['記録日時']]) : null,
@@ -3056,6 +3058,8 @@ function mtgReadDeals_(sheet, rule) {
   const range = sheet.getRange(headerRow + 1, 1, count, width);
   const values = range.getValues();
   const shown = range.getDisplayValues();
+  // 見出し（正規化）。columns の列は今の見出し（前の見出し（columnAliases）でも同じキー。時点コピーと今の行を、見出しを変えても比べられるように）
+  const cellKeys = headers.map(h => (String(h).trim() ? mtgCanonicalLabel_(h) : ''));
   shown.forEach((line, n) => {
     const text = key => (cols[key] >= 0 ? String(line[cols[key]]).trim() : '');
     const value = key => (cols[key] >= 0 ? values[n][cols[key]] : null);
@@ -3094,10 +3098,10 @@ function mtgReadDeals_(sheet, rule) {
       }, {}),
       record: text('record'),
       updatedAt: stampCol >= 0 ? mtgTime_(values[n][stampCol]) : null,
-      missing: required.filter(r => !String(line[r.col]).trim()).map(r => r.label),
-      // 見出し（正規化）→ 表示の値（時点コピーと今の行を比べる用）
-      cells: headers.reduce((map, h, c) => {
-        const key = credNormalize_(h);
+      // 空の必須項目（シートの見出しで。前の見出しのままのシートでも、シートに書いてある名前を出す）
+      missing: required.filter(r => !String(line[r.col]).trim()).map(r => String(headers[r.col]).trim() || r.label),
+      // 見出し（正規化。columns の列は今の見出し）→ 表示の値（時点コピーと今の行を比べる用）
+      cells: cellKeys.reduce((map, key, c) => {
         if (key && !(key in map)) map[key] = String(line[c]).trim();
         return map;
       }, {})
@@ -3400,9 +3404,22 @@ function mtgHeaderIndex_(headers, label) {
 
 /** 変更の記録などの列名を、資料で使う見出し（mtgLabels_ の値）にそろえる（columnAliases の見出しは columns の見出しに）。ほかは正規化しただけ */
 function mtgCanonicalLabel_(column) {
-  const cols = MTG_OPTIONS.columns;
-  const key = Object.keys(cols).find(k => cols[k] && mtgColumnIndex_([column], k) === 0);
-  return credNormalize_(key ? cols[key] : column);
+  // 見出し（正規化）→ 今の見出しの表（columns・columnAliases が変わったら作り直す。変更時点スナップショットなど、たくさんの見出しを読むので）
+  const sign = JSON.stringify([MTG_OPTIONS.columns, MTG_OPTIONS.columnAliases || {}]);
+  if (!mtgCanonicalLabel_.table || mtgCanonicalLabel_.sign !== sign) {
+    const cols = MTG_OPTIONS.columns;
+    const table = new Map();
+    Object.keys(cols).filter(k => cols[k]).forEach(k => {
+      [cols[k]].concat((MTG_OPTIONS.columnAliases || {})[k] || []).forEach(name => {
+        const n = credNormalize_(name);
+        if (n && !table.has(n)) table.set(n, credNormalize_(cols[k]));
+      });
+    });
+    mtgCanonicalLabel_.table = table;
+    mtgCanonicalLabel_.sign = sign;
+  }
+  const n = credNormalize_(column);
+  return mtgCanonicalLabel_.table.get(n) || n;
 }
 
 /** 資料に含めない列か（MTG_OPTIONS.ignoreHeaders。FY別の売上の列など） */
@@ -3816,14 +3833,17 @@ function mtgStages_(deals, statusOrder) {
  */
 function mtgParseRemoved_(text, headers) {
   const s = String(text || '');
-  const heads = (headers || []).map(h => String(h).trim()).filter(Boolean).sort((a, b) => b.length - a.length);
+  // 今の見出しに、前の見出し（columnAliases）も足す（見出しを変える前に削除した行の記録も読む）
+  const aliases = [].concat.apply([], Object.keys(MTG_OPTIONS.columnAliases || {}).map(k => MTG_OPTIONS.columnAliases[k]));
+  const heads = (headers || []).concat(aliases).map(h => String(h).trim()).filter(Boolean)
+    .filter((h, i, list) => list.indexOf(h) === i).sort((a, b) => b.length - a.length);
   const values = new Map();
   let current = null;
   let pos = 0;
   while (pos < s.length) {
     const head = heads.find(h => s.startsWith(h + ': ', pos));
     if (head) {
-      current = credNormalize_(head);
+      current = mtgCanonicalLabel_(head);
       values.set(current, '');
       pos += head.length + 2;
     } else if (current) {
@@ -3834,7 +3854,7 @@ function mtgParseRemoved_(text, headers) {
     pos = end + 1;
   }
   const cols = MTG_OPTIONS.columns;
-  const get = label => String(values.get(credNormalize_(label)) || '').trim();
+  const get = label => String(values.get(mtgCanonicalLabel_(label)) || '').trim();
   return {customer: get(cols.customer), project: get(cols.project), status: get(cols.status),
     amount: mtgNumber_(get(cols.amount)), weighted: mtgNumber_(get(cols.weighted)),
     orderMonth: mtgMonth_(get(cols.orderMonth)), orderMonthText: get(cols.orderMonth), owner: get(cols.owner),
@@ -4502,7 +4522,7 @@ function mtgTotalsLines_(name, table) {
     const all = mtgSum_(deals, key);
     const minus = mtgSum_(lost, key);
     out.push('　' + label + '（' + diffColumnLetter_(col + 1) + '列）：列の合計 ' + mtgAmount_(all) + ' − 失注の行 ' + mtgAmount_(minus) + ' ＝ 資料 ' + mtgAmount_(all - minus));
-    const head = credNormalize_(table.headers[col]);
+    const head = mtgCanonicalLabel_(table.headers[col]);
     const texts = deals.filter(d => d[key] == null && d.cells && d.cells[head]);
     if (texts.length) {
       out.push('　　数値でない値（足していません）：' + texts.slice(0, 10).map(d => d.row + '行目「' + d.cells[head] + '」').join('・') +

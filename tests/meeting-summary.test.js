@@ -836,7 +836,7 @@ test('作れないところ（列・記録が無い）は、資料の型を変�
     ['直近14日間の動き（データなし：「変更履歴_差分」シートに変更の記録が無い）', '現在の状態（進行中案件）']);
   const [moves, states] = summary.elements.filter(el => el.type === 'table');
   assert.ok(moves.rows.slice(1).every(r => r.cells[1].text === '—' && r.cells[3].text === 'データなし' && r.cells[3].fill === c.gap));
-  assert.deepStrictEqual(states.rows.map(r => r.cells[3].text), ['データなし：シートに「受注月」の列が無い',
+  assert.deepStrictEqual(states.rows.map(r => r.cells[3].text), ['データなし：シートに「受注予定月」の列が無い',
     'データなし：変更の記録も「最終更新日時」の列も無く、ステータスが同じ日数が分からない', 'データなし：シートに「商談記録（ＵＲＬ）」の列が無い']);
 
   // 計画に対する積み上げ：見出しは残し、その下に「データなし」と理由（期待値の列が無い）
@@ -878,7 +878,7 @@ test('作れないところ（列・記録が無い）は、資料の型を変�
   // 作れなかったところの一覧（同じ理由はまとめる）。作り終えた画面にも出す
   const list = plain(g.mtgGapList_(s));
   assert.ok(list.indexOf('前回からの変化：「変更履歴_差分」シートに変更の記録が無い') >= 0);
-  assert.ok(list.indexOf('受注月・受注月超過・チェック「受注月超過」・チェック「売上開始月不整合」：シートに「受注月」の列が無い') >= 0);
+  assert.ok(list.indexOf('受注月・受注月超過・チェック「受注月超過」・チェック「売上開始月不整合」：シートに「受注予定月」の列が無い') >= 0);
   gas.promptAnswers = ['1', '10/23'];
   g.previewBusinessMtgSummaries();
   const done = gas.alerts[gas.alerts.length - 1].message;
@@ -3328,7 +3328,8 @@ test('本物の設定（2026/10/29 から）：計画に対する積み上げは
   assert.ok(!s.alerts.some(a => a.type === '月の不整合'));
   assert.ok(!Object.keys(s.alertGaps || {}).some(k => k === '月の不整合'));
   // 前の版の設定（売上開始月の列）に戻すこともできる
-  assert.strictEqual(gas.get('MTG_OPTIONS').columns.orderMonth, '受注月');
+  assert.strictEqual(gas.get('MTG_OPTIONS').columns.orderMonth, '受注予定月', '2026/11/05 に「受注月」から改めた');
+  assert.deepStrictEqual(plain(gas.get('MTG_OPTIONS').columnAliases.orderMonth), ['受注予定月(yy/mm)', '受注月(yy/mm)', '受注月'], '前の見出しも読む');
 });
 
 /* ---------------- RXシナリオのポートフォリオ（パイプラインの変化の次の3枚） ---------------- */
@@ -3880,7 +3881,7 @@ test('統合版（readMode: api）：Sheets API で sheetsPerRead シートず�
     g.createBusinessMtgCombinedSummary();
     const deck = gas.decks[gas.decks.length - 1];
     const grids = (gas.sheetsApiCalls || []).filter(c => c.args && c.args.includeGridData).map(c => c.args.ranges.filter(r => /新FMT/.test(r)).join(','));
-    const text = JSON.stringify(deck.requests).replace(/\d{4}\/\d{1,2}\/\d{1,2} \d{2}:\d{2}/g, 'TIME');
+    const text = stableRequests(deck.requests);
     return {gas, deck, grids, text, message: gas.alerts[gas.alerts.length - 1].message};
   };
   const sheet = run('sheet', 3);
@@ -3905,9 +3906,18 @@ function combinedReady(gas, g) {
   return {o, meeting};
 }
 
-/** 資料のスライドの並び（ID）と、作ったときのリクエスト（時刻は除く） */
+/**
+ * 別々に作った資料を比べるためのリクエストの文字（時刻は除く。テストの変更の記録は同じ日に続けて書くので、同じ日の動き（直近2か月の動き）の
+ * 並びはミリ秒の違いで入れ替わる。文字の行は並べ替えて比べる）
+ */
+function stableRequests(requests) {
+  return JSON.stringify(requests.map(r => (r.insertText ? Object.assign({}, r, {insertText: Object.assign({}, r.insertText,
+    {text: String(r.insertText.text).split('\n').sort().join('\n')})}) : r))).replace(/(\d{4}[\/-])?\d{1,2}[\/-]\d{1,2} \d{1,2}:\d{2}/g, 'TIME');
+}
+
+/** 資料のスライドの並び（ID）と、作ったときのリクエスト（stableRequests） */
 function deckShape(deck) {
-  return {slides: deck.slides.map(sl => sl.objectId), requests: JSON.stringify(deck.requests).replace(/\d{4}\/\d{1,2}\/\d{1,2} \d{2}:\d{2}/g, 'TIME')};
+  return {slides: deck.slides.map(sl => sl.objectId), requests: stableRequests(deck.requests)};
 }
 
 test('統合版：時間がかかれば、サブインダストリーの資料のページを足したところで区切り、続き（continueBusinessMtgSummaries）で残りのページ・表紙などのページ・PDF・格納を作る。できあがりは区切らずに作ったときと同じ', () => {
@@ -4119,4 +4129,24 @@ test('資料の件数・想定売上合計・期待値合計は、シートの�
   assert.match(text, /得意先・案件名が空の行（数えています）：11行目/);
   assert.match(text, /　　C-失注：1件・7・1　← 除く\n/);
   assert.match(text, /　　辞退：1件・4・2\n/);
+});
+
+test('列の見出しを変えても（受注月 → 受注予定月）、前の見出しの時点コピー・変更の記録・変更時点スナップショット・削除した行の記録を同じ列として読む（見出しを変えただけでは変化にしない）', () => {
+  const {g, sheet} = setup({edits: false});
+  const rules = g.DIFF_RULES || null;
+  const before = g.mtgReadDeals_(sheet, rules ? rules['新FMT'] : {headerRow: 2});   // 前の見出し（受注月）のときの時点コピーの代わり
+  sheet.getRange(2, COL.orderMonth).setValue('受注予定月');
+  assert.strictEqual(g.mtgCanonicalLabel_('受注月'), g.credNormalize_('受注予定月'), '変更の記録の列名（前の見出し）も今の見出しに');
+  assert.strictEqual(g.mtgCanonicalLabel_('受注月\n(yy/mm)'), g.credNormalize_('受注予定月'));
+  const after = g.mtgReadDeals_(sheet, rules ? rules['新FMT'] : {headerRow: 2});
+  assert.deepStrictEqual(after.deals.map(d => d.orderMonthText), before.deals.map(d => d.orderMonthText), '今の見出しで読める');
+  assert.deepStrictEqual(Object.keys(after.deals[0].cells).sort(), Object.keys(before.deals[0].cells).sort(), '時点コピーと今の行を同じキーで比べる');
+  const s = plain(summarize(g, '新FMT', {copy: {table: before, title: '時点コピー', url: 'u'}}));
+  assert.ok(!s.changes.some(c => (c.columns || []).some(col => /受注/.test(col))), '見出しを変えただけでは変化にしない');
+  // 前の見出しで記録した削除した行
+  const removed = g.mtgParseRemoved_('得意先: X社\n案件名: Y案件\n案件ステータス: 提案中\n受注月: 2026/12', after.headers);
+  assert.deepStrictEqual([removed.customer, removed.project, removed.orderMonthText], ['X社', 'Y案件', '2026/12']);
+  // 必須項目の未入力は、シートに書いてある見出しで出す
+  sheet.getRange(3, COL.orderMonth).setValue('');
+  assert.ok(g.mtgReadDeals_(sheet, rules ? rules['新FMT'] : {headerRow: 2}).deals[0].missing.indexOf('受注予定月') >= 0);
 });
