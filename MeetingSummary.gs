@@ -456,6 +456,7 @@ const MTG_SLIDE = {
   footY: 386,            // 出典の行の上端
   titleSize: 21,
   leadSize: 10.5,        // リード文（1つ目の文も補足も同じ大きさ・同じ色）
+  leadMinSize: 9,        // リード文が中身にかかるときは、ここまで小さくする（それでも入らなければ「…」で切る。mtgLead_）
   leadLine: 1.35,        // リード文の行の送り = 文字の大きさ × leadLine
   bodySize: 9,
   minFitSize: 7,         // 長い文（活動状況・課題）を全文入れるために小さくする下限（fit のセル）
@@ -1518,16 +1519,20 @@ function mtgSubChatSend_(kind) {
   if (!meeting) return;
   const names = mtgAskSheets_(ss, ui, what + 'を送ります（会議日 ' + meeting.label + '）。\nwebhook を登録したシート：' + registered.join('・'));
   if (!names) return;
+  // タイトル（空欄なら設定のタイトル。再送のときに「【再送】…」とするなど）
+  const titleText = mtgSubChatTitle_(ui, kind);
+  if (titleText == null) return;
   const now = new Date();
   const past = mtgSubChatPastLink_(ss);
   const plans = names.map(name => {
     if (!mtgSubChatWebhook_(name)) return {name, skip: 'webhook が未登録（setBusinessMtgSubChats() で登録）'};
     if (kind === 'remind') {
-      return {name, message: mtgSubChatMessage_('remind', name, meeting, {now, sheet: mtgSheetLink_(ss, name), stats: mtgUpdateStats_(ss, name, now), past})};
+      return {name, message: mtgSubChatMessage_('remind', name, meeting, {now, sheet: mtgSheetLink_(ss, name), stats: mtgUpdateStats_(ss, name, now), past,
+        title: titleText})};
     }
     const pdf = mtgStoredPdf_(ss, name, meeting.date);
     if (!pdf) return {name, skip: '会議日 ' + meeting.date + ' の本番の事前資料（PDF）が無い（createBusinessMtgSummaries() で作る）'};
-    return {name, message: mtgSubChatMessage_('summary', name, meeting, {file: {name: pdf.getName(), url: pdf.getUrl()}, past})};
+    return {name, message: mtgSubChatMessage_('summary', name, meeting, {file: {name: pdf.getName(), url: pdf.getUrl()}, past, title: titleText})};
   });
   const sending = plans.filter(p => p.message);
   const skipped = plans.filter(p => p.skip);
@@ -1547,6 +1552,21 @@ function mtgSubChatSend_(kind) {
     (skipped.length ? '\n\n送らなかったシート：\n' + skipped.map(p => '・' + p.name + '：' + p.skip).join('\n') : '');
   console.log(message);
   ui.alert(title, message, ui.ButtonSet.OK);
+}
+
+/**
+ * 送るメッセージのタイトルを聞く（remindBusinessMtgUpdate・notifySubBusinessMtgSummaries）。空欄なら設定のタイトル（MTG_OPTIONS.subChat[kind].title）で ''。
+ * 「【再送】」のように【】だけを入力したら、設定のタイトルの頭に付ける。{meeting}・{name} などは送るときに置き換える。キャンセルなら null
+ */
+function mtgSubChatTitle_(ui, kind) {
+  const base = MTG_OPTIONS.subChat[kind].title;
+  const shown = base.replace('{meeting}', MTG_OPTIONS.meetingName);
+  const response = ui.prompt(CRED_OPTIONS.menuTitle, 'メッセージのタイトルを変えるときは入力してください（空欄なら「' + shown + '」）。\n' +
+    '頭に付けるだけなら「【再送】」のように入力すると「【再送】' + shown + '」にします。', ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return null;
+  const text = String(response.getResponseText() || '').trim();
+  if (!text) return '';
+  return /^【[^】]*】$/.test(text) ? text + base : text;
 }
 
 /**
@@ -1570,12 +1590,12 @@ function mtgSubChatMeeting_(ui, what) {
 }
 
 /**
- * 送るメッセージ（MTG_OPTIONS.subChat の kind のカード）。values = {now, stats, sheet, file, past}（リンクは {name, url}）。
+ * 送るメッセージ（MTG_OPTIONS.subChat の kind のカード）。values = {now, stats, sheet, file, past, title: タイトル（空なら設定のタイトル）}（リンクは {name, url}）。
  * {payload: Google チャットに送る形（cardsV2）, plain: 確かめの画面・ログに出す文}
  */
 function mtgSubChatMessage_(kind, name, meeting, values) {
   const o = MTG_OPTIONS.subChat;
-  const spec = o[kind];
+  const spec = values.title ? Object.assign({}, o[kind], {title: values.title}) : o[kind];
   const tz = Session.getScriptTimeZone();
   const p = meeting.date.split('/').map(Number);
   const due = new Date(Date.UTC(p[0], p[1] - 1, p[2] - o.deadlineDays));
@@ -4013,7 +4033,7 @@ function mtgSlides_(summary, start, options) {
   const cover = mtgCoverSlide_(summary);
   const main = [mtgSummarySlide_(summary)].concat(MTG_OPTIONS.plan.enabled ? [mtgPlanSlide_(summary.plan, summary.now)] : [],
     [mtgBridgeSlide_(summary)], MTG_OPTIONS.portfolio.enabled ? mtgPortfolioSlides_(summary.portfolio) : [],
-    [mtgMovesSlide_(summary, withAppendix)], mtgFocusSlide_(summary), mtgRecentSlide_(summary));
+    mtgMovesSlide_(summary, withAppendix), mtgFocusSlide_(summary), mtgRecentSlide_(summary));
   if (!withAppendix) return mtgNumberSlides_(mtgSheetFrame_(summary), [cover].concat(main), offset);
   // Appendix はいつも ①〜③ を出す（中身が無ければ、表の見出しの行の下に「データなし」と理由・「該当なし」）。色は appendixColors（グレー）
   const appendix = mtgWithColors_(MTG_OPTIONS.appendixColors, () => [].concat(mtgAppendixChanges_(summary), mtgAppendixStalled_(summary),
@@ -4278,7 +4298,8 @@ function mtgFrame_(frame, slide, page) {
   if (slide.cover || slide.divider) return [];
   const title = mtgTitleFit_(slide.title);
   const el = [mtgBox_(S.x, S.titleY, S.w, 30, title.text, {size: title.size, bold: true, color: c.ink, role: 'title'})];
-  if (slide.lead) el.push.apply(el, mtgLead_(slide.lead));
+  // リード文は中身（いちばん上の部品）にかからない高さに収める（mtgLead_）
+  if (slide.lead) el.push.apply(el, mtgLead_(slide.lead, mtgContentTop_(slide)));
   el.push({type: 'box', x: S.x, y: S.ruleY, w: S.w, h: 0.75, fill: c.rule, shape: 'RECTANGLE'});
   el.push(mtgBox_(S.x, S.footY, S.w - 60, 16, mtgWrap_(frame.source + (slide.note ? '　' + slide.note : ''), S.w - 60, 9, 1)[0],
     {size: 9, color: c.faint, role: 'footer'}));
@@ -4287,25 +4308,59 @@ function mtgFrame_(frame, slide, page) {
 }
 
 /**
- * リード文（タイトルの下）。どのページも同じ大きさ（MTG_SLIDE.leadSize）・同じ色（黒）。改行の前（1つ目の文）と改行のあと（補足）は行を分ける。
- * 1つ目の文は2行まで、補足は残りの行（合わせて3行まで）。入らなければ「…」で切る
+ * リード文（タイトルの下）。どのページも同じ色（黒）。改行の前（1つ目の文）と改行のあと（補足）は行を分ける（補足の中の改行（名前に入っている改行など）は
+ * つなげる）。中身の上端（bottom。省けば MTG_SLIDE.top）にかからないように収める：入らなければ文字を leadSize から 0.5pt ずつ leadMinSize まで小さくし、
+ * それでも入らなければ入る行で「…」で切る（文章が中身に重ならないように。2026/11/05 から。前の版は3行で切ったが、名前の中の改行を数えずに4行になって重なった）
  */
-function mtgLead_(text) {
+function mtgLead_(text, bottom) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
-  const parts = String(text).split('\n');
-  const rest = parts.slice(1).join('');
-  const size = S.leadSize;
-  const step = lines => lines * size * S.leadLine;
-  const first = mtgWrap_(parts[0], S.w, size, 2);
-  // 箱の高さは、上の余白（padY の半分）と文字の行の分（文字は箱の上にそろえるので、下の余白は数えない）
-  const el = [mtgBox_(S.x, S.leadY, S.w, step(first.length) + S.padY / 2, first.join('\n'), {size, color: c.ink, valign: 'TOP', role: 'lead'})];
-  if (rest) {
-    const second = mtgWrap_(rest, S.w, size, 3 - first.length);
-    el.push(mtgBox_(S.x, S.leadY + step(first.length), S.w, step(second.length) + S.padY / 2, second.join('\n'),
-      {size, color: c.ink, valign: 'TOP', role: 'lead'}));
+  const limit = bottom == null ? S.top : bottom;
+  const t = mtgLineText_(text);
+  const cut = t.indexOf('\n');
+  const head = cut < 0 ? t : t.slice(0, cut);
+  const rest = cut < 0 ? '' : t.slice(cut + 1).replace(/\n/g, '');
+  const build = (size, maxLines) => {
+    const step = lines => lines * size * S.leadLine;
+    const first = mtgWrap_(head, S.w, size, rest ? Math.max(1, maxLines - 1) : maxLines);
+    const second = rest ? mtgWrap_(rest, S.w, size, Math.max(1, maxLines - first.length)) : [];
+    // 箱の高さは、上の余白（padY の半分）と文字の行の分（文字は箱の上にそろえるので、下の余白は数えない）
+    const el = [mtgBox_(S.x, S.leadY, S.w, step(first.length) + S.padY / 2, first.join('\n'), {size, color: c.ink, valign: 'TOP', role: 'lead'})];
+    if (second.length) {
+      el.push(mtgBox_(S.x, S.leadY + step(first.length), S.w, step(second.length) + S.padY / 2, second.join('\n'),
+        {size, color: c.ink, valign: 'TOP', role: 'lead'}));
+    }
+    return el;
+  };
+  const bottomOf = el => Math.max.apply(null, el.map(e => e.y + e.h));
+  for (let size = S.leadSize; size >= S.leadMinSize - 0.01; size = Math.round((size - 0.5) * 10) / 10) {
+    const el = build(size, 99);
+    if (bottomOf(el) <= limit + 0.01) return el;
   }
-  return el;
+  // 小さくしても入らない：入る行の数で切る
+  const size = S.leadMinSize;
+  const lines = Math.max(1, Math.floor((limit - S.leadY - S.padY / 2) / (size * S.leadLine) + 0.001));
+  return build(size, lines);
+}
+
+/**
+ * リード文の下の限り：スライドの中身（見出し・リード文・出典の行・ページ番号を除く部品）のいちばん上（無ければ MTG_SLIDE.top）＋ 箱の上の余白。
+ * リード文の文字は、ここにかからないように収める
+ */
+function mtgContentTop_(slide) {
+  const S = MTG_SLIDE;
+  const tops = (slide.elements || []).filter(el => ['title', 'lead', 'footer', 'page'].indexOf(el.role) < 0 && el.y != null &&
+    el.y > S.leadY && el.y < S.ruleY).map(el => el.y);
+  // 部品の箱の上の余白（padY の半分）には文字が無いので、そこまではリード文の箱が入ってよい
+  return (tops.length ? Math.min(S.top, Math.min.apply(null, tops)) : S.top) + S.padY / 2;
+}
+
+/**
+ * 文字の改行をそろえる：CR（\r）・行区切り（U+2028 など）・垂直タブも改行（\n）にする（シートの値に入っていることがある。Slides はこれらでも行を変えるので、
+ * 行の数の見積もり（mtgWrap_）と合わせる）。CR LF は「空白＋改行」にして文字の数を変えない（一部の文字の書式 spans の位置がずれないように）
+ */
+function mtgLineText_(text) {
+  return String(text == null ? '' : text).replace(/\r\n/g, ' \n').replace(/[\r\u000b\u0085\u2028\u2029]/g, '\n');
 }
 
 /**
@@ -6058,43 +6113,36 @@ function mtgMovesSlide_(s, withAppendix) {
   const rows = [mtgHeadRow_(columns, ['得意先／案件名', 'シナリオ', 'ステータス\n' + mtgFromWord_(s) + '▶今回', '期待値\n' + mtgFromWord_(s) + '▶今回',
     '受注月\n' + mtgFromWord_(s) + '▶今回', '活動状況（最新）', '先方部門', '先方役職'])];
   const scenarioCell = ch => mtgScenarioCell_(s, ch);
-  // 上から mainRows.changes 件まで、ページに入る分だけ（行の高さは中身で変わる）
+  // 上から mainRows.changes 件まで（行が伸びてページに入らなければ「（続き）」のページに続ける。mtgTablePages_）
   const top = [];
-  moves.slice(0, MTG_OPTIONS.mainRows.changes).some(ch => {
+  moves.slice(0, MTG_OPTIONS.mainRows.changes).forEach(ch => {
     const row = mtgRow_(columns, [
       mtgDealCell_(ch, columns[0]),
       scenarioCell(ch),
       {text: mtgStatusMove_(ch), lines: 3, fill: c.white},   // 長いステータスの名前（「C-稟議対応中(50%) ▶ B-クロージング中(70%)」）は3行まで
       mtgFieldCell_(s, 'weighted', mtgValueMove_(ch.weightedFrom, ch.weightedTo, ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'orderMonth', mtgMonthMove_(ch), {lines: 2, fill: c.white, align: 'CENTER'}),
-      // 長い文は小さくして入れる（本編は件数を優先して行は伸ばさない。全文は Appendix ①）
-      mtgFieldCell_(s, 'activity', ch.activity, {lines: 3, fill: c.white, fit: true}),
+      // 長い文は小さくし、それでも入らなければ行を伸ばして全文（ページに入らなければ「（続き）」のページへ。2026/11/05 から。前の版は「…」で切った）
+      mtgFieldCell_(s, 'activity', ch.activity, {lines: 3, fill: c.white, fit: true, grow: true}),
       // 先方部門・役職は全文（入らなければ小さくし、それでも入らなければ行を伸ばす）
       mtgFieldCell_(s, 'clientDept', ch.clientDept, {lines: 3, fill: c.white, align: 'CENTER', fit: true, grow: true}),
       // 役職は短い言葉なので、途中で折り返す（「マネー／ジャー」）前に、文字を 1.5pt まで小さくして1行に入れる
       mtgFieldCell_(s, 'clientTitle', ch.clientTitle, {lines: 1, fill: c.white, align: 'CENTER', fit: true, grow: true, minSize: MTG_SLIDE.bodySize - 1.5})
     ]);
-    if (S.top + rows.reduce((sum, r) => sum + r.h, 0) + row.h > S.bottom) return true;
     rows.push(row);
     top.push(ch);
-    return false;
   });
-  const el = [];
-  if (top.length) {
-    el.push({type: 'table', x: S.x, y: S.top, columns, rows});
-  } else {
-    // 表の見出しの行の下に、変更の記録が無ければ「データなし」と理由、変化が無ければ「該当なし」（状態はリード文に書くので、同じ文を2回書かない）
-    el.push.apply(el, mtgEmptyTable_(columns, rows[0], lack.changes ? 'gap' : 'none', lack.changes || ''));
-  }
-  return {
-    title: MTG_TITLES.progress,
-    lead: lack.changes ? mtgChangedLabel_(s) + 'は' + MTG_OPTIONS.gapText + '（' + lack.changes + '）。'
+  const lead = lack.changes ? mtgChangedLabel_(s) + 'は' + MTG_OPTIONS.gapText + '（' + lack.changes + '）。'
       : (moves.length ? mtgChangedLabel_(s) + 'は ' + moves.length + '件' + mtgUpdatedNote_(s) + '。'
       : mtgPeriodShort_(s) + '、ステータス・期待値・受注月・活動状況に変化のある案件なし' + mtgUpdatedNote_(s) + '。') +
       (moves.length > top.length ? '\n今回のステータスの順（確度 A → 創注 → 失注・保留・削除）に ' + top.length + '件を掲載。' + all
-        : k.updated ? '\n' + all : ''),
-    elements: el
-  };
+        : k.updated ? '\n' + all : '');
+  if (!top.length) {
+    // 表の見出しの行の下に、変更の記録が無ければ「データなし」と理由、変化が無ければ「該当なし」（状態はリード文に書くので、同じ文を2回書かない）
+    return [{title: MTG_TITLES.progress, lead, elements: mtgEmptyTable_(columns, rows[0], lack.changes ? 'gap' : 'none', lack.changes || '')}];
+  }
+  return mtgTablePages_(rows[0], rows.slice(1)).map((p, n) => ({title: MTG_TITLES.progress + (n ? '（続き）' : ''), lead,
+    elements: [{type: 'table', x: S.x, y: S.top, columns, rows: p.rows}]}));
 }
 
 /** シナリオのセル：番号だけを縦に並べる（選んだものをすべて。列が無いシートは「データなし」、空は「未入力」）。前回から変化のある案件と Appendix ① */
@@ -6798,18 +6846,21 @@ function mtgRow_(columns, cells, min) {
 
 /**
  * セルの文字の大きさと、折り返した行（mtgRow_）。fit なら、lines 行に全文が入るまで 0.5pt ずつ小さくし（MTG_SLIDE.minFitSize まで）、
- * それでも入らなければ grow なら行を増やして全文（maxGrowLines まで）、grow でなければ最後を「…」で切る
+ * それでも入らなければ行を増やして全文を入れる（maxGrowLines まで）。「…」で切るのは clip のセルだけ（2026/11/05 から。前の版は grow のセルだけ
+ * 行を伸ばし、ほかは「…」で切っていたが、文が途中で切れて読めなかった。行が伸びてページに入らなければ、表は「（続き）」のページに続ける）
  */
 function mtgFitLines_(cell, width) {
   const base = cell.size || MTG_SLIDE.bodySize;
   const max = cell.lines || 1;
-  if (!cell.fit || !cell.text) return {size: base, lines: mtgBalance_(cell.text, width, base, max)};
+  if (!cell.text) return {size: base, lines: mtgBalance_(cell.text, width, base, max)};
   const count = size => mtgWrap_(cell.text, width, size, 999).length;
-  const min = cell.minSize || MTG_SLIDE.minFitSize;   // セルごとに小さくする下限を変えられる（得意先・案件名は 1.5pt まで）
   let size = base;
-  while (count(size) > max && size - 0.5 >= min) size = Math.round((size - 0.5) * 10) / 10;
+  if (cell.fit) {
+    const min = cell.minSize || MTG_SLIDE.minFitSize;   // セルごとに小さくする下限を変えられる（得意先・案件名は 1.5pt まで）
+    while (count(size) > max && size - 0.5 >= min) size = Math.round((size - 0.5) * 10) / 10;
+  }
   const need = count(size);
-  const limit = need > max && cell.grow ? Math.min(need, MTG_SLIDE.maxGrowLines) : max;
+  const limit = need > max && !cell.clip ? Math.min(need, MTG_SLIDE.maxGrowLines) : max;
   return {size, lines: mtgBalance_(cell.text, width, size, limit)};
 }
 
@@ -6885,7 +6936,7 @@ function mtgWrap_(text, widthPt, size, max) {
   const width = mtgCharWidth_;
   const hang = /[、。，．,.)）」』】〕〉》・ーぁぃぅぇぉっゃゅょァィゥェォッャュョ！？!?%％:：;；]/;
   const out = [];
-  String(text == null ? '' : text).split('\n').forEach(part => {
+  mtgLineText_(text).split('\n').forEach(part => {
     let line = '';
     let used = 0;
     Array.from(part.replace(/[ \t]+/g, ' ').trim()).forEach(ch => {
@@ -7109,7 +7160,7 @@ function mtgSlideRequests_(slide, pageId, index, options) {
   const styleText = (target, item, text) => {
     const font = mtgTextStyle_(item, k);
     const para = mtgParagraphStyle_(item);
-    requests.push({insertText: Object.assign({text, insertionIndex: 0}, target)});
+    requests.push({insertText: Object.assign({text: mtgLineText_(text), insertionIndex: 0}, target)});
     requests.push({updateTextStyle: Object.assign({textRange: {type: 'ALL'}, style: font.style, fields: font.fields}, target)});
     requests.push({updateParagraphStyle: Object.assign({textRange: {type: 'ALL'}, style: para.style, fields: para.fields}, target)});
     (item.spans || []).forEach(span => {

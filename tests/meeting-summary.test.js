@@ -739,8 +739,12 @@ test('長い文（活動状況・課題）：入らなければ文字を小さ�
   assert.strictEqual(grown.size, S.minFitSize);
   assert.ok(grown.lines.length > 3 && grown.lines.join('').indexOf('…') < 0, '行を伸ばして全文（' + grown.lines.length + '行）');
   assert.strictEqual(grown.lines.join('').replace(/\s/g, ''), long, '文を落とさない');
-  const clipped = plain(g.mtgFitLines_({text: long, lines: 3, fit: true}, 160));
-  assert.ok(clipped.lines.length === 3 && /…$/.test(clipped.lines[2]), 'grow でなければ最後を「…」');
+  // grow を付けなくても、全文を出す（2026/11/05 から。「…」で切るのは clip のセルだけ）
+  const plainCell = plain(g.mtgFitLines_({text: long, lines: 3, fit: true}, 160));
+  assert.ok(plainCell.lines.length > 3 && plainCell.lines.join('').indexOf('…') < 0, 'grow でなくても全文');
+  assert.ok(plain(g.mtgFitLines_({text: long, lines: 2}, 160)).lines.join('').indexOf('…') < 0, 'fit でなくても全文');
+  const clipped = plain(g.mtgFitLines_({text: long, lines: 3, fit: true, clip: true}, 160));
+  assert.ok(clipped.lines.length === 3 && /…$/.test(clipped.lines[2]), 'clip なら最後を「…」');
   const row = plain(g.mtgRow_([160], [{text: long, lines: 3, fit: true, grow: true}]));
   assert.strictEqual(row.cells[0].size, S.minFitSize, '表のセルの文字の大きさも小さくする');
   assert.ok(row.h > g.mtgTextHeight_(3, S.bodySize), '行が伸びる');
@@ -2103,6 +2107,17 @@ test('notifySubBusinessMtgSummaries：その会議日の本番の事前資料（
   g.PropertiesService.getScriptProperties().setProperty('MTG_MEETING_FOLDER', 'https://drive.google.com/drive/folders/MeetingRoot00001');
   assert.deepStrictEqual(plain(g.mtgSubChatPastLink_(gas.ss)), {name: '事前資料の格納先', url: 'https://drive.google.com/drive/folders/MeetingRoot00001'});
   assert.match(gas.alerts[gas.alerts.length - 1].message, /送らなかったシート：\n・新FMT2：会議日 \d{4}\/10\/23 の本番の事前資料（PDF）が無い/);
+  // タイトルを変えて送る（再送）：「【再送】」とだけ入れたら、設定のタイトルの頭に付ける。全文を入れたらそのタイトル。空欄なら設定のタイトル
+  const before = gas.fetches.length;
+  gas.promptAnswers = ['10/23', '1', '【再送】'];
+  g.notifySubBusinessMtgSummaries();
+  const resent = sentCard(gas.fetches[before]);
+  assert.strictEqual(resent.sections[0].widgets[0].textParagraph.text,
+    '<b>【再送】【RX Business Meeting】事前資料のご案内</b><br><font color="#5F6368">新FMT　' + g.mtgDateLabel_(meeting) + '9:00〜10:30</font>');
+  assert.match(gas.alerts[gas.alerts.length - 2].message, /【【再送】【RX Business Meeting】事前資料のご案内】/, '確かめの画面にも');
+  gas.promptAnswers = ['10/23', '1', '【訂正】事前資料（差し替え）のご案内'];
+  g.notifySubBusinessMtgSummaries();
+  assert.match(sentCard(gas.fetches[gas.fetches.length - 1]).sections[0].widgets[0].textParagraph.text, /^<b>【訂正】事前資料（差し替え）のご案内<\/b>/);
 });
 
 test('mtgNotifyScheduled（前の版の自動通知）：トリガーが残っていても何も送らず、そのトリガーを外す', () => {
@@ -2362,7 +2377,7 @@ test('統合版のスライド：表紙・目次・全サブインダストリ�
   assert.ok(!slides.some(sl => sl.divider || /^Appendix/.test(sl.title)), 'Appendix は入れない');
   assert.strictEqual(one.length, plain(g.mtgSlides_(summaries[0])).length - 1 - plain(g.mtgSlides_(summaries[0])).filter(sl => /^Appendix /.test(sl.title)).length,
     '各資料から扉と Appendix ①〜③ を除いたもの');
-  assert.match(g.mtgMovesSlide_(Object.assign({}, summaries[0], {kpi: Object.assign({}, summaries[0].kpi, {updated: 1})}), false).lead,
+  assert.match(g.mtgMovesSlide_(Object.assign({}, summaries[0], {kpi: Object.assign({}, summaries[0].kpi, {updated: 1})}), false)[0].lead,
     /全件は各サブインダストリーの資料の Appendix ① を参照。$/, '本編の「全件は Appendix ①」は、各サブインダストリーの資料のものと書く');
   assert.deepStrictEqual(slides.slice(3, 5).map(sl => sl.title), ['計画に対する積み上げ（全サブインダストリー）', '計画に対する積み上げ（サブインダストリー別）'],
     '計画に対する積み上げのセクションの2ページ目がサブインダストリー別');
@@ -3612,7 +3627,7 @@ test('前回から変化のある案件：責任者の列の代わりに先方�
   const gaps = Object.assign({}, s.gaps);
   delete gaps.clientDept;
   delete gaps.clientTitle;
-  const slide = plain(g.mtgMovesSlide_(Object.assign({}, s, {changes, gaps, scenarioColumn: true})));
+  const slide = plain(g.mtgMovesSlide_(Object.assign({}, s, {changes, gaps, scenarioColumn: true})))[0];
   const table = slide.elements.find(el => el.type === 'table');
   const first = table.rows[1].cells.map(cell => cell.text);
   assert.strictEqual(first[1], '01-04\n01-05', 'シナリオは番号だけを縦に並べる');
@@ -3625,12 +3640,25 @@ test('前回から変化のある案件：責任者の列の代わりに先方�
   const long = changes.map((ch, i) => (i ? ch : Object.assign({}, ch, {clientDept: 'ジャパンマーケティング部インストアメディア推進グループ',
     clientTitle: 'シニアマネージャー兼グループリーダー',
     scenarios: ['01-01.製品・サービス開発支援', '01-03.次世代RX店舗', '01-04.顧客情報活用パッケージ', '01-05.バックオフィス業務PF', '01-09.顧客分析パッケージ']})));
-  const longTable = plain(g.mtgMovesSlide_(Object.assign({}, s, {changes: long, gaps, scenarioColumn: true}))).elements.find(el => el.type === 'table');
+  const longTable = plain(g.mtgMovesSlide_(Object.assign({}, s, {changes: long, gaps, scenarioColumn: true})))[0].elements.find(el => el.type === 'table');
   const cells = longTable.rows[1].cells;
   assert.strictEqual(cells[1].text, '01-01\n01-03\n01-04\n01-05\n01-09', 'シナリオは5つとも');
   assert.strictEqual(cells[6].text.replace(/\n/g, ''), 'ジャパンマーケティング部インストアメディア推進グループ', '部門名は全文（「…」で切らない）');
   assert.strictEqual(cells[7].text.replace(/\n/g, ''), 'シニアマネージャー兼グループリーダー', '役職は全文');
   assert.ok(!cells.some(cell => /…/.test(cell.text)));
+  // 長い活動状況も全文（2026/11/05 から。行が伸びてページに入らなければ「（続き）」のページに続ける）
+  const longText = '・' + '役員より発注意思確認済み。BPR実施予算が27年度予算に先送り。'.repeat(8);
+  const many = Array.from({length: 7}, (_, i) => Object.assign({}, changes[i % changes.length], {project: '案件' + i, activity: longText}));
+  const moves = plain(g.mtgMovesSlide_(Object.assign({}, s, {changes: many, gaps, scenarioColumn: true})));
+  assert.ok(moves.length > 1, '続きのページ');
+  assert.deepStrictEqual(moves.map(sl => sl.title).slice(0, 2), ['前回から変化のある案件', '前回から変化のある案件（続き）']);
+  const all = [].concat.apply([], moves.map(sl => sl.elements.find(el => el.type === 'table').rows.slice(1)));
+  assert.strictEqual(all.length, 7, '7件とも');
+  all.forEach(r => assert.strictEqual(r.cells[5].text.replace(/\s/g, ''), longText.replace(/\s/g, ''), '活動状況は全文'));
+  moves.forEach(sl => {
+    const t = sl.elements.find(el => el.type === 'table');
+    assert.ok(t.y + t.rows.reduce((h, r) => h + r.h, 0) <= gas.get('MTG_SLIDE').bottom + 0.01, 'ページに入る');
+  });
   // Appendix ①（一覧）も同じ列（シナリオの番号・先方部門・先方役職。責任者の列は無い）に、更新項目を足したもの。見出しはどれも1行
   const appendix = plain(g.mtgAppendixChanges_(Object.assign({}, s, {changes: long, gaps, scenarioColumn: true})));
   const at = appendix[0].elements.find(el => el.type === 'table');
@@ -4166,4 +4194,38 @@ test('列の見出しを変えても（受注月 → 受注予定月。columnAli
   const renamed = plain(summarize(g, '新FMT', {copy: {table: oldCopy, title: '時点コピー', url: 'u'}}));
   assert.ok(!renamed.changes.some(c => (c.columns || []).some(col => /受注/.test(col))));
   assert.ok(renamed.gaps.orderMonth === undefined, '受注予定月の列として読める');
+});
+
+test('リード文は中身にかからない：名前に改行（CR など）が入っていても、行の数を数えて、入らなければ小さくし、それでも入らなければ「…」で切る。資料の文字の CR は改行にそろえる', () => {
+  const gas = createGas();
+  const g = gas.global;
+  const S = gas.get('MTG_SLIDE');
+  // 長いシナリオの名前（CR 入り。シートの値に入っていることがある）
+  const long1 = '11-02.制作・本部業務の生産性を高め\r成長原資を創出する';
+  const long2 = '11-01.組合員の本音を起点とした商品開発・組合員獲得手法の変革';
+  const sheet = portfolioSheet(gas, [['A社', long1, 'A-受注済み(100%)', '300', '300', '5', '3', '', ''], ['B社', long2, 'B-選定中(70%)', '200', '140', '5', '3', '', ''],
+    ['C社', long1 + ', ' + long2, 'C-提案中(50%)', '100', '50', '5', '3', '', ''], ['D社', long2, 'D-ヒアリング中(20%)', '50', '10', '5', '3', '', '']]);
+  const table = g.mtgReadDeals_(sheet, gas.get('DIFF_RULES')['新FMT']);
+  const p = g.mtgPortfolioOf_(table.deals, new Date('2026-11-04T12:00:00+09:00'), table);
+  const raw = g.mtgPortfolioSlides_(p)[0];
+  const slide = plain(g.mtgNumberSlides_({source: '新FMT'}, [raw], 1)[0]);
+  const leads = slide.elements.filter(el => el.role === 'lead');
+  assert.ok(leads.length >= 1);
+  const bottom = Math.max.apply(null, leads.map(el => el.y + el.h));
+  assert.ok(bottom <= g.mtgContentTop_(raw) + 0.01, 'リード文が中身にかかる：' + bottom + ' > ' + g.mtgContentTop_(raw));
+  assert.ok(leads.every(el => !/\r/.test(el.text)), 'リード文に CR を残さない');
+  const lines = leads.reduce((n, el) => n + el.text.split('\n').length, 0);
+  assert.ok(bottom - S.leadY >= lines * leads[0].size * S.leadLine - 0.01, '行の数（名前の中の改行も）を数えた高さ');
+  // 資料の文字（Slides に送る文字）にも CR を残さない
+  const requests = plain(g.mtgSlideRequests_(slide, 'p1', 1));
+  assert.ok(requests.filter(r => r.insertText).every(r => !/\r/.test(r.insertText.text)));
+
+  // とても長いリード文：小さくしても入らなければ、入る行で「…」で切る（中身にはかからない）
+  const huge = plain(g.mtgLead_('あ'.repeat(400) + '\n' + 'い'.repeat(400), S.top));
+  const hb = Math.max.apply(null, huge.map(el => el.y + el.h));
+  assert.ok(hb <= S.top + 0.01);
+  assert.ok(huge.every(el => el.size === S.leadMinSize));
+  assert.match(huge[huge.length - 1].text, /…$/);
+  // 短いリード文は大きさを変えない
+  assert.ok(plain(g.mtgLead_('短い文。\n補足。')).every(el => el.size === S.leadSize));
 });
