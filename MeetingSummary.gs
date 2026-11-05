@@ -103,7 +103,8 @@ const MTG_OPTIONS = {
   // 残りは continueAfterMs あとに自動で続ける（時間主導のトリガー continueBusinessMtgSummaries。1回きり）。次の仕事にかかる時間の見積もり：
   // summaryMs 中身を作る（シートと記録を読む）・deckMs 資料1つ・copyMs 時点コピーと記録・storeMs 会議のフォルダへの格納とインデックス1つ
   // （deckMs は RXシナリオのポートフォリオの3枚（Slides API のリクエスト 3,000 ほど。年度別のヒートマップが多い）を足した 2026/11/04 に 35000 から増やした）
-  run: {limitMs: 320000, summaryMs: 30000, deckMs: 55000, copyMs: 60000, storeMs: 10000, continueAfterMs: 60000,
+  // combinedFinishMs は統合版の仕上げ（表紙・目次・状況のページを足し、80ページほどを並べて PDF にし、会議のフォルダに格納する）の見積もり
+  run: {limitMs: 320000, summaryMs: 30000, deckMs: 55000, copyMs: 60000, storeMs: 10000, combinedFinishMs: 150000, continueAfterMs: 60000,
     handler: 'continueBusinessMtgSummaries', jobKey: 'MTG_JOB', resultKey: 'MTG_JOB_RESULT',
     // 資料の中身の読み方（2026/11/04）。'api'：このスプレッドシートを Sheets API（拡張サービス）でまとめて読む（MeetingRead.gs。大勢が編集している間も、
     // SpreadsheetApp で触れるより待たされにくい（225行のシートで約30秒。SpreadsheetApp は約4分）。元のファイルで計算済みの値なので、IMPORTRANGE などの値もそのまま）。
@@ -782,6 +783,7 @@ function mtgRunStart_(final, meeting, names, cancelJob, point) {
   const pending = mtgJobLoad_();
   if (pending) {
     if (!cancelJob) throw new Error(mtgJobPendingText_());
+    if (pending.kind === 'combined') mtgDeckDiscard_(pending.deck);   // 作りかけの統合版はゴミ箱へ
     mtgJobClear_();
     mtgJobDeleteTriggers_();
   }
@@ -1022,7 +1024,7 @@ function mtgJobPause_(job) {
   props.setProperty(R.jobKey, JSON.stringify(Object.assign({}, job, {items: job.items.length, savedAt: Date.now()})));
   mtgJobDeleteTriggers_();
   ScriptApp.newTrigger(R.handler).timeBased().after(R.continueAfterMs).create();
-  console.log('会議サマリ：時間がかかるため区切りました（資料 ' + job.items.length + '/' + job.names.length + '）。続きを予約しました。');
+  console.log((job.kind === 'combined' ? '統合版：' : '会議サマリ：') + '時間がかかるため区切りました（資料 ' + job.items.length + '/' + job.names.length + '）。続きを予約しました。');
   return false;
 }
 
@@ -1070,14 +1072,22 @@ function continueBusinessMtgSummaries() {
   mtgJobDeleteTriggers_();
   const job = mtgJobLoad_();
   if (!job) return;
+  const combined = job.kind === 'combined';
   let message;
   try {
-    if (!mtgJobRun_(SpreadsheetApp.getActiveSpreadsheet(), job, started)) return;   // また区切った（次を予約した）
-    message = mtgJobMessage_(job, true);
+    const run = combined ? mtgCombinedRun_ : mtgJobRun_;
+    if (!run(SpreadsheetApp.getActiveSpreadsheet(), job, started)) return;   // また区切った（次を予約した）
+    message = combined ? mtgCombinedMessage_(job, true) : mtgJobMessage_(job, true);
   } catch (error) {
     console.error(error && error.stack || error);
-    message = '途中で止まりました：' + (error && error.message || error) + '\ncreateBusinessMtgSummaries()（試作なら previewBusinessMtgSummaries()）で、作り直してください。\n\n' +
-      mtgJobMessage_(job, true);
+    if (combined) {
+      mtgDeckDiscard_(job.deck);   // 作りかけの資料はゴミ箱へ
+      message = '統合版（' + MTG_OPTIONS.combined.name + '）を作る途中で止まりました：' + (error && error.message || error) +
+        '\ncreateBusinessMtgCombinedSummary() で、作り直してください。';
+    } else {
+      message = '途中で止まりました：' + (error && error.message || error) + '\ncreateBusinessMtgSummaries()（試作なら previewBusinessMtgSummaries()）で、作り直してください。\n\n' +
+        mtgJobMessage_(job, true);
+    }
   }
   mtgJobClear_();
   mtgJobSaveResult_(message);
@@ -1092,10 +1102,13 @@ function showBusinessMtgSummariesResult() {
   let message;
   if (job) {
     const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === R.handler).length;
-    message = '会議サマリを作っている途中です（会議日 ' + job.meeting + '。資料 ' + job.items.length + '/' + job.names.length + '件' +
-      (job.final ? '・格納 ' + job.stored + '/' + job.names.length + '件' : '') + '）。' +
+    message = (job.kind === 'combined'
+      ? '統合版（' + MTG_OPTIONS.combined.name + '）を作っている途中です（会議日 ' + job.meeting + '。' + job.items.length + '/' + job.names.length + 'サブインダストリーのページ）。'
+      : '会議サマリを作っている途中です（会議日 ' + job.meeting + '。資料 ' + job.items.length + '/' + job.names.length + '件' +
+        (job.final ? '・格納 ' + job.stored + '/' + job.names.length + '件' : '') + '）。') +
       (triggers ? '自動で続けています。少し待ってから、もう一度実行してください。'
-        : '続きの予約がありません。createBusinessMtgSummaries()（試作なら previewBusinessMtgSummaries()）で作り直してください。');
+        : '続きの予約がありません。' + (job.kind === 'combined' ? 'createBusinessMtgCombinedSummary()'
+          : 'createBusinessMtgSummaries()（試作なら previewBusinessMtgSummaries()）') + 'で作り直してください。');
   } else {
     const props = PropertiesService.getScriptProperties();
     const keys = props.getKeys().filter(key => key.indexOf(R.resultKey + '_') === 0).sort((a, b) => Number(a.split('_').pop()) - Number(b.split('_').pop()));
@@ -1110,6 +1123,11 @@ function mtgJobPendingText_() {
   const job = mtgJobLoad_();
   if (!job) return '';
   const at = Utilities.formatDate(new Date(job.savedAt || job.now), Session.getScriptTimeZone(), 'M/d HH:mm');
+  if (job.kind === 'combined') {
+    return '前に始めた統合版（' + MTG_OPTIONS.combined.name + '。会議日 ' + job.meeting + '。' + job.items.length + '/' + job.names.length + 'サブインダストリーのページ。' +
+      at + ' に区切り）を、自動で続けている途中です。やめて新しく作るときは「やめて新しく作る」にチェックを入れてください' +
+      '（作りかけの統合版はゴミ箱に移します。続きが終わったら showBusinessMtgSummariesResult() で結果を見られます）。';
+  }
   return '前に始めた会議サマリ（会議日 ' + job.meeting + '・' + (job.final ? '本番' : '試作') + '。資料 ' + job.items.length + '/' + job.names.length + '件。' +
     at + ' に区切り）を、自動で続けている途中です。やめて新しく作るときは「やめて新しく作る」にチェックを入れてください' +
     '（続きが終わったら showBusinessMtgSummariesResult() で結果を見られます）。';
@@ -1785,24 +1803,76 @@ function mtgSummaries_(ss, names, now, final, meeting, point) {
 }
 
 /**
- * 統合版（全サブインダストリーの資料を1つにまとめた資料。mtgCombinedSlides_）を作り、PDF を保存先に保存する。
- * 本番は会議のフォルダ（事前資料の格納先 MTG_OPTIONS.meetingFolder の中。各サブインダストリーの資料と同じフォルダ）に格納し、インデックスの統合版の列に書く（できなくても止めない）。
- * 戻り値 {name, file: PDF, pages, stored, storeError, index}
+ * 統合版（全サブインダストリーの資料を1つにまとめた資料。mtgCombinedSlides_ と同じ並び）を作る仕事を、時間の許す限り進める（区切って続ける。
+ * 統合版は80ページを超え、全シートを読んでスライドにすると1回の実行の6分に入らないため）。
+ * job = {kind: 'combined', final: true, meeting, now, names, point, items: 足した資料 [{name, start: 表紙のページ, pages, lite: mtgCombinedLite_}],
+ * page: 次の資料の前に入るページの数, deck: 作っている資料（mtgDeckStart_）, result: 仕上げて格納した結果（mtgCombinedPlain_）, folderUrl, sourceError}。
+ * 順に、各サブインダストリーの資料（sheetsPerRead シートずつ読んで中身を作り、資料ごとにスライドを足す）→ 前のページ（表紙・目次・状況・計画）を足して
+ * 仕上げ（PDF）→ 会議のフォルダへの格納とインデックス。次の仕事が見積もり（MTG_OPTIONS.run）で上限を越えそうなら、仕事を保存して続きを予約し、false を返す
  */
-function mtgCreateCombined_(summaries, meeting, final, folder) {
-  const name = MTG_OPTIONS.combined.name;
-  const slides = mtgCombinedSlides_(summaries, meeting, final);
-  const out = mtgExportDeck_(mtgFileName_(name, meeting, final), slides, folder);
-  const result = {name, file: out.pdf, deck: out.deck, pages: slides.length};
-  if (final) {
-    const stored = mtgStoreToMeetingFolder_(name, meeting, out.pdf);
+function mtgCombinedRun_(ss, job, started) {
+  const o = MTG_OPTIONS;
+  const R = o.run;
+  const fits = ms => mtgNow_() - started + ms <= R.limitMs;
+  mtgRequireSlides_();
+  const folder = mtgFolder_(ss);
+  job.folderUrl = folder.getUrl();
+  const fileName = mtgFileName_(o.combined.name, job.meeting, true);
+  if (!job.deck) job.deck = mtgDeckStart_(fileName, folder);
+  while (job.items.length < job.names.length) {
+    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    const batch = R.readMode === 'api' ? job.names.slice(job.items.length, job.items.length + Math.max(R.sheetsPerRead || 1, 1))
+      : job.names.slice(job.items.length);
+    const source = mtgJobSource_(ss, job, batch);
+    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    const summaries = mtgSummaries_(source, batch, new Date(job.now), true, job.meeting, job.point).summaries;
+    for (let i = 0; i < summaries.length; i++) {
+      if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
+      const summary = summaries[i];
+      const timer = mschTimer_('統合版のスライド（' + summary.name + '）', true);
+      const slides = mtgSlides_(summary, job.page, {appendix: false});
+      mtgDeckAdd_(job.deck, slides, job.page);
+      timer.lap('スライドを足す（' + slides.length + '枚）');
+      job.items.push({name: summary.name, start: job.page + 1, pages: slides.length, lite: mtgCombinedLite_(summary)});
+      job.page += slides.length;
+    }
+  }
+  // 前のページ（すべての資料のページが決まってから）を足して仕上げる
+  if (!job.result) {
+    if (!fits(R.combinedFinishMs)) return mtgJobPause_(job);
+    const timer = mschTimer_('統合版の仕上げ', true);
+    const sections = job.items.map(item => ({summary: item.lite, start: item.start}));
+    mtgDeckAdd_(job.deck, mtgCombinedFront_(sections, job.meeting, true, new Date(job.now)), 0);
+    timer.lap('表紙・目次・状況のページ');
+    const out = mtgDeckFinish_(job.deck, fileName, folder);
+    timer.lap('並べて PDF に保存');
+    const result = {name: o.combined.name, file: out.pdf, pages: job.page};
+    // 会議のフォルダに格納し、インデックスの統合版の列に書く（できなくても止めない）
+    const stored = mtgStoreToMeetingFolder_(o.combined.name, job.meeting, out.pdf);
     if (stored.error) result.storeError = stored.error;
     else {
       result.stored = stored;
-      result.index = mtgWriteIndex_(name, meeting, stored);
+      result.index = mtgWriteIndex_(o.combined.name, job.meeting, stored);
     }
+    job.result = mtgCombinedPlain_(result);
+    job.deck = null;   // 仕上げた（Google スライドは残さない設定ならゴミ箱へ移した）
   }
-  return result;
+  return true;
+}
+
+/** 統合版の仕事の、終わり（done）・区切ったときの知らせ */
+function mtgCombinedMessage_(job, done) {
+  if (!done) {
+    const rest = job.names.slice(job.items.length);
+    const left = [].concat(rest.length ? ['資料 ' + rest.length + '件（' + rest.join('・') + '）のページ'] : [],
+      ['表紙・目次・状況のページと PDF・会議のフォルダへの格納とインデックス']);
+    return ['時間がかかるため、ここで区切りました（Apps Script の1回の実行は6分まで）。残りは約' + Math.round(MTG_OPTIONS.run.continueAfterMs / 60000) +
+      '分後に自動で続けます：' + left.join('・') + '。',
+    '続きが終わったら、エディタで showBusinessMtgSummariesResult() を実行すると結果が出ます（実行ログにも出ます）。終わるまで、会議サマリの関数は実行しないでください。',
+    '', '統合版（' + MTG_OPTIONS.combined.name + '）：' + job.items.length + '/' + job.names.length + 'サブインダストリーのページを作りました。',
+    '', '保存先：' + job.folderUrl].join('\n');
+  }
+  return mtgCombinedLines_(job.result).concat(['', '保存先：' + job.folderUrl], mtgSourceNote_(job)).join('\n');
 }
 
 /**
@@ -1822,8 +1892,10 @@ function mtgCombinedCheck_(meeting, point) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const o = MTG_OPTIONS.combined;
   if (!o.enabled) return {error: '統合版を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.combined.enabled）。'};
-  if (mtgJobLoad_()) {
-    return {error: 'サブインダストリーの資料を作っている途中です（自動で続けています）。終わってから（showBusinessMtgSummariesResult() で確かめてから）実行してください。'};
+  const pending = mtgJobLoad_();
+  if (pending) {
+    return {error: (pending.kind === 'combined' ? '統合版' : 'サブインダストリーの資料') + 'を作っている途中です（自動で続けています）。' +
+      '終わってから（showBusinessMtgSummariesResult() で確かめてから）実行してください。'};
   }
   const names = mtgTrackedNames_(ss);
   if (!names.length) return {error: '追跡しているシート（test.gs の DIFF_RULES）が見つかりません。'};
@@ -1840,26 +1912,25 @@ function mtgCombinedCheck_(meeting, point) {
     '比べる時点：' + (point ? mtgChosenText_(point) + '（全シート共通）' : '前回の会議（シートごと）')};
 }
 
-/** 統合版を作る（画面の「作成する」から。作れるかは先に mtgCombinedCheck_ で確かめる）。戻り値は終わりの知らせ */
+/**
+ * 統合版を作り始める（画面の「作成する」から。作れるかは先に mtgCombinedCheck_ で確かめる）。時間がかかれば区切って続ける（mtgCombinedRun_。
+ * 続きは個別の資料と同じトリガー continueBusinessMtgSummaries）。戻り値は終わり（区切ったとき）の知らせ
+ */
 function mtgCombinedStart_(meeting, point) {
+  const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   const check = mtgCombinedCheck_(meeting, point);
   if (check.error) throw new Error(check.error);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const names = mtgTrackedNames_(ss);
-  // 中身は Sheets API でまとめて読む（mtgJobSource_）
-  const job = {final: false, now: Date.now(), meeting, names, sourceError: ''};
-  // Sheets API なら sheetsPerRead シートずつ読んで中身を作る（全シートを一度に読むとメモリが足りない）
-  const R = MTG_OPTIONS.run;
-  const step = R.readMode === 'api' ? Math.max(R.sheetsPerRead || 1, 1) : names.length || 1;
-  let summaries = [];
-  for (let i = 0; i < names.length; i += step) {
-    const part = names.slice(i, i + step);
-    summaries = summaries.concat(mtgSummaries_(mtgJobSource_(ss, job, part), part, new Date(job.now), true, meeting, point).summaries);
+  const job = {kind: 'combined', final: true, meeting, now: Date.now(), names: mtgTrackedNames_(ss), point: point || null, items: [],
+    page: mtgCombinedFrontCount_(), deck: null, result: null, folderUrl: '', sourceError: ''};
+  let done;
+  try {
+    done = mtgCombinedRun_(ss, job, started);
+  } catch (error) {
+    mtgDeckDiscard_(job.deck);   // 作りかけの資料はゴミ箱へ
+    throw error;
   }
-  mtgRequireSlides_();
-  const folder = mtgFolder_(ss);
-  const message = mtgCombinedLines_(mtgCombinedPlain_(mtgCreateCombined_(summaries, meeting, true, folder))).concat(['', '保存先：' + folder.getUrl()],
-    mtgSourceNote_(job)).join('\n');
+  const message = mtgCombinedMessage_(job, done);
   console.log(message);
   return message;
 }
@@ -1891,7 +1962,7 @@ function mtgCombinedLines_(combined) {
       'フォルダを用意してから、エディタで storeBusinessMtgSummaries() を実行し「' + name + '」を選んで格納してください。' : '')];
 }
 
-/** 統合版の結果（mtgCreateCombined_）を、保存できる形（文字だけ）に */
+/** 統合版の結果（mtgCombinedRun_ の {name, file: PDF, pages, stored, storeError, index}）を、保存できる形（文字だけ）に */
 function mtgCombinedPlain_(c) {
   return {fileName: c.file.getName(), fileUrl: c.file.getUrl(), pages: c.pages,
     folderName: c.stored ? c.stored.folder.getName() : '', folderUrl: c.stored ? c.stored.folder.getUrl() : '', created: !!(c.stored && c.stored.created),
@@ -3903,21 +3974,35 @@ function mtgSlides_(summary, start, options) {
  * （mtgSlides_。表紙から本編まで。Appendix は入れない。summaries の順）をそのまま続ける。ページ番号は資料全体の通し番号にする
  */
 function mtgCombinedSlides_(summaries, meeting, final) {
-  const o = MTG_OPTIONS;
-  const c = o.colors;
-  const S = MTG_SLIDE;
-  const name = o.combined.name;
-  const dummy = summaries.some(s => s.dummy);
-  const planOn = !!o.plan.enabled;
-  let page = planOn ? 5 : 3;   // 前に表紙・目次・全サブインダストリーの状況（・計画に対する積み上げの全体とサブインダストリー別）
+  let page = mtgCombinedFrontCount_();
   const sections = summaries.map(s => {
     const slides = mtgSlides_(s, page, {appendix: false});
     const section = {summary: s, start: page + 1, slides};
     page += slides.length;
     return section;
   });
+  const first = mtgCombinedFront_(sections, meeting, final, summaries.length ? summaries[0].now : new Date());
+  return first.concat.apply(first, sections.map(x => x.slides));
+}
+
+/** 統合版の、各サブインダストリーの資料の前に入るページの数（表紙・目次・全サブインダストリーの状況（・計画に対する積み上げの全体とサブインダストリー別）） */
+function mtgCombinedFrontCount_() {
+  return MTG_OPTIONS.plan.enabled ? 5 : 3;
+}
+
+/**
+ * 統合版の前のページ（表紙・目次・全サブインダストリーの状況・計画に対する積み上げ（全体・サブインダストリー別））。ページ番号は1から。
+ * sections = [{summary, start: その資料の表紙のページ}]。summary は会議サマリの中身か、その一部（mtgCombinedLite_。区切って作るとき）。now は中身を作った時刻
+ */
+function mtgCombinedFront_(sections, meeting, final, now) {
+  const o = MTG_OPTIONS;
+  const c = o.colors;
+  const S = MTG_SLIDE;
+  const name = o.combined.name;
+  const summaries = sections.map(x => x.summary);
+  const dummy = summaries.some(s => s.dummy);
+  const planOn = !!o.plan.enabled;
   const line = (y, text) => mtgBox_(S.x, y, S.w, 16, mtgWrap_(text, S.w, 9, 1)[0], {size: 9, color: c.white, align: 'CENTER'});
-  const now = summaries.length ? summaries[0].now : new Date();
   const cover = {
     title: MTG_TITLES.cover,
     cover: true,
@@ -3931,8 +4016,18 @@ function mtgCombinedSlides_(summaries, meeting, final) {
   };
   const frame = {source: (final ? '' : '【試作】') + (dummy ? '【ダミーデータを含む】' : '') + name + '（' + mtgShortDate_(meeting) + ' 会議資料）　金額の単位：百万円'};
   const plan = planOn ? [mtgPlanSlide_(mtgMergePlans_(summaries.map(s => s.plan)), now, name), mtgPlanBySubSlide_(summaries, now)] : [];
-  const first = mtgNumberSlides_(frame, [cover, mtgContentsSlide_(sections), mtgOverviewSlide_(sections)].concat(plan));
-  return first.concat.apply(first, sections.map(x => x.slides));
+  return mtgNumberSlides_(frame, [cover, mtgContentsSlide_(sections), mtgOverviewSlide_(sections)].concat(plan));
+}
+
+/**
+ * 統合版の前のページ（mtgCombinedFront_）に使う、会議サマリの中身の一部（JSON にして仕事に保存できる形。区切って作るとき、資料ごとに覚えておく）：
+ * 名前・ダミーの件数・数字（kpi）・作れないところ（gaps）・期待値の増減の始まりと終わり・計画に対する積み上げ・比べた時点（前回比の書き方）
+ */
+function mtgCombinedLite_(s) {
+  const prev = s.previous;
+  return JSON.parse(JSON.stringify({name: s.name, dummy: s.dummy || 0, first: s.first || false, kpi: s.kpi, gaps: s.gaps || {},
+    bridge: {start: s.bridge.start, end: s.bridge.end}, plan: s.plan || null,
+    previous: prev ? {date: prev.date, cutoff: prev.cutoff, baseline: !!prev.baseline, chosen: !!prev.chosen} : null}));
 }
 
 /**
@@ -6978,11 +7073,7 @@ function mtgCoverTone_(slide) {
  * ひな形に扉のページが無ければ、扉は pageOf に入れない（描く）。統合版の表紙のページが無ければ、表紙のページを使う
  */
 function mtgTemplatePlan_(slides, pages) {
-  const P = MTG_OPTIONS.templatePages;
-  const page = n => (n ? pages[n - 1] || null : null);
-  // RX Service Meeting の表紙（service）は紫のページだけ（無ければ緑の表紙は使わずに、紫で描く）
-  const source = slide => (slide.service ? page(P.service) : slide.cover ? (slide.combined && page(P.combined)) || page(P.cover)
-    : slide.divider ? page(P.divider) : null);
+  const source = slide => mtgTemplateSource_(slide, pages);
   const used = {};
   const pageOf = {};
   const copies = [];
@@ -6998,6 +7089,15 @@ function mtgTemplatePlan_(slides, pages) {
     copies.push({duplicateObject: {objectId: from, objectIds: {[from]: pageOf[i]}}});
   });
   return {pageOf, requests: pages.filter(id => !used[id]).map(id => ({deleteObject: {objectId: id}})).concat(copies)};
+}
+
+/** スライド（slide）に使うひな形のページの ID（pages はひな形のページの ID の順。使わなければ null） */
+function mtgTemplateSource_(slide, pages) {
+  const P = MTG_OPTIONS.templatePages;
+  const page = n => (n ? pages[n - 1] || null : null);
+  // RX Service Meeting の表紙（service）は紫のページだけ（無ければ緑の表紙は使わずに、紫で描く）
+  return slide.service ? page(P.service) : slide.cover ? (slide.combined && page(P.combined)) || page(P.cover)
+    : slide.divider ? page(P.divider) : null;
 }
 
 /**
@@ -7416,16 +7516,7 @@ function mtgFileName_(name, meeting, final) {
  */
 function mtgExportDeck_(name, slides, folder) {
   const F = MTG_SLIDES_FIELDS;
-  const templateId = mtgTemplateId_();
-  let file;
-  let deck;
-  if (templateId) {
-    file = DriveApp.getFileById(templateId).makeCopy(name, folder);
-    deck = Slides.Presentations.get(file.getId(), {fields: F.deck});
-  } else {
-    deck = Slides.Presentations.create({title: name, pageSize: {width: mtgPt_(MTG_SLIDE.width), height: mtgPt_(MTG_SLIDE.height)}});
-    file = DriveApp.getFileById(deck.presentationId);
-  }
+  const {templateId, file, deck} = mtgDeckCreate_(name, folder);
   try {
     const scale = mtgPageWidth_(deck) / MTG_SLIDE.width;
     const pages = (deck.slides || []).map(sl => sl.objectId);
@@ -7469,17 +7560,148 @@ function mtgExportDeck_(name, slides, folder) {
     // ひな形のページを使わない表紙・扉の背景を、いただいたひな形と同じ絵柄（グラデーションと RX）の画像にする（表紙は緑・扉はグレー。mtgCoverTone_）
     mtgCoverBackground_(deck.presentationId, slides.map((slide, i) => ((slide.cover || slide.divider) && !plan.pageOf[i]
       ? {id: 'mtg_p' + (i + 1), tone: mtgCoverTone_(slide)} : null)).filter(Boolean));
-    if (!templateId && MTG_OPTIONS.keepSlides) file.moveTo(folder);   // 残さないときは動かさずにゴミ箱へ（呼び出しを減らす）
-    const blob = file.getAs('application/pdf').setName(name + '.pdf');
-    const pdf = folder.createFile(slides.some(slide => slide.elements.some(el => el.link != null)) ? mtgPdfFitLinks_(blob) : blob);
-    const pptx = mtgExportPptxEnabled_().on ? mtgExportPptx_(file.getId(), name, folder) : {};
-    if (pptx.error) console.warn(name + '：' + pptx.error + '（PDF は作りました）');
-    mtgTrashOld_(folder, [name, name + '.pdf', name + '.pptx'], [file.getId(), pdf.getId()].concat(pptx.file ? [pptx.file.getId()] : []));
-    if (!MTG_OPTIONS.keepSlides) file.setTrashed(true);
-    return {pdf, pptx: pptx.file || null, pptxError: pptx.error || '', deck: MTG_OPTIONS.keepSlides ? file : null};
+    return mtgDeckSave_(file, name, folder, !!templateId, slides.some(slide => slide.elements.some(el => el.link != null)));
   } catch (e) {
     try { file.setTrashed(true); } catch (_) {}
     throw e;
+  }
+}
+
+/**
+ * 資料（Google スライド）を作る：ひな形（mtgTemplateId_）があれば保存先（folder）にコピーし、無ければ新しい資料（720 × 405pt。マイドライブ）。
+ * {templateId, file, deck: Slides API で読んだ資料（ページの大きさとページの ID）}
+ */
+function mtgDeckCreate_(name, folder) {
+  const templateId = mtgTemplateId_();
+  if (templateId) {
+    const file = DriveApp.getFileById(templateId).makeCopy(name, folder);
+    return {templateId, file, deck: Slides.Presentations.get(file.getId(), {fields: MTG_SLIDES_FIELDS.deck})};
+  }
+  const deck = Slides.Presentations.create({title: name, pageSize: {width: mtgPt_(MTG_SLIDE.width), height: mtgPt_(MTG_SLIDE.height)}});
+  return {templateId: '', file: DriveApp.getFileById(deck.presentationId), deck};
+}
+
+/**
+ * できた資料（file）を PDF（と、設定なら PowerPoint）にして folder に保存し、同じ名前の古い版をゴミ箱へ。残さない設定なら Google スライドはゴミ箱へ。
+ * templated はひな形のコピーか（コピーは folder にある）、links は目次のリンクがあるか（PDF のリンクの飛び先を直す）。戻り値は mtgExportDeck_ と同じ
+ */
+function mtgDeckSave_(file, name, folder, templated, links) {
+  if (!templated && MTG_OPTIONS.keepSlides) file.moveTo(folder);   // 残さないときは動かさずにゴミ箱へ（呼び出しを減らす）
+  const blob = file.getAs('application/pdf').setName(name + '.pdf');
+  const pdf = folder.createFile(links ? mtgPdfFitLinks_(blob) : blob);
+  const pptx = mtgExportPptxEnabled_().on ? mtgExportPptx_(file.getId(), name, folder) : {};
+  if (pptx.error) console.warn(name + '：' + pptx.error + '（PDF は作りました）');
+  mtgTrashOld_(folder, [name, name + '.pdf', name + '.pptx'], [file.getId(), pdf.getId()].concat(pptx.file ? [pptx.file.getId()] : []));
+  if (!MTG_OPTIONS.keepSlides) file.setTrashed(true);
+  return {pdf, pptx: pptx.file || null, pptxError: pptx.error || '', deck: MTG_OPTIONS.keepSlides ? file : null};
+}
+
+/* ---------------- 何回かの実行に分けて作る資料（統合版） ---------------- */
+
+/**
+ * mtgExportDeck_ と同じ資料を、始める（mtgDeckStart_）・スライドを足す（mtgDeckAdd_。何回でも。スライドの番号（0 から）を指定して足すので、
+ * 足す順は自由。最後に番号の順に並べる）・仕上げる（mtgDeckFinish_）に分けて作る（統合版は80ページを超え、1回の実行の6分に入らないため）。
+ * 途中の状態 state は JSON にして仕事に保存できる（作った資料の ID・倍率・ひな形のページ・足したスライドの ID など。部品は持たない）。
+ * ひな形の表紙・扉は、ひな形のページを毎回複製して使う（元のページは書き換えずに残して、仕上げで消す）。複製の文字の枠の ID は複製のときに決める（objectIds）ので、読み直さない
+ */
+function mtgDeckStart_(name, folder) {
+  const {templateId, file, deck} = mtgDeckCreate_(name, folder);
+  try {
+    // added：足したスライドの数、dups：ひな形のページを複製したスライドの番号（ID は mtg_t{番号}。ほかは mtg_p{番号}）。仕事に保存するので小さく持つ
+    const state = {id: deck.presentationId, file: file.getId(), templated: !!templateId, scale: mtgPageWidth_(deck) / MTG_SLIDE.width,
+      pages: (deck.slides || []).map(sl => sl.objectId), texts: {}, blank: !templateId, added: 0, dups: [], covers: [], links: []};
+    // ひな形のページの、決まった文字（MTG_OPTIONS.templateTexts）の枠（複製の文字を書き換える。mtgTemplateTextRequests_ が読む形で、要るところだけ）
+    if (templateId) {
+      const texts = Object.keys(MTG_OPTIONS.templateTexts).map(key => MTG_OPTIONS.templateTexts[key]).filter(Boolean);
+      const known = text => texts.some(t => t === text || (/^X{5,}$/.test(t) && /^X{5,}$/.test(text)));
+      (Slides.Presentations.get(deck.presentationId, {fields: MTG_SLIDES_FIELDS.texts}).slides || []).forEach(sl => {
+        state.texts[sl.objectId] = (sl.pageElements || []).filter(el => el.shape && el.shape.text).map(el => {
+          const runs = (el.shape.text.textElements || []).filter(t => t.textRun);
+          const size = runs.length && runs[0].textRun.style && runs[0].textRun.style.fontSize;
+          return {objectId: el.objectId, transform: {translateY: el.transform && el.transform.translateY || 0},
+            shape: {text: {textElements: [{textRun: {content: runs.map(t => t.textRun.content).join(''), style: size ? {fontSize: {magnitude: size.magnitude}} : {}}}]}}};
+        }).filter(el => known(el.shape.text.textElements[0].textRun.content.replace(/\n$/, '')));
+      });
+    }
+    return state;
+  } catch (e) {
+    try { file.setTrashed(true); } catch (_) {}
+    throw e;
+  }
+}
+
+/** 資料（state）に、slides をスライドの番号 offset から足す（state を書き換える）。うまくいかなければ止める（資料は mtgDeckDiscard_ でゴミ箱へ） */
+function mtgDeckAdd_(state, slides, offset) {
+  let requests = [];
+  const flush = () => {
+    if (!requests.length) return;
+    if (state.blank) state.pages.forEach(id => requests.push({deleteObject: {objectId: id}}));   // 作ったときの白紙のスライド
+    Slides.Presentations.batchUpdate({requests}, state.id);
+    requests = [];
+    state.blank = false;
+  };
+  slides.forEach((slide, k) => {
+    const i = offset + k;
+    const own = 'mtg_p' + (i + 1);
+    const from = state.templated ? mtgTemplateSource_(slide, state.pages) : null;
+    let add;
+    if (from) {
+      // ひな形のページを複製して使う（決まった文字の枠の ID は「複製の ID_k番号」。ほかの部品の ID は Slides API が決める）
+      const page = 'mtg_t' + (i + 1);
+      const ids = {[from]: page};
+      const elements = (state.texts[from] || []).map((el, n) => {
+        ids[el.objectId] = page + '_k' + n;
+        return Object.assign({}, el, {objectId: page + '_k' + n});
+      });
+      add = [{duplicateObject: {objectId: from, objectIds: ids}}].concat(mtgTemplateTextRequests_({objectId: page, pageElements: elements}, slide.template),
+        mtgSlideRequests_(slide, page, i, {scale: state.scale, existing: true, idPrefix: own}));
+      state.dups.push(i);
+    } else {
+      add = mtgSlideRequests_(slide, own, i, {scale: state.scale});
+      if (slide.cover || slide.divider) state.covers.push({id: own, tone: mtgCoverTone_(slide)});
+    }
+    // ページへのリンク（目次）は、仕上げで付ける（リンク先のスライドができてから）
+    slide.elements.forEach((el, n) => {
+      if (el.link != null && el.text != null && el.text !== '') state.links.push({id: own + '_' + n, to: el.link, color: el.color || MTG_OPTIONS.colors.body});
+    });
+    if (requests.length && requests.length + add.length > MTG_OPTIONS.batchRequests) flush();
+    requests = requests.concat(add);
+  });
+  flush();
+  state.added += slides.length;
+}
+
+/**
+ * 資料（state）を仕上げる：使ったひな形の元のページを消し、足したスライドのレイアウトの枠を消し、目次のリンクを付け、スライドを番号の順に並べ、
+ * ひな形を使わない表紙・扉の背景の画像を付けてから、PDF にして保存する（mtgDeckSave_）。戻り値は mtgExportDeck_ と同じ
+ */
+function mtgDeckFinish_(state, name, folder) {
+  const file = DriveApp.getFileById(state.file);
+  const index = Array.from({length: state.added}, (_, i) => i);
+  const pageId = i => (state.dups.indexOf(i) >= 0 ? 'mtg_t' : 'mtg_p') + (i + 1);
+  const extra = state.templated ? state.pages.map(id => ({deleteObject: {objectId: id}})) : [];
+  extra.push.apply(extra, mtgPlaceholderRequests_(Slides.Presentations.get(state.id, {fields: MTG_SLIDES_FIELDS.placeholders}),
+    index.map(i => 'mtg_p' + (i + 1))));
+  state.links.forEach(link => {
+    if (link.to < 0 || link.to >= state.added) return;
+    extra.push({updateTextStyle: {objectId: link.id, textRange: {type: 'ALL'}, style: {link: {pageObjectId: pageId(link.to)},
+      underline: false, foregroundColor: {opaqueColor: {rgbColor: mtgRgb_(link.color)}}}, fields: 'link,underline,foregroundColor'}});
+  });
+  index.forEach(i => extra.push({updateSlidesPosition: {slideObjectIds: [pageId(i)], insertionIndex: i}}));
+  for (let i = 0; i < extra.length; i += MTG_OPTIONS.batchRequests) {
+    Slides.Presentations.batchUpdate({requests: extra.slice(i, i + MTG_OPTIONS.batchRequests)}, state.id);
+  }
+  mtgCoverBackground_(state.id, state.covers);
+  return mtgDeckSave_(file, name, folder, state.templated, state.links.length > 0);
+}
+
+/** 作っている途中の資料（state）をゴミ箱に移す（やめたとき・止まったとき。できなくても止めない） */
+function mtgDeckDiscard_(state) {
+  if (!state || !state.file) return;
+  try {
+    DriveApp.getFileById(state.file).setTrashed(true);
+  } catch (error) {
+    console.warn('作っている途中の資料をゴミ箱に移せませんでした：' + (error && error.message || error));
   }
 }
 

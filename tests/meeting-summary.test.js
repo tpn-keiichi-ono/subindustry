@@ -3878,3 +3878,189 @@ test('統合版（readMode: api）：Sheets API で sheetsPerRead シートず�
   assert.doesNotMatch(api.message, /※ Sheets API/);
   assert.strictEqual(api.text, sheet.text, 'スライドの中身は同じ');
 });
+
+/* ---------------- 統合版も区切って続ける ---------------- */
+
+/** 統合版の前に、すべてのサブインダストリーの本番の資料を作っておく */
+function combinedReady(gas, g) {
+  const o = gas.get('MTG_OPTIONS');
+  o.combined.enabled = true;
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
+  gas.promptAnswers = ['', '10/23'];
+  g.createBusinessMtgSummaries();
+  return {o, meeting};
+}
+
+/** 資料のスライドの並び（ID）と、作ったときのリクエスト（時刻は除く） */
+function deckShape(deck) {
+  return {slides: deck.slides.map(sl => sl.objectId), requests: JSON.stringify(deck.requests).replace(/\d{4}\/\d{1,2}\/\d{1,2} \d{2}:\d{2}/g, 'TIME')};
+}
+
+test('統合版：時間がかかれば、サブインダストリーの資料のページを足したところで区切り、続き（continueBusinessMtgSummaries）で残りのページ・表紙などのページ・PDF・格納を作る。できあがりは区切らずに作ったときと同じ', () => {
+  const once = (() => {
+    const {gas, g} = setup();
+    combinedReady(gas, g);
+    gas.promptAnswers = ['10/23'];
+    g.createBusinessMtgCombinedSummary();
+    return {gas, deck: deckShape(gas.decks[gas.decks.length - 1]), message: gas.alerts[gas.alerts.length - 1].message};
+  })();
+  assert.match(once.message, /「全サブインダストリー」（統合版）：.*（19ページ）/);
+  assert.deepStrictEqual(once.deck.slides, Array.from({length: 19}, (_, i) => 'mtg_p' + (i + 1)), '表紙などのページは最後に足して、番号の順に並べる');
+
+  const {gas, g} = setup();
+  const {o} = combinedReady(gas, g);
+  const sprops = g.PropertiesService.getScriptProperties();
+  const handlers = () => gas.triggers.filter(t => t.getHandlerFunction() === 'continueBusinessMtgSummaries');
+  // スライドを足すたびに 100秒かかる時計。資料1つ分（100秒）＋次の見積もり（読む 30秒・資料 55秒）は入らない
+  const clock = {t: 0};
+  g.mtgNow_ = () => clock.t;
+  const add = g.mtgDeckAdd_;
+  g.mtgDeckAdd_ = (...args) => { clock.t += 100000; return add(...args); };
+  o.run.limitMs = 150000;
+  const decks = gas.decks.length;
+  gas.promptAnswers = ['10/23'];
+  g.createBusinessMtgCombinedSummary();
+  const first = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(first, /^時間がかかるため、ここで区切りました（Apps Script の1回の実行は6分まで）。残りは約1分後に自動で続けます：資料 1件（新FMT2）のページ・表紙・目次・状況のページと PDF・会議のフォルダへの格納とインデックス。/);
+  assert.match(first, /統合版（全サブインダストリー）：1\/2サブインダストリーのページを作りました。/);
+  assert.strictEqual(gas.decks.length, decks + 1, '資料は1つだけ作り、続きで足していく');
+  assert.deepStrictEqual(handlers().map(t => t.options.after), [60000]);
+  const saved = JSON.parse(sprops.getProperty('MTG_JOB'));
+  assert.strictEqual(saved.kind, 'combined');
+  assert.ok(JSON.stringify(saved).length < 9000, 'スクリプトのプロパティの1つの値に入る');
+  assert.ok(sprops.getProperty('MTG_JOB_ITEM_0').length < 9000);
+  assert.deepStrictEqual([saved.deck.added, saved.page], [7, 12], '足したスライドの数（1つ目の資料の表紙と本編の7枚）と、次の資料の前のページの数（前のページ 5枚 ＋ 7枚）');
+
+  // 途中：統合版も個別の資料も、すぐには作らない
+  gas.promptAnswers = ['10/23'];
+  g.createBusinessMtgCombinedSummary();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版を作っている途中です（自動で続けています）。/);
+  g.showBusinessMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /統合版（全サブインダストリー）を作っている途中です（会議日 \d{4}\/10\/23。1\/2サブインダストリーのページ）。自動で続けています。/);
+  gas.confirmAnswer = 'NO';
+  gas.promptAnswers = ['', '10/23'];
+  g.createBusinessMtgSummaries();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /前に始めた統合版（全サブインダストリー。会議日 \d{4}\/10\/23。1\/2サブインダストリーのページ。/);
+  gas.confirmAnswer = 'YES';
+
+  // 続き：1回目は残りの資料のページ、2回目で仕上げ（見積もり 150秒が入らないので、もう一度区切る）
+  o.run.limitMs = 230000;   // 資料（100秒）のあと、仕上げの見積もり（150秒）は入らない
+  clock.t = 0;
+  g.continueBusinessMtgSummaries();
+  assert.ok(sprops.getProperty('MTG_JOB'), 'まだ続く');
+  assert.strictEqual(JSON.parse(sprops.getProperty('MTG_JOB')).items, 2);
+  o.run.limitMs = 400000;
+  clock.t = 0;
+  g.continueBusinessMtgSummaries();
+  assert.deepStrictEqual([sprops.getProperty('MTG_JOB'), handlers().length], [null, 0]);
+  const deck = gas.decks[gas.decks.length - 1];
+  assert.strictEqual(gas.decks.length, decks + 1);
+  assert.deepStrictEqual(deckShape(deck), once.deck, '区切らずに作ったときと同じ');
+  g.showBusinessMtgSummariesResult();
+  const done = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(done, /に終わりました。\n\n「全サブインダストリー」（統合版）：\d{8}_全サブインダストリー_RX Business Meeting用資料\.pdf（19ページ）/);
+  assert.match(done, /会議のフォルダ「\d{6}_第5回会議」に格納しました/);
+  const index = gas.ss.getSheetByName('INDEX_会議資料');
+  assert.match(index.getRange(2, 3).getDisplayValue(), /_全サブインダストリー_RX Business Meeting用資料\.pdf$/);
+});
+
+test('統合版：作っている途中でやめた・止まったときは、作りかけの資料をゴミ箱に移す', () => {
+  const {gas, g} = setup();
+  const {o} = combinedReady(gas, g);
+  const clock = {t: 0};
+  g.mtgNow_ = () => clock.t;
+  const add = g.mtgDeckAdd_;
+  g.mtgDeckAdd_ = (...args) => { clock.t += 100000; return add(...args); };
+  o.run.limitMs = 150000;
+  gas.promptAnswers = ['10/23'];
+  g.createBusinessMtgCombinedSummary();
+  const deck1 = gas.decks[gas.decks.length - 1].id;
+  // 個別の資料を「やめて新しく作る」：作りかけの統合版はゴミ箱へ
+  g.mtgNow_ = () => 0;
+  g.mtgDeckAdd_ = add;
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  assert.ok(gas.trashed.indexOf(deck1) >= 0, 'やめた統合版はゴミ箱へ');
+  assert.strictEqual(g.PropertiesService.getScriptProperties().getProperty('MTG_JOB'), null);
+  // 続きで止まった：ゴミ箱に移して、作り直しを案内する
+  g.mtgNow_ = () => clock.t;
+  g.mtgDeckAdd_ = (...args) => { clock.t += 100000; return add(...args); };
+  clock.t = 0;
+  gas.promptAnswers = ['10/23'];
+  g.createBusinessMtgCombinedSummary();
+  const deck2 = gas.decks[gas.decks.length - 1].id;
+  g.mtgDeckAdd_ = () => { throw new Error('Slides API の失敗'); };
+  clock.t = 0;
+  o.run.limitMs = 400000;
+  g.continueBusinessMtgSummaries();
+  assert.ok(gas.trashed.indexOf(deck2) >= 0, '止まった統合版はゴミ箱へ');
+  g.showBusinessMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /統合版（全サブインダストリー）を作る途中で止まりました：Slides API の失敗\ncreateBusinessMtgCombinedSummary\(\) で、作り直してください。/);
+});
+
+test('統合版・ひな形（区切って作る）：表紙はひな形のページを毎回複製して使い（文字の枠の ID は複製のときに決める）、元のページは仕上げで消して、番号の順に並べる', () => {
+  const {gas, g} = setup();
+  const id = '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
+  gas.slideTemplates[id] = pptxTemplate();
+  g.PropertiesService.getScriptProperties().setProperty('MTG_TEMPLATE_URL', 'https://docs.google.com/presentation/d/' + id + '/edit');
+  combinedReady(gas, g);
+  gas.promptAnswers = ['10/23'];
+  g.createBusinessMtgCombinedSummary();
+  const deck = gas.decks[gas.decks.length - 1];
+  assert.match(deck.title, /_全サブインダストリー_RX Business Meeting用資料$/);
+  assert.strictEqual(deck.slides.length, 19);
+  // 複製した表紙の、決まった文字の枠（見出し・会議の名前・日付・名前の4つ）だけ ID を決める
+  const dup = deck.requests.find(r => r.duplicateObject).duplicateObject;
+  assert.deepStrictEqual(Object.keys(dup.objectIds).sort(), ['g_cover', 'g_cover_date', 'g_cover_name', 'g_cover_subtitle', 'g_cover_title']);
+  // 表紙（1・6・13ページ）は複製、ほかは足したスライド
+  assert.deepStrictEqual(deck.slides.map(sl => sl.objectId), Array.from({length: 19}, (_, i) => ([0, 5, 12].indexOf(i) >= 0 ? 'mtg_t' : 'mtg_p') + (i + 1)));
+  const dups = deck.requests.filter(r => r.duplicateObject);
+  assert.deepStrictEqual(dups.map(r => r.duplicateObject.objectIds[r.duplicateObject.objectId]), ['mtg_t6', 'mtg_t13', 'mtg_t1']);
+  assert.ok(dups.every(r => r.duplicateObject.objectId === gas.slideTemplates[id].slides[0].objectId), 'どれも元のひな形の1枚目（緑）から');
+  // 元のひな形のページはどれも消す
+  const removed = deck.requests.filter(r => r.deleteObject).map(r => r.deleteObject.objectId);
+  gas.slideTemplates[id].slides.forEach(sl => assert.ok(removed.indexOf(sl.objectId) >= 0, sl.objectId));
+  // ひな形の文字（見出し）は複製の枠に書く
+  const titles = deck.requests.filter(r => r.insertText && /^mtg_t\d+_k\d+$/.test(r.insertText.objectId)).map(r => r.insertText.text);
+  assert.ok(titles.indexOf('全サブインダストリー') >= 0 && titles.indexOf('新FMT') >= 0 && titles.indexOf('新FMT2') >= 0, JSON.stringify(titles));
+  // 目次のリンク：資料の表紙は複製の ID
+  const links = deck.requests.filter(r => r.updateTextStyle && r.updateTextStyle.style.link).map(r => r.updateTextStyle.style.link.pageObjectId);
+  assert.deepStrictEqual(plain(links), ['mtg_p3', 'mtg_p3', 'mtg_p4', 'mtg_p4', 'mtg_t6', 'mtg_t6', 'mtg_t13', 'mtg_t13']);
+  // 区切って作っても（ひな形のページの文字の枠は仕事に保存して続きで使う）同じ資料
+  const again = setup();
+  again.gas.slideTemplates[id] = pptxTemplate();
+  again.g.PropertiesService.getScriptProperties().setProperty('MTG_TEMPLATE_URL', 'https://docs.google.com/presentation/d/' + id + '/edit');
+  const {o} = combinedReady(again.gas, again.g);
+  const clock = {t: 0};
+  again.g.mtgNow_ = () => clock.t;
+  const add = again.g.mtgDeckAdd_;
+  again.g.mtgDeckAdd_ = (...args) => { clock.t += 100000; return add(...args); };
+  o.run.limitMs = 150000;
+  again.gas.promptAnswers = ['10/23'];
+  again.g.createBusinessMtgCombinedSummary();
+  for (let n = 0; n < 5 && again.g.PropertiesService.getScriptProperties().getProperty('MTG_JOB'); n++) {
+    clock.t = 0;
+    o.run.limitMs = 400000;
+    again.g.continueBusinessMtgSummaries();
+  }
+  assert.deepStrictEqual(deckShape(again.gas.decks[again.gas.decks.length - 1]), deckShape(deck));
+});
+
+test('統合版の前のページ（表紙・目次・状況・計画）は、会議サマリの中身の一部（mtgCombinedLite_。JSON にして保存できる形）からでも同じに作る', () => {
+  const {gas, g} = setup();
+  const summaries = [summarize(g, '新FMT'), summarize(g, '新FMT2')];
+  const now = summaries[0].now;
+  const sections = summaries.map((s, i) => ({summary: s, start: 6 + i * 7}));
+  const lite = sections.map(x => ({summary: JSON.parse(JSON.stringify(g.mtgCombinedLite_(x.summary))), start: x.start}));
+  assert.ok(lite.every(x => JSON.stringify(x.summary).length < 9000), 'スクリプトのプロパティの1つの値に入る');
+  assert.deepStrictEqual(plain(g.mtgCombinedFront_(lite, '2026/10/23', true, now)), plain(g.mtgCombinedFront_(sections, '2026/10/23', true, now)));
+  // 基準・選んだ時点と比べたとき（前回比の書き方が変わる）も同じ
+  summaries[1].previous = Object.assign({}, summaries[1].previous || {}, {baseline: true, cutoff: new Date(2026, 9, 17).getTime(), date: '2026/10/17'});
+  const lite2 = sections.map(x => ({summary: JSON.parse(JSON.stringify(g.mtgCombinedLite_(x.summary))), start: x.start}));
+  assert.deepStrictEqual(plain(g.mtgCombinedFront_(lite2, '2026/10/23', false, now)), plain(g.mtgCombinedFront_(sections, '2026/10/23', false, now)));
+  // 前のページの数と、一度に作る並び（mtgCombinedSlides_）の前のページは同じ
+  assert.strictEqual(g.mtgCombinedFrontCount_(), 5);
+  assert.deepStrictEqual(plain(g.mtgCombinedSlides_(summaries, '2026/10/23', true).slice(0, 5)), plain(g.mtgCombinedFront_(
+    [{summary: summaries[0], start: 6}, {summary: summaries[1], start: 6 + g.mtgSlides_(summaries[0], 5, {appendix: false}).length}], '2026/10/23', true, now)));
+});

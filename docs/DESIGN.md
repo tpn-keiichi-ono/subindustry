@@ -453,7 +453,7 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   第N回は会議ごとに数えます。会議の名前を含まない前の版のフォルダ（`261023_第5回会議`）は、RX Business Meeting のフォルダとして使い続けます（2026/10/17 から）。
   前の会議の名前（RX Business MTG・RX Service MTG。`formerMeetingNames`）のフォルダも、同じ会議のフォルダとして見分けます。インデックスの会議名も、前の名前の行（`index.formerKinds`）を
   同じ会議の行として使い、書くときに今の名前に書き換えます。
-- **統合版**（`createBusinessMtgCombinedSummary()`・`mtgCreateCombined_`・`mtgCombinedSlides_`。`MTG_OPTIONS.combined`）：すべてのサブインダストリーの資料を作ったあとに、
+- **統合版**（`createBusinessMtgCombinedSummary()`・`mtgCombinedRun_`・`mtgCombinedSlides_`。`MTG_OPTIONS.combined`）：すべてのサブインダストリーの資料を作ったあとに、
   別の関数で、全サブインダストリーの資料を1つにまとめた資料を作ります（`{date}_全サブインダストリー_RX Business Meeting用資料`。試作なら試作）。
   資料を作る関数（`createBusinessMtgSummaries()`）とは分けます：11シートの資料と格納で、1回の実行の6分の上限に近いため（2026/10/17 に統合版を続けて作る版でタイムアウトした）。
   並びは、表紙（見出しは「全サブインダストリー」、下に収録したサブインダストリーと出典。緑）→ 目次（`mtgContentsSlide_`。全サブインダストリーの状況と
@@ -473,6 +473,18 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   （インデックスのその会議日の行に空のセルが無いこと）で、満たさなければ足りないサブインダストリーを知らせて、何も作らずに終えます（試作も作らない）。
   資料を区切って作っている途中（下の「6分の上限」）なら止めます。`createBusinessMtgSummaries()` は本番なら、終わりの画面に、この会議日の本番の資料（記録と PDF）が
   まだできていないサブインダストリーを出し（`mtgMeetingPending_`。サブインダストリーごとに作ってもよい）、すべてそろったらこの関数を案内します。
+  - **統合版も区切って続ける**（`mtgCombinedStart_` → `mtgCombinedRun_`。2026/11/05）：11シートを読んで80ページを超える資料にすると、1回の実行の6分に入らない
+    （Sheets API で読んでも1シート 30〜160秒、スライドは1シートの資料で約67秒）。個別の資料と同じ仕事の置き場（`MTG_JOB`・`MTG_JOB_ITEM_n`）とトリガー
+    （`continueBusinessMtgSummaries`。`job.kind: 'combined'` なら `mtgCombinedRun_` で続ける）を使う。順に、①資料（Google スライド）を始める（`mtgDeckStart_`）→
+    ② 3シートずつ読んで中身を作り、資料ごとにスライドを足す（`mtgDeckAdd_`。スライドの番号（`job.page`）は、前のページの数（`mtgCombinedFrontCount_`：5。計画を出さなければ 3）から数える。
+    見積もりは `summaryMs`・`deckMs`）→ ③ 前のページ（表紙・目次・状況・計画。`mtgCombinedFront_`）を番号 0 から足し、仕上げる（`mtgDeckFinish_`：ひな形の元のページと
+    レイアウトの枠を消し、目次のリンクを付け、番号の順に並べ（`updateSlidesPosition`）、背景の画像を付けて PDF に。`mtgDeckSave_`）→ 会議のフォルダとインデックス
+    （③ と合わせて見積もり `combinedFinishMs` 150秒）。前のページは全シートの中身が要るので、資料ごとに中身の一部（`mtgCombinedLite_`：名前・数字・作れないところ・
+    期待値の増減・計画に対する積み上げ・比べた時点。JSON にして `MTG_JOB_ITEM_n` に保存）を覚えておき、それから作る（中身そのものと同じページになる）。
+    途中の資料の状態（`job.deck`：資料の ID・倍率・ひな形のページと文字の枠・足したスライドの ID・表紙の背景・目次のリンク）も仕事に保存する。
+    ひな形の表紙は、ひな形のページを毎回 `duplicateObject` で複製して使う（`mtg_t{番号}`。文字の枠の ID は `objectIds` で「複製の ID_e番号」に決めるので読み直さない。
+    元のページは書き換えずに残して、仕上げで消す。一度に作る `mtgExportDeck_` は1回目に元のページを使う）。やめた（個別の資料の「やめて新しく作る」）・止まったときは、
+    作りかけの資料をゴミ箱に移す（`mtgDeckDiscard_`）。区切らずに作ったときと同じ資料になる（テストで確かめている）。
 - **6分の上限**（`mtgJobRun_`。`MTG_OPTIONS.run`）：資料を作る仕事を、資料（シートごと）→ 本番なら時点コピーと会議日の記録 → 会議のフォルダへの格納と
   インデックス（シートごと）に分け、次の仕事の見積もり（`summaryMs`・`deckMs`・`copyMs`・`storeMs`）で、実行を始めてから `limitMs`（320秒）を越えそうなら区切ります
   （`mtgJobPause_`：仕事をスクリプトのプロパティ `MTG_JOB`（資料ごとの知らせは `MTG_JOB_ITEM_n`）に保存し、時間主導の1回きりのトリガー `continueBusinessMtgSummaries` を
@@ -487,7 +499,7 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   計算し直しで 274秒かかり、IMPORTRANGE が 0 になったのでやめた。
   - 一度に読む追跡シートは `run.sheetsPerRead`（3）まで。`includeGridData` は1セルの情報が多く、11シートを一度に読むとメモリ不足で止まった（2026/11/04）。
     `mtgJobRun_` は3シートずつ読んで資料を作り、次の3シートを読む（`while`。時間が足りなければ区切る）。記録のシートは同じ実行の中で1回だけ読む（`job.apiCache`。保存しない）。
-    統合版（`mtgCombinedStart_`）も3シートずつ読んで中身を作る。時点コピーを直すのも3シートずつ。
+    統合版（`mtgCombinedRun_`）も3シートずつ読んで中身を作る。時点コピーを直すのも3シートずつ。
   - 読み方：シートの一覧（`Spreadsheets.get`。速い）→ 追跡シートとステータスの定義を `includeGridData` で1回（`formattedValue`・`effectiveValue`・`userEnteredValue`・
     書式の種類・入力規則）→ 記録のシートを `Values.batchGet`（`UNFORMATTED_VALUE`・`SERIAL_NUMBER`。見出しに「日時」を含む列は日時に）で1回。
     日時はシリアル値（スプレッドシートのタイムゾーン）から Date に（ミリ秒まで）。読んでいないシート（プルダウンの範囲のシートなど）は、開こうとしたときに読む。

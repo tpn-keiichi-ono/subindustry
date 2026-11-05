@@ -1191,8 +1191,19 @@ function createGas(options) {
             const at = deck.slides.findIndex(sl => sl.objectId === q.duplicateObject.objectId);
             if (at < 0) throw new Error('The object (' + q.duplicateObject.objectId + ') could not be found.');
             const copy = q.duplicateObject.objectIds[q.duplicateObject.objectId];
+            // 中の部品の ID：objectIds に指定があればそれ、無ければ「新しいページの ID_e番号」
+            const ids = q.duplicateObject.objectIds;
             deck.slides.splice(at + 1, 0, Object.assign({}, deck.slides[at], {objectId: copy,
-              pageElements: (deck.slides[at].pageElements || []).map((el, n) => Object.assign({}, el, {objectId: copy + '_e' + n}))}));
+              pageElements: (deck.slides[at].pageElements || []).map((el, n) => Object.assign({}, el, {objectId: ids[el.objectId] || copy + '_e' + n}))}));
+          }
+          // スライドの位置を変える
+          if (q.updateSlidesPosition) {
+            const moving = q.updateSlidesPosition.slideObjectIds;
+            const picked = deck.slides.filter(sl => moving.indexOf(sl.objectId) >= 0);
+            if (picked.length !== moving.length) throw new Error('The object (' + moving.join(',') + ') could not be found.');
+            const rest = deck.slides.filter(sl => moving.indexOf(sl.objectId) < 0);
+            rest.splice(q.updateSlidesPosition.insertionIndex, 0, ...picked);
+            deck.slides = rest;
           }
           if (q.deleteObject) {
             const gone = q.deleteObject.objectId;
