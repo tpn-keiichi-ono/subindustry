@@ -307,7 +307,7 @@ const MTG_OPTIONS = {
     status: '案件ステータス',
     amount: '想定売上規模（百万）',
     weighted: '期待値調整済\n想定売上規模（百万）',
-    orderMonth: '受注予定月',            // 2026/11/05 に「受注月」から改めた（前の見出しは columnAliases）
+    orderMonth: '受注月',                // 「受注予定月」に変えても読める（columnAliases）。変えたら、ここも「受注予定月」にして「受注月」を columnAliases に
     // 売上開始月：2026/10/29 にシートから無くなったので空（確認事項「売上開始月不整合」を出さない）。列を戻したら見出しを書く
     startMonth: '',
     activity: '活動状況',
@@ -324,14 +324,15 @@ const MTG_OPTIONS = {
   },
   // 同じ列のほかの見出し（シートによって見出しが違うもの。columns の見出しが無ければ、これを順に探す）。
   // 2026/10/26 時点で、I列はシートによって「RXシナリオ構成」と「RXシナリオ構成（サービス）」の2通り。
-  // 2026/10/29 に受注月の見出しが「受注月（改行）(yy/mm)」に、2026/11/05 に「受注予定月」になった。前の見出しも同じ列として読む
-  // （シートの見出しのほか、変更の記録の列名・変更時点スナップショット・時点コピー・削除した行の記録も、ここでそろえて読む。mtgCanonicalLabel_）
-  columnAliases: {scenario: ['RXシナリオ構成（サービス）'], orderMonth: ['受注予定月(yy/mm)', '受注月(yy/mm)', '受注月']},
+  // 2026/10/29 に受注月の見出しが「受注月（改行）(yy/mm)」になった。「受注予定月」に変える予定なので、その見出しも読む（2026/11/05）。
+  // 別の見出しも同じ列として読む（シートの見出しのほか、変更の記録の列名・変更時点スナップショット・時点コピー・削除した行の記録も、
+  // ここでそろえて読む。mtgCanonicalLabel_）
+  columnAliases: {scenario: ['RXシナリオ構成（サービス）'], orderMonth: ['受注月(yy/mm)', '受注予定月', '受注予定月(yy/mm)']},
   // 資料に含めない列（見出しの形。正規表現。全角・半角と空白の違いは無視）。その列の変更は、資料の変化・更新項目・時点コピーとの比較に出さない
   // （2026/10/29 に足した P〜U列「FY26前半期売上（百万）」〜「FY28後半期売上（百万）」。年度が変わっても同じ形なら除く）
   ignoreHeaders: ['^FY\\d+(前|後)半期売上'],
   // 必須項目：進行中の案件で空なら、入力内容のチェックの「未入力」に出す（シートに無い見出しは見ない）
-  required: ['案件ステータス', '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注予定月', '活動状況', 'アカウント責任者'],   // columns の見出しなら columnAliases も
+  required: ['案件ステータス', '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '活動状況', 'アカウント責任者'],   // columns の見出しなら columnAliases も
   // ステータスの定義のシート（期待値の率）。ステータスの進み具合（前進・後退）は率の大きい順、率が同じなら定義の下の行ほど進んでいる
   // （C-提案中 → C-選定対応中 → C-稟議対応中）。期待値の列が数式（想定売上 × 率）のとき、前回の期待値を記録から取れない案件はこの率で計算する。
   // シートが無ければ、進み具合はプルダウンの順（下ほど進んでいる）
@@ -3833,8 +3834,10 @@ function mtgStages_(deals, statusOrder) {
  */
 function mtgParseRemoved_(text, headers) {
   const s = String(text || '');
-  // 今の見出しに、前の見出し（columnAliases）も足す（見出しを変える前に削除した行の記録も読む）
-  const aliases = [].concat.apply([], Object.keys(MTG_OPTIONS.columnAliases || {}).map(k => MTG_OPTIONS.columnAliases[k]));
+  // 今のシートの見出しに、設定の見出し（columns）と別の見出し（columnAliases）も足す（見出しを変える前・後に削除した行の記録も読む）
+  const cols = MTG_OPTIONS.columns;
+  const aliases = [].concat.apply(Object.keys(cols).map(k => cols[k]).filter(Boolean),
+    Object.keys(MTG_OPTIONS.columnAliases || {}).map(k => MTG_OPTIONS.columnAliases[k]));
   const heads = (headers || []).concat(aliases).map(h => String(h).trim()).filter(Boolean)
     .filter((h, i, list) => list.indexOf(h) === i).sort((a, b) => b.length - a.length);
   const values = new Map();
@@ -3853,7 +3856,6 @@ function mtgParseRemoved_(text, headers) {
     if (current) values.set(current, values.get(current) + s.slice(pos, end));
     pos = end + 1;
   }
-  const cols = MTG_OPTIONS.columns;
   const get = label => String(values.get(mtgCanonicalLabel_(label)) || '').trim();
   return {customer: get(cols.customer), project: get(cols.project), status: get(cols.status),
     amount: mtgNumber_(get(cols.amount)), weighted: mtgNumber_(get(cols.weighted)),
@@ -7787,6 +7789,9 @@ function mtgDeckAdd_(state, slides, offset) {
     slide.elements.forEach((el, n) => {
       if (el.link != null && el.text != null && el.text !== '') state.links.push({id: own + '_' + n, to: el.link, color: el.color || MTG_OPTIONS.colors.body});
     });
+    // 新しいスライドはいつも最後に足す（番号の位置（insertionIndex）に入れると、前のページ（表紙など）をあとで足す統合版では、
+    // 「スライドの数より大きい位置」で失敗する。並びは仕上げで番号の順にそろえる）
+    add.forEach(q => { if (q.createSlide) delete q.createSlide.insertionIndex; });
     if (requests.length && requests.length + add.length > MTG_OPTIONS.batchRequests) flush();
     requests = requests.concat(add);
   });

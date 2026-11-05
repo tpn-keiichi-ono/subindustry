@@ -1184,8 +1184,15 @@ function createGas(options) {
         deck.requests.push(...resource.requests);
         // 白紙のスライドには、レイアウトのプレースホルダ（gas.layoutPlaceholders の種類）が付く。消したものは除く
         resource.requests.forEach(q => {
-          if (q.createSlide) deck.slides.push({objectId: q.createSlide.objectId,
-            pageElements: (gas.layoutPlaceholders || []).map((type, n) => ({objectId: q.createSlide.objectId + '_ph' + n, shape: {placeholder: {type}}}))});
+          if (q.createSlide) {
+            // 入れる位置（insertionIndex）はスライドの数まで（Slides API と同じく、越えたら失敗する）。省けば最後
+            const at = q.createSlide.insertionIndex;
+            if (at != null && at > deck.slides.length) {
+              throw new Error('Invalid requests.createSlide: The insertion index (' + at + ') should not be greater than the total number of slides (' + deck.slides.length + ').');
+            }
+            deck.slides.splice(at == null ? deck.slides.length : at, 0, {objectId: q.createSlide.objectId,
+              pageElements: (gas.layoutPlaceholders || []).map((type, n) => ({objectId: q.createSlide.objectId + '_ph' + n, shape: {placeholder: {type}}}))});
+          }
           // ページの複製：元のページのすぐ次に入る（中の部品の ID は「新しいページの ID_e番号」）
           if (q.duplicateObject) {
             const at = deck.slides.findIndex(sl => sl.objectId === q.duplicateObject.objectId);
