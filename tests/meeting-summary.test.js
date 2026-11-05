@@ -515,12 +515,13 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
   slides.forEach((slide, i) => {
     assert.ok(!slide.elements.some(el => el.type === 'box' && el.x === 0 && el.y === 0 && el.text), (i + 1) + '枚目：左上のラベル');
     if (i === 0 || i === 7) return;
-    assert.deepStrictEqual(roleOf(slide, 'footer').map(el => [el.text, el.y, el.color]), [['新FMT（10/23 会議資料）　金額の単位：百万円', S.footY, c.faint]],
+    assert.deepStrictEqual(roleOf(slide, 'footer').map(el => [el.text, el.y, el.color]), [['新FMT（10/23 会議資料）　金額の単位：百万円' +
+      (i === 1 ? '　※ 想定売上合計はステータス「失注」を除く列の合計' : ''), S.footY, c.faint]],
       (i + 1) + '枚目の出典の行（金額の単位も）');
     assert.ok(slide.elements.some(el => el.type === 'box' && el.y === S.ruleY && el.h < 1 && el.fill === c.rule), (i + 1) + '枚目の区切り線');
     assert.deepStrictEqual(roleOf(slide, 'title').map(el => [el.y, el.bold, el.color]), [[S.titleY, true, c.ink]], (i + 1) + '枚目の見出し（黒の太字）');
   });
-  assert.strictEqual(roleOf(plain(g.mtgSlides_(Object.assign({}, s, {final: false})))[1], 'footer')[0].text, '【試作】新FMT（10/23 会議資料）　金額の単位：百万円');
+  assert.strictEqual(roleOf(plain(g.mtgSlides_(Object.assign({}, s, {final: false})))[2], 'footer')[0].text, '【試作】新FMT（10/23 会議資料）　金額の単位：百万円');
   const other = plain(g.mtgSlides_(summarize(g, '新FMT2', {trackedSince: Date.now() - 100 * 86400000}))).map(sl => sl.title);
   assert.deepStrictEqual(other.slice(0, 6), titles.slice(0, 6), '本編の見出しは、中身が違うシートでも同じ');
 
@@ -576,12 +577,17 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
   const first = textOf(slides[1]);
   assert.ok(!/今期|着地/.test(first), 'サマリーに今期の受注・着地見込みは置かない');
   // 上の数字は進行中案件全体の合計（下の表の区分とは重ならない）。前回比つき
-  assert.deepStrictEqual(roleOf(slides[1], 'tile').map(el => el.text), ['進行中案件', '想定売上合計（進行中・百万円）', '期待値合計（進行中・百万円）', '入力内容の確認事項']);
+  assert.deepStrictEqual(roleOf(slides[1], 'tile').map(el => el.text), ['進行中案件', '想定売上合計（失注除く・百万円）', '期待値合計（進行中・百万円）', '入力内容の確認事項']);
   const sum = plain(summarize(g, '新FMT'));
-  assert.strictEqual(sum.bridge.amountEnd, sum.kpi.amount, '想定売上合計は進行中案件の想定売上の合計');
+  assert.strictEqual(sum.amountTotal.end, sum.kpi.amount);
+  assert.strictEqual(sum.bridge.amountEnd, sum.amountTotal.end, '案件の行だけなら、変更の記録から出す値とも同じ');
+  // 想定売上合計（2026/11/05 から）：シートの想定売上の列の合計（180）から、ステータスが失注の行（C社 20）だけを除く。進行中（A社 30・E社 80。D社は空）＋受注（B社 50）＝ 160。
+  // 前回比（時点コピーが無いとき）：変更の記録から出した前回の値。前回は C社（提案中）・F社（削除した行）も含めて 190 → 今 160
+  assert.deepStrictEqual([sum.amountTotal.totals.sum, sum.amountTotal.end, sum.amountTotal.start, sum.amountTotal.startFrom, sum.kpi.missingAmount], [180, 160, 190, 'log', 1]);
+  assert.match(textOf(slides[1]), /※ 想定売上合計はステータス「失注」を除く列の合計/, '出典の行の後ろに注記');
   assert.deepStrictEqual(roleOf(slides[1], 'tile-value').map(el => el.text), [
     '3件　直近14日間で ▲2件',
-    g.mtgAmount_(sum.bridge.amountEnd) + '　直近14日間で ' + g.mtgSigned_(sum.bridge.amountEnd - sum.bridge.amountStart),
+    '160　直近14日間で ▲30',
     '50　直近14日間で ▲8',
     '3項目　3案件・責任者 3名'
   ], '確認事項は項目の数（1案件に複数あれば別に数える）と、案件・責任者の数');
@@ -2176,7 +2182,7 @@ test('addBusinessMtgDummyHistory：シートの値は変えずに、ダミーの
   assert.ok(moves[0].some(m => /^ステータス：初回訪問 ▶ 提案中$/.test(m)), 'E社：前回より後の前進');
   assert.deepStrictEqual(moves[3], ['案件を登録'], 'F社（新規）には前回より前の動きを付けない');
   const slides = plain(g.mtgSlides_(summarize(g, '新FMT')));
-  assert.strictEqual(roleOf(slides[1], 'footer')[0].text, '【ダミーデータを含む】新FMT（10/23 会議資料）　金額の単位：百万円');
+  assert.strictEqual(roleOf(slides[2], 'footer')[0].text, '【ダミーデータを含む】新FMT（10/23 会議資料）　金額の単位：百万円');
   assert.match(slides[0].elements[0].text, /^出典：「新FMT」シートおよび変更履歴（ダミーデータを含む。/);
 
   // 入れ直し：前に足した分を消してから足す（増えない）
@@ -2378,7 +2384,7 @@ test('統合版のスライド：表紙・目次・全サブインダストリ�
     else assert.strictEqual(page[0].text, String(i + 1), (i + 1) + '枚目');
   });
   assert.strictEqual(roleOf(slides[2], 'footer')[0].text, '全サブインダストリー（10/23 会議資料）　金額の単位：百万円');
-  assert.strictEqual(roleOf(slides[start2], 'footer')[0].text, '新FMT2（10/23 会議資料）　金額の単位：百万円');
+  assert.strictEqual(roleOf(slides[start2], 'footer')[0].text, '新FMT2（10/23 会議資料）　金額の単位：百万円' + '　※ 想定売上合計はステータス「失注」を除く列の合計', 'サマリーには想定売上合計の注記');
 
   // 全サブインダストリーの状況：サブインダストリーごとの数と、その資料の表紙のページ。合計
   const overview = slides[2];
@@ -4063,4 +4069,48 @@ test('統合版の前のページ（表紙・目次・状況・計画）は、�
   assert.strictEqual(g.mtgCombinedFrontCount_(), 5);
   assert.deepStrictEqual(plain(g.mtgCombinedSlides_(summaries, '2026/10/23', true).slice(0, 5)), plain(g.mtgCombinedFront_(
     [{summary: summaries[0], start: 6}, {summary: summaries[1], start: 6 + g.mtgSlides_(summaries[0], 5, {appendix: false}).length}], '2026/10/23', true, now)));
+});
+
+test('想定売上合計は、スプレッドシートの想定売上の列の合計から、ステータスに「失注」を含む行だけを除いたものと必ず同じ（得意先・案件名が空の行も足す。文字の値は足さない。辞退などは除かない）。前回は時点コピーの同じ列から。diagnoseBusinessMtgAmount で突き合わせる', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  // 3行目〜8行目：A社 30（初回訪問）・B社 50（受注）・C社 20（提案中）・D社 空・E社 80・F社 10。9行目以降に足す
+  sheet.getRange(9, COL.customer).setValue('G社');
+  sheet.getRange(9, COL.status).setValue('C-失注');
+  sheet.getRange(9, COL.amount).setValue(7);
+  sheet.getRange(10, COL.customer).setValue('H社');
+  sheet.getRange(10, COL.status).setValue('辞退');            // ことばでは失注の分類だが、合計からは除かない（シートの「失注」だけ）
+  sheet.getRange(10, COL.amount).setValue(4);
+  sheet.getRange(11, COL.amount).setValue(2.5);               // 得意先・案件名が空の行（シートの合計には入るので足す）
+  sheet.getRange(12, COL.customer).setValue('I社');
+  sheet.getRange(12, COL.amount).setValue('約100');           // 文字（シートの合計にも入らないので足さない）
+  const values = sheet.getRange(3, COL.amount, sheet.getLastRow() - 2, 1).getValues().map(r => r[0]);
+  const statuses = sheet.getRange(3, COL.status, sheet.getLastRow() - 2, 1).getDisplayValues().map(r => r[0]);
+  const sheetSum = values.reduce((a, v, i) => a + (typeof v === 'number' && statuses[i].indexOf('失注') < 0 ? v : 0), 0);
+  assert.strictEqual(sheetSum, 30 + 50 + 20 + 80 + 10 + 4 + 2.5);
+  const raw = summarize(g, '新FMT');
+  const s = plain(raw);
+  assert.strictEqual(s.amountTotal.end, sheetSum, 'シートで失注の行を除いて列を合計したのと同じ');
+  const t = s.amountTotal.totals;
+  assert.deepStrictEqual([t.column, t.sum, t.excluded, t.excludedRows, t.unnamed, t.unnamedRows], ['G', sheetSum + 7, 7, 1, 2.5, 1].map((v, i) => (i === 0 ? g.diffColumnLetter_(COL.amount) : v)));
+  assert.deepStrictEqual(t.texts, [{row: 12, text: '約100'}]);
+  const slide = plain(g.mtgSlides_(raw))[1];
+  assert.strictEqual(roleOf(slide, 'tile-value')[1].text.split('　')[0], g.mtgAmount_(sheetSum));
+  assert.strictEqual(roleOf(slide, 'tile')[1].text, '想定売上合計（失注除く・百万円）');
+
+  // 前回：時点コピーがあれば、コピーの同じ列から同じ数え方で（変更の記録は使わない）
+  const copyTable = g.mtgReadDeals_(sheet, gas.get('DIFF_RULES')['新FMT']);
+  copyTable.amounts.counted = 100;
+  const withCopy = summarize(g, '新FMT', {copy: {table: copyTable, title: '時点コピー', url: 'u'}});
+  assert.deepStrictEqual([withCopy.amountTotal.start, withCopy.amountTotal.startFrom], [100, 'copy']);
+
+  // 突き合わせ（読むだけ）：画面に、列の合計・除いた行・資料の合計・空の行・文字の値・ステータス別を出す
+  gas.promptAnswers = ['1'];
+  g.diagnoseBusinessMtgAmount();
+  const text = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(text, new RegExp('■ 新FMT\\n　使っている列：' + g.diffColumnLetter_(COL.amount) + '列「想定売上規模（百万）」（3行目から下のすべての行）'));
+  assert.match(text, /列の数値の合計：203.5（8行）\n　除いた行（ステータスに「失注」を含む）：7（1行）\n　資料の想定売上合計：196.5（＝ 203.5 − 7）/);
+  assert.match(text, /うち得意先・案件名が空の行：2.5（1行。合計に含めています）/);
+  assert.match(text, /数値でない値（シートの合計と同じく足していません）：12行目「約100」/);
+  assert.match(text, /　　C-失注：7（1行）　← 除く\n/);
+  assert.match(text, /　　辞退：4（1行）\n/);
 });
