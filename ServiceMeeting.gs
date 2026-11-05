@@ -148,7 +148,7 @@ function smtgRunCheckText_(final, meeting, names, point) {
  * 資料を作り始める（画面の「作成する」から。MeetingSchedule.gs の runMeetingMaterials）。作っている途中の仕事があれば、cancelJob ならやめて作り、
  * そうでなければ止める。リクエストの無いサブインダストリーは作らない（選んだときを除く）。戻り値は終わり（区切ったとき）の知らせ
  */
-function smtgRunStart_(final, meeting, names, cancelJob, point) {
+function smtgRunStart_(final, meeting, names, cancelJob, point, overwrite) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   mtgRequireSlides_();
@@ -159,7 +159,8 @@ function smtgRunStart_(final, meeting, names, cancelJob, point) {
   }
   const now = new Date();
   const base = smtgRead_(ss, now);
-  const job = {final, meeting, now: now.getTime(), names, skipped: [], items: [], recorded: false, folderUrl: '', sample: base.sample, point: point || ''};
+  const job = {final, meeting, now: now.getTime(), names, skipped: [], items: [], recorded: false, folderUrl: '', sample: base.sample, point: point || '',
+    overwrite: !!overwrite};
   const done = smtgJobRun_(ss, job, started, base);
   const message = smtgJobMessage_(job, done);
   console.log(message);
@@ -213,10 +214,13 @@ function smtgJobRun_(ss, job, started, base) {
 function smtgCreateOne_(base, job, name, folder) {
   const data = smtgView_(base, name, job.meeting, job.point);
   const slides = smtgSlides_(data, job.meeting, job.final);
-  const out = smtgWithPalette_(() => mtgExportDeck_(smtgFileName_(job.meeting, name, job.final), slides, folder));
+  const fileName = smtgFileName_(job.meeting, name, job.final);
+  // 上書き（job.overwrite）：前に作った同じ資料（本番は会議のフォルダ、試作は保存先）の中身を書き換える（リンクを変えない）
+  const existing = job.overwrite ? mtgExistingPdf_(fileName, name, job.meeting, job.final, folder, SMTG_OPTIONS.meetingName) : null;
+  const out = smtgWithPalette_(() => mtgExportDeck_(fileName, slides, folder, {overwrite: existing}));
   const k = data.kpi;
   const lines = ['「' + name + '」：' + out.pdf.getName() + '（リクエスト ' + k.requests + '・判断待ち ' + k.undecided + '・サービス案 ' + k.services +
-    '・確認事項 ' + data.checks.length + '。' + slides.length + 'ページ）', '　' + out.pdf.getUrl()];
+    '・確認事項 ' + data.checks.length + '。' + slides.length + 'ページ）', '　' + out.pdf.getUrl() + (out.overwritten ? '（前の資料に上書き。リンクはそのまま）' : '')];
   if (!job.final) return {name, line: lines.join('\n')};
   // 会議のフォルダ：事前資料の格納先（MTG_OPTIONS.meetingFolder。全サブインダストリー共通）の中の
   // 「yyMMdd_RX Service Meeting_第N回」（無ければ作る。mtgMeetingFolder_）

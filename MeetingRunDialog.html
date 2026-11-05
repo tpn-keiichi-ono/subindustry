@@ -145,6 +145,11 @@
         <div class="label">作る資料<span><button type="button" class="link-btn" id="all">すべて選ぶ</button>　<button type="button" class="link-btn" id="none">すべて外す</button></span></div>
         <div class="sheets" id="sheets"></div>
       </section>
+      <section class="field" id="overwriteField">
+        <div class="label">前に作った同じ資料</div>
+        <label class="check"><input type="checkbox" id="overwrite" checked>上書きする（資料のリンクを変えない）</label>
+        <span class="hint">外すと新しいファイルに作り直します（前のファイルはゴミ箱へ。リンクが変わります）。</span>
+      </section>
       <div class="notice error" id="error" hidden></div>
     </main>
 
@@ -424,7 +429,9 @@
             showError('error', r.error);
             return;
           }
-          $('confirmText').textContent = r.text + (FINAL ? '\n\n作成してよろしいですか？' : '');
+          $('confirmText').textContent = r.text + '\n\n' + ($('overwrite').checked
+            ? '前に作った同じ資料（同じ会議日・同じ名前の PDF）があれば上書きします（リンクはそのまま）。'
+            : '前に作った同じ資料があっても上書きせず、新しいファイルに作ります（リンクが変わります）。') + (FINAL ? '\n\n作成してよろしいですか？' : '');
           showError('confirmError', '');
           show('confirm');
         })
@@ -454,7 +461,7 @@
             .withFailureHandler(() => { idle(); showError('confirmError', e); })
             .getMeetingRunState(KIND);
         })
-        .runMeetingMaterials(KIND, FINAL, meetingValue(), pickedSheets(), $('cancelJob').checked, pointValue());
+        .runMeetingMaterials(KIND, FINAL, meetingValue(), pickedSheets(), $('cancelJob').checked, pointValue(), $('overwrite').checked);
     }
 
     // 知らせの文の URL をリンクにする（文字は textContent で入れる）

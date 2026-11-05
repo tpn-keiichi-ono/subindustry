@@ -4311,3 +4311,50 @@ test('統合版：実行が強制終了されたら、足しかけたスライ�
   g.showBusinessMtgSummariesResult();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /「全サブインダストリー」（統合版）：.*（19ページ）/);
 });
+
+test('上書き（画面の「前に作った同じ資料を上書きする」）：前に作った同じ資料の PDF の中身を書き換え、ファイル（リンク）を変えない。外すと新しいファイル。上書きできなければ新しいファイルに作る', () => {
+  const {gas, g} = setup();
+  const {meeting} = combinedReady(gas, g);   // 本番（新FMT・新FMT2）を会議のフォルダに格納してある
+  const file = meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料.pdf';
+  const live = () => gas.driveFiles.filter(f => f.name === file && gas.trashed.indexOf(f.id) < 0);
+  const first = live();
+  assert.strictEqual(first.length, 1);
+  const index = gas.ss.getSheetByName('INDEX_会議資料');
+  const indexText = () => JSON.stringify(plain(index.getRange(2, 1, 1, index.getLastColumn()).getDisplayValues()));
+  const before = indexText();
+  // 上書きする：同じファイルの中身を Drive API で書き換える（新しい PDF は作らない）
+  const fetched = gas.fetches.length;
+  const r1 = g.runMeetingMaterials('business', true, meeting, ['新FMT'], false, '', true);
+  const uploads = gas.fetches.slice(fetched).filter(f => /\/upload\/drive\/v3\/files\//.test(f.url));
+  assert.strictEqual(uploads.length, 1, 'Drive API で中身を書き換える');
+  assert.ok(uploads[0].url.indexOf('/files/' + first[0].id + '?uploadType=media') > 0);
+  assert.strictEqual(uploads[0].params.method, 'patch');
+  assert.deepStrictEqual(live().map(f => [f.id, f.folder]), [[first[0].id, first[0].folder]], '同じファイルが会議のフォルダに1つ');
+  assert.match(r1.message, /（前の資料に上書き。リンクはそのまま）/);
+  assert.strictEqual(indexText(), before, 'インデックスのリンクも同じ');
+  // 外す：新しいファイルに作り、前のファイルはゴミ箱へ（リンクが変わる）
+  const r2 = g.runMeetingMaterials('business', true, meeting, ['新FMT'], false, '', false);
+  assert.strictEqual(live().length, 1);
+  assert.notStrictEqual(live()[0].id, first[0].id, 'リンクが変わる');
+  assert.ok(gas.trashed.indexOf(first[0].id) >= 0);
+  assert.doesNotMatch(r2.message, /前の資料に上書き/);
+  // 上書きできない（権限など）：新しいファイルに作る（止めない）
+  const now = live()[0].id;
+  gas.fetchStatuses = [403];
+  const r3 = g.runMeetingMaterials('business', true, meeting, ['新FMT'], false, '', true);
+  assert.notStrictEqual(live()[0].id, now);
+  assert.doesNotMatch(r3.message, /前の資料に上書き/);
+  // 試作も、保存先の同じ名前の試作を上書きする
+  g.runMeetingMaterials('business', false, meeting, ['新FMT2'], false, '', true);
+  const draftName = meeting.replace(/\//g, '') + '_新FMT2_RX Business Meeting用資料_試作.pdf';
+  const draft = gas.driveFiles.filter(f => f.name === draftName && gas.trashed.indexOf(f.id) < 0);
+  g.runMeetingMaterials('business', false, meeting, ['新FMT2'], false, '', true);
+  assert.deepStrictEqual(gas.driveFiles.filter(f => f.name === draftName && gas.trashed.indexOf(f.id) < 0).map(f => f.id), draft.map(f => f.id));
+  // 統合版も
+  g.runMeetingMaterials('combined', true, meeting, [], false, '', false);
+  const combinedName = meeting.replace(/\//g, '') + '_全サブインダストリー_RX Business Meeting用資料.pdf';
+  const c1 = gas.driveFiles.filter(f => f.name === combinedName && gas.trashed.indexOf(f.id) < 0).map(f => f.id);
+  const rc = g.runMeetingMaterials('combined', true, meeting, [], false, '', true);
+  assert.deepStrictEqual(gas.driveFiles.filter(f => f.name === combinedName && gas.trashed.indexOf(f.id) < 0).map(f => f.id), c1);
+  assert.match(rc.message, /（前の資料に上書き。リンクはそのまま）/);
+});

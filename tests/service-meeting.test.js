@@ -518,3 +518,17 @@ test('比べる会議を選ぶ：本番で記録した会議（新しい順）�
   assert.match(gas.alerts[gas.alerts.length - 1].message, /「全サブインダストリー」：/);
   assert.match(JSON.stringify(gas.decks[gas.decks.length - 1].requests), /選んだ会議（10\/9）以降：新規リクエスト 1件/);
 });
+
+test('RX Service Meeting も上書きできる：前に作った同じ資料（会議のフォルダの本番の PDF）の中身を書き換え、リンクを変えない', () => {
+  const {gas, g, request, task} = setup();
+  fill(gas, request, task);
+  const meeting = g.mtgParseDate_('10/09', new Date());
+  g.runMeetingMaterials('service', true, meeting, ['新FMT'], false, '', false);
+  const name = meeting.replace(/\//g, '') + '_新FMT_RX Service Meeting用資料.pdf';
+  const live = () => gas.driveFiles.filter(f => f.name === name && gas.trashed.indexOf(f.id) < 0).map(f => f.id);
+  const first = live();
+  assert.strictEqual(first.length, 1);
+  const r = g.runMeetingMaterials('service', true, meeting, ['新FMT'], false, '', true);
+  assert.deepStrictEqual(live(), first, '同じファイル');
+  assert.match(r.message, /（前の資料に上書き。リンクはそのまま）/);
+});

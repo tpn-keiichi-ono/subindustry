@@ -784,7 +784,7 @@ function mtgRunCheckText_(final, names, meeting, point) {
  * 会議サマリを作り始める（画面の「作成する」から。MeetingSchedule.gs の runMeetingMaterials）。作っている途中の仕事があれば、cancelJob ならやめて作り、
  * そうでなければ止める。時間がかかれば区切って続ける（mtgJobRun_）。戻り値は終わり（区切ったとき）の知らせ
  */
-function mtgRunStart_(final, meeting, names, cancelJob, point) {
+function mtgRunStart_(final, meeting, names, cancelJob, point, overwrite) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const pending = mtgJobLoad_();
@@ -796,7 +796,7 @@ function mtgRunStart_(final, meeting, names, cancelJob, point) {
   }
   const now = new Date();
   const job = {final, meeting, now: now.getTime(), names, items: [], stored: 0, copy: null, index: null, folderUrl: '',
-    combined: !!MTG_OPTIONS.combined.enabled, point: point || null, sourceError: '', copyFix: null};
+    combined: !!MTG_OPTIONS.combined.enabled, point: point || null, sourceError: '', copyFix: null, overwrite: !!overwrite};
   mtgJobSafetyTrigger_();   // 実行が強制終了されたら（メモリ不足など）、最後に保存した進み具合から続ける
   let done;
   try {
@@ -847,13 +847,16 @@ function mtgJobRun_(ss, job, started) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
       const summary = summaries[i];
       const deckTimer = mschTimer_('スライドと PDF（' + summary.name + '）', true);
-      const out = mtgExportDeck_(mtgFileName_(summary.name, job.meeting, job.final), mtgSlides_(summary), folder);
+      const fileName = mtgFileName_(summary.name, job.meeting, job.final);
+      // 上書き（job.overwrite）：前に作った同じ資料（本番は会議のフォルダ、試作は保存先）の中身を書き換える（リンクを変えない）
+      const existing = job.overwrite ? mtgExistingPdf_(fileName, summary.name, job.meeting, job.final, folder) : null;
+      const out = mtgExportDeck_(fileName, mtgSlides_(summary), folder, {overwrite: existing});
       deckTimer.lap('スライドを作って PDF に保存');
       // 試作：その会議日の最初の試作の、入力内容のチェックの結果を覚える（同じ会議日の資料で、解消した件数を出す）
       if (!job.final && !plans[i].draft) {
         props.setProperty(o.draftKeyPrefix + summary.name, JSON.stringify({meeting: job.meeting, at: job.now, keys: summary.alerts.map(a => mtgHash_(a.key))}));
       }
-      job.items.push({name: summary.name, pdf: out.pdf.getId(), line: mtgResultLine_(source, summary, out.pdf)});
+      job.items.push({name: summary.name, pdf: out.pdf.getId(), line: mtgResultLine_(source, summary, out.pdf, out.overwritten)});
       mtgJobCheckpoint_(job);   // 資料ごとに進み具合を保存（実行が止められても、続きから）
     }
   }
@@ -970,11 +973,12 @@ function mtgNow_() {
 }
 
 /** 資料1つの知らせ（ファイル名・件数・URL と、作れなかったところ（データなし）などの注意） */
-function mtgResultLine_(ss, summary, file) {
+function mtgResultLine_(ss, summary, file, overwritten) {
   const gaps = mtgGapList_(summary);
   // 変化が無く、サンプル（addSampleHistory()。会議サマリは数えない）の記録だけがあるときは、資料の確認用の関数を案内する
   const samples = !summary.kpi.changed && !summary.dummy ? smpCountEvents_(ss, SMP_OPTIONS.eventPrefix + '-', summary.name).changes : 0;
   return '「' + summary.name + '」：' + file.getName() + '（' + mtgCountsText_(summary) + '）\n　' + file.getUrl() +
+    (overwritten ? '（前の資料に上書き。リンクはそのまま）' : '') +
     (summary.copy ? '\n　' + (summary.previous && summary.previous.chosen ? '' : '前回からの') + '変化は「' + summary.copy.title + '」と比べました。' : '') +
     (summary.copyError ? '\n　※ ' + summary.copyError : '') +
     (summary.unlogged ? '\n　※ 変更の記録が無い変更 ' + summary.unlogged + '件（差分追跡が止まっていた間などの変更。資料には出しています）。' +
@@ -1949,9 +1953,10 @@ function mtgCombinedRun_(ss, job, started) {
     const sections = job.items.map(item => ({summary: item.lite, start: item.start}));
     mtgDeckAdd_(job.deck, mtgCombinedFront_(sections, job.meeting, true, new Date(job.now)), 0);
     timer.lap('表紙・目次・状況のページ');
-    const out = mtgDeckFinish_(job.deck, fileName, folder);
+    const existing = job.overwrite ? mtgExistingPdf_(fileName, o.combined.name, job.meeting, true, folder) : null;
+    const out = mtgDeckFinish_(job.deck, fileName, folder, existing);
     timer.lap('並べて PDF に保存');
-    const result = {name: o.combined.name, file: out.pdf, pages: job.page};
+    const result = {name: o.combined.name, file: out.pdf, pages: job.page, overwritten: !!out.overwritten};
     // 会議のフォルダに格納し、インデックスの統合版の列に書く（できなくても止めない）
     const stored = mtgStoreToMeetingFolder_(o.combined.name, job.meeting, out.pdf);
     if (stored.error) result.storeError = stored.error;
@@ -2044,13 +2049,13 @@ function mtgCombinedCheck_(meeting, point) {
  * 統合版を作り始める（画面の「作成する」から。作れるかは先に mtgCombinedCheck_ で確かめる）。時間がかかれば区切って続ける（mtgCombinedRun_。
  * 続きは個別の資料と同じトリガー continueBusinessMtgSummaries）。戻り値は終わり（区切ったとき）の知らせ
  */
-function mtgCombinedStart_(meeting, point) {
+function mtgCombinedStart_(meeting, point, overwrite) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   const check = mtgCombinedCheck_(meeting, point);
   if (check.error) throw new Error(check.error);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const job = {kind: 'combined', final: true, meeting, now: Date.now(), names: mtgTrackedNames_(ss), point: point || null, items: [],
-    page: mtgCombinedFrontCount_(), deck: null, result: null, folderUrl: '', sourceError: ''};
+    page: mtgCombinedFrontCount_(), deck: null, result: null, folderUrl: '', sourceError: '', overwrite: !!overwrite};
   mtgJobSafetyTrigger_();   // 実行が強制終了されたら（メモリ不足など）、最後に保存した進み具合から続ける
   let done;
   try {
@@ -2088,6 +2093,7 @@ function mtgCombinedLines_(combined) {
       'エディタで createBusinessMtgCombinedSummary() を実行すると、統合版だけを作ります。'];
   }
   return ['「' + name + '」（統合版）：' + combined.fileName + '（' + combined.pages + 'ページ）\n　' + combined.fileUrl +
+    (combined.overwritten ? '（前の資料に上書き。リンクはそのまま）' : '') +
     (combined.folderName ? '\n　会議のフォルダ「' + combined.folderName + '」' + (combined.created ? 'を作って' : 'に') + '格納しました：' + combined.folderUrl : '') +
     (combined.indexError ? '\n　※ ' + combined.indexError : '') +
     (combined.storeError ? '\n　※ 会議のフォルダに格納できませんでした（' + combined.storeError + '）。資料は保存先にあります。' +
@@ -2096,7 +2102,7 @@ function mtgCombinedLines_(combined) {
 
 /** 統合版の結果（mtgCombinedRun_ の {name, file: PDF, pages, stored, storeError, index}）を、保存できる形（文字だけ）に */
 function mtgCombinedPlain_(c) {
-  return {fileName: c.file.getName(), fileUrl: c.file.getUrl(), pages: c.pages,
+  return {fileName: c.file.getName(), fileUrl: c.file.getUrl(), pages: c.pages, overwritten: !!c.overwritten,
     folderName: c.stored ? c.stored.folder.getName() : '', folderUrl: c.stored ? c.stored.folder.getUrl() : '', created: !!(c.stored && c.stored.created),
     indexError: c.index && c.index.error || '', storeError: c.storeError || ''};
 }
@@ -7808,7 +7814,7 @@ function mtgFileName_(name, meeting, final) {
  * MTG_OPTIONS.keepSlides なら Google スライドもフォルダに残す（推進リーダーが書き足せる）。うまくいかなかったときはゴミ箱に移す。
  * 戻り値 {pdf, deck}（deck は残さないときは null）
  */
-function mtgExportDeck_(name, slides, folder) {
+function mtgExportDeck_(name, slides, folder, options) {
   const F = MTG_SLIDES_FIELDS;
   const {templateId, file, deck} = mtgDeckCreate_(name, folder);
   try {
@@ -7854,7 +7860,7 @@ function mtgExportDeck_(name, slides, folder) {
     // ひな形のページを使わない表紙・扉の背景を、いただいたひな形と同じ絵柄（グラデーションと RX）の画像にする（表紙は緑・扉はグレー。mtgCoverTone_）
     mtgCoverBackground_(deck.presentationId, slides.map((slide, i) => ((slide.cover || slide.divider) && !plan.pageOf[i]
       ? {id: 'mtg_p' + (i + 1), tone: mtgCoverTone_(slide)} : null)).filter(Boolean));
-    return mtgDeckSave_(file, name, folder, !!templateId, slides.some(slide => slide.elements.some(el => el.link != null)));
+    return mtgDeckSave_(file, name, folder, !!templateId, slides.some(slide => slide.elements.some(el => el.link != null)), options && options.overwrite);
   } catch (e) {
     try { file.setTrashed(true); } catch (_) {}
     throw e;
@@ -7879,15 +7885,68 @@ function mtgDeckCreate_(name, folder) {
  * できた資料（file）を PDF（と、設定なら PowerPoint）にして folder に保存し、同じ名前の古い版をゴミ箱へ。残さない設定なら Google スライドはゴミ箱へ。
  * templated はひな形のコピーか（コピーは folder にある）、links は目次のリンクがあるか（PDF のリンクの飛び先を直す）。戻り値は mtgExportDeck_ と同じ
  */
-function mtgDeckSave_(file, name, folder, templated, links) {
+function mtgDeckSave_(file, name, folder, templated, links, existing) {
   if (!templated && MTG_OPTIONS.keepSlides) file.moveTo(folder);   // 残さないときは動かさずにゴミ箱へ（呼び出しを減らす）
-  const blob = file.getAs('application/pdf').setName(name + '.pdf');
-  const pdf = folder.createFile(links ? mtgPdfFitLinks_(blob) : blob);
+  const raw = file.getAs('application/pdf').setName(name + '.pdf');
+  const blob = links ? mtgPdfFitLinks_(raw) : raw;
+  // 上書き（existing：前に作った同じ資料の PDF）：その中身を書き換えて、ファイル（リンク）を変えない。できなければ新しいファイルに作る
+  let pdf = null;
+  if (existing) {
+    const written = mtgOverwriteFile_(existing, blob);
+    if (written.error) console.warn(name + '：前の資料に上書きできなかったので、新しいファイルに作りました（' + written.error + '）');
+    else pdf = existing;
+  }
+  const overwritten = !!pdf;
+  if (!pdf) pdf = folder.createFile(blob);
   const pptx = mtgExportPptxEnabled_().on ? mtgExportPptx_(file.getId(), name, folder) : {};
   if (pptx.error) console.warn(name + '：' + pptx.error + '（PDF は作りました）');
   mtgTrashOld_(folder, [name, name + '.pdf', name + '.pptx'], [file.getId(), pdf.getId()].concat(pptx.file ? [pptx.file.getId()] : []));
   if (!MTG_OPTIONS.keepSlides) file.setTrashed(true);
-  return {pdf, pptx: pptx.file || null, pptxError: pptx.error || '', deck: MTG_OPTIONS.keepSlides ? file : null};
+  return {pdf, overwritten, pptx: pptx.file || null, pptxError: pptx.error || '', deck: MTG_OPTIONS.keepSlides ? file : null};
+}
+
+/**
+ * 前に作った同じ資料の PDF（上書きするもの）：本番は会議のフォルダ（name の会議 kind。無ければ作らない）、どちらも保存先（folder）にある fileName のファイル。
+ * 無ければ null（新しく作る）
+ */
+function mtgExistingPdf_(fileName, name, meeting, final, folder, kind) {
+  const folders = [];
+  if (final) {
+    const target = mtgMeetingFolder_(name, meeting, true, kind);
+    if (target.folder) folders.push(target.folder);
+  }
+  folders.push(folder);
+  for (let i = 0; i < folders.length; i++) {
+    try {
+      const files = folders[i].getFilesByName(fileName + '.pdf');
+      while (files.hasNext()) {
+        const file = files.next();
+        if (!file.isTrashed || !file.isTrashed()) return file;
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+/**
+ * ファイル（file）の中身を blob に書き換える（Drive API v3 の files.update。ファイルの ID・リンク・共有の設定はそのまま。前の中身は版の履歴に残る）。
+ * {file} か {error: 理由}（止めない）
+ */
+function mtgOverwriteFile_(file, blob) {
+  try {
+    const response = UrlFetchApp.fetch('https://www.googleapis.com/upload/drive/v3/files/' + file.getId() + '?uploadType=media&supportsAllDrives=true', {
+      method: 'patch',
+      contentType: blob.getContentType ? blob.getContentType() || 'application/pdf' : 'application/pdf',
+      payload: blob.getBytes(),
+      headers: {Authorization: 'Bearer ' + ScriptApp.getOAuthToken()},
+      muteHttpExceptions: true
+    });
+    const code = response.getResponseCode();
+    if (code !== 200) return {error: 'HTTP ' + code + '：' + String(response.getContentText()).slice(0, 200)};
+    return {file};
+  } catch (error) {
+    return {error: String(error && error.message || error)};
+  }
 }
 
 /* ---------------- 何回かの実行に分けて作る資料（統合版） ---------------- */
@@ -7972,7 +8031,7 @@ function mtgDeckAdd_(state, slides, offset) {
  * 資料（state）を仕上げる：使ったひな形の元のページを消し、足したスライドのレイアウトの枠を消し、目次のリンクを付け、スライドを番号の順に並べ、
  * ひな形を使わない表紙・扉の背景の画像を付けてから、PDF にして保存する（mtgDeckSave_）。戻り値は mtgExportDeck_ と同じ
  */
-function mtgDeckFinish_(state, name, folder) {
+function mtgDeckFinish_(state, name, folder, existing) {
   const file = DriveApp.getFileById(state.file);
   const index = Array.from({length: state.added}, (_, i) => i);
   const pageId = i => (state.dups.indexOf(i) >= 0 ? 'mtg_t' : 'mtg_p') + (i + 1);
@@ -7989,7 +8048,7 @@ function mtgDeckFinish_(state, name, folder) {
     Slides.Presentations.batchUpdate({requests: extra.slice(i, i + MTG_OPTIONS.batchRequests)}, state.id);
   }
   mtgCoverBackground_(state.id, state.covers);
-  return mtgDeckSave_(file, name, folder, state.templated, state.links.length > 0);
+  return mtgDeckSave_(file, name, folder, state.templated, state.links.length > 0, existing);
 }
 
 /** 作っている途中の資料（state）をゴミ箱に移す（やめたとき・止まったとき。できなくても止めない） */

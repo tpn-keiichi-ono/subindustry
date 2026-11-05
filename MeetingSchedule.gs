@@ -446,10 +446,11 @@ function checkMeetingRun(kind, final, meeting, names, point) {
 }
 
 /**
- * 資料を作る（google.script.run から呼ぶ。画面の「作成する」）。cancelJob なら作っている途中の仕事をやめて作る。{message: 終わりの知らせ}。
+ * 資料を作る（google.script.run から呼ぶ。画面の「作成する」）。cancelJob なら作っている途中の仕事をやめて作る。overwrite なら、前に作った同じ資料
+ * （同じ会議日・同じ名前の PDF）の中身を書き換えて、リンクを変えない（mtgExistingPdf_・mtgOverwriteFile_）。{message: 終わりの知らせ}。
  * 作っている途中・結果を控える（mschRunState_）。同じ人が作っている途中なら作らない（画面が読み込み直されたあとに、もう一度押されても2回作らない）
  */
-function runMeetingMaterials(kind, final, meeting, names, cancelJob, point) {
+function runMeetingMaterials(kind, final, meeting, names, cancelJob, point, overwrite) {
   mschCheckKind_(kind);
   const date = mschCheckInput_(kind, meeting, names);
   const running = mschRunState_();
@@ -462,10 +463,10 @@ function runMeetingMaterials(kind, final, meeting, names, cancelJob, point) {
   try {
     let message;
     if (kind === 'service') {
-      message = smtgRunStart_(!!final, date, names, !!cancelJob, smtgCheckPoint_(point));
+      message = smtgRunStart_(!!final, date, names, !!cancelJob, smtgCheckPoint_(point), !!overwrite);
     } else {
       const resolved = mtgResolvePoint_(point);
-      message = kind === 'combined' ? mtgCombinedStart_(date, resolved) : mtgRunStart_(!!final, date, names, !!cancelJob, resolved);
+      message = kind === 'combined' ? mtgCombinedStart_(date, resolved, !!overwrite) : mtgRunStart_(!!final, date, names, !!cancelJob, resolved, !!overwrite);
     }
     mschRunStateSave_(Object.assign({status: 'done', message, finishedAt: Date.now()}, base));
     return {message};
