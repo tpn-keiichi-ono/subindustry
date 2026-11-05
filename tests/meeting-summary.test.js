@@ -121,8 +121,9 @@ const label = item => [item.customer, item.project].filter(Boolean).join('／');
 
 test('ステータスの分類（進行中・受注・失注・保留。statusKinds で個別に）・受注月・金額・会議日の読み方', () => {
   const {gas, g} = setup({edits: false});
-  assert.deepStrictEqual(['受注', '受注済み', '受注見込み', '受注前', '失注', '見送り', '保留', 'ペンディング中', '提案中', ''].map(g.mtgStatusKind_),
-    ['won', 'won', 'active', 'active', 'lost', 'lost', 'hold', 'hold', 'active', 'active']);
+  // 失注は「失注」を含むものだけ（2026/11/05 から。見送り・辞退などは失注にしない：資料の数字をシートで「失注を除いて」数えたのと同じにする）
+  assert.deepStrictEqual(['受注', '受注済み', '受注見込み', '受注前', '失注', 'D-失注', '見送り', '辞退', '保留', 'ペンディング中', '提案中', ''].map(g.mtgStatusKind_),
+    ['won', 'won', 'active', 'active', 'lost', 'lost', 'active', 'active', 'hold', 'hold', 'active', 'active']);
   gas.get('MTG_OPTIONS').statusKinds = {'検討中（休止）': 'hold', '提案中': 'lost'};
   assert.deepStrictEqual(['検討中（休止）', '提案中'].map(g.mtgStatusKind_), ['hold', 'lost'], 'statusKinds が先');
   gas.get('MTG_OPTIONS').statusKinds = {};
@@ -252,24 +253,29 @@ test('前回からの変化：得意先・案件名を書き換えた案件・�
   assert.strictEqual(s.unmatched, 0);
 });
 
-test('期待値の増減：前回の時点で進行中だった期待値 + 内訳（増額・減額・受注・保留・復帰）= 今の期待値', () => {
+test('期待値の増減：前回の時点で失注でなかった期待値 + 内訳（新規・増額・復帰・減額・失注・削除）= 今の期待値（失注除く。受注・保留になっても外れない）', () => {
   const {gas, g, sheet} = setup({edits: false});
   [['F3', '提案中'], ['H3', '15'],          // A社：前進。期待値 10 → 15（増額）
     ['F5', '初回訪問'], ['H5', '2'],         // C社：後退。期待値 5 → 2（減額）
-    ['F7', '受注'],                         // E社：受注（期待値 40 が進行中から外れる）
-    ['F4', '提案中'],                       // B社：受注 → 提案中（復帰。期待値 50 が入る）
-    ['F8', '保留']                          // F社：保留（期待値 3 が外れる）
+    ['F7', '受注'],                         // E社：受注（失注ではないので外れない。期待値 40 のまま）
+    ['F4', '提案中'],                       // B社：受注 → 提案中（どちらも対象。期待値 50 のまま）
+    ['F8', '保留']                          // F社：保留（外れない。期待値 3 のまま）
   ].forEach(([a1, value]) => g.recordDiffEdit(gas.edit(sheet, a1, value)));
   const s = plain(summarize(g, '新FMT'));
   assert.deepStrictEqual(s.changes.map(c => [label(c), c.category]), [
     ['E社／販促DX', 'won'], ['B社／EC立ち上げ', 'revived'], ['A社／アプリ刷新', 'forward'], ['C社／店舗什器', 'backward'], ['F社／ブランド刷新', 'hold']
   ], '想定売上の大きい順（テストのシートのステータスには確度が無いので、どれも同じまとまり）');
   const b = s.bridge;
-  assert.deepStrictEqual([b.start, b.end, b.startCount, b.endCount], [58, 67, 5, 4], '前回：A10・C5・D空・E40・F3／今：A15・B50・C2・D空');
-  assert.deepStrictEqual(b.steps.filter(st => st.count).map(st => [st.label, st.value, st.count]),
-    [['期待値増', 5, 1], ['復帰', 50, 1], ['期待値減', -3, 1], ['受注', -40, 1], ['保留', -3, 1]]);
+  assert.deepStrictEqual([b.start, b.end, b.startCount, b.endCount], [108, 110, 6, 6], '前回：A10・B50・C5・D空・E40・F3／今：A15・B50・C2・D空・E40・F3（失注が無いので全行）');
+  assert.deepStrictEqual(b.steps.filter(st => st.count).map(st => [st.label, st.value, st.count]), [['期待値増', 5, 1], ['期待値減', -3, 1]]);
   assert.strictEqual(b.start + b.steps.reduce((sum, st) => sum + st.value, 0), b.end);
   assert.deepStrictEqual([s.kpi.won, s.kpi.wonAmount, s.kpi.backward, s.kpi.hold, s.kpi.revived, s.kpi.active, s.kpi.weighted], [1, 80, 1, 1, 1, 4, 67]);
+  assert.deepStrictEqual([s.kpi.counted, s.kpi.countedWeighted, s.kpi.countedAmount], [6, 110, 30 + 50 + 20 + 80 + 10], '失注を除く件数・期待値・想定売上（シートの合計と同じ）');
+  // 失注にすると外れる（前回の期待値の分だけ減る）
+  g.recordDiffEdit(gas.edit(sheet, 'F5', '失注'));
+  const lost = plain(summarize(g, '新FMT')).bridge;
+  assert.deepStrictEqual([lost.end, lost.endCount], [108, 5]);
+  assert.deepStrictEqual(lost.steps.filter(st => st.count).map(st => [st.label, st.value, st.count]), [['期待値増', 5, 1], ['失注', -5, 1]]);
 });
 
 test('停滞：ステータスが最後に変わってからの日数（変わった記録が無ければ「N日以上」）。期待値の大きい案件と、当てはまる状況（停滞・受注月超過・延期）', () => {
@@ -434,7 +440,7 @@ test('入力内容のチェック「資料なし」：商談記録（ＵＲＬ�
     r.cells[3].text.split('\n')[r.cells[2].text.split('\n').indexOf('商談記録未登録')] === empty), '内容は案件ごとの一覧に書く（項目は資料に出す名前。項目と内容の行をそろえる）');
 });
 
-test('受注月（四半期）別の期待値（受注月超過 → 今の四半期〜4Q → 来期以降 → 未入力）・ステータス別（プルダウンの順。進行中 → 保留 → 受注 → 失注）', () => {
+test('受注月（四半期）別の期待値（失注除く。受注月超過・前年度以前 → 今年度の1Q〜4Q → 来期以降 → 未入力。合わせると期待値合計）・ステータス別（プルダウンの順。進行中 → 保留 → 受注 → 失注）', () => {
   const {g} = setup();
   const s = plain(summarize(g, '新FMT'));
   assert.deepStrictEqual(s.stages.map(p => [p.status, p.kind, p.count, p.amount, p.weighted]), [
@@ -448,17 +454,19 @@ test('受注月（四半期）別の期待値（受注月超過 → 今の四半
     const start = (now.m >= 4 ? now.y : now.y - 1) * 12 + 4;
     return m.y * 12 + m.m >= start && m.y * 12 + m.m < start + 12;
   };
-  const planned = inYear(month(1)) ? 40 : 0;   // A社（先月・10）は受注月超過。E社（来月・40）は今期か来期以降
+  // 失注を除く4件：A社（進行中・先月・10）は受注月超過。B社（受注・2か月前・50）は受注月の四半期（今年度より前なら前年度以前）。
+  // E社（進行中・来月・40）は今年度か来期以降。D社（受注月が空）は未入力
+  const planned = (inYear(month(-2)) ? 50 : 0) + (inYear(month(1)) ? 40 : 0);
   const lead = leadOf(plain(g.mtgSlides_(summarize(g, '新FMT')))[3]);
-  assert.ok(lead.indexOf('受注月が今期の期待値は ' + planned + '百万円') >= 0, '受注月別のグラフ（今の四半期〜4Q）の合計：' + lead);
-  assert.ok(lead.indexOf('受注月超過は 10百万円') >= 0, '受注月を過ぎた進行中の期待値は四半期に入れない');
+  assert.ok(lead.indexOf('受注月が今年度の期待値は ' + planned + '百万円') >= 0, '受注月別のグラフ（1Q〜4Q）の合計：' + lead);
+  assert.ok(lead.indexOf('受注月超過は 10百万円') >= 0, '受注月を過ぎた（受注していない）案件の期待値は四半期に入れない');
   assert.strictEqual(s.fiscal, undefined, '今期の受注・着地見込み（サマリーの帯）は作らない');
-  assert.strictEqual(s.quarters.reduce((sum, q) => sum + q.count, 0), 3, '進行中の3件をどこかに入れる');
-  assert.deepStrictEqual(s.quarters[0], {label: '受注月超過', value: 10, count: 1}, '受注月超過は先頭');
+  assert.strictEqual(s.quarters.reduce((sum, q) => sum + q.count, 0), 4, '失注を除く4件をどこかに入れる');
+  assert.strictEqual(s.quarters.reduce((sum, q) => sum + q.value, 0), s.bridge.end, '合わせると期待値合計（失注除く）');
+  assert.deepStrictEqual(s.quarters.find(q => q.label === '受注月超過'), {label: '受注月超過', value: 10, count: 1});
   assert.deepStrictEqual(s.quarters[s.quarters.length - 1], {label: '受注月未入力', value: 0, count: 1}, '受注月未入力は最後');
-  const all = ['1Q（4〜6月）', '2Q（7〜9月）', '3Q（10〜12月）', '4Q（1〜3月）'];
-  const current = Math.floor(((month(0).m + 8) % 12) / 3);   // 4月 → 0（1Q）
-  assert.deepStrictEqual(s.quarters.filter(q => /Q/.test(q.label)).map(q => q.label), all.slice(current), '過ぎた四半期は出さない（今の四半期から）');
+  assert.deepStrictEqual(s.quarters.filter(q => /Q/.test(q.label)).map(q => q.label), ['1Q（4〜6月）', '2Q（7〜9月）', '3Q（10〜12月）', '4Q（1〜3月）'],
+    '今年度の四半期はいつも4つ（受注した案件は過ぎた四半期にも入る）');
   assert.strictEqual(s.quarters.some(q => q.label === '来期以降'), !inYear(month(1)), '来期以降は当てはまる案件があるときだけ');
 });
 
@@ -516,7 +524,7 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
     assert.ok(!slide.elements.some(el => el.type === 'box' && el.x === 0 && el.y === 0 && el.text), (i + 1) + '枚目：左上のラベル');
     if (i === 0 || i === 7) return;
     assert.deepStrictEqual(roleOf(slide, 'footer').map(el => [el.text, el.y, el.color]), [['新FMT（10/23 会議資料）　金額の単位：百万円' +
-      (i === 1 ? '　※ 想定売上合計はステータス「失注」を除く列の合計' : ''), S.footY, c.faint]],
+      (i === 1 ? '　※ 件数・金額はステータス「失注」の行を除くシートの合計' : ''), S.footY, c.faint]],
       (i + 1) + '枚目の出典の行（金額の単位も）');
     assert.ok(slide.elements.some(el => el.type === 'box' && el.y === S.ruleY && el.h < 1 && el.fill === c.rule), (i + 1) + '枚目の区切り線');
     assert.deepStrictEqual(roleOf(slide, 'title').map(el => [el.y, el.bold, el.color]), [[S.titleY, true, c.ink]], (i + 1) + '枚目の見出し（黒の太字）');
@@ -532,13 +540,14 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
 
   // リード文（タイトルの下）に状態を書く。1つ目の文と補足（改行のあと）は行を分ける。大きさ・色はどのページも同じ
   const lead = leadOf;
-  assert.strictEqual(lead(slides[1]), '進行中案件 3件（直近14日間で ▲2件）、期待値合計 50百万円（直近14日間で ▲8）。' +
+  // 案件数・期待値合計は失注を除く（A社・B社（受注）・D社・E社。C社（失注）は除く。前回は C社・F社（削除）も含めて6件）
+  assert.strictEqual(lead(slides[1]), '案件 4件（失注除く）（直近14日間で ▲2件）、期待値合計 100百万円（直近14日間で ▲8）。' +
     'ステータス未入力 1件は進行中に含め、想定売上未入力 1件・期待値未入力 1件は金額の合計に含めていない。');
   assert.deepStrictEqual(roleOf(slides[1], 'lead').map(el => el.text.split('\n').length), [1, 1],
     '空欄の扱い（D社：ステータス・想定売上・期待値が空）は補足の行に書く（推定で補わない）');
   assert.deepStrictEqual(roleOf(slides[3], 'lead').map(el => [el.color, el.size]), [[c.ink, S.leadSize], [c.ink, S.leadSize]]);
   slides.forEach((slide, i) => roleOf(slide, 'lead').forEach(el => assert.deepStrictEqual([el.size, el.color], [S.leadSize, c.ink], (i + 1) + '枚目：リード文の大きさ・色')));
-  assert.match(lead(slides[3]), /^進行中の期待値は 58 → 50百万円（▲8）。増加 ±0・減少 ▲8、内訳の最大は失注（1件・▲5）。受注月が今期の期待値は /);
+  assert.match(lead(slides[3]), /^期待値（失注除く）は 108 → 100百万円（▲8）。増加 ±0・減少 ▲8、内訳の最大は失注（1件・▲5）。受注月が今年度の期待値は /);
   assert.strictEqual(lead(slides[4]), '直近14日間に変化のある案件は 4件。', '区分ごとの件数（サマリーにある）・0件のものは書かない');
   assert.strictEqual(lead(slides[5]), '進行中案件のうち期待値上位 3件（進行中案件の期待値合計の 100%）。', '該当事項の数は書かない（表のラベルで分かる）');
   slides.forEach((slide, i) => roleOf(slide, 'lead').forEach(el => {
@@ -576,19 +585,18 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
   // 1枚目：「動き」と「現在の状態」の2つの表（どのシートでも同じ区分。該当が無ければ0件）。数字の箱・今期の帯は置かない
   const first = textOf(slides[1]);
   assert.ok(!/今期|着地/.test(first), 'サマリーに今期の受注・着地見込みは置かない');
-  // 上の数字は進行中案件全体の合計（下の表の区分とは重ならない）。前回比つき
-  assert.deepStrictEqual(roleOf(slides[1], 'tile').map(el => el.text), ['進行中案件', '想定売上合計（失注除く・百万円）', '期待値合計（進行中・百万円）', '入力内容の確認事項']);
+  // 上の数字は失注を除くシートの合計・件数（2026/11/05 から。下の表の区分とは重ならない）。前回比つき
+  assert.deepStrictEqual(roleOf(slides[1], 'tile').map(el => el.text), ['案件数（失注除く）', '想定売上合計（失注除く・百万円）', '期待値合計（失注除く・百万円）', '入力内容の確認事項']);
   const sum = plain(summarize(g, '新FMT'));
-  assert.strictEqual(sum.amountTotal.end, sum.kpi.amount);
-  assert.strictEqual(sum.bridge.amountEnd, sum.amountTotal.end, '案件の行だけなら、変更の記録から出す値とも同じ');
-  // 想定売上合計（2026/11/05 から）：シートの想定売上の列の合計（180）から、ステータスが失注の行（C社 20）だけを除く。進行中（A社 30・E社 80。D社は空）＋受注（B社 50）＝ 160。
-  // 前回比（時点コピーが無いとき）：変更の記録から出した前回の値。前回は C社（提案中）・F社（削除した行）も含めて 190 → 今 160
-  assert.deepStrictEqual([sum.amountTotal.totals.sum, sum.amountTotal.end, sum.amountTotal.start, sum.amountTotal.startFrom, sum.kpi.missingAmount], [180, 160, 190, 'log', 1]);
-  assert.match(textOf(slides[1]), /※ 想定売上合計はステータス「失注」を除く列の合計/, '出典の行の後ろに注記');
+  // 想定売上：シートの列の合計（180）から失注の行（C社 20）だけを除く ＝ 160。期待値：列の合計（105）から失注の行（C社 5）を除く ＝ 100
+  // 前回比（時点コピーが無いとき）：変更の記録から出した前回の値。前回は C社（提案中）・F社（削除した行）も含めて 190・108 → 今 160・100
+  assert.deepStrictEqual([sum.bridge.amountStart, sum.bridge.amountEnd, sum.bridge.start, sum.bridge.end, sum.kpi.missingAmount], [190, 160, 108, 100, 1]);
+  assert.deepStrictEqual([sum.kpi.counted, sum.kpi.countedAmount, sum.kpi.countedWeighted], [4, 160, 100], 'シートで失注を除いて数えた・足したのと同じ');
+  assert.match(textOf(slides[1]), /※ 件数・金額はステータス「失注」の行を除くシートの合計/, '出典の行の後ろに注記');
   assert.deepStrictEqual(roleOf(slides[1], 'tile-value').map(el => el.text), [
-    '3件　直近14日間で ▲2件',
+    '4件　直近14日間で ▲2件',
     '160　直近14日間で ▲30',
-    '50　直近14日間で ▲8',
+    '100　直近14日間で ▲8',
     '3項目　3案件・責任者 3名'
   ], '確認事項は項目の数（1案件に複数あれば別に数える）と、案件・責任者の数');
   assert.ok(roleOf(slides[1], 'tile-value').every(el => el.spans[0].size === 15 && el.spans[0].color === c.greenDark), '数字は大きく、前回比は小さく');
@@ -820,7 +828,7 @@ test('作れないところ（列・記録が無い）は、資料の型を変�
 
   // サマリー：前回比は「データなし」（±0 と書かない）、金額の箱は灰色、動きの行はどれも「データなし」（理由は見出し）、状態の行は理由つき
   const summary = slides[1];
-  assert.match(leadOf(summary), /^進行中案件 2件、期待値合計はデータなし（シートに「期待値調整済想定売上規模（百万）」の列が無い）。直近14日間の増減はデータなし（「変更履歴_差分」シートに変更の記録が無い）。$/);
+  assert.match(leadOf(summary), /^案件 2件（失注除く）、期待値合計はデータなし（シートに「期待値調整済想定売上規模（百万）」の列が無い）。直近14日間の増減はデータなし（「変更履歴_差分」シートに変更の記録が無い）。$/);
   assert.ok(!/±0/.test(textOf(summary)), '分からない増減を ±0 と書かない');
   assert.deepStrictEqual(roleOf(summary, 'tile-value').map(el => el.text), ['2件　直近14日間で データなし', 'データなし', 'データなし', '0項目']);
   assert.strictEqual(roleOf(summary, 'gap').length, 2, '想定売上・期待値の箱は灰色の点線');
@@ -843,7 +851,7 @@ test('作れないところ（列・記録が無い）は、資料の型を変�
     ['データなし', 'シートに「期待値調整済想定売上規模（百万）」の列が無い'],
     ['データなし', 'シートに「期待値調整済想定売上規模（百万）」の列が無い']]);
   assert.ok(!pipeline.elements.some(el => /^bar/.test(el.role || '')), '棒は描かない');
-  assert.strictEqual(leadOf(pipeline), '進行中の期待値はデータなし（シートに「期待値調整済想定売上規模（百万）」の列が無い）。');
+  assert.strictEqual(leadOf(pipeline), '期待値（失注除く）はデータなし（シートに「期待値調整済想定売上規模（百万）」の列が無い）。');
 
   // 前回から変化のある案件：表の見出しの行と「データなし」と理由
   assert.deepStrictEqual(slides[4].elements.filter(el => el.type === 'table').map(t => t.rows.length), [1]);
@@ -923,22 +931,21 @@ test('パイプラインの変化：ステータス別・受注月別の期待�
   const slide = plain(g.mtgSlides_(s))[3];
   assert.ok(!slide.elements.some(el => el.type === 'table'), '表ではなくグラフ');
   const titles = slide.elements.filter(el => el.size === 10.5 && el.bold).map(el => el.text);
-  assert.deepStrictEqual(titles, ['期待値の増減（進行中・百万円）', 'ステータス別期待値（進行中・百万円）', '受注月別期待値（進行中・百万円）'], '見出しは滝の図と同じ形');
-  // 滝の図：期待値（前回・今）・増加・減少の色の凡例。受注は白抜き（進行中から外れたが、悪い減少ではない）
-  assert.deepStrictEqual(roleOf(slide, 'legend').filter(el => el.text).map(el => el.text), ['期待値', '増加', '減少', '受注']);
+  assert.deepStrictEqual(titles, ['期待値の増減（失注除く・百万円）', 'ステータス別期待値（失注除く・百万円）', '受注月別期待値（失注除く・百万円）'], '見出しは滝の図と同じ形');
+  // 滝の図：期待値（前回・今）・増加・減少の色の凡例（2026/11/05 から受注は対象から外れないので、受注の凡例・棒は無い）
+  assert.deepStrictEqual(roleOf(slide, 'legend').filter(el => el.text).map(el => el.text), ['期待値', '増加', '減少']);
   assert.deepStrictEqual(roleOf(slide, 'bar-total').map(el => el.fill), [c.greenDark, c.greenDark], '前回・今の期待値の棒');
   assert.deepStrictEqual(roleOf(slide, 'bar-lost').map(el => el.fill), [c.down], '減少（失注）の棒');
   roleOf(slide, 'legend').forEach(el => assert.ok(el.x + el.w <= S.x + S.w + 0.01, '凡例が右にはみ出さない：' + (el.text || '')));
   const wonSetup = setup({edits: false});
-  wonSetup.g.recordDiffEdit(wonSetup.gas.edit(wonSetup.sheet, 'F7', '受注'));   // E社：受注（進行中の期待値 40 が外れる）
+  wonSetup.g.recordDiffEdit(wonSetup.gas.edit(wonSetup.sheet, 'F7', '受注'));   // E社：受注（失注ではないので外れない。期待値 40 のまま）
   const wonSlide = plain(wonSetup.g.mtgSlides_(summarize(wonSetup.g, '新FMT')))[3];
-  const won = roleOf(wonSlide, 'bar-won');
-  assert.deepStrictEqual(won.map(el => [el.fill, el.line]), [[c.white, c.greenDark]], '受注の棒は白抜きで緑の枠（減少の色にしない）');
-  assert.match(leadOf(wonSlide), /減少 ▲40（うち受注 ▲40）/, '減少のうち受注の分をリード文に書く');
+  assert.deepStrictEqual(roleOf(wonSlide, 'bar-won'), [], '受注の棒は無い');
+  assert.match(leadOf(wonSlide), /^期待値（失注除く）は 108 → 108百万円（±0）。増加 ±0・減少 ±0。/, '受注になっても期待値合計は変わらない');
   const labels = roleOf(slide, 'bar-label').map(el => el.text);
   const values = roleOf(slide, 'bar-value');
   const bars = roleOf(slide, 'bar');
-  const stages = plain(s.stages).filter(st => st.kind === 'active');
+  const stages = plain(s.stages).filter(st => st.kind !== 'lost');
   assert.deepStrictEqual(labels, stages.map(st => st.status).concat(plain(s.quarters).map(q => q.label)), 'ステータスはプルダウンの順、受注月は時間の順');
   assert.deepStrictEqual(values.map(el => el.text), stages.map(st => g.mtgAmount_(st.weighted)).concat(plain(s.quarters).map(q => g.mtgAmount_(q.value))));
   assert.ok(bars.every(el => el.fill === c.greenDark), '棒は期待値の色（滝の図と同じ）');
@@ -1600,9 +1607,9 @@ test('前回からの変化を時点コピーと比べる：差分追跡を通�
   assert.deepStrictEqual(plain(s.copy), {title: copy.title, url: opened.url});
   assert.match(g.mtgAppendixChanges_(s)[0].lead, /うち 5件は変更の記録が無い（前回の時点コピーとの比較で検出）。/);
   assert.match(JSON.stringify(g.mtgCoverSlide_(s).elements), /出典：「新FMT」シート・前回の時点コピーおよび変更履歴/);
-  // 期待値の増減もコピーの値から：C社（5）が失注、F社（3）が削除、G社は期待値なし
-  assert.strictEqual(s.bridge.start, 10 + 5 + 40 + 3);
-  assert.strictEqual(s.bridge.end, 10 + 40);
+  // 期待値の増減もコピーの値から：C社（5）が失注、F社（3）が削除、G社は期待値なし。B社（受注 50）は前回も今も含む（失注だけを除く）
+  assert.strictEqual(s.bridge.start, 10 + 50 + 5 + 40 + 3);
+  assert.strictEqual(s.bridge.end, 10 + 50 + 40);
 });
 
 test('時点コピーと比べるとき：得意先・案件名を書き換えた案件は、変更の記録で前の名前とつなげる（新規・削除にしない）。値が戻っていれば変化なし', () => {
@@ -2384,14 +2391,14 @@ test('統合版のスライド：表紙・目次・全サブインダストリ�
     else assert.strictEqual(page[0].text, String(i + 1), (i + 1) + '枚目');
   });
   assert.strictEqual(roleOf(slides[2], 'footer')[0].text, '全サブインダストリー（10/23 会議資料）　金額の単位：百万円');
-  assert.strictEqual(roleOf(slides[start2], 'footer')[0].text, '新FMT2（10/23 会議資料）　金額の単位：百万円' + '　※ 想定売上合計はステータス「失注」を除く列の合計', 'サマリーには想定売上合計の注記');
+  assert.strictEqual(roleOf(slides[start2], 'footer')[0].text, '新FMT2（10/23 会議資料）　金額の単位：百万円' + '　※ 件数・金額はステータス「失注」の行を除くシートの合計', 'サマリーには想定売上合計の注記');
 
   // 全サブインダストリーの状況：サブインダストリーごとの数と、その資料の表紙のページ。合計
   const overview = slides[2];
   assert.strictEqual(overview.title, T.overview);
   const table = overview.elements.find(el => el.type === 'table');
   const text = table.rows.map(r => r.cells.map(cell => cell.text.replace(/\n/g, ' ')));
-  assert.deepStrictEqual(table.rows[0].cells.map(cell => cell.text.replace(/\n/g, '')), ['サブインダストリー', '進行中案件', '期待値合計', '直近14日間の増減', '変化のある案件', '停滞', '確認事項', 'ページ'],
+  assert.deepStrictEqual(table.rows[0].cells.map(cell => cell.text.replace(/\n/g, '')), ['サブインダストリー', '案件数（失注除く）', '期待値合計（失注除く）', '直近14日間の増減', '変化のある案件', '停滞', '確認事項', 'ページ'],
     '増減の見出しは、いちばん多い比べ方（どれも初回なので直近14日間）');
   const k = summaries.map(s => plain(s.kpi));
   const b = summaries.map(s => plain(s.bridge));
@@ -2399,12 +2406,12 @@ test('統合版のスライド：表紙・目次・全サブインダストリ�
   // 停滞をまだ数えられないシートは「データなし」（どのシートも数えられなければ合計も）
   assert.ok(summaries.every(s => s.first && s.gaps.stalled));
   assert.deepStrictEqual(text.slice(1), [
-    ['新FMT', k[0].active + '件', g.mtgAmount_(b[0].end), signed(b[0].end - b[0].start), k[0].changed + '件', 'データなし', k[0].alerts + '項目', '6'],
-    ['新FMT2', k[1].active + '件', g.mtgAmount_(b[1].end), signed(b[1].end - b[1].start), k[1].changed + '件', 'データなし', k[1].alerts + '項目', String(start2)],
-    ['合計', (k[0].active + k[1].active) + '件', g.mtgAmount_(b[0].end + b[1].end), signed(b[0].end - b[0].start + b[1].end - b[1].start),
+    ['新FMT', b[0].endCount + '件', g.mtgAmount_(b[0].end), signed(b[0].end - b[0].start), k[0].changed + '件', 'データなし', k[0].alerts + '項目', '6'],
+    ['新FMT2', b[1].endCount + '件', g.mtgAmount_(b[1].end), signed(b[1].end - b[1].start), k[1].changed + '件', 'データなし', k[1].alerts + '項目', String(start2)],
+    ['合計', (b[0].endCount + b[1].endCount) + '件', g.mtgAmount_(b[0].end + b[1].end), signed(b[0].end - b[0].start + b[1].end - b[1].start),
       (k[0].changed + k[1].changed) + '件', 'データなし', (k[0].alerts + k[1].alerts) + '項目', '']
   ]);
-  assert.match(leadOf(overview), /^2サブインダストリーの進行中案件 \d+件、期待値合計 [\d,.]+百万円。$/);
+  assert.match(leadOf(overview), /^2サブインダストリーの案件 \d+件・期待値合計 [\d,.]+百万円（どちらも失注除く）。$/);
   assert.strictEqual(roleOf(overview, 'footer')[0].text, '全サブインダストリー（10/23 会議資料）　金額の単位：百万円', '※ が無ければ補足なし');
   // 比べ方が違うシートは、セルの1行目に何との比か
   const held = Object.assign({}, summaries[1], {first: false, previous: {date: '2026/10/09', cutoff: 1}});
@@ -2852,7 +2859,7 @@ test('日次の時点コピー：installDailySheetCopy() でトリガーを1つ�
   assert.match(gas.alerts[gas.alerts.length - 1].message, /日次の時点コピーをやめました（保存したコピーは残しています）。/);
 });
 
-test('計画に対する積み上げ：今年度の売上開始月ごとの期待値を、確度（ステータスの「-」の前）で塗り分けて積み上げ、計画（400）と比べる。時期未定・今年度より前・来年度以降・失注・保留は除いて右に参考の棒', () => {
+test('計画に対する積み上げ：今年度の売上開始月ごとの期待値を、確度（ステータスの「-」の前）で塗り分けて積み上げ、計画（400）と比べる。時期未定・今年度より前・来年度以降・失注は除いて右に参考の棒（保留も積み上げる）', () => {
   const {gas, g} = setup();
   const c = gas.get('MTG_OPTIONS').colors;
   const o = gas.get('MTG_OPTIONS').plan;
@@ -2875,20 +2882,20 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
     deal('D-ヒアリング中(20%)', 'active', 8, '2026/03'),   // 今年度より前
     deal('C-提案中(50%)', 'active', 9, '2027/05'),     // 来年度以降
     deal('失注', 'lost', 0, '2026/10'),
-    deal('保留', 'hold', 3, '2026/11')
+    deal('保留', 'hold', 3, '2026/11')                // 保留も積み上げる（2026/11/05 から。除くのは失注だけ）
   ];
   const p = plain(g.mtgPlanOf_(deals, '新FMT', now, {weighted: true, startMonth: true}));
-  assert.deepStrictEqual([p.plan, p.total, p.missing], [400, 75, 1]);
+  assert.deepStrictEqual([p.plan, p.total, p.missing], [400, 78, 1]);
   assert.deepStrictEqual([p.undated, p.before, p.after, p.excluded], [{count: 1, value: 6, values: {C: 6}}, {count: 1, value: 8, values: {D: 8}},
-    {count: 1, value: 9, values: {C: 9}}, {count: 2, value: 3, values: {'未設定': 3}}]);
-  assert.deepStrictEqual(p.months.map(m => [m.y + '/' + m.m, m.total]).filter(m => m[1]), [['2026/6', 4], ['2026/10', 50], ['2027/3', 21]]);
+    {count: 1, value: 9, values: {C: 9}}, {count: 1, value: 0, values: {'未設定': 0}}]);
+  assert.deepStrictEqual(p.months.map(m => [m.y + '/' + m.m, m.total]).filter(m => m[1]), [['2026/6', 4], ['2026/10', 50], ['2026/11', 3], ['2027/3', 21]]);
   assert.deepStrictEqual(p.months[6].values, {B: 35, C: 15});
-  assert.deepStrictEqual(p.byRank, {A: 20, B: 35, C: 15, D: 0, '創注': 1, '未設定': 4});
+  assert.deepStrictEqual(p.byRank, {A: 20, B: 35, C: 15, D: 0, '創注': 1, '未設定': 7});
 
   const slide = plain(g.mtgPlanSlide_(p, now));
   assert.strictEqual(slide.title, '計画に対する積み上げ');
-  assert.strictEqual(slide.lead, '今年度（26/4〜27/3）の期待値の積み上げは 75百万円。計画 400百万円に対して ▲325（達成率 19%）。\n' +
-    '最大は10月の 50（積み上げの 67%）、確度A・B は 55（73%）。積み上げに含まない 5件（26）は右に表示。' +
+  assert.strictEqual(slide.lead, '今年度（26/4〜27/3）の期待値の積み上げは 78百万円。計画 400百万円に対して ▲322（達成率 20%）。\n' +
+    '最大は10月の 50（積み上げの 64%）、確度A・B は 55（71%）。積み上げに含まない 4件（23）は右に表示。' +
     '期待値が空の 1件は 0 として数えた。');
   const roles = role => roleOf(slide, role);
   // 月の段は前の月までの積み上げから浮かせ、確度の順（A が下）に塗り分ける。合計は確度別。計画は白地に枠、不足は灰色の点線
@@ -2900,13 +2907,13 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
   assert.deepStrictEqual(roles('plan-total').map(el => el.fill), [o.ranks[0].color, o.ranks[1].color, o.ranks[2].color, o.ranks[4].color, o.otherColor]);
   assert.deepStrictEqual(roles('plan-plan').map(el => [el.fill, el.line]), [[c.white, c.dark]]);
   assert.deepStrictEqual(roles('plan-gap').map(el => [el.fill, el.dash]), [[c.graySoft, true]]);
-  assert.deepStrictEqual(roles('plan-value').map(el => el.text), ['+4', '+50', '+21', '75', '400', '▲325', '6', '8', '9', '3']);
+  assert.deepStrictEqual(roles('plan-value').map(el => el.text), ['+4', '+50', '+3', '+21', '78', '400', '▲322', '6', '8', '9', '0']);
   assert.deepStrictEqual(roles('plan-label').map(el => el.text), ['26/4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月', '27/1月', '2月', '3月',
-    '合計', '計画', '不足', '時期未定\n1件', '〜26/3\n1件', '27/4〜\n1件', '失注・保留\n2件']);
+    '合計', '計画', '不足', '時期未定\n1件', '〜26/3\n1件', '27/4〜\n1件', '失注\n1件']);
   // 積み上げに含まない案件：区切りの線の右に、0 から確度別の棒（3月と合計の数は、横に重なるときは合計を1行上げる）
   const divider = roles('plan-divider')[0];
   assert.ok(divider && roles('plan-aside').every(el => el.x > divider.x) && roles('plan-label').slice(0, 15).every(el => el.x < divider.x));
-  assert.deepStrictEqual(roles('plan-aside').map(el => el.fill), [o.ranks[2].color, o.ranks[3].color, o.ranks[2].color, o.otherColor]);
+  assert.deepStrictEqual(roles('plan-aside').map(el => el.fill), [o.ranks[2].color, o.ranks[3].color, o.ranks[2].color], '失注（期待値 0）の棒は無い');
   const axis = roles('plan-aside').map(el => el.y + el.h);
   assert.ok(axis.every(v => Math.abs(v - axis[0]) < 0.01), '参考の棒は 0 から');
   assert.strictEqual(roles('plan-aside-title')[0].text, '積み上げに含まない（参考）');
@@ -2932,7 +2939,7 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
   const p2 = plain(g.mtgPlanOf_(deals.slice(0, 2), '新FMT2', now, {weighted: true, startMonth: true}));
   assert.strictEqual(p2.plan, 500);
   const merged = plain(g.mtgMergePlans_([p, p2]));
-  assert.deepStrictEqual([merged.plan, merged.total, merged.months[6].values, merged.byRank.B, merged.excluded.count], [900, 125, {B: 70, C: 30}, 70, 2]);
+  assert.deepStrictEqual([merged.plan, merged.total, merged.months[6].values, merged.byRank.B, merged.excluded.count], [900, 128, {B: 70, C: 30}, 70, 1]);
   assert.deepStrictEqual([merged.undated, merged.after.values], [{count: 1, value: 6, values: {C: 6}}, {C: 9}]);
   assert.strictEqual(plain(g.mtgPlanSlide_(merged, now, '全サブインダストリー')).title, '計画に対する積み上げ（全サブインダストリー）');
 
@@ -2945,11 +2952,11 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
   ];
   const bySub = plain(g.mtgPlanBySubSlide_(subs, now));
   assert.strictEqual(bySub.title, '計画に対する積み上げ（サブインダストリー別）');
-  assert.strictEqual(bySub.lead, '達成率の高い順。計画に届いているのは 2のうち 1。最も低いのは 低い（19%）。\n' +
+  assert.strictEqual(bySub.lead, '達成率の高い順。計画に届いているのは 2のうち 1。最も低いのは 低い（20%）。\n' +
     '時期未定：売上開始月が空・読めない案件の期待値（積み上げに含まない）。');
   assert.deepStrictEqual(roleOf(bySub, 'plan-sub-name').map(el => el.text), ['高い', '低い', '合計']);
   const values = roleOf(bySub, 'plan-sub-value').map(el => el.text);
-  assert.deepStrictEqual(values, ['440', '110%', '+40', '100%', '—', '75', '19%', '▲325', '73%', '6（1件）', '515', '64%', '▲285', '96%', '6（1件）']);
+  assert.deepStrictEqual(values, ['440', '110%', '+40', '100%', '—', '78', '20%', '▲322', '71%', '6（1件）', '518', '65%', '▲282', '96%', '6（1件）']);
   assert.strictEqual(roleOf(bySub, 'plan-sub-plan').length, 2, '計画の点線は合計の行には引かない');
   assert.ok(roleOf(bySub, 'plan-sub-plan').every(el => el.type === 'line' && el.dash));
   const bars = roleOf(bySub, 'plan-sub-bar');
@@ -4071,46 +4078,45 @@ test('統合版の前のページ（表紙・目次・状況・計画）は、�
     [{summary: summaries[0], start: 6}, {summary: summaries[1], start: 6 + g.mtgSlides_(summaries[0], 5, {appendix: false}).length}], '2026/10/23', true, now)));
 });
 
-test('想定売上合計は、スプレッドシートの想定売上の列の合計から、ステータスに「失注」を含む行だけを除いたものと必ず同じ（得意先・案件名が空の行も足す。文字の値は足さない。辞退などは除かない）。前回は時点コピーの同じ列から。diagnoseBusinessMtgAmount で突き合わせる', () => {
+test('資料の件数・想定売上合計・期待値合計は、シートの行のうちステータスに「失注」を含む行だけを除いた件数・列の合計と必ず同じ（得意先・案件名が空の行も数える。文字の値は足さない。辞退などは除かない）。diagnoseBusinessMtgTotals で突き合わせる', () => {
   const {gas, g, sheet} = setup({edits: false});
-  // 3行目〜8行目：A社 30（初回訪問）・B社 50（受注）・C社 20（提案中）・D社 空・E社 80・F社 10。9行目以降に足す
-  sheet.getRange(9, COL.customer).setValue('G社');
-  sheet.getRange(9, COL.status).setValue('C-失注');
-  sheet.getRange(9, COL.amount).setValue(7);
-  sheet.getRange(10, COL.customer).setValue('H社');
-  sheet.getRange(10, COL.status).setValue('辞退');            // ことばでは失注の分類だが、合計からは除かない（シートの「失注」だけ）
-  sheet.getRange(10, COL.amount).setValue(4);
-  sheet.getRange(11, COL.amount).setValue(2.5);               // 得意先・案件名が空の行（シートの合計には入るので足す）
-  sheet.getRange(12, COL.customer).setValue('I社');
-  sheet.getRange(12, COL.amount).setValue('約100');           // 文字（シートの合計にも入らないので足さない）
-  const values = sheet.getRange(3, COL.amount, sheet.getLastRow() - 2, 1).getValues().map(r => r[0]);
-  const statuses = sheet.getRange(3, COL.status, sheet.getLastRow() - 2, 1).getDisplayValues().map(r => r[0]);
-  const sheetSum = values.reduce((a, v, i) => a + (typeof v === 'number' && statuses[i].indexOf('失注') < 0 ? v : 0), 0);
-  assert.strictEqual(sheetSum, 30 + 50 + 20 + 80 + 10 + 4 + 2.5);
+  const rules = gas.get('DIFF_RULES');
+  const before = g.mtgReadDeals_(sheet, rules['新FMT']);   // 前回の時点コピーの代わり（9行目以降を足す前）
+  // 3行目〜8行目：A社 30/10（初回訪問）・B社 50/50（受注）・C社 20/5（提案中）・D社 空・E社 80/40・F社 10/3。9行目以降に足す
+  const put = (row, values) => Object.keys(values).forEach(key => sheet.getRange(row, COL[key]).setValue(values[key]));
+  put(9, {customer: 'G社', status: 'C-失注', amount: 7, weighted: 1});
+  put(10, {customer: 'H社', status: '辞退', amount: 4, weighted: 2});   // 失注ではない（シートの「失注」だけを除く）
+  put(11, {amount: 2.5, weighted: 0.5});                                // 得意先・案件名が空の行（シートの合計には入るので数える）
+  put(12, {customer: 'I社', amount: '約100'});                          // 文字（シートの合計にも入らないので足さない）
+  const last = sheet.getLastRow() - 2;
+  const column = key => sheet.getRange(3, COL[key], last, 1).getValues().map(r => r[0]);
+  const statuses = sheet.getRange(3, COL.status, last, 1).getDisplayValues().map(r => r[0]);
+  const keep = statuses.map(st => st.indexOf('失注') < 0);
+  const sheetSum = key => column(key).reduce((a, v, i) => a + (typeof v === 'number' && keep[i] ? v : 0), 0);
+  assert.deepStrictEqual([sheetSum('amount'), sheetSum('weighted')], [30 + 50 + 20 + 80 + 10 + 4 + 2.5, 10 + 50 + 5 + 40 + 3 + 2 + 0.5]);
   const raw = summarize(g, '新FMT');
   const s = plain(raw);
-  assert.strictEqual(s.amountTotal.end, sheetSum, 'シートで失注の行を除いて列を合計したのと同じ');
-  const t = s.amountTotal.totals;
-  assert.deepStrictEqual([t.column, t.sum, t.excluded, t.excludedRows, t.unnamed, t.unnamedRows], ['G', sheetSum + 7, 7, 1, 2.5, 1].map((v, i) => (i === 0 ? g.diffColumnLetter_(COL.amount) : v)));
-  assert.deepStrictEqual(t.texts, [{row: 12, text: '約100'}]);
+  assert.deepStrictEqual([s.kpi.counted, s.kpi.countedAmount, s.kpi.countedWeighted, s.bridge.endCount, s.bridge.amountEnd, s.bridge.end],
+    [9, sheetSum('amount'), sheetSum('weighted'), 9, sheetSum('amount'), sheetSum('weighted')], 'シートで失注の行を除いて数えた・足したのと同じ（A〜F・H・11行目・I社）');
   const slide = plain(g.mtgSlides_(raw))[1];
-  assert.strictEqual(roleOf(slide, 'tile-value')[1].text.split('　')[0], g.mtgAmount_(sheetSum));
-  assert.strictEqual(roleOf(slide, 'tile')[1].text, '想定売上合計（失注除く・百万円）');
+  assert.deepStrictEqual(roleOf(slide, 'tile-value').slice(0, 3).map(el => el.text.split('　')[0]), ['9件', '196.5', '110.5']);
+  assert.match(textOf(plain(g.mtgSlides_(raw))[3]), /期待値（失注除く）は|期待値の増減（失注除く・百万円）/);
+  assert.strictEqual(raw.quarters.reduce((a, q) => a + q.value, 0), sheetSum('weighted'), '受注月別の期待値を合わせると期待値合計');
+  assert.strictEqual(raw.stages.filter(st => st.kind !== 'lost').reduce((a, st) => a + st.weighted, 0), sheetSum('weighted'), 'ステータス別も');
+  assert.strictEqual(g.mtgDealLabel_(raw.changes.concat(raw.focus).find(d => d.row === 11) || {row: 11}), '（得意先・案件名なし：11行目）');
 
-  // 前回：時点コピーがあれば、コピーの同じ列から同じ数え方で（変更の記録は使わない）
-  const copyTable = g.mtgReadDeals_(sheet, gas.get('DIFF_RULES')['新FMT']);
-  copyTable.amounts.counted = 100;
-  const withCopy = summarize(g, '新FMT', {copy: {table: copyTable, title: '時点コピー', url: 'u'}});
-  assert.deepStrictEqual([withCopy.amountTotal.start, withCopy.amountTotal.startFrom], [100, 'copy']);
+  // 前回：時点コピーの同じ行を同じ数え方で（足した行は新規）
+  const withCopy = plain(summarize(g, '新FMT', {copy: {table: before, title: '時点コピー', url: 'u'}}));
+  assert.deepStrictEqual([withCopy.bridge.startCount, withCopy.bridge.amountStart, withCopy.bridge.start], [6, 190, 108]);
 
-  // 突き合わせ（読むだけ）：画面に、列の合計・除いた行・資料の合計・空の行・文字の値・ステータス別を出す
+  // 突き合わせ（読むだけ）
   gas.promptAnswers = ['1'];
-  g.diagnoseBusinessMtgAmount();
+  g.diagnoseBusinessMtgTotals();
   const text = gas.alerts[gas.alerts.length - 1].message;
-  assert.match(text, new RegExp('■ 新FMT\\n　使っている列：' + g.diffColumnLetter_(COL.amount) + '列「想定売上規模（百万）」（3行目から下のすべての行）'));
-  assert.match(text, /列の数値の合計：203.5（8行）\n　除いた行（ステータスに「失注」を含む）：7（1行）\n　資料の想定売上合計：196.5（＝ 203.5 − 7）/);
-  assert.match(text, /うち得意先・案件名が空の行：2.5（1行。合計に含めています）/);
-  assert.match(text, /数値でない値（シートの合計と同じく足していません）：12行目「約100」/);
-  assert.match(text, /　　C-失注：7（1行）　← 除く\n/);
-  assert.match(text, /　　辞退：4（1行）\n/);
+  assert.match(text, /■ 新FMT\n　数える行：見出しの下で、得意先・案件名・ステータス・想定売上・期待値のどれかが入っている 10行（失注 1行）\n　案件数（失注除く）：9件/);
+  assert.match(text, new RegExp('　想定売上（' + g.diffColumnLetter_(COL.amount) + '列）：列の合計 203.5 − 失注の行 7 ＝ 資料 196.5\\n　　数値でない値（足していません）：12行目「約100」'));
+  assert.match(text, new RegExp('　期待値（' + g.diffColumnLetter_(COL.weighted) + '列）：列の合計 111.5 − 失注の行 1 ＝ 資料 110.5'));
+  assert.match(text, /得意先・案件名が空の行（数えています）：11行目/);
+  assert.match(text, /　　C-失注：1件・7・1　← 除く\n/);
+  assert.match(text, /　　辞退：1件・4・2\n/);
 });

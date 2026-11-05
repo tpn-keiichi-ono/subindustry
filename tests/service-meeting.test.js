@@ -156,7 +156,7 @@ function fill(gas, request, task) {
   addTask(gas, task, {'サービス案': 'SR-0009 消したリクエスト', 'タスク': '迷子のタスク', '担当者': '佐藤', '状況': '未着手'});
 }
 
-test('smtgCollect_：同じ名前のサービス案のリクエストをまとめ（棄却は除く）、タスクを ID で結び付け、元の案件の期待値（進行中だけ）・確認事項を出す', () => {
+test('smtgCollect_：同じ名前のサービス案のリクエストをまとめ（棄却は除く）、タスクを ID で結び付け、元の案件の期待値（失注を除く）・確認事項を出す', () => {
   const {gas, g, request, task} = setup();
   fill(gas, request, task);
   const data = g.smtgCollect_(gas.ss, new Date(), '2026/10/30');
@@ -217,7 +217,7 @@ test('smtgView_：サブインダストリーの資料は、そのシートの�
   assert.strictEqual(slides[1].elements.find(el => el.role === 'footer').text, '【試作】新FMT（10/30 RX Service Meeting 資料）　金額の単位：百万円');
   assert.strictEqual(slides[2].elements.find(el => el.type === 'table').rows[1].cells[1].text, '2件\n全体3');
   assert.match(slides.find(sl => sl.title === 'サービス案：購買分析').elements.find(el => el.role === 'lead').text,
-    /^リクエスト 2件（ほかのサブインダストリーに 1件）・得意先 2社、元の案件の期待値 50百万円（進行中 2案件）。$/);
+    /^リクエスト 2件（ほかのサブインダストリーに 1件）・得意先 2社、元の案件の期待値 50百万円（失注を除く 2案件）。$/);
 });
 
 /* ---------------- スライド ---------------- */

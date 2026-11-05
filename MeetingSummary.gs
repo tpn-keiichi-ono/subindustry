@@ -30,7 +30,7 @@
  *   左上のラベルは置かない（どのサブインダストリー・会議日の資料かは、表紙・ファイル名・下の出典の行に書く。試作は表紙と出典の行に【試作】）
  *
  * ことばの決まり（どのページでも同じ数え方にする）
- * - ステータスの分類：進行中・受注・失注・保留（MTG_OPTIONS のことば・statusKinds で決める）。期待値は進行中の案件だけを数える。
+ * - ステータスの分類：進行中・受注・失注・保留（MTG_OPTIONS のことば・statusKinds で決める）。資料の件数・金額の合計は失注の行だけを除いて数える（シートの合計と同じ。2026/11/05 から）。
  *   前進・後退は、案件ステータスのプルダウンの並び順で決める。
  * - 前回からの変化は、案件ごとに1つの区分にする（新規 > 受注 > 失注 > 保留 > 復帰 > 前進 > 後退 > 延期 > 前倒し > 増額 > 減額 > 変更 > 活動更新 > その他更新）。
  *   行を削除した案件は「削除」（失注には数えない）。
@@ -232,10 +232,6 @@ const MTG_OPTIONS = {
   firstDays: 14,                     // 初回（前回の会議の記録が無い）は、何日前からの変化を出すか
   lookbackDays: 180,                 // ステータスの滞留・受注月の延期の回数を数えるために、何日前までの記録を読むか
   stallDays: 45,                     // 停滞：ステータスがこの日数以上同じ進行中の案件
-  // サマリーの「想定売上合計」：シートの想定売上の列の合計から、案件ステータスにこの語を含む行だけを除く（2026/11/05 から。スプレッドシートで
-  // 「ステータスが失注の行を除いて列を合計」したのと必ず同じ数字にする。前の版は進行中だけで、辞退・見送りなどのことば（lostWords）でも失注とみなしていた）。
-  // 期待値合計は今までどおり進行中だけ
-  amountExcludeStatuses: ['失注'],
   recentMonths: 2,                   // 期待値上位案件の直近の動き：何か月前（同じ日）からの変更の記録を出すか
   recentMax: 8,                      // 期待値上位案件の直近の動き：1案件に出す動きの数（新しい順。残りは「ほか N件」）
   // RXシナリオ構成別の期待値（createBusinessMtgScenarioSummary()。構成が未確定のあいだの別の資料）。複数のシナリオを選んだ案件は、
@@ -342,7 +338,9 @@ const MTG_OPTIONS = {
   // ステータスの分類。statusKinds に書いたステータスはそのとおりに（'active' 進行中・'won' 受注・'lost' 失注・'hold' 保留）。
   // ほかは、その語を含むかで決める（失注 → 保留 → 受注 の順に見る。受注は notWonWords を含むもの（受注見込み など）を除く）
   statusKinds: {},
-  lostWords: ['失注', '辞退', '見送', '中止', 'クローズ', 'ロスト', '消滅'],
+  // 失注は、ステータスに「失注」を含むものだけ（2026/11/05 から。資料の合計・件数は「失注の行を除いたシートの合計・件数」と必ず同じにするため、
+  // 辞退・見送り・中止などのことばでは失注にしない。前の版：'失注', '辞退', '見送', '中止', 'クローズ', 'ロスト', '消滅'）
+  lostWords: ['失注'],
   holdWords: ['保留', 'ペンディング', '凍結', '休眠'],
   wonWords: ['受注', '成約', '契約済'],
   notWonWords: ['見込', '予定', '前', '待'],
@@ -417,10 +415,10 @@ const MTG_TITLES = {
  */
 
 /* 期待値の増減の内訳（増える → 減るの順） */
+// 2026/11/05 から、対象は失注を除く案件（受注・保留も含む）。受注・保留になった案件は外れないので、受注・保留の内訳は無い（期待値が変われば増・減）
 const MTG_BRIDGE = [
   {key: 'new', label: '新規'}, {key: 'up', label: '期待値増'}, {key: 'revived', label: '復帰'},
-  {key: 'down', label: '期待値減'}, {key: 'won', label: '受注'}, {key: 'lost', label: '失注'}, {key: 'hold', label: '保留'},
-  {key: 'removed', label: '削除'}
+  {key: 'down', label: '期待値減'}, {key: 'lost', label: '失注'}, {key: 'removed', label: '削除'}
 ];
 
 /* 入力内容のチェックの種類（この順に出す。意味は docs/DESIGN.md の「入力内容のチェック」） */
@@ -3009,13 +3007,14 @@ function mtgReadSnapshots_(ss, since) {
 }
 
 /**
- * 追跡シートの案件（得意先か案件名のある行）を読む。
+ * 追跡シートの案件を読む。
  * {headers, has: {見出しのキー: シートにあるか}, statusOrder: ステータスのプルダウンの選択肢（無ければ空）, weightedFormula: 期待値の列が数式か,
  *  salesYears: 年度別の売上の列の年度（下2桁）,
  *  deals: [{row, key, customer, project, status, kind, amount, weighted, orderMonth: {y, m}|null, orderMonthText,
  *  startMonth: {y, m}|null, startMonthText, activity, issue, owner, delivery, record, scenarios, scenarioAmount,
- *  sales: {年度の下2桁: 売上}, updatedAt: 時刻（ms）|null, missing: [見出し]}],
- *  amounts: 想定売上の列の合計（mtgAmountTotals_。サマリーの想定売上合計）}
+ *  sales: {年度の下2桁: 売上}, updatedAt: 時刻（ms）|null, missing: [見出し], unnamed: 得意先・案件名が空の行か}]}
+ * 案件は、見出しより下の行のうち、得意先・案件名・ステータス・想定売上・期待値のどれかが入っている行（得意先・案件名が空でも、金額などがあれば数える。
+ * 資料の合計・件数をシートの合計と同じにするため。キーは「#行」）。金額は数値のセルだけ（シートの SUM と同じ。文字のセルは空とみなす。mtgCellNumber_）
  */
 function mtgReadDeals_(sheet, rule) {
   const headerRow = rule.headerRow;
@@ -3045,7 +3044,7 @@ function mtgReadDeals_(sheet, rule) {
     if (m) salesCols.push({col: c, year: String(m[1]).slice(-2)});
   });
 
-  const out = {headers, has, hasStamp: stampCol >= 0, statusOrder: [], deals: [], weightedFormula: false, amounts: mtgAmountTotals_([], [], cols, headerRow),
+  const out = {headers, has, hasStamp: stampCol >= 0, statusOrder: [], deals: [], weightedFormula: false,
     salesYears: salesCols.map(sc => sc.year).filter((y, i, list) => list.indexOf(y) === i)};
   const count = sheet.getLastRow() - headerRow;
   if (count < 1) return out;
@@ -3057,21 +3056,22 @@ function mtgReadDeals_(sheet, rule) {
   const range = sheet.getRange(headerRow + 1, 1, count, width);
   const values = range.getValues();
   const shown = range.getDisplayValues();
-  out.amounts = mtgAmountTotals_(values, shown, cols, headerRow);
   shown.forEach((line, n) => {
     const text = key => (cols[key] >= 0 ? String(line[cols[key]]).trim() : '');
     const value = key => (cols[key] >= 0 ? values[n][cols[key]] : null);
     const customer = text('customer');
     const project = text('project');
-    if (!customer && !project) return;
     const status = text('status');
+    const unnamed = !customer && !project;
+    if (unnamed && !status && !text('amount') && !text('weighted')) return;
     out.deals.push({
       row: headerRow + 1 + n,
-      key: mtgDealKey_(customer, project),
+      key: unnamed ? '#' + (headerRow + 1 + n) : mtgDealKey_(customer, project),
+      unnamed,
       customer, project, status,
       kind: mtgStatusKind_(status),
-      amount: mtgNumber_(value('amount')),
-      weighted: mtgNumber_(value('weighted')),
+      amount: mtgCellNumber_(value('amount')),
+      weighted: mtgCellNumber_(value('weighted')),
       orderMonth: mtgMonth_(value('orderMonth')),
       orderMonthText: text('orderMonth'),
       startMonth: mtgMonth_(value('startMonth')),
@@ -3085,10 +3085,10 @@ function mtgReadDeals_(sheet, rule) {
       delivery: text('delivery'),
       nextAction: text('nextAction'),
       scenarios: mtgScenarioList_(text('scenario')),
-      scenarioAmount: mtgNumber_(value('scenarioAmount')),
+      scenarioAmount: mtgCellNumber_(value('scenarioAmount')),
       // 年度別の売上：年度の下2桁 → 前半期と後半期の合計（どちらも空なら入れない）
       sales: salesCols.reduce((map, sc) => {
-        const v = mtgNumber_(values[n][sc.col]);
+        const v = mtgCellNumber_(values[n][sc.col]);
         if (v != null) map[sc.year] = (map[sc.year] || 0) + v;
         return map;
       }, {}),
@@ -3246,7 +3246,8 @@ function mtgSummarize_(ss, name, context) {
   }
 
   const active = deals.filter(d => d.kind === 'active');
-  const amountDeals = deals.filter(d => !mtgAmountExcluded_(d.status));
+  // 資料の合計・件数の対象：失注の行を除くすべての行（受注・保留も。シートで失注を除いて合計・件数を数えたのと同じ）
+  const counted = deals.filter(d => !mtgExcludedStatus_(d.status));
   const count = key => changes.filter(c => c.category === key).length;
   const owners = new Set(alerts.map(a => a.owner || o.blankText));
   const alertDeals = new Set(alerts.map(a => a.dealKey || a.key));
@@ -3263,11 +3264,14 @@ function mtgSummarize_(ss, name, context) {
     kpi: {
       deals: deals.length,
       active: active.length,
-      amount: table.amounts.counted,   // 想定売上合計：シートの想定売上の列の、ステータスが失注の行を除く合計（mtgAmountTotals_）
-      weighted: mtgSum_(active, 'weighted'),
-      // 期待値・想定売上が空（合計に含めない）。列が無いときは空欄ではなく「データなし」（gaps）なので数えない。想定売上は合計に入れる案件（失注を除く）で数える
-      missingWeighted: table.has.weighted ? active.filter(d => d.weighted == null).length : 0,
-      missingAmount: table.has.amount ? amountDeals.filter(d => d.amount == null).length : 0,
+      weighted: mtgSum_(active, 'weighted'),   // 進行中の案件の期待値（期待値上位案件の割合）
+      // 失注を除く案件の数・想定売上合計・期待値合計（サマリー・全サブインダストリーの状況。シートの値そのものを足す）
+      counted: counted.length,
+      countedAmount: mtgSum_(counted, 'amount'),
+      countedWeighted: mtgSum_(counted, 'weighted'),
+      // 期待値・想定売上が空か数値でない（合計に含めない）。列が無いときは空欄ではなく「データなし」（gaps）なので数えない。失注を除く案件で数える
+      missingWeighted: table.has.weighted ? counted.filter(d => d.weighted == null).length : 0,
+      missingAmount: table.has.amount ? counted.filter(d => d.amount == null).length : 0,
       missingStatus: active.filter(d => !d.status).length,              // ステータスが空（進行中として数える。資料に件数を書く）
       changed: changes.filter(c => c.category !== 'updated').length,
       activity: count('activity'),
@@ -3297,12 +3301,8 @@ function mtgSummarize_(ss, name, context) {
     gaps: gaps.parts,
     alertGaps: gaps.alerts,
     bridge,
-    // 想定売上合計（サマリー）：今のシートの想定売上の列から（mtgAmountTotals_）。前回は、前回の時点コピー（スプレッドシート）の同じ列から。
-    // 時点コピーが無いときだけ、変更の記録から出した前回の値（mtgBridge_ の amountStart）
-    amountTotal: {end: table.amounts.counted, start: copy ? copy.table.amounts.counted : bridge.amountStart, startFrom: copy ? 'copy' : 'log',
-      totals: table.amounts},
     stages: mtgStages_(deals, table.statusOrder),
-    quarters: mtgQuarters_(active, context.now),
+    quarters: mtgQuarters_(counted, context.now),
     plan: mtgPlanOf_(deals, name, context.now, table.has),
     portfolio: mtgPortfolioWithPrevious_(mtgPortfolioOf_(deals, context.now, table, statusTable), copy, context, statusTable),
     changes,
@@ -3639,43 +3639,36 @@ function mtgChange_(key, deal, removed, events, states, since, labels, rules, pr
 }
 
 /**
- * 期待値の増減。前回の時点で進行中だった案件の期待値（start）から、今の進行中の期待値（end）までを内訳にする（start + 内訳の合計 = end）。
- * 進行中のまま：増額・減額。進行中に入った：新規・復帰。進行中から外れた：受注・失注・保留・削除（前回の期待値の分だけ減る）。
- * {start, end, startCount, endCount, amountStart, amountEnd（想定売上の合計。前回・今回。ステータスが失注（mtgAmountExcluded_）の案件を除く。
- * 時点コピーが無いときのサマリーの前回の値に使う）, steps: [{key, label, value, count}]}
+ * 期待値の増減。前回の時点で失注でなかった案件の期待値（start）から、今の失注でない案件の期待値（end）までを内訳にする（start + 内訳の合計 = end）。
+ * 対象は失注を除くすべての案件（受注・保留も。サマリーの合計・件数と同じ。mtgExcludedStatus_）。対象のまま：増額・減額。対象に入った：新規・
+ * 復帰（失注から戻った）。対象から外れた：失注・削除（前回の期待値の分だけ減る）。
+ * {start, end, startCount, endCount, amountStart, amountEnd（想定売上の合計。前回・今回）, steps: [{key, label, value, count}]}
  */
 function mtgBridge_(deals, byKey, changed, changes) {
   const steps = {};
   MTG_BRIDGE.forEach(b => { steps[b.key] = {key: b.key, label: b.label, value: 0, count: 0}; });
   const out = {start: 0, end: 0, startCount: 0, endCount: 0, amountStart: 0, amountEnd: 0};
-  // 想定売上の合計に入れるか（ステータスの値。null（その時点に案件が無い）なら入れない。失注（mtgAmountExcluded_）なら入れない）
-  const counted = status => status != null && !mtgAmountExcluded_(status);
-  const amounts = (statusStart, aStart, statusEnd, aEnd) => {
-    if (counted(statusStart)) out.amountStart += aStart || 0;
-    if (counted(statusEnd)) out.amountEnd += aEnd || 0;
-  };
-  const add = (item, was, wStart, now, wEnd, kindNow) => {
-    if (was) { out.start += wStart; out.startCount++; }
-    if (now) { out.end += wEnd; out.endCount++; }
+  const add = (item, was, wStart, aStart, now, wEnd, aEnd) => {
+    if (was) { out.start += wStart; out.startCount++; out.amountStart += aStart; }
+    if (now) { out.end += wEnd; out.endCount++; out.amountEnd += aEnd; }
     let key = null;
     if (!was && now) key = item && item.flags.indexOf('new') >= 0 ? 'new' : 'revived';
-    else if (was && !now) key = item && item.removed ? 'removed' : ({won: 'won', lost: 'lost', hold: 'hold'}[kindNow] || 'down');
+    else if (was && !now) key = item && item.removed ? 'removed' : 'lost';
     else if (was && now && wEnd !== wStart) key = wEnd > wStart ? 'up' : 'down';
     if (!key) return;
     steps[key].value += (now ? wEnd : 0) - (was ? wStart : 0);
     steps[key].count++;
   };
+  const inScope = status => !mtgExcludedStatus_(status);
   deals.forEach(d => {
     const item = byKey.get(d.key) === d ? changed.get(d.key) : null;
-    const was = item ? !!item.base && mtgStatusKind_(item.base.status) === 'active' : d.kind === 'active';
+    const was = item ? !!item.base && inScope(item.base.status) : inScope(d.status);
     const wStart = item ? (item.base && item.base.weighted) || 0 : d.weighted || 0;
     const aStart = item ? (item.base && item.base.amount) || 0 : d.amount || 0;
-    add(item, was, wStart, d.kind === 'active', d.weighted || 0, d.kind);
-    amounts(item ? (item.base ? item.base.status || '' : null) : d.status, aStart, d.status, d.amount || 0);
+    add(item, was, wStart, aStart, inScope(d.status), d.weighted || 0, d.amount || 0);
   });
   changes.filter(c => c.removed).forEach(c => {
-    add(c, mtgStatusKind_(c.base.status) === 'active', c.base.weighted || 0, false, 0, null);
-    amounts(c.base.status || '', c.base.amount || 0, null, 0);
+    add(c, inScope(c.base.status), c.base.weighted || 0, c.base.amount || 0, false, 0, 0);
   });
   out.steps = MTG_BRIDGE.map(b => steps[b.key]);
   return out;
@@ -3770,29 +3763,32 @@ function mtgFiscalStart_(now) {
 }
 
 /**
- * 進行中の案件の受注月ごとの期待値 [{label, value, count}]：受注月超過（受注月が今月より前）・今期の今の四半期から4Q まで・来期以降・受注月未入力。
- * 受注月を過ぎた案件は四半期に入れない（「受注月が今期の期待値」に過ぎた案件を混ぜないため。過ぎた四半期の行は出さない）
+ * 失注を除く案件（deals）の受注月ごとの期待値 [{label, value, count}]：前年度以前（受注した案件で、受注月が今年度より前）・
+ * 受注月超過（受注していない案件で、受注月が今月より前）・今年度の 1Q〜4Q（過ぎた四半期も出す。受注した案件は受注月の四半期に入れる）・
+ * 来期以降・受注月未入力。
+ * どの案件もどれか1つに入るので、合わせると期待値合計（失注除く）になる
  */
-function mtgQuarters_(active, now) {
+function mtgQuarters_(deals, now) {
   const start = mtgFiscalStart_(now);
   const month = mtgMonthIndex_(mtgMonth_(Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/MM')));
-  const first = Math.floor((month - start) / 3);
+  const before = {label: '前年度以前', value: 0, count: 0, optional: true};
   const over = {label: '受注月超過', value: 0, count: 0, optional: true};
   const quarters = [];
-  for (let q = first; q < 4; q++) {
+  for (let q = 0; q < 4; q++) {
     const a = mtgMonthOf_(start + q * 3);
     const b = mtgMonthOf_(start + q * 3 + 2);
     quarters.push({label: (q + 1) + 'Q（' + a.m + '〜' + b.m + '月）', value: 0, count: 0});
   }
   const later = {label: '来期以降', value: 0, count: 0, optional: true};
   const none = {label: '受注月未入力', value: 0, count: 0, optional: true};
-  active.forEach(d => {
+  deals.forEach(d => {
     const i = d.orderMonth ? mtgMonthIndex_(d.orderMonth) : null;
-    const bucket = i == null ? none : i < month ? over : i >= start + 12 ? later : quarters[Math.floor((i - start) / 3) - first];
+    const bucket = i == null ? none : i >= start + 12 ? later : d.kind !== 'won' && i < month ? over
+      : i < start ? before : quarters[Math.floor((i - start) / 3)];
     bucket.value += d.weighted || 0;
     bucket.count++;
   });
-  return [over].concat(quarters, [later, none]).filter(b => !b.optional || b.count).map(b => ({label: b.label, value: b.value, count: b.count}));
+  return [before, over].concat(quarters, [later, none]).filter(b => !b.optional || b.count).map(b => ({label: b.label, value: b.value, count: b.count}));
 }
 
 /** ステータスごとの件数・金額 [{status, kind, known, count, amount, weighted}]（進行中 → 保留 → 受注 → 失注。同じ分類の中はプルダウンの順） */
@@ -3852,7 +3848,7 @@ function mtgDealKey_(customer, project) {
   return credNormalize_(customer) + '\u0001' + credNormalize_(project);
 }
 
-/** ステータスの分類：'won'（受注）・'lost'（失注・クローズなど）・'hold'（保留）・'active'（進行中。空も） */
+/** ステータスの分類：'won'（受注）・'lost'（ステータスに「失注」を含む）・'hold'（保留）・'active'（進行中。空も） */
 function mtgStatusKind_(status) {
   const text = credNormalize_(status);
   if (!text) return 'active';
@@ -3907,54 +3903,16 @@ function mtgNumber_(value) {
 }
 
 /**
- * 想定売上の列の合計（サマリーの「想定売上合計」）。スプレッドシートの値だけで数える：見出しより下のすべての行（得意先・案件名が空の行も）の、
- * 数値のセルを足す（シートで列を SUM したのと同じ。文字のセルは足さない）。案件ステータスが失注（mtgAmountExcluded_）の行だけを除く。
- * values・shown は見出しの次の行からの値・表示の文字、cols は列（0 から）。
- * {column: 列の記号, header, sum: 列の数値の合計, counted: 資料の合計（sum − excluded）, excluded: 除いた行の合計, excludedRows,
- *  unnamed: 得意先・案件名が空の行の合計（counted に含む）, unnamedRows, texts: [{row, text}] 数値でない値（足していない）,
- *  byStatus: [{status, kind, rows, amount}]（ステータスの表示の値ごと。シートの上からの順）}
+ * 資料の合計・件数から除くステータスか（失注。mtgStatusKind_ が 'lost'：ステータスに「失注」を含む（lostWords）か、statusKinds で失注にしたもの）。
+ * 資料の合計・件数（案件数・想定売上合計・期待値合計とその内訳）は、シートの行のうち、これに当たる行だけを除いて数える（2026/11/05 から）
  */
-/** 想定売上合計から除くステータスか（案件ステータスの表示の値が MTG_OPTIONS.amountExcludeStatuses（失注）の語を含む） */
-function mtgAmountExcluded_(status) {
-  const text = credNormalize_(status);
-  return !!text && (MTG_OPTIONS.amountExcludeStatuses || []).some(w => credNormalize_(w) && text.indexOf(credNormalize_(w)) >= 0);
+function mtgExcludedStatus_(status) {
+  return mtgStatusKind_(status) === 'lost';
 }
 
-function mtgAmountTotals_(values, shown, cols, headerRow) {
-  const col = cols.amount;
-  const out = {column: col >= 0 ? diffColumnLetter_(col + 1) : '', sum: 0, counted: 0, excluded: 0, excludedRows: 0, unnamed: 0, unnamedRows: 0,
-    texts: [], byStatus: []};
-  if (col < 0) return out;
-  const statusOf = {};
-  values.forEach((line, n) => {
-    const raw = line[col];
-    const text = String(shown[n][col] == null ? '' : shown[n][col]).trim();
-    if (typeof raw !== 'number' || !isFinite(raw)) {
-      if (text) out.texts.push({row: headerRow + 1 + n, text});
-      return;
-    }
-    const status = cols.status >= 0 ? String(shown[n][cols.status]).trim() : '';
-    const kind = mtgStatusKind_(status);
-    if (!statusOf[status]) {
-      statusOf[status] = {status, kind, rows: 0, amount: 0};
-      out.byStatus.push(statusOf[status]);
-    }
-    statusOf[status].rows++;
-    statusOf[status].amount += raw;
-    out.sum += raw;
-    if (mtgAmountExcluded_(status)) {
-      out.excluded += raw;
-      out.excludedRows++;
-      return;
-    }
-    out.counted += raw;
-    const named = ['customer', 'project'].some(key => cols[key] >= 0 && String(shown[n][cols[key]]).trim());
-    if (!named) {
-      out.unnamed += raw;
-      out.unnamedRows++;
-    }
-  });
-  return out;
+/** シートのセルの数値（数値のセルだけ。文字のセルは、数字に見えても null。シートの SUM と同じ数え方にする） */
+function mtgCellNumber_(value) {
+  return typeof value === 'number' && isFinite(value) ? value : null;
 }
 
 /** 受注月 {y, m}（日付の値・「2026/10」「2026年10月」「2026-10-01」）。読めなければ null。 */
@@ -4012,6 +3970,7 @@ function mtgSigned_(value) {
 
 /** 得意先／案件名 */
 function mtgDealLabel_(item) {
+  if (!item.customer && !item.project && item.row) return '（得意先・案件名なし：' + item.row + '行目）';
   return (item.customer || '（得意先未入力）') + '／' + (item.project || '（案件名未入力）');
 }
 
@@ -4097,7 +4056,7 @@ function mtgCombinedFront_(sections, meeting, final, now) {
 function mtgCombinedLite_(s) {
   const prev = s.previous;
   return JSON.parse(JSON.stringify({name: s.name, dummy: s.dummy || 0, first: s.first || false, kpi: s.kpi, gaps: s.gaps || {},
-    bridge: {start: s.bridge.start, end: s.bridge.end}, plan: s.plan || null,
+    bridge: {start: s.bridge.start, end: s.bridge.end, startCount: s.bridge.startCount, endCount: s.bridge.endCount}, plan: s.plan || null,
     previous: prev ? {date: prev.date, cutoff: prev.cutoff, baseline: !!prev.baseline, chosen: !!prev.chosen} : null}));
 }
 
@@ -4149,13 +4108,14 @@ function mtgOverviewSlide_(sections) {
   sections.forEach(x => { counts[versus(x.summary)] = (counts[versus(x.summary)] || 0) + 1; });
   const common = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || '前回比';
   const vs = s => (versus(s) === common ? '' : versus(s) + '\n');
-  const labels = ['サブインダストリー', '進行中案件', '期待値合計', /比$/.test(common) ? common : common + 'の増減', '変化のある案件', '停滞', '確認事項', 'ページ'];
+  // 案件数・期待値合計は失注を除く（各資料のサマリーと同じ。シートで失注の行を除いて数えたのと同じ）
+  const labels = ['サブインダストリー', '案件数\n（失注除く）', '期待値合計\n（失注除く）', /比$/.test(common) ? common : common + 'の増減', '変化のある案件', '停滞', '確認事項', 'ページ'];
   const total = {active: 0, weighted: 0, delta: 0, changed: 0, stalled: 0, alerts: 0, lack: {}};
   const lines = sections.map(({summary: s, start}) => {
     const k = s.kpi;
     const lack = s.gaps || {};
     const b = s.bridge;
-    total.active += k.active;
+    total.active += b.endCount;
     total.alerts += k.alerts;
     if (lack.weighted) total.lack.weighted = true;
     else total.weighted += b.end;
@@ -4166,7 +4126,7 @@ function mtgOverviewSlide_(sections) {
     if (lack.stalled) total.lack.stalled = true;
     else total.stalled += k.stalled;
     return {name: s.name, page: String(start), values: [
-      k.active + '件',
+      b.endCount + '件',
       lack.weighted ? null : mtgAmount_(b.end),
       lack.weighted || lack.changes ? null : vs(s) + mtgSigned_(b.end - b.start),
       lack.changes ? null : k.changed + '件',
@@ -4179,7 +4139,7 @@ function mtgOverviewSlide_(sections) {
   const sum = {name: '合計', page: '', total: true, values: [total.active + '件', of(1, mtgAmount_(total.weighted), 'weighted'),
     of(2, mtgSigned_(total.delta), 'delta'), of(3, total.changed + '件', 'changed'), of(4, total.stalled + '件', 'stalled'), total.alerts + '項目']};
   // リード文は1行（表を大きく。11サブインダストリーと合計が1ページに入るように）。合計に ※ があるときは、出典の行の後ろに意味を書く
-  const lead = sections.length + 'サブインダストリーの進行中案件 ' + total.active + '件、期待値合計 ' + mtgAmount_(total.weighted) + '百万円' +
+  const lead = sections.length + 'サブインダストリーの案件 ' + total.active + '件・期待値合計 ' + mtgAmount_(total.weighted) + '百万円（どちらも失注除く）' +
     (total.lack.weighted ? '（期待値の列が無いシートを除く）' : '') + '。';
   const marked = sum.values.some(v => /※$/.test(v || ''));
   const top = Math.max(S.summaryTop, Math.max.apply(null, mtgLead_(lead).map(e => e.y + e.h)) + 4);
@@ -4392,7 +4352,8 @@ function mtgSummarySlide_(s) {
   const lack = s.gaps || {};
   const G = o.gapText;
   // 前回比は変更の記録から出す（記録が無ければ、前回比は「データなし」と書き、±0 と書かない）
-  const lead = '進行中案件 ' + k.active + '件' + (lack.changes ? '' : '（' + vs + mtgSigned_(k.active - b.startCount) + '件）') + '、' +
+  // 案件数・期待値合計は失注を除く（シートで失注の行を除いて数えたのと同じ）
+  const lead = '案件 ' + b.endCount + '件（失注除く）' + (lack.changes ? '' : '（' + vs + mtgSigned_(b.endCount - b.startCount) + '件）') + '、' +
     (lack.weighted ? '期待値合計は' + G + '（' + lack.weighted + '）' : '期待値合計 ' + mtgAmount_(b.end) + '百万円' +
       (lack.changes ? '' : '（' + vs + mtgSigned_(b.end - b.start) + '）')) + '。' +
     (lack.changes ? (s.first ? mtgPeriodShort_(s) + 'の増減' : vs.trim()) + 'は' + G + '（' + lack.changes + '）。' : '') + mtgBlankNote_(k);
@@ -4471,12 +4432,12 @@ function mtgSummarySlide_(s) {
   // 列が無い金額は「データなし」（灰色の箱）。前回比は、変更の記録が無ければ「前回比 データなし」
   const versus = delta => vs + (lack.changes ? G : delta);
   const tiles = [
-    {label: '進行中案件', value: k.active + '件', sub: versus(mtgSigned_(k.active - b.startCount) + '件')},
-    // 想定売上合計はシートの想定売上の列の合計から、ステータスが失注の行だけを除いたもの（mtgAmountTotals_）。数え方は出典の行の後ろに注記する
+    {label: '案件数（失注除く）', value: b.endCount + '件', sub: versus(mtgSigned_(b.endCount - b.startCount) + '件')},
+    // 案件数・想定売上合計・期待値合計は、シートの行のうち失注の行だけを除いたもの（シートの値そのものを足す）。数え方は出典の行の後ろに注記する
     lack.amount ? {label: mtgAmountTileLabel_(), value: G, gap: true}
-      : {label: mtgAmountTileLabel_(), value: mtgAmount_(s.amountTotal.end), sub: versus(mtgSigned_(s.amountTotal.end - s.amountTotal.start))},
-    lack.weighted ? {label: '期待値合計（進行中・百万円）', value: G, gap: true}
-      : {label: '期待値合計（進行中・百万円）', value: mtgAmount_(b.end), sub: versus(mtgSigned_(b.end - b.start))},
+      : {label: mtgAmountTileLabel_(), value: mtgAmount_(b.amountEnd), sub: versus(mtgSigned_(b.amountEnd - b.amountStart))},
+    lack.weighted ? {label: '期待値合計（失注除く・百万円）', value: G, gap: true}
+      : {label: '期待値合計（失注除く・百万円）', value: mtgAmount_(b.end), sub: versus(mtgSigned_(b.end - b.start))},
     {label: '入力内容の確認事項', value: k.alerts + '項目', sub: k.alerts ? k.alertDeals + '案件・責任者 ' + k.owners + '名' : ''}
   ];
   const tw = (S.w - 3 * 8) / 4;
@@ -4499,60 +4460,74 @@ function mtgSummarySlide_(s) {
 }
 
 /**
- * 資料（サマリー）の想定売上合計と、スプレッドシートの想定売上の列の合計を突き合わせる（エディタから実行する。読むだけ）。
- * シートを選び（空欄ならすべて）、シートごとに、使っている列・列の数値の合計・除いた行（ステータスが失注）・資料の想定売上合計・
- * 得意先・案件名が空の行・数値でない値（足していない）・ステータスの値ごとの行数と合計を出す。資料と同じ読み方（Sheets API）で読む
+ * 資料の件数・金額と、スプレッドシートを突き合わせる（エディタから実行する。読むだけ）。シートを選び（空欄ならすべて）、シートごとに、
+ * 数える行・案件数・想定売上と期待値の列の合計（失注の行・資料の数字）・得意先・案件名が空の行・数値でない値（足していない）・ステータスごとの
+ * 件数と金額を出す。資料と同じ読み方（Sheets API）・同じ数え方（mtgReadDeals_・mtgExcludedStatus_）で数える
  */
-function diagnoseBusinessMtgAmount() {
+function diagnoseBusinessMtgTotals() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = mtgUiOrNull_();
-  const names = ui ? mtgAskSheets_(ss, ui, '想定売上合計の突き合わせ（読むだけ）') : Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
+  const names = ui ? mtgAskSheets_(ss, ui, '資料の件数・金額とシートの突き合わせ（読むだけ）') : Object.keys(DIFF_RULES).filter(name => ss.getSheetByName(name));
   if (!names) return;
   const R = MTG_OPTIONS.run;
   const api = R.readMode === 'api' && mtgApiAvailable_();
   const step = api ? Math.max(R.sheetsPerRead || 1, 1) : names.length || 1;
-  const lines = ['想定売上合計の突き合わせ（資料のサマリーの「' + mtgAmountTileLabel_() + '」と、シートの想定売上の列）', ''];
+  const lines = ['資料の件数・金額とシートの突き合わせ（資料の数字は、ステータス「失注」の行を除くシートの合計・件数）', ''];
   for (let i = 0; i < names.length; i += step) {
     const part = names.slice(i, i + step);
     const book = api ? mtgApiBook_(ss, part, {records: false}) : ss;
-    part.forEach(name => {
-      const a = mtgReadDeals_(book.getSheetByName(name), DIFF_RULES[name]).amounts;
-      lines.push('■ ' + name);
-      if (!a.column) {
-        lines.push('　✗ 想定売上の列（「' + MTG_OPTIONS.columns.amount + '」）がありません', '');
-        return;
-      }
-      const rows = a.byStatus.reduce((n, x) => n + x.rows, 0);
-      lines.push('　使っている列：' + a.column + '列「' + MTG_OPTIONS.columns.amount + '」（' + (DIFF_RULES[name].headerRow + 1) + '行目から下のすべての行）',
-        '　列の数値の合計：' + mtgAmount_(a.sum) + '（' + rows + '行）',
-        '　除いた行（ステータスに「' + (MTG_OPTIONS.amountExcludeStatuses || []).join('」「') + '」を含む）：' + mtgAmount_(a.excluded) + '（' + a.excludedRows + '行）',
-        '　資料の想定売上合計：' + mtgAmount_(a.counted) + '（＝ ' + mtgAmount_(a.sum) + ' − ' + mtgAmount_(a.excluded) + '）');
-      if (a.unnamedRows) lines.push('　うち得意先・案件名が空の行：' + mtgAmount_(a.unnamed) + '（' + a.unnamedRows + '行。合計に含めています）');
-      if (a.texts.length) {
-        lines.push('　数値でない値（シートの合計と同じく足していません）：' + a.texts.slice(0, 10).map(t => t.row + '行目「' + t.text + '」').join('・') +
-          (a.texts.length > 10 ? ' ほか' + (a.texts.length - 10) + '件' : ''));
-      }
-      lines.push('　ステータス別：');
-      a.byStatus.forEach(x => lines.push('　　' + (x.status || '（空欄）') + '：' + mtgAmount_(x.amount) + '（' + x.rows + '行）' +
-        (mtgAmountExcluded_(x.status) ? '　← 除く' : '')));
-      lines.push('');
-    });
+    part.forEach(name => lines.push.apply(lines, mtgTotalsLines_(name, mtgReadDeals_(book.getSheetByName(name), DIFF_RULES[name])).concat([''])));
   }
-  lines.push('※ シートでフィルタ・非表示にしている行も数えます（画面右下の合計は、表示している行だけを足します）。');
+  lines.push('※ シートでフィルタ・非表示にしている行も数えます（スプレッドシートの画面右下の合計は、表示している行だけを足します）。',
+    '※ 金額は数値のセルだけを足します（シートの SUM と同じ。文字で入っている数字は足しません）。資料では小数第1位までに丸めて出します。');
   console.log(lines.join('\n'));
   if (ui) ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
 }
 
-/** サマリーの想定売上合計の箱の見出し（「想定売上合計（失注除く・百万円）」。除くものが無ければ「（百万円）」） */
-function mtgAmountTileLabel_() {
-  const out = MTG_OPTIONS.amountExcludeStatuses || [];
-  return '想定売上合計（' + (out.length ? out.join('・') + '除く・' : '') + '百万円）';
+/** diagnoseBusinessMtgTotals の1シートの行（table は mtgReadDeals_ の戻り値） */
+function mtgTotalsLines_(name, table) {
+  const o = MTG_OPTIONS;
+  const deals = table.deals;
+  const lost = deals.filter(d => mtgExcludedStatus_(d.status));
+  const counted = deals.filter(d => !mtgExcludedStatus_(d.status));
+  const out = ['■ ' + name, '　数える行：見出しの下で、得意先・案件名・ステータス・想定売上・期待値のどれかが入っている ' + deals.length + '行（失注 ' + lost.length + '行）',
+    '　案件数（失注除く）：' + counted.length + '件'];
+  ['amount', 'weighted'].forEach(key => {
+    const label = key === 'amount' ? '想定売上' : '期待値';
+    const col = mtgColumnIndex_(table.headers, key);
+    if (col < 0) {
+      out.push('　' + label + '：✗ 列（「' + String(o.columns[key]).replace(/\s+/g, '') + '」）がありません');
+      return;
+    }
+    const all = mtgSum_(deals, key);
+    const minus = mtgSum_(lost, key);
+    out.push('　' + label + '（' + diffColumnLetter_(col + 1) + '列）：列の合計 ' + mtgAmount_(all) + ' − 失注の行 ' + mtgAmount_(minus) + ' ＝ 資料 ' + mtgAmount_(all - minus));
+    const head = credNormalize_(table.headers[col]);
+    const texts = deals.filter(d => d[key] == null && d.cells && d.cells[head]);
+    if (texts.length) {
+      out.push('　　数値でない値（足していません）：' + texts.slice(0, 10).map(d => d.row + '行目「' + d.cells[head] + '」').join('・') +
+        (texts.length > 10 ? ' ほか' + (texts.length - 10) + '件' : ''));
+    }
+  });
+  const unnamed = deals.filter(d => d.unnamed);
+  if (unnamed.length) {
+    out.push('　得意先・案件名が空の行（数えています）：' + unnamed.slice(0, 10).map(d => d.row + '行目').join('・') + (unnamed.length > 10 ? ' ほか' + (unnamed.length - 10) + '行' : ''));
+  }
+  out.push('　ステータス別（件数・想定売上・期待値）：');
+  mtgStages_(deals, table.statusOrder).forEach(st => {
+    out.push('　　' + st.status + '：' + st.count + '件・' + mtgAmount_(st.amount) + '・' + mtgAmount_(st.weighted) + (mtgExcludedStatus_(st.status === o.blankText ? '' : st.status) ? '　← 除く' : ''));
+  });
+  return out;
 }
 
-/** サマリーの出典の行の後ろの注記：想定売上合計の数え方（「※ 想定売上合計はステータス「失注」を除く列の合計」。出典の行は1行なので短く） */
+/** サマリーの想定売上合計の箱の見出し */
+function mtgAmountTileLabel_() {
+  return '想定売上合計（失注除く・百万円）';
+}
+
+/** サマリーの出典の行の後ろの注記：合計・件数の数え方（出典の行は1行なので短く） */
 function mtgAmountNote_() {
-  const out = MTG_OPTIONS.amountExcludeStatuses || [];
-  return '※ 想定売上合計は' + (out.length ? 'ステータス「' + out.join('」「') + '」を除く' : '') + '列の合計';
+  return '※ 件数・金額はステータス「失注」の行を除くシートの合計';
 }
 
 /**
@@ -4661,14 +4636,14 @@ function mtgBridgeSlide_(s) {
   const minus = mtgSum_(b.steps.filter(st => st.value < 0), 'value');
   const peak = s.quarters.filter(q => /Q/.test(q.label) && q.value > 0).sort((x, y) => y.value - x.value)[0];
   const over = s.quarters.find(q => q.label === '受注月超過');
-  const won = b.steps.find(st => st.key === 'won' && st.count);
   const lack = s.gaps || {};
   const G = MTG_OPTIONS.gapText;
   // 期待値の列・変更の記録が無ければ、滝の図の場所に「データなし」と理由（見出しは残す）
   const flowGap = lack.weighted || lack.changes;
-  const el = flowGap ? [mtgBox_(S.x, S.top - 2, 190, 20, '期待値の増減（進行中・百万円）', {size: 10.5, bold: true, color: MTG_OPTIONS.colors.ink}),
+  const el = flowGap ? [mtgBox_(S.x, S.top - 2, 190, 20, '期待値の増減（失注除く・百万円）', {size: 10.5, bold: true, color: MTG_OPTIONS.colors.ink}),
     mtgEmptyBox_(S.x, S.top + 26, 360, 64, 'gap', flowGap)] : mtgWaterfall_(s, S.x, S.top, 360, S.bottom - S.top);
-  const stages = s.stages.filter(st => st.kind === 'active');
+  // ステータス別は失注を除くステータス（進行中 → 保留 → 受注の順）。合わせると期待値合計（失注除く）
+  const stages = s.stages.filter(st => st.kind !== 'lost');
   const shown = stages.slice(0, 8);
   if (stages.length > 8) {
     const rest = stages.slice(7);
@@ -4678,23 +4653,23 @@ function mtgBridgeSlide_(s) {
   const width = S.w - 376;
   const statusRows = shown.map(st => ({label: st.status, count: st.count, value: st.weighted || 0}));
   const monthRows = s.quarters.map(q => ({label: q.label, count: q.count, value: q.value || 0}));
-  // 2つのグラフは同じ目盛り（どちらも進行中の期待値の内訳なので、棒の長さで比べられるように）。行の高さは、下まで入るように
+  // 2つのグラフは同じ目盛り（どちらも期待値合計（失注除く）の内訳なので、棒の長さで比べられるように）。行の高さは、下まで入るように
   const max = Math.max.apply(null, statusRows.concat(monthRows).map(r => r.value).concat([0]));
   const gap = 14;
   const rowH = Math.min(15, (S.bottom - S.top - 2 * 22 - gap) / Math.max(1, statusRows.length + monthRows.length));
   const labelW = mtgBarLabelWidth_(statusRows.concat(monthRows).map(r => r.label));
-  const byStatus = mtgBarChart_('ステータス別期待値（進行中・百万円）', statusRows, right, S.top, width, max, rowH, '進行中案件なし', labelW,
+  const byStatus = mtgBarChart_('ステータス別期待値（失注除く・百万円）', statusRows, right, S.top, width, max, rowH, '案件なし', labelW,
     lack.weighted);
-  const byMonth = mtgBarChart_('受注月別期待値（進行中・百万円）', monthRows, right, byStatus.bottom + gap, width, max, rowH, '進行中案件なし', labelW,
+  const byMonth = mtgBarChart_('受注月別期待値（失注除く・百万円）', monthRows, right, byStatus.bottom + gap, width, max, rowH, '案件なし', labelW,
     lack.weighted || lack.orderMonth);
   el.push.apply(el, byStatus.elements.concat(byMonth.elements));
-  const first = lack.weighted ? '進行中の期待値は' + G + '（' + lack.weighted + '）。'
-    : lack.changes ? '進行中の期待値は ' + mtgAmount_(b.end) + '百万円。' + (s.first ? mtgPeriodShort_(s) + 'の増減' : mtgVersus_(s).trim()) + 'は' + G + '（' + lack.changes + '）。'
-      : '進行中の期待値は ' + mtgAmount_(b.start) + ' → ' + mtgAmount_(b.end) + '百万円（' + mtgSigned_(delta) + '）。増加 ' + mtgSigned_(plus) +
-        '・減少 ' + mtgSigned_(minus) + (won && won.value ? '（うち受注 ' + mtgSigned_(won.value) + '）' : '') +
+  const first = lack.weighted ? '期待値（失注除く）は' + G + '（' + lack.weighted + '）。'
+    : lack.changes ? '期待値（失注除く）は ' + mtgAmount_(b.end) + '百万円。' + (s.first ? mtgPeriodShort_(s) + 'の増減' : mtgVersus_(s).trim()) + 'は' + G + '（' + lack.changes + '）。'
+      : '期待値（失注除く）は ' + mtgAmount_(b.start) + ' → ' + mtgAmount_(b.end) + '百万円（' + mtgSigned_(delta) + '）。増加 ' + mtgSigned_(plus) +
+        '・減少 ' + mtgSigned_(minus) +
         (biggest && biggest.value ? '、内訳の最大は' + biggest.label + '（' + biggest.count + '件・' + mtgSigned_(biggest.value) + '）' : '') + '。';
   const second = lack.weighted ? '' : lack.orderMonth ? '受注月別の期待値は' + G + '（' + lack.orderMonth + '）。'
-    : '受注月が今期の期待値は ' + mtgAmount_(mtgSum_(s.quarters.filter(q => /Q/.test(q.label)), 'value')) + '百万円' +
+    : '受注月が今年度の期待値は ' + mtgAmount_(mtgSum_(s.quarters.filter(q => /Q/.test(q.label)), 'value')) + '百万円' +
       (peak ? '（最大は' + peak.label.replace(/（.*/, '') + 'の ' + mtgAmount_(peak.value) + '）' : '') +
       (over ? '、受注月超過は ' + mtgAmount_(over.value) + '百万円' : '') +
       (s.kpi.missingWeighted ? '。期待値未入力の ' + s.kpi.missingWeighted + '件は金額に含めていない' : '') + '。';
@@ -5626,10 +5601,10 @@ function mtgPlanAmount_(name) {
 
 /**
  * 計画に対する積み上げの中身。今年度（MTG_OPTIONS.fiscalStartMonth から12か月）の月（plan.monthColumn。今は受注月）ごとの期待値を、確度（mtgPlanRank_）ごとに足す。
- * 進行中・受注の案件が対象。積み上げに入らない案件（時期未定・今年度より前・来年度以降・失注・保留）は、それぞれの件数と期待値（確度別も）を残す
+ * 失注を除く案件（進行中・受注・保留）が対象。積み上げに入らない案件（時期未定・今年度より前・来年度以降・失注）は、それぞれの件数と期待値（確度別も）を残す
  * （資料では積み上げの右に参考として出す）。期待値が空の案件は 0 として数え、件数を残す。has はシートの列があるか（期待値・月の列が無ければ gap に理由）。
  * 戻り値 {plan, start: 今年度の最初の月の番号, months: [{y, m, values: {確度: 期待値}, total, count}], total, byRank: {確度: 期待値},
- *  undated: 月が空・読めない, before: 今年度より前, after: 来年度以降, excluded: 失注・保留（どれも {count, value, values: {確度: 期待値}}）,
+ *  undated: 月が空・読めない, before: 今年度より前, after: 来年度以降, excluded: 失注（どれも {count, value, values: {確度: 期待値}}）,
  *  missing: 期待値が空の件数, gap}
  */
 function mtgPlanOf_(deals, name, now, has) {
@@ -5649,7 +5624,7 @@ function mtgPlanOf_(deals, name, now, has) {
     const v = d.weighted || 0;
     const rank = mtgPlanRank_(d.status);
     const i = d.planMonth ? mtgMonthIndex_(d.planMonth) - start : null;
-    const lost = d.kind === 'lost' || d.kind === 'hold';
+    const lost = mtgExcludedStatus_(d.status);   // 失注だけを除く（2026/11/05 から保留も積み上げる。資料のほかの合計と同じ）
     if (!lost && d.weighted == null) out.missing++;
     const aside = lost ? out.excluded : i == null ? out.undated : i < 0 ? out.before : i >= 12 ? out.after : null;
     if (aside) {
@@ -5702,7 +5677,7 @@ function mtgMergePlans_(plans) {
 /**
  * 計画に対する積み上げ（本編2枚目。統合版は全サブインダストリーの状況の次）：今年度の月（plan.monthColumn。今は受注月）ごとの期待値を左から積み上げる滝の図。
  * 月の段は確度（濃い緑 A → 淡い緑 創注・灰色 未設定）で塗り分け、最後に 合計（確度別）・計画（白地に枠）・差（計画に届かない分 ▲／超えた分 +）。
- * 計画の高さに点線の横線を引く（どの月で計画に届くかが分かる）。右に区切って、積み上げに含まない案件（時期未定・今年度より前・来年度以降・失注・保留）を
+ * 計画の高さに点線の横線を引く（どの月で計画に届くかが分かる）。右に区切って、積み上げに含まない案件（時期未定・今年度より前・来年度以降・失注）を
  * 参考として 0 からの確度別の棒で出す（期待値と件数）。p は mtgPlanOf_（統合版は mtgMergePlans_）の戻り値。name は統合版のときだけ（見出しに付ける）
  */
 function mtgPlanSlide_(p, now, name) {
@@ -5725,13 +5700,13 @@ function mtgPlanSlide_(p, now, name) {
   const peak = p.months.slice().sort((a, b) => b.total - a.total)[0];
   const sure = (p.byRank.A || 0) + (p.byRank.B || 0);
   const share = v => (p.total > 0 ? Math.round(v / p.total * 100) + '%' : '—');
-  // 積み上げに入らない案件（右に参考として出す）：時期未定（月が空・読めない）・今年度より前（〜26/3）・来年度以降（27/4〜）・失注・保留
+  // 積み上げに入らない案件（右に参考として出す）：時期未定（月が空・読めない）・今年度より前（〜26/3）・来年度以降（27/4〜）・失注
   const prevEnd = mtgMonthOf_(p.start - 1);
   const asides = [
     {key: 'undated', label: '時期未定'},
     {key: 'before', label: '〜' + String(prevEnd.y).slice(2) + '/' + prevEnd.m},
     {key: 'after', label: String(last.y + (last.m === 12 ? 1 : 0)).slice(2) + '/' + (last.m % 12 + 1) + '〜'},
-    {key: 'excluded', label: '失注・保留'}
+    {key: 'excluded', label: '失注'}
   ];
   const asideCount = asides.reduce((sum, a) => sum + p[a.key].count, 0);
   const asideValue = asides.reduce((sum, a) => sum + p[a.key].value, 0);
@@ -5945,9 +5920,10 @@ function mtgPlanBySubSlide_(summaries, now) {
 function mtgWaterfall_(s, x, y, w, h) {
   const c = MTG_OPTIONS.colors;
   const b = s.bridge;
-  const el = [mtgBox_(x, y - 2, 190, 20, '期待値の増減（進行中・百万円）', {size: 10.5, bold: true, color: c.ink})];
+  const el = [mtgBox_(x, y - 2, 190, 20, '期待値の増減（失注除く・百万円）', {size: 10.5, bold: true, color: c.ink})];
   // 凡例：色の四角と名前。名前の箱は文字の幅＋左右の余白（14.4）＋少し。右端を図の右端にそろえ、項目の間は 8pt あける
-  const legend = [['期待値', c.greenDark], ['増加', c.up], ['減少', c.down], ['受注', c.white, c.greenDark]]
+  // （2026/11/05 から受注は対象から外れないので、受注の凡例・棒は無い）
+  const legend = [['期待値', c.greenDark], ['増加', c.up], ['減少', c.down]]
     .map(([label, color, line]) => ({label, color, line, bw: Array.from(label).length * 8.5 + 16}));
   let lx = x + w - legend.reduce((sum, item) => sum + 6 + item.bw, 0) - (legend.length - 1) * (8 - 7.2 - 1.6);
   legend.forEach(item => {
@@ -5978,10 +5954,8 @@ function mtgWaterfall_(s, x, y, w, h) {
     const bx = x + slot * i + (slot - bw) / 2;
     const bh = Math.max((span.hi - span.lo) * scale, 1);
     const by = axis - span.lo * scale - bh;
-    // 受注は進行中から外れるので減少だが、失注などと分けて白地に濃い緑の枠で描く
-    const won = bar.key === 'won';
-    el.push({type: 'box', x: bx, y: by, w: bw, h: bh, fill: bar.total ? c.greenDark : won ? c.white : bar.value >= 0 ? c.up : c.down,
-      line: won ? c.greenDark : undefined, lineWeight: won ? 1 : undefined, shape: 'RECTANGLE', role: 'bar-' + (bar.key || 'total')});
+    el.push({type: 'box', x: bx, y: by, w: bw, h: bh, fill: bar.total ? c.greenDark : bar.value >= 0 ? c.up : c.down,
+      shape: 'RECTANGLE', role: 'bar-' + (bar.key || 'total')});
     el.push(mtgBox_(x + slot * i - 8, by - 15, slot + 16, 14, bar.total ? mtgAmount_(bar.value) : mtgSigned_(bar.value),
       {size: 9, bold: true, color: c.ink, align: 'CENTER'}));
     const name = bar.label;
@@ -5989,7 +5963,7 @@ function mtgWaterfall_(s, x, y, w, h) {
       {size: 8.5, color: c.muted, align: 'CENTER', valign: 'TOP', spans: [{start: 0, end: name.length, bold: true, color: c.ink}]}));
   });
   if (!bars.some(bar => bar.value)) {
-    el.push(mtgBox_(x, top + 40, w, 20, '進行中案件の期待値なし', {size: 9, color: c.muted, align: 'CENTER'}));
+    el.push(mtgBox_(x, top + 40, w, 20, '期待値なし', {size: 9, color: c.muted, align: 'CENTER'}));
   }
   return el;
 }

@@ -479,7 +479,8 @@ function smtgView_(base, name, meeting, point) {
     const dealsOf = new Map();
     own.forEach(r => { if (r.deal) dealsOf.set(r.deal.key, r.deal); });
     const deals = Array.from(dealsOf.values());
-    const active = deals.filter(d => d.kind === 'active');
+    // 期待値は失注を除く案件の合計（RX Business Meeting の資料と同じ数え方。2026/11/05 から。前の版は進行中だけ）
+    const active = deals.filter(d => !mtgExcludedStatus_(d.status));
     return {key: s.key, name: s.name, requests: own, allRequests: s.requests, tasks: s.tasks,
       customers: smtgDistinct_(own.map(r => r.customer)),
       subIndustries: smtgDistinct_(s.requests.map(r => r.subIndustry)),
@@ -1032,7 +1033,7 @@ function smtgTextCell_(text, extra) {
 }
 
 /**
- * 2 サービス案の一覧：サービス案ごとのリクエストの数・得意先・サブインダストリー・元になった案件の期待値（進行中）・主管本部と担当者・タスク・詳細のページ。
+ * 2 サービス案の一覧：サービス案ごとのリクエストの数・得意先・サブインダストリー・元になった案件の期待値（失注を除く）・主管本部と担当者・タスク・詳細のページ。
  * starts はサービス案ごとの詳細のページ（0 なら空。ページの数を先に数えるとき）
  */
 function smtgServicesSlides_(data, starts) {
@@ -1049,7 +1050,7 @@ function smtgServicesSlides_(data, starts) {
         : {text: s.requests.length + '件', size: 10, bold: true, color: c.greenDark, fill: c.white, align: 'CENTER'},
       {text: s.customers.length + '社\n' + s.customers.join('・'), lines: 3, fill: c.white, parts: [{bold: true}, {}]},
       smtgTextCell_(s.subIndustries.join('・'), {lines: 3}),
-      data.hasWeighted ? {text: s.active.length ? mtgAmount_(s.weighted) + '\n（' + s.active.length + '案件）' : '進行中の\n案件なし', lines: 2,
+      data.hasWeighted ? {text: s.active.length ? mtgAmount_(s.weighted) + '\n（' + s.active.length + '案件）' : '失注以外の\n案件なし', lines: 2,
         align: 'END', fill: c.white, color: s.active.length ? c.body : c.muted} : mtgGapCell_({}),
       smtgTextCell_(s.owners.join('\n'), {lines: 3}),
       n.total ? {text: '全' + n.total + '件（完了' + n.done + '）\n対応中' + n.doing + '・未着手' + n.todo, lines: 3, fill: c.white,
@@ -1059,7 +1060,7 @@ function smtgServicesSlides_(data, starts) {
   });
   const lead = (data.all ? 'サービス案 ' + data.services.length + '件。'
     : 'このサブインダストリーのリクエストがあるサービス案 ' + data.services.length + '件（件数・得意先・期待値はこのサブインダストリーの分）。') +
-    'リクエストの多い順。\n期待値は、元になった案件（進行中）の期待値調整済の想定売上の合計（案件全体の値で、サービスの売上ではありません）。';
+    'リクエストの多い順。\n期待値は、元になった案件（失注を除く）の期待値調整済の想定売上の合計（案件全体の値で、サービスの売上ではありません）。';
   return smtgPages_({title: SMTG_TITLES.services, lead, sections: [{columns, rows,
     head: ['サービス案', '件数', '得意先', 'サブインダストリー', '元の案件の\n期待値', '主管本部・担当者', 'タスク', 'ページ'],
     empty: {kind: 'none', text: '「' + SVC_OPTIONS.requestSheet + '」の「サービス案」に名前を入れたリクエストがありません（同じ名前のリクエストが1つのサービス案になります）。'}}]});
@@ -1117,7 +1118,7 @@ function smtgDetailSlides_(data, s) {
     {text: '', fill: c.white},
     smtgTextCell_(t.note, {lines: 3, fit: true, grow: true})
   ]);
-  const amount = data.hasWeighted ? '元の案件の期待値 ' + mtgAmount_(s.weighted) + '百万円（進行中 ' + s.active.length + '案件）' : '';
+  const amount = data.hasWeighted ? '元の案件の期待値 ' + mtgAmount_(s.weighted) + '百万円（失注を除く ' + s.active.length + '案件）' : '';
   const others = s.allRequests.length - s.requests.length;
   const lead = (data.all ? 'リクエスト ' + s.requests.length + '件（得意先 ' + s.customers.length + '社・' + (s.subIndustries.join('・') || 'サブインダストリー未入力') + '）'
     : 'リクエスト ' + s.requests.length + '件' + (others ? '（ほかのサブインダストリーに ' + others + '件）' : '') + '・得意先 ' + s.customers.length + '社') +
