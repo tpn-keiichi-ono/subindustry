@@ -3850,3 +3850,31 @@ test('Sheets API は sheetsPerRead シートずつ読む（全シートを一度
   assert.strictEqual(one.message, all.message);
   assert.match(one.message, /「新FMT」：.*\n[\s\S]*「新FMT2」：/);
 });
+
+test('統合版（readMode: api）：Sheets API で sheetsPerRead シートずつ読んで作る。中身（スライド）は SpreadsheetApp で読んだときと同じ。元の追跡シートは SpreadsheetApp で読まない', () => {
+  const run = (mode, perRead) => {
+    const {gas, g} = setup();
+    const o = gas.get('MTG_OPTIONS');
+    o.combined.enabled = true;
+    meetingFolders(gas, []);
+    gas.promptAnswers = ['', '10/23'];
+    g.createBusinessMtgSummaries();
+    o.run.readMode = mode;
+    o.run.sheetsPerRead = perRead;
+    if (mode === 'api') gas.enableSheetsApi();
+    gas.reads.length = 0;
+    gas.promptAnswers = ['10/23'];
+    g.createBusinessMtgCombinedSummary();
+    const deck = gas.decks[gas.decks.length - 1];
+    const grids = (gas.sheetsApiCalls || []).filter(c => c.args && c.args.includeGridData).map(c => c.args.ranges.filter(r => /新FMT/.test(r)).join(','));
+    const text = JSON.stringify(deck.requests).replace(/\d{4}\/\d{1,2}\/\d{1,2} \d{2}:\d{2}/g, 'TIME');
+    return {gas, deck, grids, text, message: gas.alerts[gas.alerts.length - 1].message};
+  };
+  const sheet = run('sheet', 3);
+  const api = run('api', 1);
+  assert.match(api.deck.title, /_全サブインダストリー_RX Business Meeting用資料$/);
+  assert.deepStrictEqual(api.grids, ["'新FMT'", "'新FMT2'"], '1シートずつ読む');
+  assert.deepStrictEqual(api.gas.reads.filter(r => /^新FMT/.test(r.sheet)).map(r => r.sheet), [], '追跡シートは SpreadsheetApp で読まない');
+  assert.doesNotMatch(api.message, /※ Sheets API/);
+  assert.strictEqual(api.text, sheet.text, 'スライドの中身は同じ');
+});
