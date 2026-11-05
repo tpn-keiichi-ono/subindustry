@@ -2027,20 +2027,23 @@ test('remindBusinessMtgUpdate：管理フォーマットの更新のお願いを
   // カード（cardsV2）：見出し（題・サブインダストリーと会議日程）、文、更新期限（赤の太字）、更新していただきたい項目、今の入力状況、ボタン（管理フォーマット・過去の事前資料）
   const card = sentCard(gas.fetches[0]);
   assert.deepStrictEqual(plain(card.header), {title: '【RX Business Meeting】管理フォーマットの更新のお願い', subtitle: '新FMT　2026年10月23日（金）9:00〜10:30'});
-  const parts = plain(cardLines(card));
+  // 区切りの線を入れないよう、部品はすべて1つのまとまりに（見出しは太字の文）
+  assert.strictEqual(card.sections.length, 1);
+  const parts = plain(cardLines(card))[0].slice(1);
   assert.deepStrictEqual(parts.slice(0, 3), [
-    ['', '2026年10月23日（金）9:00〜10:30 の「RX Business Meeting」に向けて、事前資料（新FMT）を作成します。<br>お手数ですが、更新期限までに、管理フォーマットの案件の情報を最新にしてください。'],
-    ['', '更新期限：<font color="#D93025"><b>10月21日（水） 17:00</b></font>'],
-    ['更新していただきたい項目', '・案件ステータス・想定売上・期待値・受注月<br>・活動状況・活動における課題・次回アクション']]);
+    '2026年10月23日（金）9:00〜10:30 の「RX Business Meeting」に向けて、事前資料（新FMT）を作成します。<br>お手数ですが、更新期限までに、管理フォーマットの案件の情報を最新にしてください。',
+    '更新期限：<font color="#D93025"><b>10月21日（水） 17:00</b></font>',
+    '<b>更新していただきたい項目</b><br>・案件ステータス・想定売上・期待値・受注月<br>・活動状況・活動における課題・次回アクション']);
   // 今の入力状況：進行中は A社・C社・D社・E社・F社。必須項目が空は D社・F社（活動状況）、受注月を過ぎているのは A社、最終更新から30日以上は E社
-  assert.match(parts[3][0], /^今の入力状況（\d{1,2}\/\d{1,2} \d{2}:\d{2} 時点）$/);
-  const stats = parts[3][1].split('<br>');
+  assert.match(parts[3], /^<b>今の入力状況（\d{1,2}\/\d{1,2} \d{2}:\d{2} 時点）<\/b><br>/);
+  const stats = parts[3].split('<br>').slice(1);
   assert.ok(stats.indexOf('・進行中の案件 5件') >= 0 && stats.some(l => /^・必須項目（案件ステータス・.*・活動状況・アカウント責任者）が未入力の案件 2件$/.test(l)) &&
-    stats.indexOf('・受注月を過ぎている案件 1件') >= 0 && stats.indexOf('・最終更新から 30日以上たっている案件 1件') >= 0, parts[3][1]);
+    stats.indexOf('・受注月を過ぎている案件 1件') >= 0 && stats.indexOf('・最終更新から 30日以上たっている案件 1件') >= 0, parts[3]);
   // 0件のものは書かない（新FMT2 は A社・B社だけ：必須項目の未入力・最終更新から30日以上は0件）
   assert.deepStrictEqual(plain(g.mtgUpdateStats_(gas.ss, '新FMT2', new Date())), ['・進行中の案件 1件', '・受注月を過ぎている案件 1件']);
-  // ボタン：管理フォーマットのシート（色つき）と、過去の事前資料（格納先が無ければ会議資料のインデックス。インデックスも無ければボタンを出さない）
-  assert.match(parts[4][1], /^［管理フォーマットを開く］ https:\/\/docs\.google\.com\/spreadsheets\/d\/spreadsheet-id\/edit#gid=\d+（色つき）$/, 'シートを開くボタン');
+  // ボタンのすぐ上に開くものの名前、ボタン：管理フォーマットのシート（色つき）。過去の事前資料は、格納先もインデックスのシートも無いので出さない
+  assert.strictEqual(parts[4], '管理フォーマット：「新FMT」シート');
+  assert.match(parts[5], /^［管理フォーマットを開く］ https:\/\/docs\.google\.com\/spreadsheets\/d\/spreadsheet-id\/edit#gid=\d+（色つき）$/, 'シートを開くボタン');
   assert.match(confirm, /【RX Business Meeting】管理フォーマットの更新のお願い】\n新FMT　/, '確かめの画面にはカードの中身を文で出す');
   assert.match(gas.alerts[gas.alerts.length - 1].message, /^管理フォーマットの更新のお願いを送りました（1\/1スペース）。\n・新FMT：送りました/);
   // 送れなかったスペースがあっても、ほかは送る（理由を出す）
@@ -2067,14 +2070,15 @@ test('notifySubBusinessMtgSummaries：その会議日の本番の事前資料（
   const pdf = meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料.pdf';
   const card = sentCard(sent[0]);
   assert.deepStrictEqual(plain(card.header), {title: '【RX Business Meeting】事前資料のご案内', subtitle: '新FMT　' + g.mtgDateLabel_(meeting) + '9:00〜10:30'});
-  const parts = plain(cardLines(card));
+  assert.strictEqual(card.sections.length, 1, '区切りの線を入れない');
+  const parts = plain(cardLines(card))[0].slice(1);
   assert.deepStrictEqual(parts.slice(0, 4), [
-    ['', g.mtgDateLabel_(meeting) + '9:00〜10:30 の「RX Business Meeting」の事前資料（新FMT）が作成されました。'],
-    ['', '事前資料：' + pdf],
-    ['レビュアーの方々', 'お手数ですが、会議の前にご一読いただきレビュー観点を整理ください。'],
-    ['発表者の方々', '資料内容をご確認の上、発表内容のご準備をお願いいたします。']]);
+    g.mtgDateLabel_(meeting) + '9:00〜10:30 の「RX Business Meeting」の事前資料（新FMT）が作成されました。',
+    '<b>レビュアーの方々</b><br>お手数ですが、会議の前にご一読いただきレビュー観点を整理ください。',
+    '<b>発表者の方々</b><br>資料内容をご確認の上、発表内容のご準備をお願いいたします。',
+    '事前資料：' + pdf], 'ファイル名はボタンのすぐ上');
   // ボタン：事前資料の PDF（色つき）。過去の事前資料は、格納先もインデックスのシートも無いので出さない
-  assert.match(parts[4][1], /^［事前資料を開く］ https:\/\/drive\.google\.com\/file\/d\/[^ ]+（色つき）$/, parts[4][1]);
+  assert.match(parts[4], /^［事前資料を開く］ https:\/\/drive\.google\.com\/file\/d\/[^ ]+（色つき）$/, parts[4]);
   // 過去の事前資料：格納先が無ければ会議資料のインデックスのシート、格納先があればそのフォルダ
   gas.addSheet('INDEX_会議資料', [['日付', '会議名']]);
   assert.match(g.mtgSubChatPastLink_(gas.ss).url, /^https:\/\/docs\.google\.com\/spreadsheets\/d\/spreadsheet-id\/edit#gid=\d+$/);

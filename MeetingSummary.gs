@@ -192,9 +192,10 @@ const MTG_OPTIONS = {
     webhookKeyPrefix: 'MTG_SUBCHAT_',  // スクリプトのプロパティ：後ろにシート名。webhook の URL（鍵を含むので、コードやシートに書かない）
     deadlineDays: 2,                   // 更新の締め切り：会議日の何日前か（事前資料を作る前）
     deadlineTime: '17:00',             // 更新の締め切りの時刻（空なら日付だけ）
-    // 送る文は Google チャットのカード（cardsV2。2026/11/05 から）。title・subtitle は見出し、sections は上から順に：
-    //   {text} 文 ／ {header, text} 見出しつきの文 ／ {label, value, alert} 小さなラベルと値（alert なら赤の太字。締め切りなど）
+    // 送る文は Google チャットのカード（cardsV2。2026/11/05 から）。title・subtitle は見出し、sections は上から順に（区切りの線は入れず、1つのまとまりにする）：
+    //   {text} 文 ／ {header, text} 太字の見出しつきの文 ／ {label, value, alert} 小さなラベルと値（alert なら赤の太字。締め切りなど）
     // buttons は下に並べるボタン（link：'sheet' 管理フォーマットのシート・'file' 事前資料の PDF・'past' 過去の事前資料。filled なら色つき）。
+    // buttonsLabel はボタンのすぐ上に書く、開くものの名前（小さなラベルと値）。
     // 文の {meeting}・{name}（サブインダストリー）・{date}（会議日程）・{deadline}・{now}・{stats}・{fileName} を置き換える
     remind: {
       title: '【{meeting}】管理フォーマットの更新のお願い',
@@ -205,6 +206,7 @@ const MTG_OPTIONS = {
         {header: '更新していただきたい項目', text: '・案件ステータス・想定売上・期待値・受注月\n・活動状況・活動における課題・次回アクション'},
         {header: '今の入力状況（{now} 時点）', text: '{stats}'}
       ],
+      buttonsLabel: {label: '管理フォーマット', value: '「{name}」シート'},
       buttons: [{text: '管理フォーマットを開く', link: 'sheet', filled: true}, {text: '過去の事前資料', link: 'past'}]
     },
     summary: {
@@ -212,10 +214,10 @@ const MTG_OPTIONS = {
       subtitle: '{name}　{date}',
       sections: [
         {text: '{date} の「{meeting}」の事前資料（{name}）が作成されました。'},
-        {label: '事前資料', value: '{fileName}'},
         {header: 'レビュアーの方々', text: 'お手数ですが、会議の前にご一読いただきレビュー観点を整理ください。'},
         {header: '発表者の方々', text: '資料内容をご確認の上、発表内容のご準備をお願いいたします。'}
       ],
+      buttonsLabel: {label: '事前資料', value: '{fileName}'},
       buttons: [{text: '事前資料を開く', link: 'file', filled: true}, {text: '過去の事前資料', link: 'past'}]
     },
     // 「過去の事前資料」のボタンの行き先：'folder' 事前資料の格納先のフォルダ（会議ごとのフォルダが並ぶ）・'index' 会議資料のインデックスのシート。
@@ -1562,28 +1564,32 @@ function mtgSubChatMessage_(kind, name, meeting, values) {
   const html = text => fill(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
   const links = {sheet: values.sheet, file: values.file, past: values.past};
   const plain = ['【' + fill(spec.title) + '】', fill(spec.subtitle), ''];
-  const sections = spec.sections.map(sec => {
-    const widgets = [];
-    if (sec.label) {
-      const value = html(sec.value);
-      widgets.push({decoratedText: {topLabel: fill(sec.label), wrapText: true,
-        text: sec.alert ? '<font color="' + o.alertColor + '"><b>' + value + '</b></font>' : value}});
-      plain.push(fill(sec.label) + '：' + fill(sec.value));
-    } else {
-      widgets.push({textParagraph: {text: html(sec.text)}});
-      if (sec.header) plain.push('▼ ' + fill(sec.header));
-      plain.push(fill(sec.text));
-    }
-    plain.push('');
-    return Object.assign(sec.header ? {header: fill(sec.header)} : {}, {widgets});
+  // 区切りの線を入れないよう、すべての部品を1つのまとまり（section）に並べる。見出しは太字の文
+  const widgets = [];
+  const labelled = (label, value, alert) => {
+    const text = html(value);
+    widgets.push({decoratedText: {topLabel: fill(label), wrapText: true,
+      text: alert ? '<font color="' + o.alertColor + '"><b>' + text + '</b></font>' : text}});
+    plain.push(fill(label) + '：' + fill(value), '');
+  };
+  spec.sections.forEach(sec => {
+    if (sec.label) return labelled(sec.label, sec.value, sec.alert);
+    widgets.push({textParagraph: {text: (sec.header ? '<b>' + html(sec.header) + '</b><br>' : '') + html(sec.text)}});
+    if (sec.header) plain.push('▼ ' + fill(sec.header));
+    plain.push(fill(sec.text), '');
   });
   const rgb = hex => { const c = mtgRgb_(hex); return {red: c.red, green: c.green, blue: c.blue}; };
   const buttons = (spec.buttons || []).filter(b => links[b.link] && links[b.link].url).map(b => {
     plain.push('［' + b.text + '］ ' + links[b.link].url);
     return Object.assign({text: b.text, onClick: {openLink: {url: links[b.link].url}}}, b.filled ? {color: rgb(MTG_OPTIONS.colors.greenDark)} : {});
   });
-  if (buttons.length) sections.push({widgets: [{buttonList: {buttons}}]});
-  const card = {header: {title: fill(spec.title), subtitle: fill(spec.subtitle)}, sections};
+  // ボタンのすぐ上に、開くものの名前（事前資料のファイル名など）
+  if (buttons.length && spec.buttonsLabel) {
+    plain.splice(plain.length - buttons.length, 0, fill(spec.buttonsLabel.label) + '：' + fill(spec.buttonsLabel.value));
+    widgets.push({decoratedText: {topLabel: fill(spec.buttonsLabel.label), wrapText: true, text: html(spec.buttonsLabel.value)}});
+  }
+  if (buttons.length) widgets.push({buttonList: {buttons}});
+  const card = {header: {title: fill(spec.title), subtitle: fill(spec.subtitle)}, sections: [{widgets}]};
   return {payload: {cardsV2: [{cardId: 'mtg-' + kind, card}]}, plain: plain.join('\n').replace(/\n{3,}/g, '\n\n').trim()};
 }
 
