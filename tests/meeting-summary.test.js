@@ -2026,10 +2026,13 @@ test('remindBusinessMtgUpdate：管理フォーマットの更新のお願いを
   assert.deepStrictEqual(gas.fetches.map(f => f.url), [hook]);
   // カード（cardsV2）：見出し（題・サブインダストリーと会議日程）、文、更新期限（赤の太字）、更新していただきたい項目、今の入力状況、ボタン（管理フォーマット・過去の事前資料）
   const card = sentCard(gas.fetches[0]);
-  assert.deepStrictEqual(plain(card.header), {title: '【RX Business Meeting】管理フォーマットの更新のお願い', subtitle: '新FMT　2026年10月23日（金）9:00〜10:30'});
-  // 区切りの線を入れないよう、部品はすべて1つのまとまりに（見出しは太字の文）
-  assert.strictEqual(card.sections.length, 1);
-  const parts = plain(cardLines(card))[0].slice(1);
+  // 題：最初のまとまりに太字の題と灰色のサブインダストリー・会議日程（カードの見出し欄は太字にできないので使わない）
+  assert.strictEqual(card.header, undefined);
+  assert.strictEqual(card.sections[0].widgets[0].textParagraph.text,
+    '<b>【RX Business Meeting】管理フォーマットの更新のお願い</b><br><font color="#5F6368">新FMT　2026年10月23日（金）9:00〜10:30</font>');
+  // 区切りの線は題と本文の間だけ。本文の部品はすべて1つのまとまりに（見出しは太字の文）
+  assert.strictEqual(card.sections.length, 2);
+  const parts = plain(cardLines(card))[1].slice(1);
   assert.deepStrictEqual(parts.slice(0, 3), [
     '2026年10月23日（金）9:00〜10:30 の「RX Business Meeting」に向けて、事前資料（新FMT）を作成します。<br>お手数ですが、更新期限までに、管理フォーマットの案件の情報を最新にしてください。',
     '更新期限：<font color="#D93025"><b>10月21日（水） 17:00</b></font>',
@@ -2069,9 +2072,10 @@ test('notifySubBusinessMtgSummaries：その会議日の本番の事前資料（
   const meeting = g.mtgParseDate_('10/23', new Date());
   const pdf = meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料.pdf';
   const card = sentCard(sent[0]);
-  assert.deepStrictEqual(plain(card.header), {title: '【RX Business Meeting】事前資料のご案内', subtitle: '新FMT　' + g.mtgDateLabel_(meeting) + '9:00〜10:30'});
-  assert.strictEqual(card.sections.length, 1, '区切りの線を入れない');
-  const parts = plain(cardLines(card))[0].slice(1);
+  assert.strictEqual(card.sections[0].widgets[0].textParagraph.text,
+    '<b>【RX Business Meeting】事前資料のご案内</b><br><font color="#5F6368">新FMT　' + g.mtgDateLabel_(meeting) + '9:00〜10:30</font>');
+  assert.strictEqual(card.sections.length, 2, '区切りの線は題と本文の間だけ');
+  const parts = plain(cardLines(card))[1].slice(1);
   assert.deepStrictEqual(parts.slice(0, 4), [
     g.mtgDateLabel_(meeting) + '9:00〜10:30 の「RX Business Meeting」の事前資料（新FMT）が作成されました。',
     '<b>レビュアーの方々</b><br>お手数ですが、会議の前にご一読いただきレビュー観点を整理ください。',

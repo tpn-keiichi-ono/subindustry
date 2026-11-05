@@ -224,6 +224,7 @@ const MTG_OPTIONS = {
     // 格納先が設定されていなければインデックスのシート
     pastLink: 'folder',
     alertColor: '#D93025',   // 締め切りなどの赤の字
+    subtitleColor: '#5F6368',   // 題の下の行（サブインダストリー・会議日程）の灰色の字
   },
   firstDays: 14,                     // 初回（前回の会議の記録が無い）は、何日前からの変化を出すか
   lookbackDays: 180,                 // ステータスの滞留・受注月の延期の回数を数えるために、何日前までの記録を読むか
@@ -1589,7 +1590,10 @@ function mtgSubChatMessage_(kind, name, meeting, values) {
     widgets.push({decoratedText: {topLabel: fill(spec.buttonsLabel.label), wrapText: true, text: html(spec.buttonsLabel.value)}});
   }
   if (buttons.length) widgets.push({buttonList: {buttons}});
-  const card = {header: {title: fill(spec.title), subtitle: fill(spec.subtitle)}, sections: [{widgets}]};
+  // 題は太字にするため、カードの見出し欄（太字にできない）は使わず、最初のまとまりに太字の題と灰色のサブインダストリー・会議日程を書く。
+  // 題のまとまりと本文のまとまりの間だけ区切りの線が入る（2026/11/05）
+  const titleWidget = {textParagraph: {text: '<b>' + html(spec.title) + '</b>' + (spec.subtitle ? '<br><font color="' + o.subtitleColor + '">' + html(spec.subtitle) + '</font>' : '')}};
+  const card = {sections: [{widgets: [titleWidget]}, {widgets}]};
   return {payload: {cardsV2: [{cardId: 'mtg-' + kind, card}]}, plain: plain.join('\n').replace(/\n{3,}/g, '\n\n').trim()};
 }
 
