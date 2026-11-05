@@ -491,6 +491,14 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   `continueAfterMs`（60秒）後に1つだけ作る）。続き（`continueBusinessMtgSummaries`）は、残りの仕事を同じように進め、終われば知らせを `MTG_JOB_RESULT_n`（2,000文字ずつ）に保存して
   仕事とトリガーを消します（`showBusinessMtgSummariesResult()` で出す）。資料の中身は、作り始めた時刻（`job.now`）で数え、本番の会議日の記録もその時刻にします。
   時刻は `mtgNow_()`（テストで差し替える）。
+  - **強制終了されても続ける**（2026/11/05）：メモリ不足・6分の上限は catch できずに実行が止められ、前の版は仕事が残ったまま続きのトリガーも無く止まっていた。
+    実行を始めるときに安全のためのトリガー（`mtgJobSafetyTrigger_`。`safetyAfterMs` 7分後に `continueBusinessMtgSummaries`）を置き、資料ごと・手順ごとに
+    進み具合を保存する（`mtgJobCheckpoint_`。保存した仕事は `running: true`）。区切る（`mtgJobPause_`）・終わる（`mtgJobFinish_`）ときにトリガーを置き直す・外す。
+    止められると安全のためのトリガーが続きを動かし、`running` のまま残った仕事を「止められた」と数えて（`crashes`）続きから作る。同じところで `maxCrashes`（2）回を
+    超えたら、知らせを残してやめる。統合版は、保存した資料のあとに足しかけたスライドを消してから続ける（`mtgCombinedRecover_`。仕上げの途中なら作り直し）。
+  - **時点コピーを直す手順は新しい実行で**：資料の中身を読んだ実行（記録のシートの読み取り `job.apiCache` などでメモリを使っている）では直さずに区切り、
+    1シートずつ、値と数式だけ（`mtgApiBook_` の `light`：表示の文字・書式・入力規則を読まない）を読んで書く（シートごとに進み具合を保存。`copyFixDone`）。
+    2026/11/05 に、資料を作った同じ実行で3シートずつ全項目を読み直して、メモリ不足で止まった。
 - **読み方は Sheets API**（`mtgJobSource_`・`MeetingRead.gs`。`MTG_OPTIONS.run.readMode: 'api'`。2026/11/04）：`mtgSummaries_` に渡すスプレッドシートを、
   Sheets API で読んだ入れ物（`mtgApiBook_`。読むだけで、SpreadsheetApp のスプレッドシート・シート・範囲と同じ使い方：`getSheetByName`・`getLastRow`・`getRange`・
   `getValues`・`getDisplayValues`・`getFormulas`・`getDataValidation` など）にする。`mtgSummarize_` 以下は変えない。

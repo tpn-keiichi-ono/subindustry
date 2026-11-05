@@ -3863,10 +3863,19 @@ test('createBusinessMtgSummaries（readMode: api）：本番の時点コピー�
   };
   gas.promptAnswers = ['1', '10/23'];
   g.createBusinessMtgSummaries();
+  // 資料の中身を読んだ実行では直さず、新しい実行（続き）で直す（メモリが足りなくならないように。2026/11/05）
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^時間がかかるため、ここで区切りました/);
   const copySheet = gas.created[gas.created.length - 1].getSheetByName('新FMT');
+  assert.strictEqual(copySheet.getRange(3, col).getValue(), 0, 'まだ直していない');
+  const reads = gas.sheetsApiCalls.length;
+  g.continueBusinessMtgSummaries();
+  const fixReads = gas.sheetsApiCalls.slice(reads).filter(c => c.args && c.args.includeGridData);
+  assert.ok(fixReads.length >= 1 && fixReads.every(c => c.args.ranges.length === 1 && !/formattedValue|dataValidation/.test(c.args.fields)),
+    '1シートずつ、値と数式だけを読む');
   for (let r = 3; r <= last; r++) assert.strictEqual(copySheet.getRange(r, col).getValue(), 10 * r, r + '行目は元の値');
   assert.strictEqual(copySheet.getRange(3, col).getFormula(), '', '値にする');
   assert.strictEqual(copySheet.getRange(3, COL.weighted).getFormula(), '=G3*0.5', '期待値の列は数式のまま');
+  g.showBusinessMtgSummariesResult();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /時点コピーの、数式で出している列は、元のスプレッドシートの値にしました（新FMT のT列（見込金額））。/);
 });
 
@@ -4228,4 +4237,77 @@ test('リード文は中身にかからない：名前に改行（CR など）�
   assert.match(huge[huge.length - 1].text, /…$/);
   // 短いリード文は大きさを変えない
   assert.ok(plain(g.mtgLead_('短い文。\n補足。')).every(el => el.size === S.leadSize));
+});
+
+/** 実行の強制終了（メモリ不足など。catch できない）のまねをする：fn の中では、仕事とトリガーを消さない（catch の片付けが動かなかったことにする） */
+function crashing(g, fn) {
+  const keep = ['mtgJobClear_', 'mtgJobDeleteTriggers_', 'mtgDeckDiscard_'].map(k => [k, g[k]]);
+  keep.forEach(([k]) => { g[k] = () => {}; });
+  try {
+    assert.throws(fn, /メモリ不足/);
+  } finally {
+    keep.forEach(([k, f]) => { g[k] = f; });
+  }
+}
+
+test('実行が強制終了されても（メモリ不足など）、資料ごとに保存した進み具合から、安全のためのトリガーで続ける。同じところで何度も止められたら、知らせを残してやめる', () => {
+  const {gas, g} = setup();
+  const sprops = g.PropertiesService.getScriptProperties();
+  const handlers = () => gas.triggers.filter(t => t.getHandlerFunction() === 'continueBusinessMtgSummaries');
+  const exportDeck = g.mtgExportDeck_;
+  let calls = 0;
+  g.mtgExportDeck_ = (...args) => { if (++calls === 2) throw new Error('メモリ不足のためエラーが発生しました。'); return exportDeck(...args); };
+  gas.promptAnswers = ['', '10/23'];
+  crashing(g, () => g.mtgRunStart_(false, g.mtgParseDate_('10/23', new Date()), ['新FMT', '新FMT2'], false, null));
+  const saved = JSON.parse(sprops.getProperty('MTG_JOB'));
+  assert.deepStrictEqual([saved.items, saved.running], [1, true], '1つ目の資料まで保存してある（実行中のまま）');
+  assert.deepStrictEqual(handlers().map(t => t.options.after), [420000], '安全のためのトリガー（6分の上限より後）');
+  // 続き：止められた回数を数え、2つ目の資料から続ける（1つ目は作り直さない）
+  g.mtgExportDeck_ = exportDeck;
+  const decks = gas.decks.length;
+  g.continueBusinessMtgSummaries();
+  assert.deepStrictEqual(gas.decks.slice(decks).map(d => d.title.replace(/^\d{8}_/, '')), ['新FMT2_RX Business Meeting用資料_試作']);
+  assert.deepStrictEqual([sprops.getProperty('MTG_JOB'), handlers().length], [null, 0], '終わったら仕事とトリガーを消す');
+  g.showBusinessMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「新FMT」：[\s\S]*「新FMT2」：/);
+
+  // 同じところで maxCrashes（2）回を超えて止められたら、やめて知らせを残す
+  calls = 0;
+  g.mtgExportDeck_ = (...args) => { if (++calls === 2) throw new Error('メモリ不足のためエラーが発生しました。'); return exportDeck(...args); };
+  crashing(g, () => g.mtgRunStart_(false, g.mtgParseDate_('10/23', new Date()), ['新FMT', '新FMT2'], false, null));
+  const job = JSON.parse(sprops.getProperty('MTG_JOB'));
+  sprops.setProperty('MTG_JOB', JSON.stringify(Object.assign(job, {crashes: 2})));
+  g.continueBusinessMtgSummaries();
+  assert.deepStrictEqual([sprops.getProperty('MTG_JOB'), handlers().length], [null, 0]);
+  g.showBusinessMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /会議サマリを作る実行が、同じところで 3回止められました（メモリ不足・6分の上限など。/);
+  g.mtgExportDeck_ = exportDeck;
+});
+
+test('統合版：実行が強制終了されたら、足しかけたスライドを消して、保存した資料の次から続ける（できあがりは止められなかったときと同じ）', () => {
+  const once = (() => {
+    const {gas, g} = setup();
+    combinedReady(gas, g);
+    gas.promptAnswers = ['10/23'];
+    g.createBusinessMtgCombinedSummary();
+    return deckShape(gas.decks[gas.decks.length - 1]).slides;
+  })();
+  const {gas, g} = setup();
+  combinedReady(gas, g);
+  const sprops = g.PropertiesService.getScriptProperties();
+  const add = g.mtgDeckAdd_;
+  let calls = 0;
+  // 2つ目の資料のスライドを足したところで止められる（進み具合は保存されない）
+  g.mtgDeckAdd_ = (...args) => { add(...args); if (++calls === 2) throw new Error('メモリ不足のためエラーが発生しました。'); };
+  crashing(g, () => g.mtgCombinedStart_(g.mtgParseDate_('10/23', new Date()), null));
+  const saved = JSON.parse(sprops.getProperty('MTG_JOB'));
+  assert.deepStrictEqual([saved.kind, saved.items, saved.running], ['combined', 1, true]);
+  const deck = gas.decks[gas.decks.length - 1];
+  assert.ok(deck.slides.length > 7, '足しかけたスライドが残っている');
+  g.mtgDeckAdd_ = add;
+  g.continueBusinessMtgSummaries();
+  assert.strictEqual(sprops.getProperty('MTG_JOB'), null);
+  assert.deepStrictEqual(deck.slides.map(sl => sl.objectId), once, '止められなかったときと同じ並び');
+  g.showBusinessMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「全サブインダストリー」（統合版）：.*（19ページ）/);
 });

@@ -104,7 +104,9 @@ const MTG_OPTIONS = {
   // summaryMs 中身を作る（シートと記録を読む）・deckMs 資料1つ・copyMs 時点コピーと記録・storeMs 会議のフォルダへの格納とインデックス1つ
   // （deckMs は RXシナリオのポートフォリオの3枚（Slides API のリクエスト 3,000 ほど。年度別のヒートマップが多い）を足した 2026/11/04 に 35000 から増やした）
   // combinedFinishMs は統合版の仕上げ（表紙・目次・状況のページを足し、80ページほどを並べて PDF にし、会議のフォルダに格納する）の見積もり
+  // safetyAfterMs：実行が強制終了された（メモリ不足など）ときに続きを動かすトリガーの時間（1回の実行の6分より後）。maxCrashes：同じところで止められたら続ける回数
   run: {limitMs: 320000, summaryMs: 30000, deckMs: 55000, copyMs: 60000, storeMs: 10000, combinedFinishMs: 150000, continueAfterMs: 60000,
+    safetyAfterMs: 420000, maxCrashes: 2,
     handler: 'continueBusinessMtgSummaries', jobKey: 'MTG_JOB', resultKey: 'MTG_JOB_RESULT',
     // 資料の中身の読み方（2026/11/04）。'api'：このスプレッドシートを Sheets API（拡張サービス）でまとめて読む（MeetingRead.gs。大勢が編集している間も、
     // SpreadsheetApp で触れるより待たされにくい（225行のシートで約30秒。SpreadsheetApp は約4分）。元のファイルで計算済みの値なので、IMPORTRANGE などの値もそのまま）。
@@ -795,7 +797,16 @@ function mtgRunStart_(final, meeting, names, cancelJob, point) {
   const now = new Date();
   const job = {final, meeting, now: now.getTime(), names, items: [], stored: 0, copy: null, index: null, folderUrl: '',
     combined: !!MTG_OPTIONS.combined.enabled, point: point || null, sourceError: '', copyFix: null};
-  const done = mtgJobRun_(ss, job, started);
+  mtgJobSafetyTrigger_();   // 実行が強制終了されたら（メモリ不足など）、最後に保存した進み具合から続ける
+  let done;
+  try {
+    done = mtgJobRun_(ss, job, started);
+  } catch (error) {
+    mtgJobClear_();
+    mtgJobDeleteTriggers_();
+    throw error;
+  }
+  if (done) mtgJobFinish_();
   const message = mtgJobMessage_(job, done);
   console.log(message);
   return message;
@@ -822,10 +833,12 @@ function mtgJobRun_(ss, job, started) {
   // 資料：残りのシートの中身を作り、1つずつスライドと PDF にする（中身は作り始めた時刻 job.now で数える）。
   // 中身は mtgJobSource_ で読む（Sheets API なら sheetsPerRead シートずつ。全シートを一度に読むとメモリが足りない）
   const props = PropertiesService.getDocumentProperties();
+  let heavy = false;   // この実行で資料の中身を読んだか（読んだら、時点コピーを直す手順は新しい実行で）
   while (job.items.length < job.names.length) {
     if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const batch = R.readMode === 'api' ? job.names.slice(job.items.length, job.items.length + Math.max(R.sheetsPerRead || 1, 1))
       : job.names.slice(job.items.length);
+    heavy = true;
     const source = mtgJobSource_(ss, job, batch);
     // 読むのに時間がかかって、残りの時間が足りなければここで区切る（続きで読み直す）
     if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
@@ -841,6 +854,7 @@ function mtgJobRun_(ss, job, started) {
         props.setProperty(o.draftKeyPrefix + summary.name, JSON.stringify({meeting: job.meeting, at: job.now, keys: summary.alerts.map(a => mtgHash_(a.key))}));
       }
       job.items.push({name: summary.name, pdf: out.pdf.getId(), line: mtgResultLine_(source, summary, out.pdf)});
+      mtgJobCheckpoint_(job);   // 資料ごとに進み具合を保存（実行が止められても、続きから）
     }
   }
   // 本番：今の値を時点コピーに保存し（次の会議の資料はこれと比べる）、会議日を記録する。資料を全部作れてから
@@ -855,26 +869,37 @@ function mtgJobRun_(ss, job, started) {
         .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)).slice(-o.keepMeetings);
       props.setProperty(o.meetingsKeyPrefix + name, JSON.stringify(list));
     });
+    mtgJobCheckpoint_(job);
   }
   // 本番：時点コピーの追跡シートの、数式で出している値（IMPORTRANGE など。コピーでは計算し直されて 0 になる）を、元の値にする（Sheets API。mtgApiFixCopy_）。
   // できなくても止めない（知らせに出す）
   if (job.final && job.copy && !job.copyFix && R.readMode === 'api' && mtgApiAvailable_()) {
-    if (!fits(R.copyFixMs)) return mtgJobPause_(job);
-    const fix = {cells: 0, columns: [], error: ''};
+    // この実行で資料の中身を読んだ（メモリを使った）なら、新しい実行で続ける（2026/11/05 に、資料を作った同じ実行で直そうとしてメモリ不足で止まった）
+    if (heavy || !fits(R.copyFixMs)) return mtgJobPause_(job);
+    delete job.apiCache;   // 記録のシートの読み取りは使わないので放す
+    const fix = job.copyFixDone || {cells: 0, columns: [], error: '', done: 0};
     try {
-      // sheetsPerRead シートずつ読んで書く（メモリが足りなくならないように）
-      const step = Math.max(R.sheetsPerRead || 1, 1);
-      for (let i = 0; i < job.names.length && !fix.error; i += step) {
-        const part = job.names.slice(i, i + step);
-        const result = mtgApiFixCopy_(job.copy.id, mtgApiBook_(ss, part, {records: false}), part);
+      // 1シートずつ、値と数式だけを読んで書く（メモリが足りなくならないように。シートごとに進み具合を保存し、止まっても続きから）
+      for (let i = fix.done; i < job.names.length && !fix.error; i++) {
+        if (i > fix.done && !fits(R.copyFixMs / Math.max(job.names.length, 1) + 15000)) {
+          job.copyFixDone = fix;
+          return mtgJobPause_(job);
+        }
+        const part = [job.names[i]];
+        const result = mtgApiFixCopy_(job.copy.id, mtgApiBook_(ss, part, {records: false, light: true}), part);
         fix.cells += result.cells;
         fix.columns = fix.columns.concat(result.columns);
         fix.error = result.error;
+        fix.done = i + 1;
+        job.copyFixDone = fix;
+        mtgJobCheckpoint_(job);
       }
     } catch (error) {
       fix.error = '時点コピーの、数式で出している値を元の値にできませんでした（' + (error && error.message || error) + '）';
     }
-    job.copyFix = fix;
+    delete job.copyFixDone;
+    job.copyFix = {cells: fix.cells, columns: fix.columns, error: fix.error};
+    mtgJobCheckpoint_(job);
   }
   // 本番：会議のフォルダに PDF を格納し、インデックスに書く（できなくても止めない。資料は保存先にあるので、あとで storeBusinessMtgSummaries() で格納できる）
   while (job.final && job.stored < job.items.length) {
@@ -885,6 +910,7 @@ function mtgJobRun_(ss, job, started) {
     item.line += mtgStoredText_(stored, index);
     if (index && index.url && !job.index) job.index = index;
     job.stored++;
+    mtgJobCheckpoint_(job);
   }
   return true;
 }
@@ -1023,10 +1049,9 @@ function mtgSourceNote_(job) {
 /** 仕事を保存し（スクリプトのプロパティ。資料ごとの知らせは別のキー）、続きのトリガーを1つだけ作る。false を返す */
 function mtgJobPause_(job) {
   const R = MTG_OPTIONS.run;
-  const props = PropertiesService.getScriptProperties();
-  mtgJobClear_();
-  job.items.forEach((item, i) => props.setProperty(R.jobKey + '_ITEM_' + i, JSON.stringify(item)));
-  props.setProperty(R.jobKey, JSON.stringify(Object.assign({}, job, {items: job.items.length, savedAt: Date.now()})));
+  job.running = false;   // 区切った（強制終了ではない）。進んだので、止められた回数も数え直す
+  job.crashes = 0;
+  mtgJobSave_(job);
   mtgJobDeleteTriggers_();
   ScriptApp.newTrigger(R.handler).timeBased().after(R.continueAfterMs).create();
   console.log((job.kind === 'combined' ? '統合版：' : '会議サマリ：') + '時間がかかるため区切りました（資料 ' + job.items.length + '/' + job.names.length + '）。続きを予約しました。');
@@ -1074,10 +1099,29 @@ function mtgJobSaveResult_(message) {
  */
 function continueBusinessMtgSummaries() {
   const started = mtgNow_();
+  const R = MTG_OPTIONS.run;
   mtgJobDeleteTriggers_();
   const job = mtgJobLoad_();
   if (!job) return;
   const combined = job.kind === 'combined';
+  // 前の実行が終わらずに止められた（メモリ不足・6分の上限など。保存した進み具合が「実行中」のまま）：同じところで maxCrashes 回までは続きから
+  if (job.running) {
+    job.crashes = (job.crashes || 0) + 1;
+    console.warn('会議サマリ：前の実行が途中で止められました（' + job.crashes + '回目）。最後に保存した進み具合から続けます。');
+    const recovered = job.crashes <= R.maxCrashes && (!combined || mtgCombinedRecover_(job));
+    if (!recovered) {
+      if (combined) mtgDeckDiscard_(job.deck);
+      const message = (combined ? '統合版（' + MTG_OPTIONS.combined.name + '）' : '会議サマリ') + 'を作る実行が、同じところで ' + job.crashes +
+        '回止められました（メモリ不足・6分の上限など。実行数のログで確かめてください）。' +
+        (combined ? '\ncreateBusinessMtgCombinedSummary() で、作り直してください。'
+          : '\ncreateBusinessMtgSummaries()（試作なら previewBusinessMtgSummaries()）で、作り直してください。\n\n' + mtgJobMessage_(job, true));
+      mtgJobClear_();
+      mtgJobSaveResult_(message);
+      console.log(message);
+      return;
+    }
+  }
+  mtgJobSafetyTrigger_();
   let message;
   try {
     const run = combined ? mtgCombinedRun_ : mtgJobRun_;
@@ -1094,9 +1138,40 @@ function continueBusinessMtgSummaries() {
         mtgJobMessage_(job, true);
     }
   }
-  mtgJobClear_();
+  mtgJobFinish_();
   mtgJobSaveResult_(message);
   console.log(message);
+}
+
+/**
+ * 進み具合を保存する（資料ごと・手順ごと。続きのトリガーは変えない）。保存した仕事は「実行中」（running）にする：この実行が強制終了されたら
+ * （メモリ不足・6分の上限など。catch できない）、安全のためのトリガー（mtgJobSafetyTrigger_）が続き（continueBusinessMtgSummaries）を動かし、ここから続ける
+ */
+function mtgJobCheckpoint_(job) {
+  job.running = true;
+  mtgJobSave_(job);
+}
+
+/** 仕事を保存する（スクリプトのプロパティ。資料ごとの知らせは別のキー） */
+function mtgJobSave_(job) {
+  const R = MTG_OPTIONS.run;
+  const props = PropertiesService.getScriptProperties();
+  mtgJobClear_();
+  job.items.forEach((item, i) => props.setProperty(R.jobKey + '_ITEM_' + i, JSON.stringify(item)));
+  props.setProperty(R.jobKey, JSON.stringify(Object.assign({}, job, {items: job.items.length, savedAt: Date.now()})));
+}
+
+/** 安全のためのトリガー：この実行が強制終了されたときだけ、続き（continueBusinessMtgSummaries）を動かす（区切る・終わるときに外す） */
+function mtgJobSafetyTrigger_() {
+  const R = MTG_OPTIONS.run;
+  mtgJobDeleteTriggers_();
+  ScriptApp.newTrigger(R.handler).timeBased().after(R.safetyAfterMs).create();
+}
+
+/** 終わった（または止まって知らせを残した）：仕事と続きのトリガーを消す */
+function mtgJobFinish_() {
+  mtgJobClear_();
+  mtgJobDeleteTriggers_();
 }
 
 /** 会議サマリの続き（自動で続けたもの）の結果・進み具合を出す（エディタから実行） */
@@ -1842,7 +1917,10 @@ function mtgCombinedRun_(ss, job, started) {
   const folder = mtgFolder_(ss);
   job.folderUrl = folder.getUrl();
   const fileName = mtgFileName_(o.combined.name, job.meeting, true);
-  if (!job.deck) job.deck = mtgDeckStart_(fileName, folder);
+  if (!job.deck) {
+    job.deck = mtgDeckStart_(fileName, folder);
+    mtgJobCheckpoint_(job);
+  }
   while (job.items.length < job.names.length) {
     if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const batch = R.readMode === 'api' ? job.names.slice(job.items.length, job.items.length + Math.max(R.sheetsPerRead || 1, 1))
@@ -1859,12 +1937,15 @@ function mtgCombinedRun_(ss, job, started) {
       timer.lap('スライドを足す（' + slides.length + '枚）');
       job.items.push({name: summary.name, start: job.page + 1, pages: slides.length, lite: mtgCombinedLite_(summary)});
       job.page += slides.length;
+      mtgJobCheckpoint_(job);   // 資料ごとに進み具合を保存（実行が止められても、この資料の次から。mtgCombinedRecover_）
     }
   }
   // 前のページ（すべての資料のページが決まってから）を足して仕上げる
   if (!job.result) {
     if (!fits(R.combinedFinishMs)) return mtgJobPause_(job);
     const timer = mschTimer_('統合版の仕上げ', true);
+    job.deck.finishing = true;   // 仕上げの途中で止められたら、続きからは作れない（作り直す。mtgCombinedRecover_）
+    mtgJobCheckpoint_(job);
     const sections = job.items.map(item => ({summary: item.lite, start: item.start}));
     mtgDeckAdd_(job.deck, mtgCombinedFront_(sections, job.meeting, true, new Date(job.now)), 0);
     timer.lap('表紙・目次・状況のページ');
@@ -1882,6 +1963,29 @@ function mtgCombinedRun_(ss, job, started) {
     job.deck = null;   // 仕上げた（Google スライドは残さない設定ならゴミ箱へ移した）
   }
   return true;
+}
+
+/**
+ * 統合版を作る実行が止められたあと（continueBusinessMtgSummaries）、続きから作れるようにする：保存した進み具合のあとに足しかけたスライド
+ * （mtg_p{番号}・mtg_t{番号} のうち、保存した資料のページ（前のページの数 〜 job.page）でないもの）を消す。仕上げの途中なら続けられない（false）
+ */
+function mtgCombinedRecover_(job) {
+  const state = job.deck;
+  if (!state) return true;
+  if (state.finishing) return false;
+  try {
+    const front = mtgCombinedFrontCount_();
+    const keep = new Set();
+    for (let i = front; i < job.page; i++) keep.add((state.dups.indexOf(i) >= 0 ? 'mtg_t' : 'mtg_p') + (i + 1));
+    const extra = (Slides.Presentations.get(state.id, {fields: MTG_SLIDES_FIELDS.count}).slides || []).map(sl => sl.objectId)
+      .filter(id => /^mtg_[pt]\d+$/.test(id) && !keep.has(id));
+    if (extra.length) Slides.Presentations.batchUpdate({requests: extra.map(id => ({deleteObject: {objectId: id}}))}, state.id);
+    if (extra.length) console.warn('統合版：止められる前に足しかけたスライド ' + extra.length + '枚を消して、続きから作ります。');
+    return true;
+  } catch (error) {
+    console.warn('統合版：続きから作れません（' + (error && error.message || error) + '）');
+    return false;
+  }
 }
 
 /** 統合版の仕事の、終わり（done）・区切ったときの知らせ */
@@ -1947,13 +2051,17 @@ function mtgCombinedStart_(meeting, point) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const job = {kind: 'combined', final: true, meeting, now: Date.now(), names: mtgTrackedNames_(ss), point: point || null, items: [],
     page: mtgCombinedFrontCount_(), deck: null, result: null, folderUrl: '', sourceError: ''};
+  mtgJobSafetyTrigger_();   // 実行が強制終了されたら（メモリ不足など）、最後に保存した進み具合から続ける
   let done;
   try {
     done = mtgCombinedRun_(ss, job, started);
   } catch (error) {
     mtgDeckDiscard_(job.deck);   // 作りかけの資料はゴミ箱へ
+    mtgJobClear_();
+    mtgJobDeleteTriggers_();
     throw error;
   }
+  if (done) mtgJobFinish_();
   const message = mtgCombinedMessage_(job, done);
   console.log(message);
   return message;

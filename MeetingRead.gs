@@ -72,9 +72,10 @@ function mtgApiBook_(ss, names, options) {
   (meta.sheets || []).forEach(s => { book.props[s.properties.title] = s.properties; });
   timer.lap('シートの一覧');
   const exists = name => !!book.props[name];
-  const grid = opt.grid === false ? [] : (names || []).concat([MTG_OPTIONS.statusTable && MTG_OPTIONS.statusTable.sheet])
+  // options.light：値と数式だけ（表示の文字・書式・入力規則を読まない。時点コピーを直すとき。メモリを使わない）。ステータスの定義も読まない
+  const grid = opt.grid === false ? [] : (names || []).concat(opt.light ? [] : [MTG_OPTIONS.statusTable && MTG_OPTIONS.statusTable.sheet])
     .filter((name, i, list) => name && exists(name) && list.indexOf(name) === i);
-  if (grid.length) mtgApiLoadGrid_(book, grid);
+  if (grid.length) mtgApiLoadGrid_(book, grid, !!opt.light);
   if (opt.records !== false) {
     const records = [DIFF_OPTIONS.logSheet, DIFF_OPTIONS.rowSnapshotSheet].concat(credEnabled_() ? [CRED_OPTIONS.logSheet] : []).filter(exists);
     // options.cache：同じ実行の中で何度か読むとき（シートを分けて読む）、記録のシートは1回だけ読んで使い回す
@@ -88,9 +89,12 @@ function mtgApiBook_(ss, names, options) {
   return mtgApiBookObject_(book);
 }
 
-/** シートを、値・表示の文字・数式・書式の種類・入力規則まで読む（1回の呼び出し） */
-function mtgApiLoadGrid_(book, names) {
-  const fields = 'sheets(properties(title),data(startRow,startColumn,rowData(values(formattedValue,effectiveValue,' +
+/**
+ * シートを、値・表示の文字・数式・書式の種類・入力規則まで読む（1回の呼び出し）。light なら値と数式だけ（日時はシリアル値のまま、表示の文字は値の文字）
+ */
+function mtgApiLoadGrid_(book, names, light) {
+  const fields = light ? 'sheets(properties(title),data(startRow,startColumn,rowData(values(effectiveValue,userEnteredValue))))'
+    : 'sheets(properties(title),data(startRow,startColumn,rowData(values(formattedValue,effectiveValue,' +
     'userEnteredValue,effectiveFormat(numberFormat(type)),dataValidation(condition)))))';
   const res = Sheets.Spreadsheets.get(book.id, {ranges: names.map(mtgApiQuote_), includeGridData: true, fields});
   (res.sheets || []).forEach(s => {
@@ -100,7 +104,7 @@ function mtgApiLoadGrid_(book, names) {
       const c0 = data.startColumn || 0;
       (data.rowData || []).forEach((row, i) => {
         const line = rows[r0 + i] = rows[r0 + i] || [];
-        (row.values || []).forEach((cell, j) => { line[c0 + j] = mtgApiCell_(cell, book.tz); });
+        (row.values || []).forEach((cell, j) => { line[c0 + j] = mtgApiCell_(cell, book.tz, light); });
       });
     });
     book.sheets[s.properties.title] = mtgApiTrim_(rows);
@@ -128,7 +132,7 @@ function mtgApiLoadValues_(book, names) {
 }
 
 /** API のセル → {v: 値（getValues と同じ型）, d: 表示の文字, f: 数式, u: 入力した値・数式があるか（無ければ配列の数式が広げた値）, dv: 入力規則の条件} */
-function mtgApiCell_(cell, tz) {
+function mtgApiCell_(cell, tz, light) {
   const ev = cell.effectiveValue || {};
   const type = ((cell.effectiveFormat || {}).numberFormat || {}).type || '';
   let v = '';
@@ -136,7 +140,8 @@ function mtgApiCell_(cell, tz) {
   else if (ev.stringValue != null) v = ev.stringValue;
   else if (ev.boolValue != null) v = ev.boolValue;
   else if (ev.errorValue) v = cell.formattedValue || '#ERROR!';
-  return {v, d: cell.formattedValue == null ? '' : String(cell.formattedValue), f: ((cell.userEnteredValue || {}).formulaValue) || '',
+  const shown = light ? (v === '' ? '' : String(v)) : cell.formattedValue == null ? '' : String(cell.formattedValue);
+  return {v, d: shown, f: ((cell.userEnteredValue || {}).formulaValue) || '',
     u: !!cell.userEnteredValue, dv: cell.dataValidation ? cell.dataValidation.condition || null : null};
 }
 
