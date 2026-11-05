@@ -3255,6 +3255,47 @@ test('PowerPoint も作る（exportPptx）：PDF と同じ名前の .pptx を Dr
   assert.ok(!gas.driveFiles.some(f => f.name === base + '_試作.pptx'));
 });
 
+test('PowerPoint を作るかは、スクリプトのプロパティ MTG_EXPORT_PPTX が優先（true/false など）。無い・読めない値ならコードの exportPptx。showOutputFolders に今の設定を出す', () => {
+  const {gas, g} = setup({edits: false});
+  const o = gas.get('MTG_OPTIONS');
+  const props = g.PropertiesService.getScriptProperties();
+  const exportsOf = () => gas.fetches.filter(f => /\/export\?mimeType=application%2Fvnd\.openxmlformats/.test(f.url)).length;
+  o.exportPptx = false;
+  assert.deepStrictEqual(plain(g.mtgExportPptxEnabled_()), {on: false, where: 'MeetingSummary.gs の MTG_OPTIONS.exportPptx'});
+  ['true', 'TRUE', ' 1 ', 'はい', 'する', 'ｔｒｕｅ'].forEach(v => {
+    props.setProperty('MTG_EXPORT_PPTX', v);
+    assert.strictEqual(g.mtgExportPptxEnabled_().on, true, v);
+  });
+  o.exportPptx = true;
+  ['false', 'No', '0', 'しない'].forEach(v => {
+    props.setProperty('MTG_EXPORT_PPTX', v);
+    assert.strictEqual(g.mtgExportPptxEnabled_().on, false, v);
+  });
+  props.setProperty('MTG_EXPORT_PPTX', 'たぶん');
+  assert.strictEqual(g.mtgExportPptxEnabled_().on, true, '読めない値はコードの設定');
+  assert.match(g.mtgExportPptxEnabled_().where, /値「たぶん」は読めないので使わない/);
+  // 資料を作るとき：プロパティが true なら、コードが false でも作る。false なら作らない
+  o.exportPptx = false;
+  props.setProperty('MTG_EXPORT_PPTX', 'true');
+  meetingFolders(gas, []);
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  assert.strictEqual(exportsOf(), 1, 'プロパティが true なら作る');
+  props.setProperty('MTG_EXPORT_PPTX', 'false');
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  assert.strictEqual(exportsOf(), 1, 'プロパティが false なら作らない');
+  props.deleteProperty('MTG_EXPORT_PPTX');
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  assert.strictEqual(exportsOf(), 1, 'プロパティが無ければコードの設定（false）');
+  g.showOutputFolders();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /■ PowerPoint（\.pptx）\n作らない（MeetingSummary\.gs の MTG_OPTIONS\.exportPptx。スクリプトのプロパティ「MTG_EXPORT_PPTX」に true \/ false を入れると切り替わる）\n/);
+  props.setProperty('MTG_EXPORT_PPTX', 'true');
+  g.showOutputFolders();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /■ PowerPoint（\.pptx）\n作る（スクリプトのプロパティ「MTG_EXPORT_PPTX」。/);
+});
+
 test('本物の設定（2026/10/29 から）：計画に対する積み上げは受注月ごと（plan.monthColumn: orderMonth）。売上開始月の列は使わず、確認事項「売上開始月不整合」は出さない（「データなし」にもしない）', () => {
   const {gas, g} = setup({edits: false});
   const o = gas.get('MTG_OPTIONS');

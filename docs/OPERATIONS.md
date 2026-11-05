@@ -245,8 +245,10 @@ D列以降（タスク・担当者・状況・メモ）の値はそのまま残�
 RX Business Meeting（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ります。
 会議の前に配り、参加者が通読してから会議に臨むための資料です。
 
-- 資料は PDF と一緒に、同じ名前の PowerPoint（.pptx。編集できる形）も作ります（2026/10/29 から。`MTG_OPTIONS.exportPptx`。RX Service Meeting も同じ）。
-  本番は PDF と一緒に会議のフォルダに移します。インデックス・チャットの通知・統合版の確認は PDF を使います。PowerPoint を書き出せなかったときは、PDF だけを作り、実行ログに書きます。
+- 資料は PDF だけを作ります。同じ名前の PowerPoint（.pptx。編集できる形）は、2026/11/05 から作りません（2026/10/29〜11/04 は作っていました）。
+  PowerPoint も作りたくなったら、スクリプトのプロパティ `MTG_EXPORT_PPTX` に `true` を入れます（コードの変更は不要。やめるときは `false` にするか消す。
+  プロパティが無いときはコードの `MTG_OPTIONS.exportPptx`（false）。RX Service Meeting も同じ。今の設定は `showOutputFolders()` の「■ PowerPoint（.pptx）」で確かめられます）。
+  作るときは、本番は PDF と一緒に会議のフォルダに移します。インデックス・チャットの通知・統合版の確認は PDF を使います。PowerPoint を書き出せなかったときは、PDF だけを作り、実行ログに書きます。
 - 列は見出しで探すので、列の並びが変わっても読めます。見出しが変わった列は `MTG_OPTIONS.columnAliases` に今の見出しを足します
   （2026/10/29 時点：受注月は「受注月(yy/mm)」）。売上開始月の列は 2026/10/29 にシートから無くなったので、計画に対する積み上げは受注月で積み上げ（`MTG_OPTIONS.plan.monthColumn`）、
   確認事項「売上開始月不整合」は使いません（`columns.startMonth` が空。列を戻したら見出しを書き、`plan.monthColumn` を `'startMonth'` にすると前の版と同じ）。
@@ -762,6 +764,7 @@ Appendix ① リクエスト・② タスク・③ 入力内容の確認事項�
 | `AP_DEST_FOLDER` | アカウントプランシートの保存先 | `コード.gs` の `AP_OPTIONS.destFolderId` |
 | `MTG_TEMPLATE_URL`（素材） | 事前資料の表紙・扉のひな形（Google スライドか .pptx。RX Service Meeting も同じひな形の3枚目） | `MTG_OPTIONS.templateId`（空）。無ければ表紙・扉はコードで描くので、素材が無くても作れる |
 | `AP_TEMPLATE_FILE`（素材） | アカウントプランシートのひな形（スプレッドシート） | `コード.gs` の `AP_OPTIONS.templateFileId` |
+| `MTG_EXPORT_PPTX`（出力の切り替え） | 事前資料の PowerPoint（.pptx）も作るか（`true` で作る・`false` で作らない。はい／いいえ、1／0 も可） | `MTG_OPTIONS.exportPptx`（false＝作らない） |
 
 前の版のサブインダストリーごとの格納先のプロパティ（`MTG_MEETING_FOLDER_<シート名>`）は使いません。`showOutputFolders()` の「使わなくなったスクリプトのプロパティ」に出るので、
 `removeFormerMeetingFolderProps()`（確かめてから消す）か、プロジェクトの設定で消してください。

@@ -173,9 +173,11 @@ const MTG_OPTIONS = {
   lastKeyPrefix: 'MTG_LAST_',         // 前の版の「前回の作成日時」（会議日の記録が無いときだけ使う）
   keepMeetings: 24,                  // 会議日の記録をいくつ残すか
   keepSlides: false,                 // Google スライドもフォルダに残すか（true なら推進リーダーが書き足せる。false なら PDF だけ。2026/10 から PDF だけ）
-  // PDF と同じ名前の PowerPoint（.pptx）も作り、PDF と同じフォルダに置く（会議のフォルダへの格納も一緒に移す。2026/10/29 から。
-  // Drive API の書き出し（files.export）で作る。作れなくても PDF は作る）。インデックス・チャットの通知・統合版の確認は PDF を使う
-  exportPptx: true,
+  // PDF と同じ名前の PowerPoint（.pptx）も作り、PDF と同じフォルダに置くか（会議のフォルダへの格納も一緒に移す。2026/10/29 から。
+  // Drive API の書き出し（files.export）で作る。作れなくても PDF は作る）。インデックス・チャットの通知・統合版の確認は PDF を使う。
+  // 2026/11/05 から作らない（false）。スクリプトのプロパティ pptxProp（MTG_EXPORT_PPTX）に true / false を入れると、そちらを使う（コードを変えずに切り替える）
+  exportPptx: false,
+  pptxProp: 'MTG_EXPORT_PPTX',
   // Google チャットへの通知は、サブインダストリーごとのスペースへの2つだけ（下の subChat。2026/10/19 に全体のスペースへの通知はやめた）
   chat: {
     meetingTime: '9:00〜10:30',      // 会議の時刻（会議日程の日付のあとに書く。送るときに時刻を入力すれば、そちら。空なら日付だけ）
@@ -2102,6 +2104,19 @@ function mtgOutputSetting_(keys, codeValue, codeWhere) {
 }
 
 /**
+ * PowerPoint（.pptx）も作るか。スクリプトのプロパティ MTG_OPTIONS.pptxProp（MTG_EXPORT_PPTX）に true / false（はい・いいえ、1・0 も）があればそれ、
+ * 無ければ（読めない値なら）コードの設定 MTG_OPTIONS.exportPptx。{on, where: 設定の場所}
+ */
+function mtgExportPptxEnabled_() {
+  const o = MTG_OPTIONS;
+  let value = '';
+  try { value = String(PropertiesService.getScriptProperties().getProperty(o.pptxProp) || '').normalize('NFKC').trim().toLowerCase(); } catch (_) {}
+  if (/^(true|yes|on|1|はい|する|作る)$/.test(value)) return {on: true, where: 'スクリプトのプロパティ「' + o.pptxProp + '」'};
+  if (/^(false|no|off|0|いいえ|しない|作らない)$/.test(value)) return {on: false, where: 'スクリプトのプロパティ「' + o.pptxProp + '」'};
+  return {on: !!o.exportPptx, where: 'MeetingSummary.gs の MTG_OPTIONS.exportPptx' + (value ? '（スクリプトのプロパティ「' + o.pptxProp + '」の値「' + value + '」は読めないので使わない）' : '')};
+}
+
+/**
  * 今の出力先と素材（ひな形）を一覧にする（エディタから実行する。読むだけで、フォルダは作らない）。項目ごとに、使っているフォルダ・ファイル（○ 開ける・✗ 開けない）と、
  * スクリプトのプロパティに値を入れているか（入れていなければコードの設定を使う）を出す。スクリプトのプロパティを変えたあとの確かめに使う。画面に出せなければ実行ログだけ
  */
@@ -2129,6 +2144,9 @@ function showOutputFolders() {
   if (typeof apDestFolderSetting_ === 'function') lines.push(item('アカウントプランシートの保存先', apDestFolderSetting_(), '✗ 無し'));
   lines.push(item('事前資料の格納先（この中に会議日のフォルダ「yyMMdd_RX Business Meeting_第N回」を作り、全サブインダストリーと統合版の資料を入れる）',
     mtgMeetingFolderSetting_(), '✗ 無し（本番の資料を会議のフォルダに格納できません）'));
+  // PowerPoint（.pptx）を作るか：プロパティ → コードの exportPptx の順
+  const pptx = mtgExportPptxEnabled_();
+  lines.push('', '■ PowerPoint（.pptx）', (pptx.on ? '作る' : '作らない') + '（' + pptx.where + '。スクリプトのプロパティ「' + o.pptxProp + '」に true / false を入れると切り替わる）');
   // 素材（ひな形）：表紙・扉のひな形は、プロパティ → コードの templateId → 前の版の登録の順
   lines.push('', '■ 素材（ひな形）');
   const legacy = PropertiesService.getDocumentProperties().getProperty(o.templateKey) || '';
@@ -7454,7 +7472,7 @@ function mtgExportDeck_(name, slides, folder) {
     if (!templateId && MTG_OPTIONS.keepSlides) file.moveTo(folder);   // 残さないときは動かさずにゴミ箱へ（呼び出しを減らす）
     const blob = file.getAs('application/pdf').setName(name + '.pdf');
     const pdf = folder.createFile(slides.some(slide => slide.elements.some(el => el.link != null)) ? mtgPdfFitLinks_(blob) : blob);
-    const pptx = MTG_OPTIONS.exportPptx ? mtgExportPptx_(file.getId(), name, folder) : {};
+    const pptx = mtgExportPptxEnabled_().on ? mtgExportPptx_(file.getId(), name, folder) : {};
     if (pptx.error) console.warn(name + '：' + pptx.error + '（PDF は作りました）');
     mtgTrashOld_(folder, [name, name + '.pdf', name + '.pptx'], [file.getId(), pdf.getId()].concat(pptx.file ? [pptx.file.getId()] : []));
     if (!MTG_OPTIONS.keepSlides) file.setTrashed(true);
