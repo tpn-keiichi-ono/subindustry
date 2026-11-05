@@ -542,7 +542,7 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
   const lead = leadOf;
   // 案件数・期待値合計は失注を除く（A社・B社（受注）・D社・E社。C社（失注）は除く。前回は C社・F社（削除）も含めて6件）
   assert.strictEqual(lead(slides[1]), '案件 4件（失注除く）（直近14日間で ▲2件）、期待値合計 100百万円（直近14日間で ▲8）。' +
-    'ステータス未入力 1件は進行中に含め、想定売上未入力 1件・期待値未入力 1件は金額の合計に含めていない。');
+    'ステータス未入力 1件は進行中に含め、想定売上が空・数値でない 1件・期待値が空・数値でない 1件は金額の合計に含めていない。');
   assert.deepStrictEqual(roleOf(slides[1], 'lead').map(el => el.text.split('\n').length), [1, 1],
     '空欄の扱い（D社：ステータス・想定売上・期待値が空）は補足の行に書く（推定で補わない）');
   assert.deepStrictEqual(roleOf(slides[3], 'lead').map(el => [el.color, el.size]), [[c.ink, S.leadSize], [c.ink, S.leadSize]]);
@@ -711,7 +711,7 @@ test('空欄は推定で補わず「未入力」と書く（「—」や 0 に�
 
   // 空欄が多くリード文の補足が長くても、サマリーの表はページに入る（数字の箱・余白を詰める）
   const crowded = plain(g.mtgSlides_(Object.assign({}, s, {kpi: Object.assign({}, s.kpi, {missingStatus: 12, missingAmount: 15, missingWeighted: 18})})))[1];
-  assert.match(leadOf(crowded), /ステータス未入力 12件は進行中に含め、想定売上未入力 15件・期待値未入力 18件は金額の合計に含めていない。$/);
+  assert.match(leadOf(crowded), /ステータス未入力 12件は進行中に含め、想定売上が空・数値でない 15件・期待値が空・数値でない 18件は金額の合計に含めていない。$/);
   crowded.elements.filter(el => el.type === 'table').forEach(t =>
     assert.ok(t.y + t.rows.reduce((a, r) => a + r.h, 0) <= gas.get('MTG_SLIDE').bottom + 0.01, 'サマリーの表がページの下にはみ出す'));
   assert.ok(crowded.elements.filter(el => el.role === 'tile-value').every(el => el.h >= 32 - 14), '数字の箱は下限より小さくしない');
@@ -2896,7 +2896,7 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
   assert.strictEqual(slide.title, '計画に対する積み上げ');
   assert.strictEqual(slide.lead, '今年度（26/4〜27/3）の期待値の積み上げは 78百万円。計画 400百万円に対して ▲322（達成率 20%）。\n' +
     '最大は10月の 50（積み上げの 64%）、確度A・B は 55（71%）。積み上げに含まない 4件（23）は右に表示。' +
-    '期待値が空の 1件は 0 として数えた。');
+    '期待値が空・数値でない 1件は 0 として数えた。');
   const roles = role => roleOf(slide, role);
   // 月の段は前の月までの積み上げから浮かせ、確度の順（A が下）に塗り分ける。合計は確度別。計画は白地に枠、不足は灰色の点線
   const oct = roles('plan-month').filter(el => el.fill === o.ranks[1].color || el.fill === o.ranks[2].color);
@@ -4124,9 +4124,13 @@ test('資料の件数・想定売上合計・期待値合計は、シートの�
   g.diagnoseBusinessMtgTotals();
   const text = gas.alerts[gas.alerts.length - 1].message;
   assert.match(text, /■ 新FMT\n　数える行：見出しの下で、得意先・案件名・ステータス・想定売上・期待値のどれかが入っている 10行（失注 1行）\n　案件数（失注除く）：9件/);
-  assert.match(text, new RegExp('　想定売上（' + g.diffColumnLetter_(COL.amount) + '列）：列の合計 203.5 − 失注の行 7 ＝ 資料 196.5\\n　　数値でない値（足していません）：12行目「約100」'));
+  assert.match(text, new RegExp('　想定売上（' + g.diffColumnLetter_(COL.amount) + '列）：列の合計 203.5 − 失注の行 7 ＝ 資料 196.5\\n　　数値でない値（文字・エラー。足していません）：12行目「約100」'));
   assert.match(text, new RegExp('　期待値（' + g.diffColumnLetter_(COL.weighted) + '列）：列の合計 111.5 − 失注の行 1 ＝ 資料 110.5'));
   assert.match(text, /得意先・案件名が空の行（数えています）：11行目/);
+  assert.match(text, /　　列の中身：数式なし（手入力の値）/);
+  // 空のセル（D社は想定売上・期待値とも空。I社は想定売上が文字・期待値が空）：ステータスごとの行数と例の行
+  assert.deepStrictEqual(text.split('\n').filter(l => /空のセル/.test(l)),
+    ['　　空のセル（失注を除く 1行）：（空欄） 1行（6行目）', '　　空のセル（失注を除く 2行）：（空欄） 2行（6行目・12行目）']);
   assert.match(text, /　　C-失注：1件・7・1　← 除く\n/);
   assert.match(text, /　　辞退：1件・4・2\n/);
 });

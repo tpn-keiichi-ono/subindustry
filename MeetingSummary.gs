@@ -4524,11 +4524,20 @@ function mtgTotalsLines_(name, table) {
     const all = mtgSum_(deals, key);
     const minus = mtgSum_(lost, key);
     out.push('　' + label + '（' + diffColumnLetter_(col + 1) + '列）：列の合計 ' + mtgAmount_(all) + ' − 失注の行 ' + mtgAmount_(minus) + ' ＝ 資料 ' + mtgAmount_(all - minus));
+    if (key === 'weighted') out.push('　　列の中身：' + (table.weightedFormula ? '数式あり（シートで計算した値を読みます）' : '数式なし（手入力の値）'));
     const head = mtgCanonicalLabel_(table.headers[col]);
     const texts = deals.filter(d => d[key] == null && d.cells && d.cells[head]);
     if (texts.length) {
-      out.push('　　数値でない値（足していません）：' + texts.slice(0, 10).map(d => d.row + '行目「' + d.cells[head] + '」').join('・') +
+      out.push('　　数値でない値（文字・エラー。足していません）：' + texts.slice(0, 10).map(d => d.row + '行目「' + d.cells[head] + '」').join('・') +
         (texts.length > 10 ? ' ほか' + (texts.length - 10) + '件' : ''));
+    }
+    // 空のセル（失注を除く）：ステータスごとの件数と、例の行（数式の列なら、定義に無いステータスなどで空になっていないか）
+    const empty = counted.filter(d => d[key] == null && !(d.cells && d.cells[head]));
+    if (empty.length) {
+      const byStatus = {};
+      empty.forEach(d => { (byStatus[d.status || '（空欄）'] = byStatus[d.status || '（空欄）'] || []).push(d.row); });
+      out.push('　　空のセル（失注を除く ' + empty.length + '行）：' + Object.keys(byStatus).map(st => st + ' ' + byStatus[st].length + '行（' +
+        byStatus[st].slice(0, 3).map(r => r + '行目').join('・') + (byStatus[st].length > 3 ? '…' : '') + '）').join('・'));
     }
   });
   const unnamed = deals.filter(d => d.unnamed);
@@ -4611,7 +4620,8 @@ function mtgBreakdown_(s) {
  * 「\nステータス未入力 1件は進行中に含め、想定売上未入力 1件・期待値未入力 1件は金額の合計に含めていない。」
  */
 function mtgBlankNote_(k) {
-  const amounts = [k.missingAmount ? '想定売上未入力 ' + k.missingAmount + '件' : '', k.missingWeighted ? '期待値未入力 ' + k.missingWeighted + '件' : '']
+  // 空か数値でない（文字・エラー）セル。シートの SUM と同じく足さない
+  const amounts = [k.missingAmount ? '想定売上が空・数値でない ' + k.missingAmount + '件' : '', k.missingWeighted ? '期待値が空・数値でない ' + k.missingWeighted + '件' : '']
     .filter(Boolean).join('・');
   const status = k.missingStatus ? 'ステータス未入力 ' + k.missingStatus + '件は進行中に含め' : '';
   if (!status && !amounts) return '';
@@ -4694,7 +4704,7 @@ function mtgBridgeSlide_(s) {
     : '受注月が今年度の期待値は ' + mtgAmount_(mtgSum_(s.quarters.filter(q => /Q/.test(q.label)), 'value')) + '百万円' +
       (peak ? '（最大は' + peak.label.replace(/（.*/, '') + 'の ' + mtgAmount_(peak.value) + '）' : '') +
       (over ? '、受注月超過は ' + mtgAmount_(over.value) + '百万円' : '') +
-      (s.kpi.missingWeighted ? '。期待値未入力の ' + s.kpi.missingWeighted + '件は金額に含めていない' : '') + '。';
+      (s.kpi.missingWeighted ? '。期待値が空・数値でない ' + s.kpi.missingWeighted + '件は金額に含めていない' : '') + '。';
   return {title: MTG_TITLES.pipeline, lead: first + (second ? '\n' + second : ''), elements: el};
 }
 
@@ -5737,7 +5747,7 @@ function mtgPlanSlide_(p, now, name) {
     (peak && peak.total > 0 ? '最大は' + peak.m + '月の ' + mtgAmount_(peak.total) + '（積み上げの ' + share(peak.total) + '）、確度A・B は ' +
       mtgAmount_(sure) + '（' + share(sure) + '）。' : '今年度に' + monthName + 'がある案件の期待値はなし。') +
     (asideCount ? '積み上げに含まない ' + asideCount + '件（' + mtgAmount_(asideValue) + '）は右に表示。' : '') +
-    (p.missing ? '期待値が空の ' + p.missing + '件は 0 として数えた。' : '');
+    (p.missing ? '期待値が空・数値でない ' + p.missing + '件は 0 として数えた。' : '');
 
   const x = S.x;
   const w = S.w;
