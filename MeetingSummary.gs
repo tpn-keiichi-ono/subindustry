@@ -192,43 +192,36 @@ const MTG_OPTIONS = {
     webhookKeyPrefix: 'MTG_SUBCHAT_',  // スクリプトのプロパティ：後ろにシート名。webhook の URL（鍵を含むので、コードやシートに書かない）
     deadlineDays: 2,                   // 更新の締め切り：会議日の何日前か（事前資料を作る前）
     deadlineTime: '17:00',             // 更新の締め切りの時刻（空なら日付だけ）
-    remind: [
-      '*【{meeting}】 管理フォーマットの更新のお願い（{name}）*',
-      '{date} の 「{meeting}」 に向けて、事前資料（{name}）を作成します。',
-      'お手数ですが、更新期限までに、管理フォーマットの案件の情報を最新にしてください。',
-      '',
-      '*▼ 更新期限*',
-      '{deadline}',
-      '',
-      '*▼ 更新していただきたい項目*',
-      '・案件ステータス・想定売上・期待値・受注月',
-      '・活動状況・活動における課題・次回アクション',
-      '',
-      '*▼ 今の入力状況（{now} 時点）*',
-      '{stats}',
-      '',
-      '*▼ 会議日程*',
-      '{date}',
-      '',
-      '*▼ 管理フォーマット*',
-      '{sheet}'
-    ],
-    summary: [
-      '*【{meeting}】 事前資料のご案内（{name}）*',
-      '{date} の 「{meeting}」 の事前資料（{name}）が作成されました。',
-      '',
-      '*▼ レビュアーの方々*',
-      'お手数ですが、会議の前にご一読いただきレビュー観点を整理ください。',
-      '',
-      '*▼ 発表者の方々*',
-      '資料内容をご確認の上、発表内容のご準備をお願いいたします。',
-      '',
-      '*▼ 会議日程*',
-      '{date}',
-      '',
-      '*▼ 事前資料*',
-      '{file}'
-    ]
+    // 送る文は Google チャットのカード（cardsV2。2026/11/05 から）。title・subtitle は見出し、sections は上から順に：
+    //   {text} 文 ／ {header, text} 見出しつきの文 ／ {label, value, alert} 小さなラベルと値（alert なら赤の太字。締め切りなど）
+    // buttons は下に並べるボタン（link：'sheet' 管理フォーマットのシート・'file' 事前資料の PDF・'past' 過去の事前資料。filled なら色つき）。
+    // 文の {meeting}・{name}（サブインダストリー）・{date}（会議日程）・{deadline}・{now}・{stats}・{fileName} を置き換える
+    remind: {
+      title: '【{meeting}】管理フォーマットの更新のお願い',
+      subtitle: '{name}　{date}',
+      sections: [
+        {text: '{date} の「{meeting}」に向けて、事前資料（{name}）を作成します。\nお手数ですが、更新期限までに、管理フォーマットの案件の情報を最新にしてください。'},
+        {label: '更新期限', value: '{deadline}', alert: true},
+        {header: '更新していただきたい項目', text: '・案件ステータス・想定売上・期待値・受注月\n・活動状況・活動における課題・次回アクション'},
+        {header: '今の入力状況（{now} 時点）', text: '{stats}'}
+      ],
+      buttons: [{text: '管理フォーマットを開く', link: 'sheet', filled: true}, {text: '過去の事前資料', link: 'past'}]
+    },
+    summary: {
+      title: '【{meeting}】事前資料のご案内',
+      subtitle: '{name}　{date}',
+      sections: [
+        {text: '{date} の「{meeting}」の事前資料（{name}）が作成されました。'},
+        {label: '事前資料', value: '{fileName}'},
+        {header: 'レビュアーの方々', text: 'お手数ですが、会議の前にご一読いただきレビュー観点を整理ください。'},
+        {header: '発表者の方々', text: '資料内容をご確認の上、発表内容のご準備をお願いいたします。'}
+      ],
+      buttons: [{text: '事前資料を開く', link: 'file', filled: true}, {text: '過去の事前資料', link: 'past'}]
+    },
+    // 「過去の事前資料」のボタンの行き先：'folder' 事前資料の格納先のフォルダ（会議ごとのフォルダが並ぶ）・'index' 会議資料のインデックスのシート。
+    // 格納先が設定されていなければインデックスのシート
+    pastLink: 'folder',
+    alertColor: '#D93025',   // 締め切りなどの赤の字
   },
   firstDays: 14,                     // 初回（前回の会議の記録が無い）は、何日前からの変化を出すか
   lookbackDays: 180,                 // ステータスの滞留・受注月の延期の回数を数えるために、何日前までの記録を読むか
@@ -1140,8 +1133,10 @@ function mtgDateLabel_(date) {
 }
 
 /** webhook にメッセージを送る（混んでいる・一時的な失敗は1回だけやり直す）。失敗したら止める（URL は鍵を含むので出さない） */
-function mtgPostChat_(webhook, text) {
-  const params = {method: 'post', contentType: 'application/json; charset=UTF-8', payload: JSON.stringify({text}), muteHttpExceptions: true};
+function mtgPostChat_(webhook, message) {
+  // message：文（そのまま text で送る）か、送るメッセージ（cardsV2 など）
+  const body = typeof message === 'string' ? {text: message} : message;
+  const params = {method: 'post', contentType: 'application/json; charset=UTF-8', payload: JSON.stringify(body), muteHttpExceptions: true};
   let res = UrlFetchApp.fetch(webhook, params);
   if (res.getResponseCode() === 429 || res.getResponseCode() >= 500) {
     Utilities.sleep(2000);
@@ -1497,14 +1492,17 @@ function mtgSubChatSend_(kind) {
   const names = mtgAskSheets_(ss, ui, what + 'を送ります（会議日 ' + meeting.label + '）。\nwebhook を登録したシート：' + registered.join('・'));
   if (!names) return;
   const now = new Date();
+  const past = mtgSubChatPastLink_(ss);
   const plans = names.map(name => {
     if (!mtgSubChatWebhook_(name)) return {name, skip: 'webhook が未登録（setBusinessMtgSubChats() で登録）'};
-    if (kind === 'remind') return {name, text: mtgSubChatText_('remind', name, meeting, {now, sheet: mtgSheetLink_(ss, name), stats: mtgUpdateStats_(ss, name, now)})};
+    if (kind === 'remind') {
+      return {name, message: mtgSubChatMessage_('remind', name, meeting, {now, sheet: mtgSheetLink_(ss, name), stats: mtgUpdateStats_(ss, name, now), past})};
+    }
     const pdf = mtgStoredPdf_(ss, name, meeting.date);
     if (!pdf) return {name, skip: '会議日 ' + meeting.date + ' の本番の事前資料（PDF）が無い（createBusinessMtgSummaries() で作る）'};
-    return {name, text: mtgSubChatText_('summary', name, meeting, {file: {name: pdf.getName(), url: pdf.getUrl()}})};
+    return {name, message: mtgSubChatMessage_('summary', name, meeting, {file: {name: pdf.getName(), url: pdf.getUrl()}, past})};
   });
-  const sending = plans.filter(p => p.text);
+  const sending = plans.filter(p => p.message);
   const skipped = plans.filter(p => p.skip);
   const list = sending.map(p => '・' + p.name + '：' + mtgChatSpace_(mtgSubChatWebhook_(p.name))).join('\n') +
     (skipped.length ? '\n\n送らないシート：\n' + skipped.map(p => '・' + p.name + '：' + p.skip).join('\n') : '');
@@ -1512,11 +1510,11 @@ function mtgSubChatSend_(kind) {
     ui.alert(title, what + 'を送れるシートがありません。\n' + list, ui.ButtonSet.OK);
     return;
   }
-  const preview = mtgSubChatPlain_(sending[0].text);
+  const preview = sending[0].message.plain;
   const answer = ui.alert(title, what + 'を、次のスペースにすぐに送ります。よろしいですか？\n' + list + '\n\n（例：' + sending[0].name + ' に送る文）\n' + preview,
     ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return;
-  const results = sending.map(p => mtgSubChatPost_(p.name, p.text));
+  const results = sending.map(p => mtgSubChatPost_(p.name, p.message.payload));
   const message = what + 'を送りました（' + results.filter(r => !r.error).length + '/' + results.length + 'スペース）。\n' +
     results.map(r => '・' + r.name + '：' + (r.error ? '送れませんでした（' + r.error + '）' : '送りました')).join('\n') +
     (skipped.length ? '\n\n送らなかったシート：\n' + skipped.map(p => '・' + p.name + '：' + p.skip).join('\n') : '');
@@ -1545,26 +1543,58 @@ function mtgSubChatMeeting_(ui, what) {
 }
 
 /**
- * 送る文（MTG_OPTIONS.subChat の kind の行の、{meeting}・{name}・{date}・{deadline}・{now}・{stats}・{sheet}・{file} を置き換える）。
- * リンクは <URL|名前>（チャットでは名前で出る）
+ * 送るメッセージ（MTG_OPTIONS.subChat の kind のカード）。values = {now, stats, sheet, file, past}（リンクは {name, url}）。
+ * {payload: Google チャットに送る形（cardsV2）, plain: 確かめの画面・ログに出す文}
  */
-function mtgSubChatText_(kind, name, meeting, values) {
+function mtgSubChatMessage_(kind, name, meeting, values) {
   const o = MTG_OPTIONS.subChat;
+  const spec = o[kind];
   const tz = Session.getScriptTimeZone();
-  const link = item => (item ? '<' + item.url + '|' + String(item.name).replace(/[|<>]/g, ' ') + '>' : '');
   const p = meeting.date.split('/').map(Number);
   const due = new Date(Date.UTC(p[0], p[1] - 1, p[2] - o.deadlineDays));
   const dueDate = due.getUTCFullYear() + '/' + String(due.getUTCMonth() + 1).padStart(2, '0') + '/' + String(due.getUTCDate()).padStart(2, '0');
   const deadline = mtgDateLabel_(dueDate).replace(/^\d+年/, '') + (o.deadlineTime ? ' ' + o.deadlineTime : '');
   const map = {meeting: MTG_OPTIONS.meetingName, name, date: meeting.label, deadline,
     now: values.now ? Utilities.formatDate(values.now, tz, 'M/d HH:mm') : '', stats: (values.stats || []).join('\n'),
-    sheet: link(values.sheet), file: link(values.file)};
-  return o[kind].join('\n').replace(/\{(\w+)\}/g, (all, key) => (key in map ? map[key] : all));
+    fileName: values.file ? values.file.name : ''};
+  const fill = text => String(text || '').replace(/\{(\w+)\}/g, (all, key) => (key in map ? map[key] : all));
+  // カードの文は HTML の一部の書式が使えるので、置き換えた値の < > & はそのまま出るようにする。改行は <br>
+  const html = text => fill(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+  const links = {sheet: values.sheet, file: values.file, past: values.past};
+  const plain = ['【' + fill(spec.title) + '】', fill(spec.subtitle), ''];
+  const sections = spec.sections.map(sec => {
+    const widgets = [];
+    if (sec.label) {
+      const value = html(sec.value);
+      widgets.push({decoratedText: {topLabel: fill(sec.label), wrapText: true,
+        text: sec.alert ? '<font color="' + o.alertColor + '"><b>' + value + '</b></font>' : value}});
+      plain.push(fill(sec.label) + '：' + fill(sec.value));
+    } else {
+      widgets.push({textParagraph: {text: html(sec.text)}});
+      if (sec.header) plain.push('▼ ' + fill(sec.header));
+      plain.push(fill(sec.text));
+    }
+    plain.push('');
+    return Object.assign(sec.header ? {header: fill(sec.header)} : {}, {widgets});
+  });
+  const rgb = hex => { const c = mtgRgb_(hex); return {red: c.red, green: c.green, blue: c.blue}; };
+  const buttons = (spec.buttons || []).filter(b => links[b.link] && links[b.link].url).map(b => {
+    plain.push('［' + b.text + '］ ' + links[b.link].url);
+    return Object.assign({text: b.text, onClick: {openLink: {url: links[b.link].url}}}, b.filled ? {color: rgb(MTG_OPTIONS.colors.greenDark)} : {});
+  });
+  if (buttons.length) sections.push({widgets: [{buttonList: {buttons}}]});
+  const card = {header: {title: fill(spec.title), subtitle: fill(spec.subtitle)}, sections};
+  return {payload: {cardsV2: [{cardId: 'mtg-' + kind, card}]}, plain: plain.join('\n').replace(/\n{3,}/g, '\n\n').trim()};
 }
 
-/** 確かめの画面に出す形（リンク <URL|名前> を「名前（URL）」に） */
-function mtgSubChatPlain_(text) {
-  return text.replace(/<([^|>]+)\|([^>]*)>/g, '$2（$1）');
+/** 「過去の事前資料」のボタンの行き先 {name, url}（subChat.pastLink。格納先のフォルダか、会議資料のインデックスのシート。どちらも無ければ null） */
+function mtgSubChatPastLink_(ss) {
+  if (MTG_OPTIONS.subChat.pastLink === 'folder') {
+    const id = mtgFolderIdOf_(mtgMeetingFolderSetting_().value);
+    if (id) return {name: '事前資料の格納先', url: 'https://drive.google.com/drive/folders/' + id};
+  }
+  const index = ss.getSheetByName(MTG_OPTIONS.index.sheet);
+  return index ? {name: MTG_OPTIONS.index.sheet, url: ss.getUrl() + '#gid=' + index.getSheetId()} : null;
 }
 
 /** 管理フォーマットのシートのリンク {name: シート名, url: そのシートを開く URL} */
@@ -1602,10 +1632,10 @@ function mtgSubChatState_(name) {
   return webhook ? mtgChatSpace_(webhook) + ' に送る' : '未登録';
 }
 
-/** シートのスペースに送る。{name, error}（送れなければ error に理由。止めない。URL は鍵を含むので出さない） */
-function mtgSubChatPost_(name, text) {
+/** シートのスペースに送る（message は文か、カードなどのメッセージ）。{name, error}（送れなければ error に理由。止めない。URL は鍵を含むので出さない） */
+function mtgSubChatPost_(name, message) {
   try {
-    mtgPostChat_(mtgSubChatWebhook_(name), text);
+    mtgPostChat_(mtgSubChatWebhook_(name), message);
     return {name, error: ''};
   } catch (error) {
     return {name, error: String(error && error.message || error).split('\n')[0]};
