@@ -326,6 +326,7 @@ class Range {
 
   setNumberFormat(format) { this.each(cell => { cell.nf = format; }); return this; }
   getNumberFormats() { return this.map(cell => (cell && cell.nf) || 'General'); }
+  getNumberFormat() { return this.getNumberFormats()[0][0]; }
   setNumberFormats(matrix) {
     this.checkShape(matrix);
     this.each((cell, r, c) => { cell.nf = matrix[r][c] === 'General' ? undefined : matrix[r][c]; });
@@ -833,7 +834,8 @@ function createGas(options) {
     BorderStyle: {SOLID: 'SOLID', SOLID_MEDIUM: 'SOLID_MEDIUM', SOLID_THICK: 'SOLID_THICK', DOTTED: 'DOTTED', DASHED: 'DASHED'},
     /** 新しいスプレッドシート（gas.created に残す。最初のシートは「シート1」） */
     create(name) {
-      const created = new Spreadsheet(gas, {id: 'created-' + (++createdSeq), name: String(name), timeZone: ss.timeZone});
+      // ID は本物と同じく 20文字以上（URL・ID から読む処理 mtgFileIdOf_ が読めるように）
+      const created = new Spreadsheet(gas, {id: 'created-' + String(++createdSeq).padStart(16, '0'), name: String(name), timeZone: ss.timeZone});
       created.insertSheet('シート1');
       gas.created.push(created);
       return created;

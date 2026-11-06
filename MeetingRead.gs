@@ -72,8 +72,9 @@ function mtgApiBook_(ss, names, options) {
   (meta.sheets || []).forEach(s => { book.props[s.properties.title] = s.properties; });
   timer.lap('シートの一覧');
   const exists = name => !!book.props[name];
-  // options.light：値と数式だけ（表示の文字・書式・入力規則を読まない。時点コピーを直すとき。メモリを使わない）。ステータスの定義も読まない
-  const grid = opt.grid === false ? [] : (names || []).concat(opt.light ? [] : [MTG_OPTIONS.statusTable && MTG_OPTIONS.statusTable.sheet])
+  // options.light：値と数式だけ（表示の文字・書式・入力規則を読まない。時点コピーを直すとき・週次推移。メモリを使わない）
+  // options.status が false なら、ステータスの定義を読まない（時点コピーを直すとき）
+  const grid = opt.grid === false ? [] : (names || []).concat(opt.status === false ? [] : [MTG_OPTIONS.statusTable && MTG_OPTIONS.statusTable.sheet])
     .filter((name, i, list) => name && exists(name) && list.indexOf(name) === i);
   if (grid.length) mtgApiLoadGrid_(book, grid, !!opt.light);
   if (opt.records !== false) {

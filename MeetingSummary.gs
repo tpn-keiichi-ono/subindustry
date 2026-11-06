@@ -251,7 +251,14 @@ const MTG_OPTIONS = {
     fileName: '{date}_期待値の週次推移_試作',
     weeks: 12,
     upColors: ['#E2EFDA', '#B5D99C', '#8FC46B'],     // 増（小 → 大）
-    downColors: ['#EDEDED', '#D0D0D0', '#A6A6A6']    // 減（小 → 大）
+    downColors: ['#EDEDED', '#D0D0D0', '#A6A6A6'],   // 減（小 → 大）
+    // 別のスプレッドシートに、全サブインダストリーの週次推移を書く（updateBusinessMtgWeeklySheet()。2026/11/06）。URL か ID。
+    // スクリプトのプロパティ「MTG_WEEKLY_SPREADSHEET」が優先。どちらも無ければ、保存先のフォルダに spreadsheetName で作り、そのプロパティに入れる
+    spreadsheet: '',
+    spreadsheetProp: 'MTG_WEEKLY_SPREADSHEET',
+    spreadsheetName: '期待値の週次推移（全サブインダストリー）',
+    sheetByWeek: '週次_案件別',      // 横軸が週（行は合計・サブインダストリーの合計・案件）
+    sheetByRank: '週次_確度別'       // 横軸が確度（行は週。全体とサブインダストリーごとのまとまり）
   },
   noUpdateDays: 30,                  // 入力内容のチェック「更新なし」：最終更新日時がこの日数より前の進行中の案件
   overdueDays: 90,                   // 入力内容のチェック「予定日超過」：予定日を過ぎてこの日数以内のもの（古いものは出さない）
@@ -898,7 +905,7 @@ function mtgJobRun_(ss, job, started) {
           return mtgJobPause_(job);
         }
         const part = [job.names[i]];
-        const result = mtgApiFixCopy_(job.copy.id, mtgApiBook_(ss, part, {records: false, light: true}), part);
+        const result = mtgApiFixCopy_(job.copy.id, mtgApiBook_(ss, part, {records: false, light: true, status: false}), part);
         fix.cells += result.cells;
         fix.columns = fix.columns.concat(result.columns);
         fix.error = result.error;
@@ -1383,7 +1390,8 @@ function mtgWeeklyData_(ss, names, now) {
   const sheets = [];
   for (let i = 0; i < names.length; i += step) {
     const part = names.slice(i, i + step);
-    const book = api ? mtgApiBook_(ss, part, {cache}) : ss;
+    // 値と数式だけ読む（表示の文字・書式・入力規則は使わない。メモリを使わないように）
+    const book = api ? mtgApiBook_(ss, part, {cache, light: true}) : ss;
     const context = {now, windowStart, since: new Date(weeks.before)};
     context.log = mtgReadLog_(book, windowStart);
     context.snapshots = mtgReadSnapshots_(book, windowStart);
@@ -1398,7 +1406,7 @@ function mtgWeeklySheet_(book, name, context, statusTable, weeks) {
   const table = mtgReadDeals_(book.getSheetByName(name), DIFF_RULES[name]);
   if (!table.has.weighted) {
     return {name, gap: 'シートに「' + String(MTG_OPTIONS.columns.weighted).replace(/\s+/g, '') + '」の列が無い', totals: [], before: 0, deals: [], unchanged: 0,
-      ranks: [], ranksBefore: {}};
+      ranks: [], ranksBefore: {}, all: []};
   }
   const history = mtgHistory_(name, context);
   const labels = mtgLabels_();
@@ -1418,6 +1426,7 @@ function mtgWeeklySheet_(book, name, context, statusTable, weeks) {
   const totals = weeks.list.map(() => 0);
   let before = 0;
   const moved = [];
+  const all = [];
   let unchanged = 0;
   table.deals.forEach(deal => {
     const states = weeks.list.map(w => stateAt(deal, w.current ? null : w.end));
@@ -1428,13 +1437,16 @@ function mtgWeeklySheet_(book, name, context, statusTable, weeks) {
     ranksBefore[mtgPlanRank_(start.status)] += start.value;
     values.forEach((v, k) => { totals[k] += v; });
     before += first;
-    if ([first].concat(values).some(v => Math.abs(v - first) > 1e-9)) {
-      moved.push({customer: deal.customer, project: deal.project, row: deal.row, status: deal.status, values, before: first});
-    } else unchanged++;
+    const line = {customer: deal.customer, project: deal.project, row: deal.row, status: deal.status, rank: mtgPlanRank_(deal.status), values, before: first};
+    // 期間中ずっと 0（前から失注など）でなければ、スプレッドシートの一覧（all）に入れる
+    if ([first].concat(values).some(v => Math.abs(v) > 1e-9)) all.push(line);
+    if ([first].concat(values).some(v => Math.abs(v - first) > 1e-9)) moved.push(line);
+    else unchanged++;
   });
   const delta = d => d.values[d.values.length - 1] - d.before;
   moved.sort((a, b) => (Math.abs(delta(b)) - Math.abs(delta(a))) || (b.values[b.values.length - 1] - a.values[a.values.length - 1]));
-  return {name, gap: '', totals, before, deals: moved, unchanged, ranks, ranksBefore};
+  all.sort((a, b) => (Math.abs(delta(b)) - Math.abs(delta(a))) || (b.values[b.values.length - 1] - a.values[a.values.length - 1]));
+  return {name, gap: '', totals, before, deals: moved, all, unchanged, ranks, ranksBefore};
 }
 
 /** 週次推移の確度の列（MTG_OPTIONS.plan.ranks の順と、どれでもない「未設定」） */
@@ -1500,11 +1512,7 @@ function mtgWeeklyRankSlide_(title, ranks, before, weeks) {
   const delta = (k, key) => (key === '合計' ? total(ranks[k]) - total(k ? ranks[k - 1] : before) : (ranks[k][key] || 0) - ((k ? ranks[k - 1] : before)[key] || 0));
   const scale = Math.max.apply(null, [0].concat([].concat.apply([], weeks.list.map((_, k) => keys.map(key => Math.abs(delta(k, key)))))));
   const totalScale = Math.max.apply(null, [0].concat(weeks.list.map((_, k) => Math.abs(delta(k, '合計')))));
-  const shade = (d, sc) => {
-    if (Math.abs(d) < 0.05 || sc <= 0) return c.white;
-    const level = Math.min(2, Math.floor(Math.abs(d) / sc * 3 - 1e-9));
-    return d > 0 ? o.upColors[level] : o.downColors[level];
-  };
+  const shade = mtgWeeklyShade_;
   // 見出しの行：確度（色の印つき）と合計
   el.push(mtgBox_(S.x, top, labelW, headH, '週（週末の期待値）', {size: 8, bold: true, color: c.white, fill: c.green, shape: 'RECTANGLE', align: 'CENTER', role: 'rank-head'}));
   keys.concat(['合計']).forEach((key, i) => {
@@ -1553,6 +1561,208 @@ function mtgWeeklyRankSlide_(title, ranks, before, weeks) {
   return {title, lead, elements: el};
 }
 
+/** 前の週からの増減 d の色（増＝緑・減＝灰。scale（いちばん大きい増減）の 1/3・2/3 で3段。ほぼ変わらなければ白） */
+function mtgWeeklyShade_(d, scale) {
+  const o = MTG_OPTIONS.weekly;
+  if (Math.abs(d) < 0.05 || !(scale > 0)) return MTG_OPTIONS.colors.white;
+  const level = Math.min(2, Math.floor(Math.abs(d) / scale * 3 - 1e-9));
+  return d > 0 ? o.upColors[level] : o.downColors[level];
+}
+
+/* ---------------- 期待値の週次推移を、別のスプレッドシートに書く ---------------- */
+
+/**
+ * 全サブインダストリーの期待値の週次推移を、別のスプレッドシート（MTG_OPTIONS.weekly.spreadsheet・スクリプトのプロパティ MTG_WEEKLY_SPREADSHEET）に書く
+ * （エディタから実行する。このスプレッドシートは読むだけ）。スプレッドシートが無ければ保存先のフォルダに作り、プロパティに入れる。
+ * 「週次_案件別」（横軸が週。行は全体の合計・サブインダストリーの合計・案件）と「週次_確度別」（横軸が確度。行は週。全体とサブインダストリーごとのまとまり）を
+ * 毎回書き直す（同じスプレッドシートなのでリンクは変わらない）。値はスクリプトが書き、数式・条件付き書式は使わない（色も直接塗る）
+ */
+function updateBusinessMtgWeeklySheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const o = MTG_OPTIONS.weekly;
+  const timer = mschTimer_('期待値の週次推移（スプレッドシート）', true);
+  const names = mtgTrackedNames_(ss);
+  if (!names.length) throw new Error('追跡しているシート（test.gs の DIFF_RULES）が見つかりません。');
+  const now = new Date();
+  const data = mtgWeeklyData_(ss, names, now);
+  timer.lap('期待値を週ごとに求める（' + names.length + 'シート）');
+  const target = mtgWeeklyBook_(ss);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('ほかの処理が実行中です。少し待ってからもう一度お試しください。');
+  try {
+    mtgWeeklyWriteByWeek_(target.book, data, now);
+    mtgWeeklyWriteByRank_(target.book, data, now);
+    const blank = target.book.getSheetByName('シート1');
+    if (blank && target.book.getSheets().length > 1 && blank.getLastRow() === 0) target.book.deleteSheet(blank);
+  } finally {
+    lock.releaseLock();
+  }
+  timer.lap('書く');
+  const message = o.title + 'を書きました（' + names.length + 'サブインダストリー・直近' + o.weeks + '週）：' + target.book.getUrl() +
+    (target.created ? '\n（スプレッドシートを新しく作り、スクリプトのプロパティ「' + o.spreadsheetProp + '」に入れました）' : '') +
+    (data.sheets.some(x => x.gap) ? '\n' + MTG_OPTIONS.gapText + '：' + data.sheets.filter(x => x.gap).map(x => x.name + '（' + x.gap + '）').join('・') : '');
+  console.log(message + '\n' + timer.text());
+  const ui = mtgUiOrNull_();
+  if (ui) ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+  return message;
+}
+
+/** 週次推移を書くスプレッドシート {book, created}（設定が無ければ保存先のフォルダに作って、スクリプトのプロパティに入れる。開けなければ止める） */
+function mtgWeeklyBook_(ss) {
+  const o = MTG_OPTIONS.weekly;
+  const setting = mtgOutputSetting_([o.spreadsheetProp], o.spreadsheet, 'MeetingSummary.gs の MTG_OPTIONS.weekly.spreadsheet');
+  const id = mtgFileIdOf_(setting.value);
+  if (setting.value && !id) throw new Error('週次推移のスプレッドシートの設定（' + setting.where + '）を URL か ID として読めません。');
+  if (id) {
+    try {
+      return {book: SpreadsheetApp.openById(id), created: false};
+    } catch (_) {
+      throw new Error('週次推移のスプレッドシート（ID：' + id + '。' + setting.where + '）を開けません。実行するアカウントに編集の権限があるか確かめてください' +
+        '（作り直すときは、スクリプトのプロパティ「' + o.spreadsheetProp + '」を消してから実行すると、新しく作ります）。');
+    }
+  }
+  const book = SpreadsheetApp.create(o.spreadsheetName);
+  try {
+    DriveApp.getFileById(book.getId()).moveTo(mtgFolder_(ss));
+  } catch (error) {
+    console.warn('週次推移のスプレッドシートを保存先のフォルダに移せませんでした（マイドライブにあります）：' + (error && error.message || error));
+  }
+  PropertiesService.getScriptProperties().setProperty(o.spreadsheetProp, book.getUrl());   // URL で入れる（プロジェクトの設定で見て分かるように）
+  return {book, created: true};
+}
+
+/** シート（name）を、rows 行 × cols 列ちょうどにして中身・書式を消す（無ければ作る。使わない行・列は持たない） */
+function mtgWeeklyClearSheet_(book, name, rows, cols) {
+  const sheet = book.getSheetByName(name) || book.insertSheet(name);
+  const filter = sheet.getFilter && sheet.getFilter();
+  if (filter) filter.remove();
+  sheet.clear();
+  if (sheet.getMaxRows() < rows) sheet.insertRowsAfter(sheet.getMaxRows(), rows - sheet.getMaxRows());
+  if (sheet.getMaxRows() > rows) sheet.deleteRows(rows + 1, sheet.getMaxRows() - rows);
+  if (sheet.getMaxColumns() < cols) sheet.insertColumnsAfter(sheet.getMaxColumns(), cols - sheet.getMaxColumns());
+  if (sheet.getMaxColumns() > cols) sheet.deleteColumns(cols + 1, sheet.getMaxColumns() - cols);
+  return sheet;
+}
+
+/**
+ * 「週次_案件別」（横軸が週）：1行目は説明、2行目は見出し（サブインダストリー・得意先・案件名・今のステータス・今の確度・週・期間の増減）、
+ * 3行目から全体の合計・サブインダストリーの合計・案件（サブインダストリーの順、その中は期間の増減の大きい順）。週のセルの色は前の週からの増減
+ */
+function mtgWeeklyWriteByWeek_(book, data, now) {
+  const o = MTG_OPTIONS.weekly;
+  const c = MTG_OPTIONS.colors;
+  const tz = Session.getScriptTimeZone();
+  const weeks = data.weeks.list;
+  const ok = data.sheets.filter(x => !x.gap);
+  const lines = [];
+  const all = {label: '全サブインダストリー', sub: '（合計）', values: weeks.map((_, k) => ok.reduce((sum, x) => sum + x.totals[k], 0)),
+    before: ok.reduce((sum, x) => sum + x.before, 0), total: true};
+  lines.push(all);
+  ok.forEach(x => lines.push({label: x.name, sub: '（合計）', values: x.totals, before: x.before, total: true}));
+  ok.forEach(x => x.all.forEach(d => lines.push({label: x.name, customer: d.customer, project: d.project || (d.customer ? '' : '（得意先・案件名なし：' + d.row + '行目）'),
+    status: d.status, rank: d.rank, values: d.values, before: d.before})));
+  const head = ['サブインダストリー', '得意先', '案件名', '今のステータス', '今の確度'].concat(weeks.map(w => w.label + (w.current ? '（今）' : '')), ['期間の増減']);
+  const cols = head.length;
+  const textCols = 5;
+  const sheet = mtgWeeklyClearSheet_(book, o.sheetByWeek, lines.length + 2, cols);
+  const scale = Math.max.apply(null, [0].concat([].concat.apply([], lines.filter(l => !l.total).map(l => l.values.map((v, k) => Math.abs(v - (k ? l.values[k - 1] : l.before)))))));
+  const totalScale = Math.max.apply(null, [0].concat([].concat.apply([], lines.filter(l => l.total).map(l => l.values.map((v, k) => Math.abs(v - (k ? l.values[k - 1] : l.before)))))));
+  const round = v => Math.round(v * 10) / 10;
+  const values = lines.map(l => [l.label, l.total ? l.sub : l.customer, l.total ? '' : l.project, l.total ? '' : l.status || '', l.total ? '' : l.rank || '']
+    .concat(l.values.map(round), [round(l.values[l.values.length - 1] - l.before)]));
+  const fills = lines.map(l => [1, 2, 3, 4, 5].map(() => (l.total ? c.greenSoft : null))
+    .concat(l.values.map((v, k) => mtgWeeklyShade_(v - (k ? l.values[k - 1] : l.before), l.total ? totalScale : scale)), [l.total ? c.greenSoft : null]));
+  sheet.getRange(1, 1).setValue(o.title + '（期待値調整済の想定売上・失注除く・百万円。週末（日曜の終わり）の値、今週は今。' +
+    Utilities.formatDate(now, tz, 'yyyy/M/d HH:mm') + ' 時点。色は前の週からの増減：緑＝増・灰＝減）');
+  sheet.getRange(1, 1).setFontWeight('bold');
+  sheet.getRange(2, 1, 1, cols).setValues([head]).setFontWeight('bold').setFontColor(c.white).setBackground(c.green);
+  if (lines.length) {
+    sheet.getRange(3, 1, lines.length, textCols).setNumberFormat('@');   // 名前は文字として書く（数式にならないように）
+    sheet.getRange(3, 1, lines.length, cols).setValues(values).setBackgrounds(fills);
+    sheet.getRange(3, textCols + 1, lines.length, weeks.length).setNumberFormat('#,##0.0');
+    sheet.getRange(3, cols, lines.length, 1).setNumberFormat('+#,##0.0;▲#,##0.0;±0');
+    const totals = lines.filter(l => l.total).length;
+    sheet.getRange(3, 1, totals, cols).setFontWeight('bold');
+  }
+  sheet.setFrozenRows(2);
+  if (sheet.setFrozenColumns) sheet.setFrozenColumns(3);
+  sheet.setColumnWidths(1, 1, 130);
+  sheet.setColumnWidths(2, 2, 160);
+  sheet.setColumnWidths(4, 1, 150);
+  sheet.setColumnWidths(5, 1, 60);
+  sheet.setColumnWidths(textCols + 1, weeks.length + 1, 72);
+  // フィルタ（サブインダストリー・確度などで絞る）
+  if (lines.length && sheet.getRange(2, 1, lines.length + 1, cols).createFilter) sheet.getRange(2, 1, lines.length + 1, cols).createFilter();
+  return sheet;
+}
+
+/**
+ * 「週次_確度別」（横軸が確度）：全体とサブインダストリーごとのまとまり。まとまりは、名前の行・見出しの行（週・確度・合計）・週の行（上が古い。最後は今週）・
+ * 期間の増減の行と、空の行。セルの色は前の週からの増減（まとまりの中の、確度の列の増減の大きさで3段。合計の列は合計の増減で）
+ */
+function mtgWeeklyWriteByRank_(book, data, now) {
+  const o = MTG_OPTIONS.weekly;
+  const c = MTG_OPTIONS.colors;
+  const tz = Session.getScriptTimeZone();
+  const weeks = data.weeks.list;
+  const keys = mtgWeeklyRanks_();
+  const ok = data.sheets.filter(x => !x.gap);
+  const sum = (list, k) => keys.reduce((m, r) => Object.assign(m, {[r]: list.reduce((a, x) => a + ((k == null ? x.ranksBefore : x.ranks[k])[r] || 0), 0)}), {});
+  const blocks = [{name: '全サブインダストリー', ranks: weeks.map((_, k) => sum(ok, k)), before: sum(ok, null)}]
+    .concat(ok.map(x => ({name: x.name, ranks: x.ranks, before: x.ranksBefore})));
+  const cols = keys.length + 2;
+  const per = weeks.length + 4;   // 名前・見出し・週・期間の増減・空
+  const sheet = mtgWeeklyClearSheet_(book, o.sheetByRank, 1 + blocks.length * per, cols);
+  const round = v => Math.round(v * 10) / 10;
+  const values = [];
+  const fills = [];
+  const weights = [];
+  const formats = [];
+  blocks.forEach(b => {
+    const total = m => keys.reduce((a, k) => a + (m[k] || 0), 0);
+    const delta = (k, key) => (key === '合計' ? total(b.ranks[k]) - total(k ? b.ranks[k - 1] : b.before)
+      : (b.ranks[k][key] || 0) - ((k ? b.ranks[k - 1] : b.before)[key] || 0));
+    const scale = Math.max.apply(null, [0].concat([].concat.apply([], weeks.map((_, k) => keys.map(key => Math.abs(delta(k, key)))))));
+    const totalScale = Math.max.apply(null, [0].concat(weeks.map((_, k) => Math.abs(delta(k, '合計')))));
+    const blank = () => new Array(cols).fill('');
+    values.push([b.name].concat(new Array(cols - 1).fill('')));
+    fills.push(new Array(cols).fill(null));
+    weights.push(['bold'].concat(new Array(cols - 1).fill('normal')));
+    formats.push(new Array(cols).fill('@'));
+    values.push(['週'].concat(keys, ['合計']));
+    fills.push(new Array(cols).fill(c.green));
+    weights.push(new Array(cols).fill('bold'));
+    formats.push(new Array(cols).fill('@'));
+    weeks.forEach((w, k) => {
+      values.push([w.label + (w.current ? '（今）' : '')].concat(keys.map(key => round(b.ranks[k][key] || 0)), [round(total(b.ranks[k]))]));
+      fills.push([c.greenSoft].concat(keys.map(key => mtgWeeklyShade_(delta(k, key), scale)), [mtgWeeklyShade_(delta(k, '合計'), totalScale)]));
+      weights.push(['bold'].concat(keys.map(() => 'normal'), ['bold']));
+      formats.push(['@'].concat(new Array(cols - 1).fill('#,##0.0')));
+    });
+    const last = b.ranks[b.ranks.length - 1];
+    values.push(['期間の増減'].concat(keys.map(key => round((last[key] || 0) - (b.before[key] || 0))), [round(total(last) - total(b.before))]));
+    fills.push([c.greenSoft].concat(new Array(cols - 1).fill(null)));
+    weights.push(new Array(cols).fill('bold'));
+    formats.push(['@'].concat(new Array(cols - 1).fill('+#,##0.0;▲#,##0.0;±0')));
+    values.push(blank());
+    fills.push(new Array(cols).fill(null));
+    weights.push(new Array(cols).fill('normal'));
+    formats.push(new Array(cols).fill('@'));
+  });
+  sheet.getRange(1, 1).setValue(o.title + '（確度別。期待値調整済の想定売上・失注除く・百万円。確度はその週末のステータスの「-」の前。' +
+    Utilities.formatDate(now, tz, 'yyyy/M/d HH:mm') + ' 時点。色は前の週からの増減：緑＝増・灰＝減）');
+  sheet.getRange(1, 1).setFontWeight('bold');
+  const range = sheet.getRange(2, 1, values.length, cols);
+  range.setNumberFormats(formats);
+  range.setValues(values).setBackgrounds(fills).setFontWeights(weights);
+  // 見出しの行の字は白
+  const colors = values.map((line, i) => line.map(() => (fills[i][0] === c.green ? c.white : c.ink)));
+  range.setFontColors(colors);
+  sheet.setColumnWidths(1, 1, 130);
+  sheet.setColumnWidths(2, cols - 1, 80);
+  return sheet;
+}
+
 /** 週次推移のリード文の1つ目の文：「直近12週（8/18週〜）の期待値（失注除く）は A → B百万円（±N）。最大は 10/13週の N。」 */
 function mtgWeeklyLead_(total, weeks) {
   const last = total.values[total.values.length - 1];
@@ -1582,11 +1792,7 @@ function mtgWeeklyTableSlides_(title, lead, rows, weeks, firstHead) {
   rows.filter(r => !r.total).forEach(r => r.values.forEach((v, k) => deltas.push(Math.abs(v - (k ? r.values[k - 1] : r.before)))));
   const max = Math.max.apply(null, deltas.concat([0]));
   const totalMax = Math.max.apply(null, rows.filter(r => r.total).map(r => Math.max.apply(null, r.values.map((v, k) => Math.abs(v - (k ? r.values[k - 1] : r.before))))).concat([0]));
-  const shade = (d, scale) => {
-    if (Math.abs(d) < 0.05 || scale <= 0) return c.white;
-    const level = Math.min(2, Math.floor(Math.abs(d) / scale * 3 - 1e-9));
-    return d > 0 ? o.upColors[level] : o.downColors[level];
-  };
+  const shade = mtgWeeklyShade_;
   const body = rows.map(r => {
     const scale = r.total ? totalMax : max;
     // 名前は1行（「得意先／案件名」。入らなければ小さくし、それでも入らなければ行を伸ばす）：1ページに多くの案件を入れる
@@ -2658,6 +2864,9 @@ function showOutputFolders() {
   lines.push(item('事前資料などの保存先（作る場所・試作）', mtgSaveFolderSetting_(), '（無し。このスプレッドシートと同じフォルダの中に「' + o.folderName + '」を作る）'));
   lines.push(item('時点コピーの保存先', mtgCopyFolderSetting_(), '（無し。保存先の中の「' + o.copyFolderName + '」）'));
   if (typeof apDestFolderSetting_ === 'function') lines.push(item('アカウントプランシートの保存先', apDestFolderSetting_(), '✗ 無し'));
+  lines.push(item('期待値の週次推移のスプレッドシート（updateBusinessMtgWeeklySheet() が書く）',
+    mtgOutputSetting_([o.weekly.spreadsheetProp], o.weekly.spreadsheet, 'MeetingSummary.gs の MTG_OPTIONS.weekly.spreadsheet'),
+    '（無し。updateBusinessMtgWeeklySheet() を初めて実行すると、保存先に作ってプロパティに入れる）', 'file'));
   lines.push(item('事前資料の格納先（この中に会議日のフォルダ「yyMMdd_RX Business Meeting_第N回」を作り、全サブインダストリーと統合版の資料を入れる）',
     mtgMeetingFolderSetting_(), '✗ 無し（本番の資料を会議のフォルダに格納できません）'));
   // PowerPoint（.pptx）を作るか：プロパティ → コードの exportPptx の順

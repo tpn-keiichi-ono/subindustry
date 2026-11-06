@@ -916,6 +916,11 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
   失注（`mtgExcludedStatus_`）の週は 0。表は `mtgWeeklyTableSlides_`（横軸が週。名前は1行に「得意先／案件名」、セルの色は増減の大きさで3段 `upColors`・`downColors`）と
   `mtgWeeklyRankSlide_`（横軸が確度（`mtgWeeklyRanks_`：plan.ranks と未設定）と合計、行は週。確度はその週末のステータスで `mtgPlanRank_`。13行を1ページに入れるため、
   表ではなく箱で描く（表の行は上下の余白で 24pt ほどになり入らない））。
+- **期待値の週次推移のスプレッドシート**（`updateBusinessMtgWeeklySheet()`・`mtgWeeklyBook_`・`mtgWeeklyWriteByWeek_`・`mtgWeeklyWriteByRank_`）：別のスプレッドシート
+  （`weekly.spreadsheet`・スクリプトのプロパティ `MTG_WEEKLY_SPREADSHEET`。無ければ保存先に作ってプロパティに URL を入れる）に、毎回シートを書き直す
+  （`mtgWeeklyClearSheet_`：中身・書式・フィルタを消し、行・列を使う分ちょうどにする）。このスプレッドシートは計算が重いので何も足さない。
+  読むときは Sheets API で値と数式だけ（`mtgApiBook_` の `light`。表示の文字・入力規則は使わない）。名前の列は書式を文字（`@`）にしてから書く（数式にならない）。
+  数式・条件付き書式は使わず、色は `setBackgrounds` で塗る。書くときはスクリプトのロック。
 - **上書き**（2026/11/05。資料を作る画面の「上書きする」→ `runMeetingMaterials` の `overwrite` → `job.overwrite`）：前に作った同じ資料の PDF（`mtgExistingPdf_`：
   本番は会議のフォルダ、試作は保存先の、同じ名前のファイル）があれば、新しい PDF を作らずに、その中身を Drive API v3 の files.update（`uploadType=media`）で書き換える
   （`mtgOverwriteFile_`。ファイルの ID が変わらないので、リンク・共有・インデックスのチップ・チャットで送ったリンクがそのまま使える。前の中身は版の履歴に残る）。
