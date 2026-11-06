@@ -77,12 +77,15 @@ const MTG_OPTIONS = {
     fileSuffix: '_報告案件版',
     flagColumn: 'AG',                        // 報告フラグの列を足す場所（addBusinessMtgReportFlagColumn()。追跡範囲の外）
     flagWidth: 60,                           // その列の幅（px）
-    maxSize: 11,
-    minSize: 7,
+    maxSize: 8,                              // 文章の字の大きさ（既定は枠の緑の見出しと同じ 8pt。長ければ minSize まで小さくする）
+    minSize: 6.5,
     steps: ['創注', 'D', 'C', 'B', 'A'],   // ステータスの枠の確度の段（左から）
     newText: '（新規）',                     // 前回に無かった案件の「前回：」
+    prevSize: 7,                             // 活動状況・次回アクションの「前回」の帯の字の大きさ
+    staleFill: '#FFE699',                    // 活動状況・次回アクションが前回から変わっていないときの「更新なし」の印の色
     note: '前回＝表紙の対象期間の始まり',     // 出典の行の後ろ
-    recordWidth: 200,                        // 右下の「商談記録：」の幅（pt）
+    recordWidth: 200,
+    staffWidth: 220,                         // 右上の「担当営業：…　BX担当：…」の幅の上限（pt）                        // 右下の「商談記録：」の幅（pt）
     noneText: '報告フラグにチェックの入った案件がありません（シートの「報告フラグ」にチェックを入れた案件を、1件1枚で載せます）'
   },
   folderId: '1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK',   // 保存先のフォルダの ID（空なら、このスプレッドシートと同じフォルダの中に folderName を作る）
@@ -362,6 +365,7 @@ const MTG_OPTIONS = {
     // 報告案件版（MeetingReport.gs）で使う列。無くても会議サマリは作れる（報告案件版は「データなし」・「未入力」）
     strategy: '提案を勝ち取るための戦略・差異化要素',
     valueCase: '想定される価値創出のケース／期待される導入効果',
+    bx: 'BX担当',                        // 報告案件の右上に、担当営業（owner）と並べて出す
     reportFlag: '報告フラグ'              // チェックボックス。追跡範囲（DIFF_RULES の ranges）の外の列（AG など）に置く
   },
   // 同じ列のほかの見出し（シートによって見出しが違うもの。columns の見出しが無ければ、これを順に探す）。
@@ -3586,7 +3590,7 @@ function mtgReadSnapshots_(ss, since) {
       status: pick(cols.status),
       // その時点の行の値（変更のあとの値。数式の列も計算した値）。前回の時点の値に使う
       values: {status: pick(cols.status), amount: mtgNumber_(pick(cols.amount)), weighted: mtgNumber_(pick(cols.weighted)),
-        monthText: pick(cols.orderMonth), activity: pick(cols.activity)}
+        monthText: pick(cols.orderMonth), activity: pick(cols.activity), issue: pick(cols.issue), nextAction: pick(cols.nextAction)}
     });
   });
   return map;
@@ -3681,6 +3685,7 @@ function mtgReadDeals_(sheet, rule) {
         return map;
       }, {}),
       record: text('record'),
+      bx: text('bx'),
       strategy: text('strategy'),
       valueCase: text('valueCase'),
       reportFlag: mtgReportFlag_(value('reportFlag'), text('reportFlag')),
@@ -4169,7 +4174,7 @@ function mtgChange_(key, deal, removed, events, states, since, labels, rules, pr
   let base = null;
   if (byCopy) {
     base = prev ? {source: 'copy', status: prev.status, amount: prev.amount, weighted: prev.weighted, monthText: prev.orderMonthText,
-      activity: prev.activity || ''} : null;
+      activity: prev.activity || '', issue: prev.issue || '', nextAction: prev.nextAction || ''} : null;
   } else if (born) {
     base = null;
   } else if (prior) {
@@ -4181,7 +4186,9 @@ function mtgChange_(key, deal, removed, events, states, since, labels, rules, pr
       amount: pick(labels.amount, cur.amount, mtgNumber_),
       weighted: pick(labels.weighted, cur.weighted, mtgNumber_),
       monthText: pick(labels.orderMonth, cur.orderMonthText, String),
-      activity: pick(labels.activity, cur.activity || '', String)
+      activity: pick(labels.activity, cur.activity || '', String),
+      issue: pick(labels.issue, cur.issue || '', String),               // 課題・次回アクションは報告案件版の「前回」（MeetingReport.gs）
+      nextAction: pick(labels.nextAction, cur.nextAction || '', String)
     };
     if (rules.weightedFormula) {
       const touched = recent.some(e => e.label === labels.status || e.label === labels.amount);

@@ -13,13 +13,13 @@ const createGas = options => withRunDialog(createMockGas(options));
  */
 const WIDTH = 36;
 const COL = {customer: 4, project: 5, status: 6, amount: 7, weighted: 8, orderMonth: 9, activity: 10, issue: 11, owner: 12,
-  clientDept: 13, clientTitle: 14, nextAction: 15, scenario: 16, scenarioAmount: 17, record: 18, strategy: 19, valueCase: 20,
+  clientDept: 13, clientTitle: 14, nextAction: 15, scenario: 16, scenarioAmount: 17, record: 18, strategy: 19, valueCase: 20, bx: 21,
   stamp: 33, reportFlag: 36};
 const HEADERS = {customer: '得意先', project: '案件名', status: '案件ステータス', amount: '想定売上規模（百万）',
   weighted: '期待値調整済\n想定売上規模（百万）', orderMonth: '受注月', activity: '活動状況', issue: '活動における課題',
   owner: 'アカウント責任者', clientDept: '先方部門', clientTitle: '先方担当役職', nextAction: '次回アクション', scenario: 'RXシナリオ構成',
   scenarioAmount: 'サービスパッケージ合算（百万円）', record: '商談記録（ＵＲＬ）', strategy: '提案を勝ち取るための戦略・差異化要素',
-  valueCase: '想定される価値創出のケース／期待される導入効果', stamp: '最終更新日時', reportFlag: '報告フラグ'};
+  valueCase: '想定される価値創出のケース／期待される導入効果', bx: 'BX担当', stamp: '最終更新日時', reportFlag: '報告フラグ'};
 const STATUSES = ['創注-仮検討(10%)', 'D-ヒアリング中(20%)', 'C-提案中(50%)', 'B-クロージング中(70%)', 'A-受注済み(100%)', '失注'];
 
 function row(values) {
@@ -32,7 +32,7 @@ const DEALS = [
   {customer: 'A社', project: '店舗DX基盤の刷新', status: 'C-提案中(50%)', amount: 100, weighted: 50, orderMonth: '2026/12', activity: '11/2 役員向けに最終提案',
     issue: '情報システム部門の稼働が逼迫', owner: '佐藤', clientDept: '経営企画部', clientTitle: '部長', nextAction: '11/15 稟議資料の事前確認',
     scenario: '店舗オペレーション効率化, 需要予測', scenarioAmount: 80, record: 'https://drive.google.com/drive/folders/abc',
-    strategy: '業務設計から運用定着まで一括で提案する', valueCase: '', reportFlag: true},
+    strategy: '業務設計から運用定着まで一括で提案する', valueCase: '', bx: '山田', reportFlag: true},
   {customer: 'B社', project: '需要予測', status: 'D-ヒアリング中(20%)', amount: 30, weighted: 6, orderMonth: '2027/03', owner: '鈴木', reportFlag: false},
   {customer: 'C社', project: '販促最適化', status: 'C-提案中(50%)', amount: 40, weighted: 20, orderMonth: '2027/01', owner: '田中', reportFlag: true}
 ];
@@ -108,11 +108,12 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
     'RXシナリオ（見込金額 80百万円）', '店舗オペレーション効率化', '需要予測', '提案を勝ち取るための戦略・差異化要素', '業務設計から運用定着まで一括で提案する',
     '想定される価値創出のケース／期待される導入効果', '11/2 役員向けに最終提案', '情報システム部門の稼働が逼迫', '11/15 稟議資料の事前確認']
     .forEach(t => assert.ok(all.indexOf(t) >= 0, t + ' が無い：\n' + all));
-  assert.ok(all.indexOf('佐藤') < 0, '責任者は出さない');
+  assert.strictEqual(byRole(a, 'report-staff')[0].text, '担当営業：佐藤　BX担当：山田', '右上に担当営業と BX担当');
+  assert.ok(head.w < 676, '案件名はその分だけ狭い');
   const bodies = byRole(a, 'report-text');
   assert.strictEqual(bodies.length, 5);
   assert.strictEqual(new Set(bodies.map(b => b.size)).size, 1, '文章の枠の字の大きさはスライドの中で同じ');
-  assert.strictEqual(bodies[0].size, 11, '短ければいちばん大きい大きさ');
+  assert.strictEqual(bodies[0].size, gas.get('MTG_OPTIONS').report.maxSize, '短ければいちばん大きい大きさ（枠の見出しと同じ 8pt）');
   assert.strictEqual(bodies[1].text, '未入力', '空の項目は「未入力」');
   // 確度の段：今（B）は緑・前回（C）は薄い緑
   const steps = byRole(a, 'report-step');
@@ -133,22 +134,23 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
 });
 
 test('報告案件版のスライド：文章が多いと、どの枠にも入る大きさまで全部の枠を小さくし、最小でも入らなければ「…」で切る', () => {
-  const long = 'あいうえおかきくけこ'.repeat(30);
+  const long = 'あいうえおかきくけこ'.repeat(60);
   const huge = 'あいうえおかきくけこ'.repeat(200);
-  const {g} = setup({edits: false, deals: [Object.assign({}, DEALS[0], {strategy: long}), Object.assign({}, DEALS[2], {activity: huge, reportFlag: true})]});
+  const {gas, g} = setup({edits: false, deals: [Object.assign({}, DEALS[0], {strategy: long}), Object.assign({}, DEALS[2], {activity: huge, reportFlag: true})]});
   const s = summarize(g, '新FMT');
   const slides = plain(g.mtgReportSlides_(s)).filter(sl => /^報告案件：/.test(sl.title));
   const sizeOf = sl => byRole(sl, 'report-text')[0].size;
-  assert.ok(sizeOf(slides[0]) < 11 && sizeOf(slides[0]) >= 7, '長い戦略の分だけ小さく：' + sizeOf(slides[0]));
+  const R = gas.get('MTG_OPTIONS').report;
+  assert.ok(sizeOf(slides[0]) < R.maxSize && sizeOf(slides[0]) >= R.minSize, '長い戦略の分だけ小さく：' + sizeOf(slides[0]));
   assert.strictEqual(new Set(byRole(slides[0], 'report-text').map(b => b.size)).size, 1);
   assert.ok(!slides[0].cut);
   assert.ok(byRole(slides[0], 'report-text')[0].text === long, '入れば全文');
-  assert.strictEqual(sizeOf(slides[1]), 7, '入らなければ最小の大きさ');
+  assert.strictEqual(sizeOf(slides[1]), R.minSize, '入らなければ最小の大きさ');
   assert.strictEqual(slides[1].cut, true);
-  const activity = byRole(slides[1], 'report-text')[2];
+  const activity = byRole(slides[1], 'report-text')[3];   // 戦略・価値創出・課題・活動状況・次回アクションの順
   assert.match(activity.text, /…$/, '最小でも入らなければ「…」で切る');
   const box = activity;
-  assert.ok(g.mtgTextHeight_(activity.text.split('\n').length, 7) <= box.h + 0.01, '箱の高さに収める');
+  assert.ok(g.mtgTextHeight_(activity.text.split('\n').length, R.minSize) <= box.h + 0.01, '箱の高さに収める');
 });
 
 test('報告案件版のスライド：チェックのある案件が無ければ「該当なし」、報告フラグの列が無ければ「データなし」の1枚', () => {
@@ -305,4 +307,30 @@ test('報告フラグの列を足すとき、まだ記録していない編集�
   assert.strictEqual(lines[0], '「新FMT」：まだ変更の記録に書いていない編集があるため、足しませんでした（数分ごとの取りこぼし回収のあとで、もう一度実行してください）。');
   assert.strictEqual(sheet.getMaxColumns(), 32);
   assert.match(lines[1], /^「新FMT2」：AG列に「報告フラグ」の列を足しました/);
+});
+
+test('報告案件：活動状況・次回アクションの下に前回の内容。前回から変わっていなければ「今回と同じ（前回から更新なし）」と「更新なし」の印', () => {
+  const {gas, g, sheet} = setup();
+  g.recordDiffEdit(gas.edit(sheet, 'J3', '11/9 稟議の事前説明'));   // A社：活動状況を書き換える（次回アクションはそのまま）
+  const s = summarize(g, '新FMT');
+  const a = plain(s.reported[0]);
+  assert.deepStrictEqual([a.activity, a.prevActivity, a.nextAction, a.prevNextAction],
+    ['11/9 稟議の事前説明', '11/2 役員向けに最終提案', '11/15 稟議資料の事前確認', '11/15 稟議資料の事前確認']);
+  const slide = plain(g.mtgReportSlides_(s)).find(sl => sl.title === '報告案件：A社／店舗DX基盤の刷新');
+  const prev = byRole(slide, 'report-prev').map(el => el.text);
+  assert.deepStrictEqual(prev, ['今回と同じ（前回から更新なし）', '11/2 役員向けに最終提案', '今回と同じ（前回から更新なし）'],
+    '課題・活動状況・次回アクションの順。活動状況は前回の文、課題・次回アクションは更新なし');
+  assert.deepStrictEqual(byRole(slide, 'report-prev-frame').map(el => el.text), ['前回', '前回', '前回'], '前回の会議が無いときは見出しは「前回」だけ');
+  const stale = byRole(slide, 'report-stale');
+  assert.strictEqual(stale.length, 2, '「更新なし」の印は課題と次回アクションの枠');
+  assert.ok(stale[1].x > byRole(slide, 'report-text')[4].x, '次回アクションの枠の右上');
+  assert.strictEqual(a.prevIssue, '情報システム部門の稼働が逼迫');
+  // 前回の会議の資料と比べるときは、見出しに会議日
+  assert.strictEqual(g.mtgReportPrevLabel_({previous: {date: '2026/10/30', cutoff: 0}}), '前回（10/30 会議）');
+  assert.strictEqual(g.mtgReportPrevLabel_({previous: {date: '2026/10/30', cutoff: 0, chosen: true}}), '前回');
+  // 前回に無かった案件・前回の値が分からない案件
+  const fresh = plain(g.mtgReportPrevious_({x: 0, y: 0, w: 300, h: 160, text: 'a'}, {isNew: true}, undefined, 10, '前回'));
+  assert.strictEqual(fresh.find(el => el.role === 'report-prev').text, '新規の案件のため、前回はありません');
+  const unknown = plain(g.mtgReportPrevious_({x: 0, y: 0, w: 300, h: 160, text: 'a'}, {isNew: false}, undefined, 10, '前回'));
+  assert.strictEqual(unknown.find(el => el.role === 'report-prev').text, 'データなし');
 });
