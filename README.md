@@ -26,7 +26,7 @@ Google スプレッドシート「シナリオ攻略先リスト」に組み込�
   自動入力部分のシート保護.gs   「案件_」シートの列の保護
   サンプルデータ.gs             画面確認用のサンプル履歴の追加・削除（エディタから実行）
   TaskManagement.gs             タスク管理シート（サービス案ごとの検討の進捗）
-  ServiceManagement.gs          サービスリクエスト（新FMT のリクエストを選択パネルで登録する。サービス案を付けてまとめる。メニューは onOpen から追加）
+  ServiceManagement.gs          サービスリクエスト（新FMT のリクエストを選択パネルで登録する・メニューでまとめて取り込む。サービス案を付けてまとめる。メニューは onOpen から追加）
   RequestPickerView.html        サービスリクエストの選択パネル（サイドバー）
   RequestListDialog.html        サービスリクエストの未登録・登録済みの一覧（パネルの件数のバッジから開くモーダル）
   MeetingSummary.gs             会議サマリ（RX Business Meeting の事前資料。サブインダストリー（シート）ごと。16:9 の Google スライドと PDF。エディタから実行）

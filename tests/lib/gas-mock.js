@@ -174,6 +174,8 @@ class Range {
   }
 
   getSheet() { return this.sheet; }
+  /** 範囲を選ぶ（シートも開く。getActiveSheet / getActiveRange に反映） */
+  activate() { this.sheet.gas.selection = {sheet: this.sheet, range: this}; return this; }
   getRow() { return this.row; }
   getColumn() { return this.col; }
   getLastRow() { return this.row + this.numRows - 1; }
