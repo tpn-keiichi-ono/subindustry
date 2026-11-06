@@ -679,7 +679,7 @@ test('importServiceRequests：まだ無いリクエストをすべて、取り�
   assert.match(alerts[0].message, /^「リクエスト」に、まだ無いリクエスト 3件を取り込みます/);
   assert.match(alerts[0].message, /\n内訳：「新FMT」3件\n/);
   assert.match(alerts[0].message, /同じリクエスト（得意先・案件名・リクエストが同じもの。全角・半角と空白の違いは無視）は1件だけ取り込み/);
-  assert.match(alerts[0].message, /検討しないリクエストは行を削除せずに判断を「棄却」にしてください/);
+  assert.match(alerts[0].message, /一度取り込んだリクエストは、行を削除しても次からは取り込みません（選択パネルからは追加できます）。/);
 
   const today = todayText();
   assert.deepStrictEqual(gas.dump(request, 'A1:J4'), [
@@ -716,7 +716,7 @@ test('importServiceRequests：何度押しても重ならない。新しく足�
   assert.strictEqual(result.ok, true);
   assert.strictEqual(result.alerts.length, 1, '新しく書くものが無ければ確かめない');
   assert.strictEqual(result.alerts[0].message.split('\n')[0],
-    '新しく取り込むリクエストはありません（取り込み元のリクエスト 3件は、すべて登録済みです）。');
+    '新しく取り込むリクエストはありません（取り込み元のリクエスト 3件は、すべて登録済みか、前に取り込んで行を削除したものです）。');
   assert.strictEqual(request.getLastRow(), 4);
   assert.deepStrictEqual(gas.writes, [], '変わっていなければ書かない');
 
@@ -871,6 +871,107 @@ test('importServiceRequests：書き込み・読み取りの回数は、取り�
   const large = countsFor(25);
   assert.deepStrictEqual(large, small, '回数が行の数で増えている');
   assert.ok(small.writes <= 12, '書き込みが多すぎます（' + small.writes + '回）');
+});
+
+/* ---------------- 一度取り込んだリクエストの覚えと、自動の取り込み（トリガー） ---------------- */
+
+test('importServiceRequests：一度取り込んだリクエストは、行を削除しても次からは取り込まない（選択パネルには出る）', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  importAll(gas);
+  const imported = gas.ss.getSheetByName('__REQUEST_IMPORTED');
+  assert.ok(imported, '覚えのシートを作る');
+  assert.strictEqual(imported.isSheetHidden(), true, '非表示');
+  assert.strictEqual(imported.getLastRow(), 3, '取り込んだ3件を覚える');
+  assert.strictEqual(imported.getMaxColumns(), 1, '使わない列を持たない');
+  assert.strictEqual(gas.ss.getActiveSheet().getName() === '__REQUEST_IMPORTED', false, '開いていたシートに戻す');
+
+  gas.asUser(() => request.deleteRow(3));   // チラシのデジタル化 の行を削除
+  const {alerts} = importAll(gas);
+  assert.strictEqual(alerts.length, 1, '取り込むものが無いので確かめない');
+  assert.match(alerts[0].message, /^新しく取り込むリクエストはありません/);
+  assert.strictEqual(request.getLastRow(), 3, '削除した行は戻らない');
+  assert.ok(shown(g.getRequestPickerData()).includes('食品スーパー / A社 / チラシのデジタル化 / チラシの効果を測りたい'), 'パネルからは追加できる');
+
+  // 取り込み元に新しいリクエストが増えたら、それだけを取り込み、削除したものの数を知らせる
+  gas.asUser(() => gas.ss.getSheetByName('新FMT').getRange('C8:F8').setValues([['ホームセンター', 'D社', '会員アプリ', 'ポイントを統合したい']]));
+  const second = importAll(gas);
+  assert.match(second.alerts[0].message, /まだ無いリクエスト 1件を取り込みます/);
+  assert.ok(second.alerts[1].message.split('\n').includes('前に取り込んで行を削除したリクエスト 1件は取り込んでいません。'));
+  assert.strictEqual(imported.getLastRow(), 4);
+});
+
+test('installServiceImportTrigger：5分ごとのトリガーを1つだけ作る。シートに無いリクエストは、今取り込むか（はい）、取り込まずに覚えるか（いいえ）を聞く', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  add(g, 'アプリ刷新', '会員の購買分析をしたい');
+  const request = gas.ss.getSheetByName('リクエスト');
+
+  // キャンセル：何もしない
+  gas.confirmAnswer = 'CANCEL';
+  assert.strictEqual(g.installServiceImportTrigger(), false);
+  assert.strictEqual(gas.triggers.length, 0);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /に無いリクエストが 2件あります（内訳：「新FMT」2件）/);
+  assert.strictEqual(gas.alerts[gas.alerts.length - 1].buttons, 'YES_NO_CANCEL');
+
+  // いいえ：取り込まずに覚える
+  gas.confirmAnswer = 'NO';
+  assert.strictEqual(g.installServiceImportTrigger(), true);
+  assert.strictEqual(request.getLastRow(), 2, '取り込まない');
+  assert.strictEqual(gas.ss.getSheetByName('__REQUEST_IMPORTED').getLastRow(), 3, 'シートにある1件と、取り込まなかった2件を覚える');
+  assert.deepStrictEqual(gas.triggers.map(t => [t.getHandlerFunction(), t.getEventType(), t.options.everyMinutes]),
+    [['serviceImportTick', 'CLOCK', 5]]);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /2件は取り込まずに覚えました.*\n5分ごとの自動の取り込みを始めました。/);
+
+  // もう一度実行してもトリガーは1つ（覚えていないものが無ければ聞かない）
+  const asked = gas.alerts.length;
+  g.installServiceImportTrigger();
+  assert.strictEqual(gas.triggers.length, 1);
+  assert.strictEqual(gas.alerts.length, asked + 1, '結果だけを知らせる');
+
+  // 自動の取り込みは、覚えたリクエストを取り込まない
+  g.serviceImportTick();
+  assert.strictEqual(request.getLastRow(), 2);
+
+  assert.strictEqual(g.removeServiceImportTrigger(), 1);
+  assert.strictEqual(gas.triggers.length, 0);
+});
+
+test('installServiceImportTrigger：「はい」なら、シートに無いリクエストを今取り込んでから始める', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  gas.confirmAnswer = 'YES';
+  assert.strictEqual(g.installServiceImportTrigger(), true);
+  assert.strictEqual(gas.ss.getSheetByName('リクエスト').getLastRow(), 4);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^3件を取り込みました。\n5分ごとの自動の取り込みを始めました。/);
+  assert.strictEqual(gas.triggers.length, 1);
+});
+
+test('serviceImportTick：取り込み元に増えたリクエストを、画面を出さずに取り込む。覚えのシートが無い・ほかの処理が実行中なら、その回は何もしない', () => {
+  const {gas, g, source} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  gas.writes.length = 0;
+  assert.strictEqual(g.serviceImportTick(), null, '覚えのシートが無い（installServiceImportTrigger() の前）');
+  assert.strictEqual(request.getLastRow(), 1);
+  assert.deepStrictEqual(gas.writes, []);
+
+  gas.confirmAnswer = 'NO';
+  g.installServiceImportTrigger();   // 今ある3件は取り込まずに覚える
+  gas.alerts.length = 0;
+  gas.asUser(() => source.getRange('C8:F8').setValues([['ホームセンター', 'D社', '会員アプリ', 'ポイントを統合したい']]));
+
+  gas.lockBusy = 'script';
+  assert.strictEqual(g.serviceImportTick(), null, 'ほかの処理が実行中なら止めずに飛ばす');
+  gas.lockBusy = false;
+  assert.strictEqual(request.getLastRow(), 1);
+
+  assert.deepStrictEqual(plain(g.serviceImportTick()), {added: 1});
+  assert.deepStrictEqual(valuesOf(request, 2, ['追加日', 'ID', '得意先', 'リクエスト']), [todayText(), 'SR-0001', 'D社', 'ポイントを統合したい']);
+  assert.deepStrictEqual(plain(g.serviceImportTick()), {added: 0}, '次の回は何も足さない');
+  assert.strictEqual(gas.alerts.length, 0, '画面は出さない');
+  assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
 });
 
 /* ---------------- 行の並び（サブインダストリーの順） ---------------- */

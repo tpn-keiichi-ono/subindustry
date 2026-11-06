@@ -12,7 +12,9 @@
  *   （サブインダストリー → 得意先 → 案件名で絞り込み、文字で探せる）。選ぶと、サービスリクエストの最後の行の下に A〜D を書く。
  * - メニュー「サブインダストリーのシートから取り込む」（importServiceRequests）は、まだ登録していないリクエストをすべて書く
  *   （追加日・ID と取り込み元から書く列。今の並びで A〜J）。同じリクエストは1件だけにし、登録済みのものは書かないので、
- *   何度押しても重ならない。書く前に件数を見せて確かめる。
+ *   何度押しても重ならない。書く前に件数を見せて確かめる。一度取り込んだリクエストは非表示のシート（SVC_OPTIONS.importedSheet）に覚え、
+ *   行を削除しても次からは取り込まない（選択パネルからは追加できる）。
+ * - 自動の取り込み：installServiceImportTrigger() が5分ごとの時間主導トリガー（serviceImportTick）を作り、同じ取り込みを画面なしで行う。
  * - 行はサブインダストリーの順（取り込み元のシートの順）に並べる。追加・取り込みのときに、足した行（と、手で最後の行の下に足した行）を
  *   そのサブインダストリーの行の最後に動かす（svcArrangeRows_）。
  * - ID を1番から振り直すときは、エディタで renumberRequestIds() を実行する（タスク管理のサービス案も新しい ID に書き換える）。
@@ -96,6 +98,13 @@ const SVC_OPTIONS = {
   // タスク管理の「サービス案」のプルダウンの候補（ID とリクエストをつないだ「SR-0001 会員の購買分析をしたい」の形）を書く非表示のシート。
   // スクリプトが書き直すので、手で書き換えない（書き換えても、パネルを開いたときなどに戻す）
   taskChoiceSheet: '__TASK_CHOICES',
+  // 一度取り込んだ（サービスリクエストにあった）リクエストの覚え（非表示のシート。A 列にキーの要約を1件1行）。
+  // まとめて取り込む・自動の取り込みは、ここにあるリクエストを取り込まない（行を削除したリクエストが戻らないように。パネルからは追加できる）
+  importedSheet: '__REQUEST_IMPORTED',
+  // 自動の取り込み（installServiceImportTrigger() で作る時間主導トリガー）
+  autoImportHandler: 'serviceImportTick',
+  autoImportMinutes: 5,           // 間隔（分。1・5・10・15・30 のどれか）
+  autoImportLockWaitMs: 10000,    // ロックを待つ時間（取れなければ、その回は飛ばして次の回に取り込む）
   taskChoiceLength: 40,   // 候補に出すリクエストの文字数（長いリクエストは「…」で切る）
   // タスク管理のサービス案のプルダウンを確かめた記録（ドキュメントのプロパティ）。候補・列・行数が変わらなければ、
   // パネルを開いても taskLinkCheckMinutes 分に1回しか確かめない（毎回すべての行を確かめると、パネルの読み込みが遅くなる）
@@ -347,7 +356,9 @@ function importServiceRequests() {
     const sheet = svcRequestSheetOrThrow_(ss);
     const records = svcSourceRecords_(ss);
     const registered = svcRegistered_(sheet);
-    preview = {records, pending: records.filter(rec => !registered.keys.has(rec.key))};
+    const remembered = svcImportedKeys_(ss);
+    const unregistered = records.filter(rec => !registered.keys.has(rec.key));
+    preview = {records, pending: unregistered.filter(rec => !remembered.has(svcImportedKey_(rec.key)))};
   } catch (e) {
     ui.alert(title, svcErrorText_(e), ui.ButtonSet.OK);
     return false;
@@ -388,12 +399,14 @@ function svcImportRequests_(ss) {
   const sheet = svcRequestSheetOrThrow_(ss);
   const stats = {};
   const records = svcSourceRecords_(ss, stats);
+  const remembered = svcImportedKeys_(ss);
   const legacy = !PropertiesService.getDocumentProperties().getProperty(SVC_OPTIONS.legacyDoneKey);
   svcRemoveLegacyLists_(ss, sheet);   // 前の版の A〜D のプルダウンが残っていると、スクリプトの書き込みも止まるため（済んでいれば何もしない）
   const synced = svcSync_(ss, sheet, records, {notes: legacy});
   const ids = svcEnsureIds_(sheet);   // 先に ID の重複を直してから、次の番号を決める
   const registered = svcRegistered_(sheet);
-  const added = records.filter(rec => !registered.keys.has(rec.key));
+  const unregistered = records.filter(rec => !registered.keys.has(rec.key));
+  const added = unregistered.filter(rec => !remembered.has(svcImportedKey_(rec.key)));
   const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
   const firstRow = registered.lastRow + 1;
   const lastRow = registered.lastRow + added.length;
@@ -422,6 +435,8 @@ function svcImportRequests_(ss) {
   // 足した行を、それぞれのサブインダストリーの行の最後に動かす（手で下に足した行も一緒に）
   const arranged = added.length ? svcArrangeRowsSafely_(sheet, records) : {moved: 0, rowOf: row => row, warning: ''};
   const warning = [arranged.warning, svcRefreshTaskChoices_(ss)].filter(Boolean).join('\n');   // タスク管理のサービス案で、すぐ選べるように
+  // 今シートにあるリクエストと取り込んだリクエストを覚える（あとで行を削除しても、次からは取り込まない）
+  svcRememberImported_(ss, Array.from(registered.keys).concat(added.map(rec => rec.key)));
   const keys = new Set(records.map(rec => rec.key));
   const rows = added.map((_, i) => arranged.rowOf(firstRow + i));
   return {
@@ -430,7 +445,8 @@ function svcImportRequests_(ss) {
     arranged: arranged.moved > 0,
     focusCol: cols.id || cols.request || 0,
     duplicates: stats.duplicates || 0,
-    skipped: records.length - added.length,
+    skipped: records.length - unregistered.length,
+    removed: unregistered.length - added.length,   // 前に取り込んで、今はシートに無い（行を削除した）ので取り込まなかった数
     missing: registered.rows.filter(r => !keys.has(r.key)).map(r => r.row),
     synced, ids, warning
   };
@@ -450,7 +466,7 @@ function svcImportConfirmText_(pending) {
       '（追加日・ID・サブインダストリー・得意先・案件名・リクエストした営業の4列・リクエストを書き、それぞれのサブインダストリーの行の最後に入れます）。',
     '内訳：' + svcImportBreakdown_(pending),
     '同じリクエスト（得意先・案件名・リクエストが同じもの。全角・半角と空白の違いは無視）は1件だけ取り込み、登録済みのものは取り込みません。',
-    '検討しないリクエストは行を削除せずに判断を「棄却」にしてください（削除すると、次に取り込んだときにまた入ります）。',
+    '一度取り込んだリクエストは、行を削除しても次からは取り込みません（選択パネルからは追加できます）。',
     '',
     '取り込みますか？'
   ].join('\n');
@@ -467,8 +483,9 @@ function svcImportResultLines_(result) {
       : (count === 1 ? result.firstRow + '行目' : result.firstRow + '〜' + result.lastRow + '行目') + 'に入れています。'));
     lines.push('内訳：' + svcImportBreakdown_(result.added));
     if (result.skipped) lines.push('登録済みのリクエスト ' + result.skipped + '件は取り込んでいません。');
+    if (result.removed) lines.push('前に取り込んで行を削除したリクエスト ' + result.removed + '件は取り込んでいません。');
   } else {
-    lines.push('新しく取り込むリクエストはありません（取り込み元のリクエスト ' + result.records.length + '件は、すべて登録済みです）。');
+    lines.push('新しく取り込むリクエストはありません（取り込み元のリクエスト ' + result.records.length + '件は、すべて登録済みか、前に取り込んで行を削除したものです）。');
   }
   if (result.duplicates) lines.push('ほかの行・シートと同じリクエストの ' + result.duplicates + '行は、重ならないよう取り込んでいません。');
   if (result.ids.assigned) lines.push('ID の無い ' + result.ids.assigned + '行に ID を振りました。');
@@ -482,6 +499,136 @@ function svcImportResultLines_(result) {
   }
   if (result.warning) lines.push(result.warning);
   return lines;
+}
+
+/* ---------------- 一度取り込んだリクエストの覚え ---------------- */
+
+/** 覚えに書くキー（リクエストのキー svcRequestKey_ の要約。数字・時刻に読まれないよう、書くときは文字として書く）。 */
+function svcImportedKey_(key) {
+  return svcTextHash_(String(key));
+}
+
+/** 覚えたリクエストのキー（svcImportedKey_）の Set。覚えのシートが無ければ空。 */
+function svcImportedKeys_(ss) {
+  const sheet = ss.getSheetByName(SVC_OPTIONS.importedSheet);
+  if (!sheet || sheet.getLastRow() < 1) return new Set();
+  return new Set(sheet.getRange(1, 1, sheet.getLastRow(), 1).getDisplayValues().map(line => String(line[0]).trim()).filter(Boolean));
+}
+
+/** 覚えのシート（無ければ非表示で作る。作ったときは開いていたシートに戻す）。 */
+function svcImportedSheet_(ss) {
+  let sheet = ss.getSheetByName(SVC_OPTIONS.importedSheet);
+  if (sheet) return sheet;
+  const active = ss.getActiveSheet();
+  sheet = ss.insertSheet(SVC_OPTIONS.importedSheet, ss.getSheets().length);
+  if (sheet.getMaxColumns() > 1) sheet.deleteColumns(2, sheet.getMaxColumns() - 1);   // 使わない列を持たない（空のセルも上限に数えられる）
+  sheet.hideSheet();
+  if (active) active.activate();   // insertSheet は作ったシートを開くので、開いていたシートに戻す
+  return sheet;
+}
+
+/** リクエストのキー（svcRequestKey_）を覚える（まだ覚えていないものだけを下に足す。ロック取得中に呼ぶこと）。足した数。 */
+function svcRememberImported_(ss, keys) {
+  const sheet = svcImportedSheet_(ss);
+  const known = svcImportedKeys_(ss);
+  const fresh = Array.from(new Set(keys.map(svcImportedKey_))).filter(k => !known.has(k));
+  if (!fresh.length) return 0;
+  const first = sheet.getLastRow() + 1;
+  const need = first + fresh.length - 1 - sheet.getMaxRows();
+  if (need > 0) sheet.insertRowsAfter(sheet.getMaxRows(), need);
+  sheet.getRange(first, 1, fresh.length, 1).setValues(fresh.map(k => [credText_(k)]));
+  return fresh.length;
+}
+
+/* ---------------- 自動の取り込み（時間主導トリガー） ---------------- */
+
+/**
+ * 自動の取り込みを始める（管理者がエディタから1回実行する。トリガーの所有者は実行した人）。
+ * SVC_OPTIONS.autoImportMinutes 分ごとに serviceImportTick を動かすトリガーを1つだけ作る（前からあるものは消して作り直す）。
+ * 始める前に、取り込み元にあってサービスリクエストに無いリクエスト（行を削除したものを含む）を、今取り込むか、取り込まずに覚えるかを聞く
+ * （覚えたリクエストは、そのあとも取り込まない。覚えが無いまま始めると、削除した行が次の回に戻るため）。
+ */
+function installServiceImportTrigger() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const title = SVC_OPTIONS.menuTitle;
+  const sheet = svcRequestSheetOrThrow_(ss);
+  const records = svcSourceRecords_(ss);
+  const registered = svcRegistered_(sheet);
+  const remembered = svcImportedKeys_(ss);
+  const pending = records.filter(rec => !registered.keys.has(rec.key) && !remembered.has(svcImportedKey_(rec.key)));
+  let mode = 'none';
+  if (pending.length) {
+    const answer = ui.alert(title, [
+      SVC_OPTIONS.autoImportMinutes + '分ごとに、サブインダストリーのシートから自動で取り込みます。',
+      '今、取り込み元にあって「' + SVC_OPTIONS.requestSheet + '」に無いリクエストが ' + pending.length + '件あります（内訳：' + svcImportBreakdown_(pending) + '）。',
+      '行を削除したリクエストも、この中に入っています。',
+      '',
+      'はい：今すべて取り込んでから始めます。',
+      'いいえ：取り込まずに始めます（これらは、このあとも自動では取り込みません。選択パネルからは追加できます）。',
+      'キャンセル：始めません。'
+    ].join('\n'), ui.ButtonSet.YES_NO_CANCEL);
+    if (answer === ui.Button.YES) mode = 'import';
+    else if (answer === ui.Button.NO) mode = 'remember';
+    else return false;
+  }
+
+  const lines = taskWithLock_(() => {
+    const out = [];
+    if (mode === 'import') {
+      const result = svcImportRequests_(ss);
+      out.push(result.added.length + '件を取り込みました。');
+    } else {
+      const now = svcRegistered_(sheet);
+      const keys = Array.from(now.keys).concat(mode === 'remember' ? pending.map(rec => rec.key) : []);
+      svcRememberImported_(ss, keys);
+      svcImportedSheet_(ss);   // 覚えるものが無くてもシートを作る（自動の取り込みは、覚えのシートがあるときだけ動く）
+      if (mode === 'remember') out.push(pending.length + '件は取り込まずに覚えました（このあとも自動では取り込みません）。');
+    }
+    ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === SVC_OPTIONS.autoImportHandler)
+      .forEach(t => ScriptApp.deleteTrigger(t));
+    ScriptApp.newTrigger(SVC_OPTIONS.autoImportHandler).timeBased().everyMinutes(SVC_OPTIONS.autoImportMinutes).create();
+    return out;
+  }, SVC_OPTIONS.lockWaitMs, 'installServiceImportTrigger()');
+  lines.push(SVC_OPTIONS.autoImportMinutes + '分ごとの自動の取り込みを始めました。止めるときは removeServiceImportTrigger() を実行してください。');
+  ui.alert(title, lines.join('\n'), ui.ButtonSet.OK);
+  return true;
+}
+
+/** 自動の取り込みを止める（トリガーを消す。管理者がエディタから実行する）。消したトリガーの数。 */
+function removeServiceImportTrigger() {
+  const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === SVC_OPTIONS.autoImportHandler);
+  triggers.forEach(t => ScriptApp.deleteTrigger(t));
+  const message = triggers.length ? '自動の取り込みを止めました。' : '自動の取り込みは動いていません。';
+  const ui = diffUiOrNull_();
+  if (ui) ui.alert(SVC_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+  else console.log(message);
+  return triggers.length;
+}
+
+/**
+ * 自動の取り込み（時間主導トリガーから呼ぶ）。メニューの「サブインダストリーのシートから取り込む」と同じく、まだ無いリクエストを書く（画面は出さない）。
+ * 覚えのシートが無ければ動かない（installServiceImportTrigger() で作る。無いまま取り込むと、削除した行が戻るため）。
+ * ほかの処理がロックを持っていれば、その回は飛ばす（次の回に取り込む）。結果は実行ログに書く。
+ */
+function serviceImportTick() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss.getSheetByName(SVC_OPTIONS.importedSheet)) {
+    console.warn('「' + SVC_OPTIONS.importedSheet + '」シートが無いため、自動の取り込みをしませんでした。installServiceImportTrigger() を実行してください。');
+    return null;
+  }
+  let result;
+  try {
+    result = taskWithLock_(() => svcImportRequests_(ss), SVC_OPTIONS.autoImportLockWaitMs, '自動の取り込み');
+  } catch (e) {
+    if (/他の処理.*実行中/.test(svcErrorText_(e))) {
+      console.log('ほかの処理が実行中のため、この回の自動の取り込みは飛ばしました。');
+      return null;
+    }
+    throw e;
+  }
+  if (result.added.length) console.log(svcImportResultLines_(result).join('\n'));
+  return {added: result.added.length};
 }
 
 /* ---------------- 一覧のモーダル（パネルの件数のバッジから開く） ---------------- */
