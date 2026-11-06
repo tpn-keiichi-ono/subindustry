@@ -4358,3 +4358,64 @@ test('上書き（画面の「前に作った同じ資料を上書きする」�
   assert.deepStrictEqual(gas.driveFiles.filter(f => f.name === combinedName && gas.trashed.indexOf(f.id) < 0).map(f => f.id), c1);
   assert.match(rc.message, /（前の資料に上書き。リンクはそのまま）/);
 });
+
+test('期待値の週次推移（試作）：直近12週の週末の期待値（失注除く）を、変更の記録から案件ごとに出し、前の週からの増減で色を付ける。動いた案件は増減の大きい順', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  // A社：30日前に期待値 10 → 15。C社：10日前に失注（5 → 0）。E社：今日 40 → 60。B社（受注 50）・D社（空）・F社（3）は動かない
+  aged(gas, 30, () => g.recordDiffEdit(gas.edit(sheet, 'H3', '15')));
+  aged(gas, 10, () => g.recordDiffEdit(gas.edit(sheet, 'F5', '失注')));
+  aged(gas, 20, () => g.recordDiffEdit(gas.edit(sheet, 'F3', 'B-クロージング中(70%)')));   // A社：20日前に確度 B に（確度の無いステータス → B）
+  g.recordDiffEdit(gas.edit(sheet, 'H7', '60'));
+  const now = new Date();
+  const data = plain(g.mtgWeeklyData_(gas.ss, ['新FMT'], now));
+  const weeks = data.weeks.list;
+  assert.strictEqual(weeks.length, 12);
+  assert.ok(weeks[weeks.length - 1].current && weeks.slice(0, -1).every((w, k) => w.end === weeks[k + 1].start), '週は続いている（月曜〜日曜。最後は今週）');
+  const x = data.sheets[0];
+  assert.deepStrictEqual(x.deals.map(d => d.customer), ['E社', 'A社', 'C社'], '動いた案件だけ。増減の大きい順（同じなら今の期待値の大きい順）');
+  const [e, a, cc] = x.deals;
+  const ago = days => now.getTime() - days * 86400000;
+  assert.deepStrictEqual([a.before, a.values[a.values.length - 1]], [10, 15]);
+  a.values.forEach((v, k) => assert.strictEqual(v, weeks[k].end < ago(30) ? 10 : 15, weeks[k].label));
+  assert.deepStrictEqual([cc.before, cc.values[cc.values.length - 1]], [5, 0], '失注の週からは 0');
+  cc.values.forEach((v, k) => assert.strictEqual(v, weeks[k].end < ago(10) ? 5 : 0, weeks[k].label));
+  assert.deepStrictEqual([e.before, e.values.slice(-2)], [40, [40, 60]], '今週だけ増えた');
+  assert.strictEqual(x.unchanged, 3);
+  assert.deepStrictEqual([x.before, x.totals[x.totals.length - 1]], [10 + 50 + 5 + 40 + 3, 15 + 50 + 0 + 60 + 3], '合計は失注を除く（動かなかった案件も含む）');
+  // 確度別（週末のステータスの確度）：A社は 20日前から B。ほかは確度の無いステータスなので「未設定」。合わせると合計
+  x.ranks.forEach((m, k) => {
+    assert.strictEqual(m.B, weeks[k].end < ago(20) ? 0 : 15, weeks[k].label + ' の B');
+    assert.strictEqual(Object.keys(m).reduce((sum, key) => sum + m[key], 0), x.totals[k], weeks[k].label + ' の合計');
+  });
+  assert.deepStrictEqual(Object.keys(x.ranksBefore), ['A', 'B', 'C', 'D', '創注', '未設定']);
+  // スライド：確度別（行は週、列は確度と合計）→ 案件別（見出しの行（名前・12週・期間の増減）、合計の行、案件の行）。色は前の週からの増減
+  const slides = plain(g.mtgWeeklySlides_(data, now));
+  assert.deepStrictEqual(slides.map(sl => sl.title), ['期待値の週次推移（新FMT・確度別）', '期待値の週次推移（新FMT）']);
+  const rankSlide = slides.shift();
+  assert.deepStrictEqual(roleOf(rankSlide, 'rank-head').map(el => el.text), ['週（週末の期待値）', 'A', 'B', 'C', 'D', '創注', '未設定', '合計']);
+  assert.strictEqual(roleOf(rankSlide, 'rank-week').length, 13, '12週と期間の増減');
+  assert.deepStrictEqual(roleOf(rankSlide, 'rank-delta').map(el => el.text), ['±0', '+15', '±0', '±0', '±0', '+5', '+20']);
+  const S = gas.get('MTG_SLIDE');
+  rankSlide.elements.filter(el => /^(rank|legend)/.test(el.role || '')).forEach(el => assert.ok(el.y + el.h <= S.bottom + 0.01, 'ページに入る：' + (el.text || el.role)));
+  const table = slides[0].elements.find(el => el.type === 'table');
+  assert.strictEqual(table.columns.length, 14);
+  assert.match(table.rows[0].cells[12].text, /（今）$/);
+  assert.deepStrictEqual(table.rows.slice(1).map(r => r.cells[0].text), ['合計（失注除く）', 'E社／販促DX', 'A社／アプリ刷新', 'C社／店舗什器']);
+  const o = gas.get('MTG_OPTIONS').weekly;
+  const eRow = table.rows[2].cells;
+  assert.strictEqual(eRow[12].fill, o.upColors[2], '今週の増（いちばん大きい）は濃い緑');
+  assert.strictEqual(eRow[13].text, '+20');
+  const cRow = table.rows[4].cells;
+  assert.ok(cRow.slice(1, 13).some(cell => o.downColors.indexOf(cell.fill) >= 0), '減は灰');
+  assert.ok(roleOf(slides[0], 'legend').some(el => el.text === '増（大）'));
+  assert.match(leadOf(slides[0]), /^直近12週（\d+\/\d+週〜）の期待値（失注除く）は 108 → 128百万円（\+20）。/);
+  // 2つ以上のシートなら、最初にサブインダストリーごとの合計
+  const two = plain(g.mtgWeeklySlides_(plain(g.mtgWeeklyData_(gas.ss, ['新FMT', '新FMT2'], now)), now));
+  assert.deepStrictEqual(two.slice(0, 4).map(sl => sl.title), ['期待値の週次推移（サブインダストリー別）', '期待値の週次推移（確度別・2サブインダストリー）',
+    '期待値の週次推移（新FMT・確度別）', '期待値の週次推移（新FMT）']);
+  assert.deepStrictEqual(two[0].elements.find(el => el.type === 'table').rows.slice(1).map(r => r.cells[0].text), ['合計', '新FMT', '新FMT2']);
+  // エディタから：シートを選んで PDF（試作）を保存先に作る
+  gas.promptAnswers = ['1'];
+  g.createBusinessMtgWeeklyHeatmap();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^期待値の週次推移の資料（試作）を作りました：\d{8}_期待値の週次推移_試作\.pdf（2ページ）/);
+});

@@ -244,6 +244,15 @@ const MTG_OPTIONS = {
     unsetLabel: '未設定',
     combos: 15                       // 組み合わせの表に出す数（期待値の大きい順）
   },
+  // 期待値の週次推移（試作。createBusinessMtgWeeklyHeatmap()）：直近 weeks 週の、週末（日曜の終わり。今週は今）の期待値（失注除く）を、
+  // 案件ごと・サブインダストリーごとにヒートマップの表で出す。セルの色は前の週からの増減（緑＝増・灰＝減。濃いほど大きい）
+  weekly: {
+    title: '期待値の週次推移',
+    fileName: '{date}_期待値の週次推移_試作',
+    weeks: 12,
+    upColors: ['#E2EFDA', '#B5D99C', '#8FC46B'],     // 増（小 → 大）
+    downColors: ['#EDEDED', '#D0D0D0', '#A6A6A6']    // 減（小 → 大）
+  },
   noUpdateDays: 30,                  // 入力内容のチェック「更新なし」：最終更新日時がこの日数より前の進行中の案件
   overdueDays: 90,                   // 入力内容のチェック「予定日超過」：予定日を過ぎてこの日数以内のもの（古いものは出さない）
   fiscalStartMonth: 4,               // 期の始まりの月（受注月別の期待値の四半期・計画に対する積み上げの今年度）
@@ -1316,6 +1325,304 @@ function createBusinessMtgScenarioSummary() {
   const message = o.title + 'の資料（試作）を作りました：' + out.pdf.getName() + '（' + slides.length + 'ページ）\n' + out.pdf.getUrl();
   console.log(message);
   ui.alert(title, message, ui.ButtonSet.OK);
+}
+
+/* ---------------- 期待値の週次推移（ヒートマップ。試作） ---------------- */
+
+/**
+ * 期待値の週次推移の資料（試作）を作る（エディタから実行する。読むだけで、会議日の記録・会議のフォルダ・インデックスは変えない）。シートを選び（空欄ならすべて）、
+ * 直近 MTG_OPTIONS.weekly.weeks 週の、週末（日曜の終わり。今週は今）の期待値（失注除く）を、案件ごとに表にして、前の週からの増減で色を付ける。
+ * 週末の期待値は、変更の記録・変更時点スナップショットから、前回からの変化と同じ求め方（mtgChange_）で出す。2つ以上のシートなら、最初にサブインダストリーごとの合計
+ */
+function createBusinessMtgWeeklyHeatmap() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = mtgUi_();
+  const o = MTG_OPTIONS.weekly;
+  const names = mtgAskSheets_(ss, ui, o.title + 'の資料（試作）を作ります（直近' + o.weeks + '週）。');
+  if (!names) return;
+  mtgRequireSlides_();
+  const now = new Date();
+  const data = mtgWeeklyData_(ss, names, now);
+  const slides = mtgWeeklySlides_(data, now);
+  const folder = mtgFolder_(ss);
+  const name = o.fileName.replace('{date}', Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyyMMdd'));
+  const out = mtgExportDeck_(name, slides, folder);
+  const message = o.title + 'の資料（試作）を作りました：' + out.pdf.getName() + '（' + slides.length + 'ページ）\n' + out.pdf.getUrl();
+  console.log(message);
+  ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+}
+
+/** 週の区切り：直近 weeks 週の週末の時刻（ms。日曜の終わり＝次の月曜 0時。最後は今）と、各週の始まりの月曜 [{start, end, label}]。0 番目の前の週末も before に */
+function mtgWeeklyWeeks_(now, weeks) {
+  const tz = Session.getScriptTimeZone();
+  const day = Utilities.formatDate(now, tz, 'yyyy/MM/dd');
+  const p = day.split('/').map(Number);
+  const fromMonday = (new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay() + 6) % 7;   // 月曜から何日目か（0〜6）
+  const thisMonday = Utilities.parseDate(day, tz, 'yyyy/MM/dd').getTime() - fromMonday * 86400000;
+  const out = [];
+  for (let k = weeks - 1; k >= 0; k--) {
+    const start = thisMonday - k * 7 * 86400000;
+    out.push({start, end: k === 0 ? now.getTime() : start + 7 * 86400000, label: Utilities.formatDate(new Date(start), tz, 'M/d') + '週', current: k === 0});
+  }
+  return {list: out, before: out[0].start};
+}
+
+/**
+ * 週次推移の中身（読むだけ）：{weeks: mtgWeeklyWeeks_, sheets: [{name, gap, totals: [週末の合計], before: 最初の週の前の合計,
+ *  deals: [{customer, project, row, status, values: [週末の期待値], before}]（期待値が動いた案件。増減の大きい順）, unchanged: 動かなかった案件の数}]}。
+ * 期待値は失注を除く（失注の週は 0）。案件ができる前は 0
+ */
+function mtgWeeklyData_(ss, names, now) {
+  const o = MTG_OPTIONS;
+  const R = o.run;
+  const weeks = mtgWeeklyWeeks_(now, o.weekly.weeks);
+  const windowStart = new Date(weeks.before - 60 * 86400000);   // 最初の週の前の値を、その前のスナップショットから取れるように
+  const api = R.readMode === 'api' && mtgApiAvailable_();
+  const step = api ? Math.max(R.sheetsPerRead || 1, 1) : names.length || 1;
+  const cache = {};
+  const sheets = [];
+  for (let i = 0; i < names.length; i += step) {
+    const part = names.slice(i, i + step);
+    const book = api ? mtgApiBook_(ss, part, {cache}) : ss;
+    const context = {now, windowStart, since: new Date(weeks.before)};
+    context.log = mtgReadLog_(book, windowStart);
+    context.snapshots = mtgReadSnapshots_(book, windowStart);
+    const statusTable = mtgReadStatusTable_(book);
+    part.forEach(name => sheets.push(mtgWeeklySheet_(book, name, context, statusTable, weeks)));
+  }
+  return {weeks, sheets};
+}
+
+/** 1つのシートの週次推移（mtgWeeklyData_ の sheets の1つ） */
+function mtgWeeklySheet_(book, name, context, statusTable, weeks) {
+  const table = mtgReadDeals_(book.getSheetByName(name), DIFF_RULES[name]);
+  if (!table.has.weighted) {
+    return {name, gap: 'シートに「' + String(MTG_OPTIONS.columns.weighted).replace(/\s+/g, '') + '」の列が無い', totals: [], before: 0, deals: [], unchanged: 0,
+      ranks: [], ranksBefore: {}};
+  }
+  const history = mtgHistory_(name, context);
+  const labels = mtgLabels_();
+  const rules = {rank: mtgStatusRank_(table.statusOrder, statusTable), statusTable, weightedFormula: table.weightedFormula, copy: false, tracked: []};
+  const value = (status, weighted) => (mtgExcludedStatus_(status) ? 0 : weighted || 0);
+  // 時刻 t の状態 {status, value}：t より後に変更の記録が無ければ今の値。あれば t の時点の値（mtgChange_ の base。案件ができる前は期待値 0）
+  const stateAt = (deal, t) => {
+    const key = history.root(deal.key);
+    const item = t == null ? null : mtgChange_(key, deal, null, history.events.get(key) || [], history.states.get(key) || [], t, labels, rules);
+    if (!item) return {status: deal.status, value: value(deal.status, deal.weighted)};
+    return item.base ? {status: item.base.status, value: value(item.base.status, item.base.weighted)} : {status: '', value: 0};
+  };
+  const rankKeys = mtgWeeklyRanks_();
+  const byRank = () => rankKeys.reduce((m, k) => Object.assign(m, {[k]: 0}), {});
+  const ranks = weeks.list.map(byRank);   // 週ごとの確度別の期待値（確度はその週末のステータスの「-」の前。mtgPlanRank_）
+  const ranksBefore = byRank();
+  const totals = weeks.list.map(() => 0);
+  let before = 0;
+  const moved = [];
+  let unchanged = 0;
+  table.deals.forEach(deal => {
+    const states = weeks.list.map(w => stateAt(deal, w.current ? null : w.end));
+    const start = stateAt(deal, weeks.before);
+    const values = states.map(st => st.value);
+    const first = start.value;
+    states.forEach((st, k) => { ranks[k][mtgPlanRank_(st.status)] += st.value; });
+    ranksBefore[mtgPlanRank_(start.status)] += start.value;
+    values.forEach((v, k) => { totals[k] += v; });
+    before += first;
+    if ([first].concat(values).some(v => Math.abs(v - first) > 1e-9)) {
+      moved.push({customer: deal.customer, project: deal.project, row: deal.row, status: deal.status, values, before: first});
+    } else unchanged++;
+  });
+  const delta = d => d.values[d.values.length - 1] - d.before;
+  moved.sort((a, b) => (Math.abs(delta(b)) - Math.abs(delta(a))) || (b.values[b.values.length - 1] - a.values[a.values.length - 1]));
+  return {name, gap: '', totals, before, deals: moved, unchanged, ranks, ranksBefore};
+}
+
+/** 週次推移の確度の列（MTG_OPTIONS.plan.ranks の順と、どれでもない「未設定」） */
+function mtgWeeklyRanks_() {
+  const o = MTG_OPTIONS.plan;
+  return o.ranks.map(r => r.key).concat([o.otherLabel]);
+}
+
+/** 週次推移のスライド：2つ以上のシートならサブインダストリーごとの合計、続けてシートごと（案件が多ければ「（続き）」のページ） */
+function mtgWeeklySlides_(data, now) {
+  const o = MTG_OPTIONS.weekly;
+  const tz = Session.getScriptTimeZone();
+  const frame = {source: '【試作】' + o.title + '（' + Utilities.formatDate(now, tz, 'M/d HH:mm') + ' 時点）　金額の単位：百万円'};
+  const slides = [];
+  const ok = data.sheets.filter(x => !x.gap);
+  const sumRanks = list => data.weeks.list.map((_, k) => mtgWeeklyRanks_().reduce((m, r) => Object.assign(m, {[r]: list.reduce((sum, x) => sum + x.ranks[k][r], 0)}), {}));
+  const sumBefore = list => mtgWeeklyRanks_().reduce((m, r) => Object.assign(m, {[r]: list.reduce((sum, x) => sum + (x.ranksBefore[r] || 0), 0)}), {});
+  if (data.sheets.length > 1) {
+    const rows = ok.map(x => ({label: x.name, values: x.totals, before: x.before, bold: true}));
+    const total = {label: '合計', values: data.weeks.list.map((_, k) => ok.reduce((sum, x) => sum + x.totals[k], 0)),
+      before: ok.reduce((sum, x) => sum + x.before, 0), total: true};
+    const lacking = data.sheets.filter(x => x.gap);
+    slides.push.apply(slides, mtgWeeklyTableSlides_(o.title + '（サブインダストリー別）', mtgWeeklyLead_(total, data.weeks) +
+      (lacking.length ? '\n' + MTG_OPTIONS.gapText + '：' + lacking.map(x => x.name + '（' + x.gap + '）').join('・') : ''), [total].concat(rows), data.weeks, 'サブインダストリー'));
+    if (ok.length) slides.push(mtgWeeklyRankSlide_(o.title + '（確度別・' + ok.length + 'サブインダストリー）', sumRanks(ok), sumBefore(ok), data.weeks));
+  }
+  data.sheets.forEach(x => {
+    if (x.gap) {
+      slides.push({title: o.title + '（' + x.name + '）', lead: o.title + 'は' + MTG_OPTIONS.gapText + '（' + x.gap + '）。', elements: []});
+      return;
+    }
+    slides.push(mtgWeeklyRankSlide_(o.title + '（' + x.name + '・確度別）', x.ranks, x.ranksBefore, data.weeks));
+    const total = {label: '合計（失注除く）', values: x.totals, before: x.before, total: true};
+    const rows = x.deals.map(d => ({deal: d, values: d.values, before: d.before}));
+    const up = x.deals.filter(d => d.values[d.values.length - 1] > d.before).length;
+    const down = x.deals.filter(d => d.values[d.values.length - 1] < d.before).length;
+    const lead = mtgWeeklyLead_(total, data.weeks) + '\n期待値が動いた案件 ' + x.deals.length + '件（増 ' + up + '・減 ' + down + '。増減の大きい順）。' +
+      '動かなかった ' + x.unchanged + '件は合計にだけ含める。色は前の週からの増減（緑＝増・灰＝減。濃いほど大きい）。';
+    slides.push.apply(slides, mtgWeeklyTableSlides_(o.title + '（' + x.name + '）', lead, [total].concat(rows), data.weeks, mtgDealHead_({})));
+  });
+  return mtgNumberSlides_(frame, slides);
+}
+
+/**
+ * 週次推移（確度別）：行は週（上が古い。最後は今週）、列は確度（A → 創注・未設定）と合計。セルはその週末の、その確度の期待値（失注除く）。
+ * 色は前の週からの増減（増＝緑・灰＝減。確度の列の増減の大きさで3段。合計の列は合計の増減で）。12週が1ページに入るよう、表ではなく箱で描く。
+ * ranks = [{確度: 期待値}]（週ごと）、before は最初の週の前の週末
+ */
+function mtgWeeklyRankSlide_(title, ranks, before, weeks) {
+  const o = MTG_OPTIONS.weekly;
+  const c = MTG_OPTIONS.colors;
+  const S = MTG_SLIDE;
+  const keys = mtgWeeklyRanks_();
+  const total = m => keys.reduce((sum, k) => sum + (m[k] || 0), 0);
+  const labelW = 86;
+  const colW = (S.w - labelW) / (keys.length + 1);
+  const headH = 20;
+  const top = S.top;
+  // 行：週（weeks 行）と期間の増減（1行）。下に凡例（20pt）が入る高さ
+  const rowH = Math.min(20, Math.floor((S.bottom - top - headH - 20) / (weeks.list.length + 1) * 10) / 10);
+  const size = rowH < 16 ? 7.5 : 8;
+  const el = [];
+  const delta = (k, key) => (key === '合計' ? total(ranks[k]) - total(k ? ranks[k - 1] : before) : (ranks[k][key] || 0) - ((k ? ranks[k - 1] : before)[key] || 0));
+  const scale = Math.max.apply(null, [0].concat([].concat.apply([], weeks.list.map((_, k) => keys.map(key => Math.abs(delta(k, key)))))));
+  const totalScale = Math.max.apply(null, [0].concat(weeks.list.map((_, k) => Math.abs(delta(k, '合計')))));
+  const shade = (d, sc) => {
+    if (Math.abs(d) < 0.05 || sc <= 0) return c.white;
+    const level = Math.min(2, Math.floor(Math.abs(d) / sc * 3 - 1e-9));
+    return d > 0 ? o.upColors[level] : o.downColors[level];
+  };
+  // 見出しの行：確度（色の印つき）と合計
+  el.push(mtgBox_(S.x, top, labelW, headH, '週（週末の期待値）', {size: 8, bold: true, color: c.white, fill: c.green, shape: 'RECTANGLE', align: 'CENTER', role: 'rank-head'}));
+  keys.concat(['合計']).forEach((key, i) => {
+    el.push(mtgBox_(S.x + labelW + colW * i, top, colW, headH, key, {size: 8.5, bold: true, color: c.white, fill: c.green, shape: 'RECTANGLE',
+      align: 'CENTER', line: c.white, lineWeight: 0.5, role: 'rank-head'}));
+  });
+  weeks.list.forEach((w, k) => {
+    const y = top + headH + rowH * k;
+    el.push(mtgBox_(S.x, y, labelW, rowH, w.label + (w.current ? '（今）' : ''), {size, bold: true, color: c.ink, fill: c.greenSoft, shape: 'RECTANGLE',
+      line: c.white, lineWeight: 0.5, role: 'rank-week'}));
+    keys.concat(['合計']).forEach((key, i) => {
+      const v = key === '合計' ? total(ranks[k]) : ranks[k][key] || 0;
+      const d = delta(k, key);
+      el.push(mtgBox_(S.x + labelW + colW * i, y, colW, rowH, mtgAmount_(v), {size, bold: key === '合計', color: c.ink, align: 'END',
+        fill: shade(d, key === '合計' ? totalScale : scale), shape: 'RECTANGLE', line: c.line, lineWeight: 0.5, role: 'rank-cell'}));
+    });
+  });
+  // 期間の増減（いちばん下）
+  const lastY = top + headH + rowH * weeks.list.length;
+  el.push(mtgBox_(S.x, lastY, labelW, rowH, '期間の増減', {size, bold: true, color: c.ink, fill: c.greenSoft, shape: 'RECTANGLE', line: c.white, lineWeight: 0.5,
+    role: 'rank-week'}));
+  keys.concat(['合計']).forEach((key, i) => {
+    const last = ranks[ranks.length - 1];
+    const d = key === '合計' ? total(last) - total(before) : (last[key] || 0) - (before[key] || 0);
+    el.push(mtgBox_(S.x + labelW + colW * i, lastY, colW, rowH, mtgSigned_(d), {size, bold: true, color: mtgDeltaColor_(d), align: 'END',
+      fill: c.white, shape: 'RECTANGLE', line: c.line, lineWeight: 0.5, role: 'rank-delta'}));
+  });
+  // 色の凡例
+  let lx = S.x;
+  const ly = lastY + rowH + 4;
+  [['増（小）', o.upColors[0]], ['増（大）', o.upColors[2]], ['減（小）', o.downColors[0]], ['減（大）', o.downColors[2]], ['変化なし', c.white]].forEach(([label, color]) => {
+    el.push({type: 'box', x: lx, y: ly + 3, w: 10, h: 8, fill: color, line: c.frame, lineWeight: 0.5, shape: 'RECTANGLE', role: 'legend'});
+    el.push(mtgBox_(lx + 10, ly - 2, mtgTextWidth_(label, 8) + 12, 18, label, {size: 8, color: c.sub, role: 'legend'}));
+    lx += 10 + mtgTextWidth_(label, 8) + 18;
+  });
+  // リード文：今週の確度別と、期間でいちばん増えた・減った確度
+  const last = ranks[ranks.length - 1];
+  const moves = keys.map(key => ({key, d: (last[key] || 0) - (before[key] || 0)}));
+  const upMost = moves.slice().sort((a, b) => b.d - a.d)[0];
+  const downMost = moves.slice().sort((a, b) => a.d - b.d)[0];
+  const lead = '確度別の期待値（失注除く）の週ごとの推移。今週は ' + keys.filter(key => last[key]).map(key => key + ' ' + mtgAmount_(last[key])).join('・') +
+    '（合計 ' + mtgAmount_(total(last)) + '）。' + '\n直近' + weeks.list.length + '週で' +
+    (upMost && upMost.d > 0 ? 'いちばん増えたのは ' + upMost.key + '（' + mtgSigned_(upMost.d) + '）' : '増えた確度はなし') + '、' +
+    (downMost && downMost.d < 0 ? 'いちばん減ったのは ' + downMost.key + '（' + mtgSigned_(downMost.d) + '）' : '減った確度はなし') +
+    '。確度はその週末のステータスの「-」の前。色は前の週からの増減。';
+  return {title, lead, elements: el};
+}
+
+/** 週次推移のリード文の1つ目の文：「直近12週（8/18週〜）の期待値（失注除く）は A → B百万円（±N）。最大は 10/13週の N。」 */
+function mtgWeeklyLead_(total, weeks) {
+  const last = total.values[total.values.length - 1];
+  const peak = total.values.reduce((best, v, k) => (v > total.values[best] ? k : best), 0);
+  return '直近' + weeks.list.length + '週（' + weeks.list[0].label + '〜）の期待値（失注除く）は ' + mtgAmount_(total.before) + ' → ' + mtgAmount_(last) +
+    '百万円（' + mtgSigned_(last - total.before) + '）。最大は ' + weeks.list[peak].label + 'の ' + mtgAmount_(total.values[peak]) + '。';
+}
+
+/**
+ * 週次推移の表（ページに入らなければ「（続き）」）：列は名前・週ごとの週末の期待値・期間の増減。セルの色は前の週からの増減（増＝緑・減＝灰。
+ * 表の中の増減の大きさで3段。変わらなければ白）。rows = [{label|deal, values, before, total, bold}]。下に色の凡例
+ */
+function mtgWeeklyTableSlides_(title, lead, rows, weeks, firstHead) {
+  const o = MTG_OPTIONS.weekly;
+  const c = MTG_OPTIONS.colors;
+  const S = MTG_SLIDE;
+  const size = 8;
+  const deltaW = 46;
+  const nameW = 150;
+  const weekW = (S.w - nameW - deltaW) / weeks.list.length;
+  const columns = mtgColumns_([nameW].concat(weeks.list.map(() => weekW), [deltaW]), 0);
+  // 週の見出しは、その週の月曜（「10/26」）と「週」の2行（今週は「（今）」）。列が細いので2行にそろえる
+  const head = mtgHeadRow_(columns, [firstHead.replace(/\n/g, '')].concat(weeks.list.map(w => w.label.replace('週', '') + '\n' + (w.current ? '（今）' : '週')),
+    ['期間の\n増減']), size);
+  // 色の段：表の中の、前の週からの増減の大きさ（合計の行は除く）の最大の 1/3・2/3 で分ける
+  const deltas = [];
+  rows.filter(r => !r.total).forEach(r => r.values.forEach((v, k) => deltas.push(Math.abs(v - (k ? r.values[k - 1] : r.before)))));
+  const max = Math.max.apply(null, deltas.concat([0]));
+  const totalMax = Math.max.apply(null, rows.filter(r => r.total).map(r => Math.max.apply(null, r.values.map((v, k) => Math.abs(v - (k ? r.values[k - 1] : r.before))))).concat([0]));
+  const shade = (d, scale) => {
+    if (Math.abs(d) < 0.05 || scale <= 0) return c.white;
+    const level = Math.min(2, Math.floor(Math.abs(d) / scale * 3 - 1e-9));
+    return d > 0 ? o.upColors[level] : o.downColors[level];
+  };
+  const body = rows.map(r => {
+    const scale = r.total ? totalMax : max;
+    // 名前は1行（「得意先／案件名」。入らなければ小さくし、それでも入らなければ行を伸ばす）：1ページに多くの案件を入れる
+    const name = r.deal
+      ? {text: mtgDealLabel_(r.deal), size, color: c.ink, fill: c.greenSoft, lines: 1, fit: true, minSize: size - 1.5,
+        spans: null, parts: [{bold: true}]}
+      : {text: r.label, size, bold: true, color: c.ink, fill: c.greenSoft, lines: 1, fit: true, minSize: size - 1.5};
+    const cells = [name].concat(r.values.map((v, k) => ({text: mtgAmount_(v), size, align: 'END', bold: !!r.total,
+      color: c.ink, fill: shade(v - (k ? r.values[k - 1] : r.before), scale)})));
+    const d = r.values[r.values.length - 1] - r.before;
+    cells.push({text: mtgSigned_(d), size, align: 'END', bold: true, color: mtgDeltaColor_(d), fill: r.total ? c.greenSoft : c.white});
+    return mtgRow_(columns, cells, 0);
+  });
+  // 色の凡例（表の下。ページの下の余白に入らなければ、最後のページだけに置く）
+  const legend = (y) => {
+    const el = [];
+    let x = S.x;
+    const item = (label, color) => {
+      el.push({type: 'box', x, y: y + 3, w: 10, h: 8, fill: color, line: c.frame, lineWeight: 0.5, shape: 'RECTANGLE', role: 'legend'});
+      el.push(mtgBox_(x + 10, y - 2, mtgTextWidth_(label, 8) + 12, 18, label, {size: 8, color: c.sub, role: 'legend'}));
+      x += 10 + mtgTextWidth_(label, 8) + 18;
+    };
+    item('増（小）', o.upColors[0]);
+    item('増（大）', o.upColors[2]);
+    item('減（小）', o.downColors[0]);
+    item('減（大）', o.downColors[2]);
+    item('変化なし', c.white);
+    return el;
+  };
+  const pages = mtgTablePages_(head, body);
+  return pages.map((p, n) => {
+    const table = {type: 'table', x: S.x, y: S.top, columns, rows: p.rows};
+    const bottom = S.top + p.rows.reduce((h, r) => h + r.h, 0);
+    const el = [table].concat(bottom + 22 <= S.bottom ? legend(bottom + 4) : []);
+    return {title: title + (n ? '（続き）' : ''), lead, elements: el};
+  });
 }
 
 /**

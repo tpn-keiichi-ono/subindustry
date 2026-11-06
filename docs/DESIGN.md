@@ -910,6 +910,12 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
 
 #### 資料のデザイン（トンマナ）
 
+- **期待値の週次推移**（試作。`createBusinessMtgWeeklyHeatmap()`・`mtgWeeklyData_`・`mtgWeeklySlides_`。`MTG_OPTIONS.weekly`。2026/11/06）：
+  週の区切りは月曜 0時（`mtgWeeklyWeeks_`。最後の週の終わりは今）。週末 t の期待値は、t より後に変更の記録が無ければ今の値、あれば `mtgChange_(…, since = t)` の
+  `base`（t の時点の値：t より前のスナップショット → 無ければ変更の記録の「変更前」（期待値の列が数式なら定義の率 × 想定売上）。案件ができる前は 0）。
+  失注（`mtgExcludedStatus_`）の週は 0。表は `mtgWeeklyTableSlides_`（横軸が週。名前は1行に「得意先／案件名」、セルの色は増減の大きさで3段 `upColors`・`downColors`）と
+  `mtgWeeklyRankSlide_`（横軸が確度（`mtgWeeklyRanks_`：plan.ranks と未設定）と合計、行は週。確度はその週末のステータスで `mtgPlanRank_`。13行を1ページに入れるため、
+  表ではなく箱で描く（表の行は上下の余白で 24pt ほどになり入らない））。
 - **上書き**（2026/11/05。資料を作る画面の「上書きする」→ `runMeetingMaterials` の `overwrite` → `job.overwrite`）：前に作った同じ資料の PDF（`mtgExistingPdf_`：
   本番は会議のフォルダ、試作は保存先の、同じ名前のファイル）があれば、新しい PDF を作らずに、その中身を Drive API v3 の files.update（`uploadType=media`）で書き換える
   （`mtgOverwriteFile_`。ファイルの ID が変わらないので、リンク・共有・インデックスのチップ・チャットで送ったリンクがそのまま使える。前の中身は版の履歴に残る）。
