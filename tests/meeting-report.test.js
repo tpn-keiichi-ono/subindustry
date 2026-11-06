@@ -207,7 +207,7 @@ test('addBusinessMtgReportFlagColumn：各シートの AG列に「報告フラ�
   gas.writes.length = 0;
   const result = g.addBusinessMtgReportFlagColumn();
   assert.deepStrictEqual(plain(result), [
-    '「新FMT」：AG列に「報告フラグ」の列を足しました（3行目から下をチェックボックスに）。',
+    '「新FMT」：AG列に「報告フラグ」の列を足しました（3行目から下をチェックボックスに。列が増えたので、変更履歴の比較基準を取り直しました）。',
     '「新FMT2」：AG列に値があるため、足しませんでした（AG3：「メモ」）。MTG_OPTIONS.report.flagColumn を空いている列にしてください。'
   ]);
   assert.strictEqual(sheet.getMaxColumns(), 33);
@@ -249,4 +249,60 @@ test('addBusinessMtgReportFlagColumn：AF列まで無いシート・追跡範囲
   assert.strictEqual(result[0], '「新FMT」：AF列まで無いため、足しませんでした（今は AA列まで）。');
   assert.strictEqual(gas.ss.getSheetByName('新FMT').getMaxColumns(), 27);
   assert.deepStrictEqual([g.mtgColumnNumber_('AG'), g.mtgColumnLetter_(33), g.mtgColumnLetter_(27), g.mtgColumnLetter_(26)], [33, 'AG', 'AA', 'Z']);
+});
+
+/** 本物と同じ形（最終更新日時が A列・A〜AF の32列）の追跡シートを2つ作り、差分追跡を始める */
+function realLayout() {
+  const gas = createGas();
+  const g = gas.global;
+  const plainHeaders = Object.assign({}, HEADERS);
+  delete plainHeaders.reportFlag;
+  delete plainHeaders.stamp;
+  const header = Object.assign(row(plainHeaders), {0: HEADERS.stamp}).slice(0, 32);
+  const deal = row({customer: 'A社', project: 'X', status: 'C-提案中(50%)', activity: '提案'}).slice(0, 32);
+  const sheet = gas.addSheet('新FMT', [row({}).slice(0, 32), header, deal], {rows: 10, columns: 32});
+  gas.addSheet('新FMT2', [row({}).slice(0, 32), header], {rows: 10, columns: 32});
+  g.setupDiffTracking();
+  return {gas, g, sheet};
+}
+
+const logRows = gas => gas.ss.getSheetByName('変更履歴_差分').getLastRow();
+const diffState = (gas, g) => JSON.parse(g.PropertiesService.getDocumentProperties().getProperty(gas.get('DIFF_OPTIONS').stateKey));
+
+test('報告フラグの列を足しても差分追跡は止まらない（列を増やしたシートは比較基準を取り直す）。チェックは変更の記録・最終更新日時・行の内容に残さない', () => {
+  const {gas, g, sheet} = realLayout();
+  const lines = g.addBusinessMtgReportFlagColumn();
+  assert.match(lines[0], /列が増えたので、変更履歴の比較基準を取り直しました/);
+  assert.ok(Object.values(diffState(gas, g)).every(s => !s.paused && s.gridColumns === 33), '止まっていない');
+
+  // 追跡範囲の編集は今までどおり記録される
+  const before = logRows(gas);
+  g.recordDiffEdit(gas.edit(sheet, 'J3', '11/6 再提案'));
+  assert.strictEqual(logRows(gas), before + 1, '活動状況の変更を記録する');
+  assert.ok(Object.values(diffState(gas, g)).every(s => !s.paused));
+  const stamp = sheet.getRange('A3').getValue();
+
+  // 報告フラグのチェックは記録しない・最終更新日時を変えない
+  g.recordDiffEdit(gas.edit(sheet, 'AG3', true));
+  g.onCredentialLauncherEdit(gas.edit(sheet, 'AG3', true));
+  assert.strictEqual(logRows(gas), before + 1, 'チェックは変更の記録に残らない');
+  assert.strictEqual(sheet.getRange('A3').getValue(), stamp, '最終更新日時は変わらない');
+  assert.strictEqual(sheet.getRange('AG3').getValue(), true, 'ボタン列ではないので、チェックは戻さない');
+
+  // チェックの入った行を編集しても、行の内容（スナップショット）に報告フラグは入れない
+  g.recordDiffEdit(gas.edit(sheet, 'K3', '課題あり'));
+  const snap = gas.ss.getSheetByName('変更時点スナップショット');
+  const content = snap.getRange(snap.getLastRow(), 1, 1, snap.getLastColumn()).getDisplayValues()[0].join('\n');
+  assert.match(content, /課題あり/);
+  assert.doesNotMatch(content, /報告フラグ/);
+});
+
+test('報告フラグの列を足すとき、まだ記録していない編集（取りこぼし回収の印）があるシートには足さない', () => {
+  const {gas, g, sheet} = realLayout();
+  const props = g.PropertiesService.getDocumentProperties();
+  props.setProperty(gas.get('DIFF_OPTIONS').dirtyPrefix + sheet.getSheetId(), 'x');
+  const lines = g.addBusinessMtgReportFlagColumn();
+  assert.strictEqual(lines[0], '「新FMT」：まだ変更の記録に書いていない編集があるため、足しませんでした（数分ごとの取りこぼし回収のあとで、もう一度実行してください）。');
+  assert.strictEqual(sheet.getMaxColumns(), 32);
+  assert.match(lines[1], /^「新FMT2」：AG列に「報告フラグ」の列を足しました/);
 });

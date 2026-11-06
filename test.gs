@@ -2099,11 +2099,13 @@ function diffSnapshotCustomerHeader_() {
   return diffCleanHeaderText_(typeof CRED_OPTIONS !== 'undefined' ? CRED_OPTIONS.customerHeader : '得意先');
 }
 
-/** スナップショットに入れない列（ボタン列。チェックの ON/OFF は行の内容ではない）。 */
+/** スナップショットに入れない列（ボタン列・報告フラグ。チェックの ON/OFF は行の内容ではない）。 */
 function diffSnapshotSkippedHeaders_() {
   const headers = [];
   if (typeof CRED_OPTIONS !== 'undefined') headers.push(CRED_OPTIONS.launcherHeader);
   if (typeof CHG_OPTIONS !== 'undefined') headers.push(CHG_OPTIONS.launcherHeader);
+  // 報告フラグ（会議サマリの報告案件版で、会議ごとに付け外しする印。MeetingReport.gs）も、行の内容に残さない
+  if (typeof MTG_OPTIONS !== 'undefined' && MTG_OPTIONS.columns && MTG_OPTIONS.columns.reportFlag) headers.push(MTG_OPTIONS.columns.reportFlag);
   return new Set(headers.map(diffCleanHeaderText_));
 }
 

@@ -27,7 +27,9 @@ function previewBusinessMtgReportSummaries() {
  * 見出しの行（headerRow）に「報告フラグ」と書き（書式は左の列の見出しと同じ）、その下の行をすべてチェックボックスにする（入力規則だけ。値は書かないので、
  * シートの最後の行は変わらない）。何度実行してもよい：もう「報告フラグ」の列があるシートは、チェックボックスを付け直すだけ（AG 以外の列にあれば、そのまま）。
  * 足さないシート：AG列に何か書いてある（上書きしない）・AG列が追跡範囲（DIFF_RULES の ranges）の中・AF列まで無い（列を増やすと追跡範囲が変わるため）。
- * 追跡範囲の外なので、変更の記録（差分追跡）には影響しない（setupDiffTracking() の実行は要らない）
+ * 追跡範囲の外なので、チェックしても変更の記録（差分追跡）には残らない。列を増やしたシート（AF列までのシート）は、差分追跡が列の数の変化を
+ * 「構成が変わった」として止めるので、足したあとにその場で比較基準を取り直す（diffRebaselineSheet_。列を足すだけなので値は変わらない）。
+ * 取り直す前に、まだ記録していない変更（取りこぼし回収の印）があるシートは足さない（取り直すと、その変更が記録されなくなるため）
  */
 function addBusinessMtgReportFlagColumn() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -45,7 +47,7 @@ function addBusinessMtgReportFlagColumn() {
   if (!lock.tryLock(30000)) throw new Error('ほかの処理（差分追跡など）が実行中です。少し待ってからもう一度お試しください。');
   let lines;
   try {
-    lines = names.map(name => '「' + name + '」：' + mtgReportAddFlagColumn_(ss.getSheetByName(name), DIFF_RULES[name], column));
+    lines = names.map(name => '「' + name + '」：' + mtgReportAddFlagColumn_(ss, ss.getSheetByName(name), DIFF_RULES[name], column));
   } finally {
     lock.releaseLock();
   }
@@ -56,8 +58,8 @@ function addBusinessMtgReportFlagColumn() {
   return lines;
 }
 
-/** 1つのシートに報告フラグの列を足す（addBusinessMtgReportFlagColumn）。結果の文（足した・付け直した・足さなかった理由） */
-function mtgReportAddFlagColumn_(sheet, rule, letter) {
+/** 1つのシートに報告フラグの列を足す（addBusinessMtgReportFlagColumn。ドキュメントロックの中で呼ぶ）。結果の文（足した・付け直した・足さなかった理由） */
+function mtgReportAddFlagColumn_(ss, sheet, rule, letter) {
   const o = MTG_OPTIONS;
   const label = o.columns.reportFlag;
   const col = mtgColumnNumber_(letter);
@@ -86,8 +88,20 @@ function mtgReportAddFlagColumn_(sheet, rule, letter) {
   if (tracked.length) return letter + '列が追跡範囲（' + tracked.join('・') + '）の中のため、足しませんでした（MTG_OPTIONS.report.flagColumn を範囲の外の列にしてください）。';
   // 左の列（AF）まで無いシートは、列を増やすと追跡範囲（D3:AF など）が広がって変更の記録の比べ方が変わるので、足さない
   if (maxCols < col - 1) return mtgColumnLetter_(col - 1) + '列まで無いため、足しませんでした（今は ' + mtgColumnLetter_(maxCols) + '列まで）。';
+  let rebuilt = false;
   if (maxCols < col) {
+    // 差分追跡は列の数（gridColumns）を覚えていて、変わると次の編集で止まるので、列を足したら比較基準を取り直す。
+    // まだ記録していない変更があれば、取り直すと記録されなくなるので足さない（数分ごとの取りこぼし回収のあとで、もう一度実行する）
+    const saved = diffSavedState_(sheet);
+    const tracking = !!(saved && !saved.paused);
+    if (tracking && diffPendingSheetIds_(PropertiesService.getDocumentProperties().getProperties()).indexOf(String(sheet.getSheetId())) >= 0) {
+      return 'まだ変更の記録に書いていない編集があるため、足しませんでした（数分ごとの取りこぼし回収のあとで、もう一度実行してください）。';
+    }
     sheet.insertColumnsAfter(maxCols, col - maxCols);
+    if (tracking) {
+      diffRebaselineSheet_(ss, sheet.getName());
+      rebuilt = true;
+    }
   } else {
     // AG列に何か書いてあれば上書きしない
     const values = sheet.getRange(1, col, maxRows, 1).getDisplayValues();
@@ -103,7 +117,8 @@ function mtgReportAddFlagColumn_(sheet, rule, letter) {
   const range = boxes(col);
   if (range) range.setDataValidation(checkbox).setHorizontalAlignment('center');
   sheet.setColumnWidth(col, o.report.flagWidth);
-  return letter + '列に「' + label + '」の列を足しました（' + (headerRow + 1) + '行目から下をチェックボックスに）。';
+  return letter + '列に「' + label + '」の列を足しました（' + (headerRow + 1) + '行目から下をチェックボックスに' +
+    (rebuilt ? '。列が増えたので、変更履歴の比較基準を取り直しました' : '') + '）。';
 }
 
 /** 列の文字（AG）→ 番号（33） */
