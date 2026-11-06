@@ -125,9 +125,12 @@ function mschImport_() {
 
 /* ---------------- 資料を作る画面 ---------------- */
 
-/** 会議資料を作る画面の種類（kind）：'business' 会議サマリ・'combined' 統合版・'service' RX Service Meeting。それ以外は止める */
+/**
+ * 会議資料を作る画面の種類（kind）：'business' 会議サマリ・'report' 会議サマリの報告案件版（MeetingReport.gs。画面と作り方は business と同じ）・
+ * 'combined' 統合版・'service' RX Service Meeting。それ以外は止める
+ */
 function mschCheckKind_(kind) {
-  if (['business', 'combined', 'service'].indexOf(kind) < 0) throw new Error('資料の種類「' + kind + '」が分かりません。');
+  if (['business', 'report', 'combined', 'service'].indexOf(kind) < 0) throw new Error('資料の種類「' + kind + '」が分かりません。');
   return kind;
 }
 
@@ -164,7 +167,7 @@ function getMeetingRunData(kind, final) {
   let sheets = [];
   let points = [];
   let job = '';
-  if (kind === 'business') {
+  if (kind === 'business' || kind === 'report') {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const props = PropertiesService.getDocumentProperties();
     sheets = mtgTrackedNames_(ss).map(name => {
@@ -185,7 +188,7 @@ function getMeetingRunData(kind, final) {
     timer.lap('比べる時点（' + MTG_OPTIONS.copyName + ' ' + points.length + '件）');
   }
   console.log('資料を作る画面の読み込み：' + timer.text());
-  const titles = {business: '会議サマリ（' + meetingName + '）', combined: '統合版（' + MTG_OPTIONS.combined.name + '）', service: meetingName + ' の事前資料'};
+  const titles = {business: '会議サマリ（' + meetingName + '）', report: '会議サマリ・報告案件版（' + meetingName + '）', combined: '統合版（' + MTG_OPTIONS.combined.name + '）', service: meetingName + ' の事前資料'};
   // 直前の「作成する」（画面が読み込み直されたとき・開き直したときに、作っている途中なら待ち、終わっていれば結果を出す）
   const run = getMeetingRunState(kind);
   return {kind, final: !!final, title: titles[kind] + (final ? 'を作る' : 'を試しに作る'), meetingName,
@@ -442,7 +445,8 @@ function checkMeetingRun(kind, final, meeting, names, point) {
   if (kind === 'service') return {text: smtgRunCheckText_(!!final, date, names, smtgCheckPoint_(point))};
   const resolved = mtgResolvePoint_(point);
   if (kind === 'combined') return mtgCombinedCheck_(date, resolved);
-  return {text: mtgRunCheckText_(!!final, names, date, resolved)};
+  const text = mtgRunCheckText_(!!final, names, date, resolved);
+  return {text: kind === 'report' ? mtgReportCheckText_() + '\n\n' + text : text};
 }
 
 /**
@@ -466,7 +470,8 @@ function runMeetingMaterials(kind, final, meeting, names, cancelJob, point, over
       message = smtgRunStart_(!!final, date, names, !!cancelJob, smtgCheckPoint_(point), !!overwrite);
     } else {
       const resolved = mtgResolvePoint_(point);
-      message = kind === 'combined' ? mtgCombinedStart_(date, resolved, !!overwrite) : mtgRunStart_(!!final, date, names, !!cancelJob, resolved, !!overwrite);
+      message = kind === 'combined' ? mtgCombinedStart_(date, resolved, !!overwrite)
+        : mtgRunStart_(!!final, date, names, !!cancelJob, resolved, !!overwrite, kind === 'report' ? 'report' : '');
     }
     mschRunStateSave_(Object.assign({status: 'done', message, finishedAt: Date.now()}, base));
     return {message};

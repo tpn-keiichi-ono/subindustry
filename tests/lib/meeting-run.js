@@ -13,6 +13,8 @@
 const RUNS = {
   createBusinessMtgSummaries: ['business', true],
   previewBusinessMtgSummaries: ['business', false],
+  createBusinessMtgReportSummaries: ['report', true],
+  previewBusinessMtgReportSummaries: ['report', false],
   createBusinessMtgCombinedSummary: ['combined', true],
   createServiceMtgSummaries: ['service', true],
   previewServiceMtgSummaries: ['service', false]

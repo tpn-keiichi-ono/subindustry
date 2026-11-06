@@ -132,7 +132,8 @@ test('本物のシートの見出し（2026/10/29 のスーパー・GMS の2行�
     '提案を勝ち取るための戦略・差異化要素', 'サービスのリクエスト'];
   const at = label => headers.findIndex(h => g.credNormalize_(h) === g.credNormalize_(label));
   // 売上開始月は 2026/10/29 にシートから無くなった（計画に対する積み上げ・売上開始月の確認は「データなし」）
-  Object.keys(mtg.columns).filter(key => key !== 'delivery' && key !== 'startMonth').forEach(key =>
+  // 報告フラグ（報告案件版。MeetingReport.gs）は、これから足す列（AF の右。追跡範囲の外）なので、この見出しには無い
+  Object.keys(mtg.columns).filter(key => key !== 'delivery' && key !== 'startMonth' && key !== 'reportFlag').forEach(key =>
     assert.ok(g.mtgColumnIndex_(headers, key) >= 0, '見出し：' + mtg.columns[key]));
   assert.strictEqual(g.mtgColumnIndex_(headers, 'startMonth'), -1);
   assert.strictEqual(g.mtgColumnIndex_(headers, 'orderMonth'), 13, '受注月は「受注月(yy/mm)」の N列（columnAliases）');

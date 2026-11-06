@@ -68,6 +68,21 @@ const MTG_OPTIONS = {
   // ファイル名（スライド・PDF）。{date} は会議日（yyyyMMdd）、{name} はサブインダストリー（シート名）。
   // 例：20261023_スーパー・GMS_RX Business Meeting用資料.pdf（試作は末尾に「_試作」）
   fileName: '{date}_{name}_RX Business Meeting用資料',
+  // 報告案件版（MeetingReport.gs。createBusinessMtgReportSummaries()）：数字のページは同じで、案件のページを、報告フラグにチェックした案件の
+  // 1件1枚にしたもの（Appendix なし）。ファイル名は fileName の後ろに fileSuffix（試作は、さらに「_試作」）。
+  // 右の文章の枠の字の大きさは、スライドの中で同じ（maxSize から 0.5pt ずつ minSize まで。入らなければ minSize で「…」で切る）
+  report: {
+    title: '報告案件',
+    prefix: '報告案件：',
+    fileSuffix: '_報告案件版',
+    maxSize: 11,
+    minSize: 7,
+    steps: ['創注', 'D', 'C', 'B', 'A'],   // ステータスの枠の確度の段（左から）
+    newText: '（新規）',                     // 前回に無かった案件の「前回：」
+    note: '前回＝表紙の対象期間の始まり',     // 出典の行の後ろ
+    recordWidth: 200,                        // 右下の「商談記録：」の幅（pt）
+    noneText: '報告フラグにチェックの入った案件がありません（シートの「報告フラグ」にチェックを入れた案件を、1件1枚で載せます）'
+  },
   folderId: '1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK',   // 保存先のフォルダの ID（空なら、このスプレッドシートと同じフォルダの中に folderName を作る）
   folderName: '会議サマリ',
   folderKey: 'MTG_FOLDER_ID',         // 作ったフォルダの ID（ドキュメントのプロパティ）
@@ -341,7 +356,11 @@ const MTG_OPTIONS = {
     scenario: 'RXシナリオ構成',           // I列。複数選んだときは「A, B」の形（プルダウンの複数選択）。無ければ使わない（ほかの見出しは columnAliases）
     // デリバリー担当：新FMT にはこの列が無いので空（入力内容のチェック「デリバリー担当未設定」を出さない）。列を作ったら、その見出しを書く
     delivery: '',
-    record: '商談記録（ＵＲＬ）'          // 提案資料・商談の音声の格納先（入力内容のチェック「資料なし」）
+    record: '商談記録（ＵＲＬ）',         // 提案資料・商談の音声の格納先（入力内容のチェック「資料なし」）
+    // 報告案件版（MeetingReport.gs）で使う列。無くても会議サマリは作れる（報告案件版は「データなし」・「未入力」）
+    strategy: '提案を勝ち取るための戦略・差異化要素',
+    valueCase: '想定される価値創出のケース／期待される導入効果',
+    reportFlag: '報告フラグ'              // チェックボックス。追跡範囲（DIFF_RULES の ranges）の外の列（AG など）に置く
   },
   // 同じ列のほかの見出し（シートによって見出しが違うもの。columns の見出しが無ければ、これを順に探す）。
   // 2026/10/26 時点で、I列はシートによって「RXシナリオ構成」と「RXシナリオ構成（サービス）」の2通り。
@@ -379,7 +398,7 @@ const MTG_OPTIONS = {
     green: '#70AD47', greenDark: '#38761D', greenDeep: '#548235', greenSoft: '#E2EFDA', greenText: '#274E13',
     up: '#8FD36B', down: '#A6A6A6', dark: '#595959',
     ink: '#1A1A1A', body: '#1A1A1A', sub: '#404040', muted: '#595959', faint: '#7F7F7F',
-    line: '#D0D0D0', frame: '#BFBFBF', rule: '#D9D9D9', white: '#FFFFFF', graySoft: '#EDEDED',
+    line: '#D0D0D0', frame: '#BFBFBF', rule: '#D9D9D9', white: '#FFFFFF', graySoft: '#EDEDED', link: '#1155CC',
     gap: '#F2F2F2', gapLine: '#A6A6A6',   // データなし（作れなかったところ）の塗りと点線の枠
     cover: '#3A7D22',                // 表紙の背景（画像を付けるまで・付けられないとき）
     divider: '#7F7F7F',              // 扉（Appendix）の背景（同じ。扉はグレー）
@@ -803,7 +822,7 @@ function mtgRunCheckText_(final, names, meeting, point) {
  * 会議サマリを作り始める（画面の「作成する」から。MeetingSchedule.gs の runMeetingMaterials）。作っている途中の仕事があれば、cancelJob ならやめて作り、
  * そうでなければ止める。時間がかかれば区切って続ける（mtgJobRun_）。戻り値は終わり（区切ったとき）の知らせ
  */
-function mtgRunStart_(final, meeting, names, cancelJob, point, overwrite) {
+function mtgRunStart_(final, meeting, names, cancelJob, point, overwrite, variant) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const pending = mtgJobLoad_();
@@ -815,7 +834,8 @@ function mtgRunStart_(final, meeting, names, cancelJob, point, overwrite) {
   }
   const now = new Date();
   const job = {final, meeting, now: now.getTime(), names, items: [], stored: 0, copy: null, index: null, folderUrl: '',
-    combined: !!MTG_OPTIONS.combined.enabled, point: point || null, sourceError: '', copyFix: null, overwrite: !!overwrite};
+    combined: !!MTG_OPTIONS.combined.enabled, point: point || null, sourceError: '', copyFix: null, overwrite: !!overwrite,
+    variant: variant === 'report' ? 'report' : ''};   // 'report'：報告案件版（MeetingReport.gs）
   mtgJobSafetyTrigger_();   // 実行が強制終了されたら（メモリ不足など）、最後に保存した進み具合から続ける
   let done;
   try {
@@ -866,10 +886,11 @@ function mtgJobRun_(ss, job, started) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
       const summary = summaries[i];
       const deckTimer = mschTimer_('スライドと PDF（' + summary.name + '）', true);
-      const fileName = mtgFileName_(summary.name, job.meeting, job.final);
+      const fileName = mtgFileName_(summary.name, job.meeting, job.final, job.variant);
       // 上書き（job.overwrite）：前に作った同じ資料（本番は会議のフォルダ、試作は保存先）の中身を書き換える（リンクを変えない）
       const existing = job.overwrite ? mtgExistingPdf_(fileName, summary.name, job.meeting, job.final, folder) : null;
-      const out = mtgExportDeck_(fileName, mtgSlides_(summary), folder, {overwrite: existing});
+      const slides = job.variant === 'report' ? mtgReportSlides_(summary) : mtgSlides_(summary);
+      const out = mtgExportDeck_(fileName, slides, folder, {overwrite: existing});
       deckTimer.lap('スライドを作って PDF に保存');
       // 試作：その会議日の最初の試作の、入力内容のチェックの結果を覚える（同じ会議日の資料で、解消した件数を出す）
       if (!job.final && !plans[i].draft) {
@@ -3658,6 +3679,9 @@ function mtgReadDeals_(sheet, rule) {
         return map;
       }, {}),
       record: text('record'),
+      strategy: text('strategy'),
+      valueCase: text('valueCase'),
+      reportFlag: mtgReportFlag_(value('reportFlag'), text('reportFlag')),
       updatedAt: stampCol >= 0 ? mtgTime_(values[n][stampCol]) : null,
       // 空の必須項目（シートの見出しで。前の見出しのままのシートでも、シートに書いてある名前を出す）
       missing: required.filter(r => !String(line[r.col]).trim()).map(r => String(headers[r.col]).trim() || r.label),
@@ -3862,6 +3886,8 @@ function mtgSummarize_(ss, name, context) {
     },
     recordColumn: !!table.has.record,
     scenarioColumn: !!table.has.scenario,
+    reportColumn: !!table.has.reportFlag,
+    reported: mtgReportItems_(table, changed),   // 報告フラグにチェックのある案件（報告案件版。MeetingReport.gs）
     stallPending,
     gaps: gaps.parts,
     alertGaps: gaps.alerts,
@@ -4818,7 +4844,7 @@ function mtgDividerSlide_(appendix, firstPage) {
 function mtgNumberSlides_(frame, slides, offset) {
   return slides.map((slide, i) => {
     const out = {title: slide.title, elements: mtgFrame_(frame, slide, (offset || 0) + i + 1).concat(slide.elements)};
-    ['cover', 'divider', 'combined', 'service', 'template', 'empty'].forEach(key => { if (slide[key]) out[key] = slide[key]; });
+    ['cover', 'divider', 'combined', 'service', 'template', 'empty', 'cut'].forEach(key => { if (slide[key]) out[key] = slide[key]; });
     return out;
   });
 }
@@ -4836,13 +4862,24 @@ function mtgFrame_(frame, slide, page) {
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
   if (slide.cover || slide.divider) return [];
-  const title = mtgTitleFit_(slide.title);
-  const el = [mtgBox_(S.x, S.titleY, S.w, 30, title.text, {size: title.size, bold: true, color: c.ink, role: 'title'})];
+  const el = [];
+  // 見出しを出さないスライド（noTitle。報告案件版の案件のページは、いちばん上に自分で「報告案件：」の行を描く）
+  if (!slide.noTitle) {
+    const title = mtgTitleFit_(slide.title);
+    el.push(mtgBox_(S.x, S.titleY, S.w, 30, title.text, {size: title.size, bold: true, color: c.ink, role: 'title'}));
+  }
   // リード文は中身（いちばん上の部品）にかからない高さに収める（mtgLead_）
   if (slide.lead) el.push.apply(el, mtgLead_(slide.lead, mtgContentTop_(slide)));
   el.push({type: 'box', x: S.x, y: S.ruleY, w: S.w, h: 0.75, fill: c.rule, shape: 'RECTANGLE'});
-  el.push(mtgBox_(S.x, S.footY, S.w - 60, 16, mtgWrap_(frame.source + (slide.note ? '　' + slide.note : ''), S.w - 60, 9, 1)[0],
+  // footRight = {w, text, size, color, spans}：出典の行の右（ページ番号の左）に置く文（報告案件の「商談記録：」）。出典の行はその分だけ狭くする
+  const right = slide.footRight || null;
+  const sourceW = S.w - 60 - (right ? right.w : 0);
+  el.push(mtgBox_(S.x, S.footY, sourceW, 16, mtgWrap_(frame.source + (slide.note ? '　' + slide.note : ''), sourceW, 9, 1)[0],
     {size: 9, color: c.faint, role: 'footer'}));
+  if (right) {
+    el.push(mtgBox_(S.x + sourceW, S.footY, right.w, 16, right.text, {size: right.size || 9, color: right.color || c.faint, align: 'END',
+      spans: right.spans || [], role: 'footer-right'}));
+  }
   el.push(mtgBox_(S.x + S.w - 60, S.footY - 1, 60, 18, String(page), {size: 10.5, color: c.ink, align: 'END', role: 'page'}));
   return el;
 }
@@ -7635,7 +7672,7 @@ function mtgTextHeight_(lines, size, spans) {
  * スライドの部品（位置・大きさは pt。スライドは MTG_SLIDE.width × height）
  * - 箱：{type: 'box', x, y, w, h, text, size, bold, color, font（既定は MTG_SLIDE.font）, fill, alpha（塗りの濃さ 0〜1）, line, lineWeight, dash（枠を点線に）,
  *        align: 'START'|'CENTER'|'END',
- *        valign: 'TOP'|'MIDDLE'|'BOTTOM', shape: 'TEXT_BOX'|'RECTANGLE'|'ROUND_RECTANGLE', spans: [{start, end, bold, color, size}]（一部の文字の書式）}
+ *        valign: 'TOP'|'MIDDLE'|'BOTTOM', shape: 'TEXT_BOX'|'RECTANGLE'|'ROUND_RECTANGLE', spans: [{start, end, bold, color, size, underline, url（URL へのリンク）}]（一部の文字の書式）}
  * - 表：{type: 'table', x, y, columns: [列の幅], rows: [{h, cells: [{text, size, bold, color, fill, align, spans}]}],
  *        borders: [{row, col, rows, cols, color, weight}]}（区切り線は薄いグレー。borders はそのあとに外枠として付ける）
  *   列の幅は 32pt 以上にする（Slides API は、それより狭い列の幅をエラーにする）。
@@ -7711,6 +7748,8 @@ function mtgSlideRequests_(slide, pageId, index, options) {
       if ('bold' in span) { style.bold = !!span.bold; fields.push('bold'); }
       if (span.color) { style.foregroundColor = {opaqueColor: {rgbColor: mtgRgb_(span.color)}}; fields.push('foregroundColor'); }
       if (span.size) { style.fontSize = pt(span.size); fields.push('fontSize'); }
+      if (span.underline) { style.underline = true; fields.push('underline'); }
+      if (span.url) { style.link = {url: span.url}; fields.push('link'); }   // URL へのリンク（報告案件の商談記録）
       if (fields.length) {
         requests.push({updateTextStyle: Object.assign({textRange: {type: 'FIXED_RANGE', startIndex: span.start, endIndex: end}, style,
           fields: fields.join(',')}, target)});
@@ -8226,9 +8265,13 @@ function mtgRequireSlides_() {
   }
 }
 
-/** ファイル名（20261023_スーパー・GMS_RX Business Meeting用資料。MTG_OPTIONS.fileName。試作は「_試作」つき） */
-function mtgFileName_(name, meeting, final) {
-  return MTG_OPTIONS.fileName.replace('{date}', meeting.replace(/\//g, '')).replace('{name}', name) + (final ? '' : '_試作');
+/**
+ * ファイル名（20261023_スーパー・GMS_RX Business Meeting用資料。MTG_OPTIONS.fileName。試作は「_試作」つき）。
+ * variant が 'report'（報告案件版）なら、MTG_OPTIONS.report.fileSuffix（「_報告案件版」）を「_試作」の前に付ける
+ */
+function mtgFileName_(name, meeting, final, variant) {
+  return MTG_OPTIONS.fileName.replace('{date}', meeting.replace(/\//g, '')).replace('{name}', name) +
+    (variant === 'report' ? MTG_OPTIONS.report.fileSuffix : '') + (final ? '' : '_試作');
 }
 
 /**
