@@ -73,7 +73,6 @@ const MTG_OPTIONS = {
   // 右の文章の枠の字の大きさは、スライドの中で同じ（maxSize から 0.5pt ずつ minSize まで。入らなければ minSize で「…」で切る）
   report: {
     title: '報告案件',
-    prefix: '報告案件：',
     fileSuffix: '_報告案件版',
     flagColumn: 'AG',                        // 報告フラグの列を足す場所（addBusinessMtgReportFlagColumn()。追跡範囲の外）
     flagWidth: 60,                           // その列の幅（px）
@@ -81,11 +80,13 @@ const MTG_OPTIONS = {
     minSize: 6.5,
     steps: ['創注', 'D', 'C', 'B', 'A'],   // ステータスの枠の確度の段（左から）
     newText: '（新規）',                     // 前回に無かった案件の「前回：」
-    prevSize: 7,                             // 活動状況・次回アクションの「前回」の帯の字の大きさ
-    staleFill: '#FFE699',                    // 活動状況・次回アクションが前回から変わっていないときの「更新なし」の印の色
+    prevSize: 7,                             // 課題・活動状況・次回アクションの「前回」の帯の字の大きさ
+    staleFill: '#FFE699',                    // 課題・活動状況・次回アクションが前回から変わっていないときの「更新なし」の印の色
     note: '前回＝表紙の対象期間の始まり',     // 出典の行の後ろ
-    recordWidth: 200,
-    staffWidth: 220,                         // 右上の「担当営業：…　BX担当：…」の幅の上限（pt）                        // 右下の「商談記録：」の幅（pt）
+    recordWidth: 200,                        // 右下の「商談記録：」の幅（pt）
+    linkLabel: '格納先リンク',               // 商談記録のリンクの文字（商談記録のセルのリンクへのハイパーリンク）
+    maxLinks: 3,                             // リンクが2つ以上あるときに出す数（格納先リンク①②③）
+    staffWidth: 220,                         // 右上の「担当営業：…　BX担当：…」の幅の上限（pt）
     noneText: '報告フラグにチェックの入った案件がありません（シートの「報告フラグ」にチェックを入れた案件を、1件1枚で載せます）'
   },
   folderId: '1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK',   // 保存先のフォルダの ID（空なら、このスプレッドシートと同じフォルダの中に folderName を作る）
@@ -3646,6 +3647,8 @@ function mtgReadDeals_(sheet, rule) {
   const range = sheet.getRange(headerRow + 1, 1, count, width);
   const values = range.getValues();
   const shown = range.getDisplayValues();
+  // 商談記録のセルのリンク（文字に URL が無い・ラベル付きのリンク・チップでも開けるように。報告案件版の「格納先リンク」）
+  const recordLinks = has.record ? mtgCellLinks_(sheet.getRange(headerRow + 1, cols.record + 1, count, 1)) : [];
   // 見出し（正規化）。columns の列は今の見出し（前の見出し（columnAliases）でも同じキー。時点コピーと今の行を、見出しを変えても比べられるように）
   const cellKeys = headers.map(h => (String(h).trim() ? mtgCanonicalLabel_(h) : ''));
   shown.forEach((line, n) => {
@@ -3685,6 +3688,7 @@ function mtgReadDeals_(sheet, rule) {
         return map;
       }, {}),
       record: text('record'),
+      recordLinks: has.record ? recordLinks[n] || [] : [],
       bx: text('bx'),
       strategy: text('strategy'),
       valueCase: text('valueCase'),
@@ -3700,6 +3704,37 @@ function mtgReadDeals_(sheet, rule) {
     });
   });
   return out;
+}
+
+/**
+ * 1列の範囲の、セルごとのリンクの URL（[URL の並び]。同じ URL は1つ）。セル全体・一部の文字のリンク、スマートチップ、
+ * =HYPERLINK("URL", …) の数式、文字の中の URL から。Sheets API で読んだ入れ物（getLinkUrls）でも、SpreadsheetApp でも読む。
+ * 読めなければ文字の中の URL だけ（止めない）
+ */
+function mtgCellLinks_(range) {
+  const shown = range.getDisplayValues();
+  const formulas = range.getFormulas();
+  let links = null;
+  try {
+    if (typeof range.getLinkUrls === 'function') {
+      links = range.getLinkUrls().map(line => line[0] || []);
+    } else {
+      links = range.getRichTextValues().map(line => {
+        const rich = line[0];
+        if (!rich) return [];
+        const runs = typeof rich.getRuns === 'function' ? rich.getRuns().map(run => run.getLinkUrl()) : [];
+        return [rich.getLinkUrl()].concat(runs);
+      });
+    }
+  } catch (error) {
+    console.warn('商談記録のリンクを読めませんでした（文字の中の URL だけ使います）：' + (error && error.message || error));
+  }
+  return shown.map((line, i) => {
+    const formula = /HYPERLINK\s*\(\s*"([^"]+)"/i.exec(String(formulas[i][0] || ''));
+    const inText = String(line[0] || '').match(/https?:\/\/[^\s"'<>、。）)]+/g) || [];
+    const all = ((links && links[i]) || []).concat(formula ? [formula[1]] : [], inText).filter(u => /^https?:\/\//i.test(String(u || '')));
+    return all.filter((u, k) => all.indexOf(u) === k);
+  });
 }
 
 /* ---------------- まとめる ---------------- */

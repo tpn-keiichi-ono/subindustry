@@ -96,7 +96,9 @@ function mtgApiBook_(ss, names, options) {
 function mtgApiLoadGrid_(book, names, light) {
   const fields = light ? 'sheets(properties(title),data(startRow,startColumn,rowData(values(effectiveValue,userEnteredValue))))'
     : 'sheets(properties(title),data(startRow,startColumn,rowData(values(formattedValue,effectiveValue,' +
-    'userEnteredValue,effectiveFormat(numberFormat(type)),dataValidation(condition)))))';
+    'userEnteredValue,effectiveFormat(numberFormat(type)),dataValidation(condition),' +
+    // セルのリンク（全体のリンク・一部の文字のリンク・スマートチップ。報告案件の商談記録の「格納先リンク」。mtgCellLinks_）
+    'hyperlink,textFormatRuns(format(link(uri))),chipRuns(chip(richLinkProperties(uri)))))))';
   const res = Sheets.Spreadsheets.get(book.id, {ranges: names.map(mtgApiQuote_), includeGridData: true, fields});
   (res.sheets || []).forEach(s => {
     const rows = [];
@@ -142,8 +144,10 @@ function mtgApiCell_(cell, tz, light) {
   else if (ev.boolValue != null) v = ev.boolValue;
   else if (ev.errorValue) v = cell.formattedValue || '#ERROR!';
   const shown = light ? (v === '' ? '' : String(v)) : cell.formattedValue == null ? '' : String(cell.formattedValue);
+  const links = [cell.hyperlink].concat((cell.textFormatRuns || []).map(run => (((run.format || {}).link) || {}).uri),
+    (cell.chipRuns || []).map(run => ((((run.chip || {}).richLinkProperties) || {}).uri))).filter(Boolean);
   return {v, d: shown, f: ((cell.userEnteredValue || {}).formulaValue) || '',
-    u: !!cell.userEnteredValue, dv: cell.dataValidation ? cell.dataValidation.condition || null : null};
+    u: !!cell.userEnteredValue, dv: cell.dataValidation ? cell.dataValidation.condition || null : null, l: links};
 }
 
 /** シリアル値（スプレッドシートのタイムゾーンの日時）→ Date */
@@ -285,7 +289,9 @@ function mtgApiRangeObject_(sheet, data, book, row, col, rows, cols) {
     getDisplayValue: () => range.getDisplayValues()[0][0],
     getFormula: () => range.getFormulas()[0][0],
     getDataValidations: () => map(rule),
-    getDataValidation: () => rule(cell(row, col))
+    getDataValidation: () => rule(cell(row, col)),
+    /** セルのリンクの URL（[[URL の並び]]。mtgCellLinks_ が使う。SpreadsheetApp には無い） */
+    getLinkUrls: () => map(x => (x && x.l ? x.l.slice() : []))
   };
   return range;
 }

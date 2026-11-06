@@ -95,14 +95,17 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   const titles = slides.map(sl => sl.title);
   const numbers = normal.slice(0, normal.findIndex(sl => sl.title === gas.get('MTG_TITLES').progress)).map(sl => sl.title);
   assert.deepStrictEqual(titles.slice(0, numbers.length), numbers, '表紙から RXシナリオまでは同じ');
-  assert.deepStrictEqual(titles.slice(numbers.length), ['報告案件：A社／店舗DX基盤の刷新', '報告案件：C社／販促最適化']);
+  assert.deepStrictEqual(titles.slice(numbers.length), ['報告案件①：A社／店舗DX基盤の刷新', '報告案件②：C社／販促最適化']);
   assert.ok(!slides.some(sl => sl.divider || /Appendix|前回から変化のある案件|期待値上位案件/.test(sl.title)), 'Appendix・案件のページは入れない');
 
   const a = slides[numbers.length];
   assert.ok(!byRole(a, 'title').length, '見出し（タイトル）は付けない');
   const head = byRole(a, 'report-title')[0];
-  assert.strictEqual(head.text, '報告案件：A社／店舗DX基盤の刷新');
-  assert.deepStrictEqual(head.spans.map(sp => [sp.start, sp.end]), [[0, 5]], '「報告案件：」だけ緑');
+  assert.strictEqual(head.text, '報告案件①：A社／店舗DX基盤の刷新');
+  assert.strictEqual(head.size, 21, '見出しはほかのスライドと同じ大きさ');
+  assert.ok(!(head.spans || []).length && head.color === '#1A1A1A', '色を付けない');
+  assert.ok(!byRole(a, 'report-rule').length, '見出しの下の線は無い');
+  assert.strictEqual(g.mtgReportTitle_('X', 21), '報告案件(21)：X');
   const all = texts(a).join('\n');
   ['先方', '経営企画部', '部長', 'B-クロージング中(70%)', '前回：C-提案中(50%)', '70　+20', '前回：50　／　想定売上：100', '2027/02', '前回：2026/12（延期）',
     'RXシナリオ（見込金額 80百万円）', '店舗オペレーション効率化', '需要予測', '提案を勝ち取るための戦略・差異化要素', '業務設計から運用定着まで一括で提案する',
@@ -121,8 +124,8 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.deepStrictEqual(steps.map(st => st.fill), ['#EDEDED', '#EDEDED', '#E2EFDA', '#70AD47', '#EDEDED']);
   // 右下の商談記録はリンク（出典の行は、その分だけ狭い）
   const record = byRole(a, 'footer-right')[0];
-  assert.match(record.text, /^商談記録：https:\/\/drive\.google\.com\//, '長い URL は「…」で切って見せる（リンクは全部）');
-  assert.deepStrictEqual(record.spans.map(sp => sp.url), ['https://drive.google.com/drive/folders/abc']);
+  assert.strictEqual(record.text, '商談記録：格納先リンク', 'URL は見せずに「格納先リンク」をハイパーリンクに');
+  assert.deepStrictEqual(record.spans.map(sp => [sp.url, record.text.slice(sp.start, sp.end)]), [['https://drive.google.com/drive/folders/abc', '格納先リンク']]);
   assert.ok(byRole(a, 'footer')[0].w < 676 - 60, '出典の行は商談記録の分だけ狭い');
   assert.match(byRole(a, 'footer')[0].text, /前回＝表紙の対象期間の始まり/);
   assert.ok(byRole(a, 'page').length === 1, 'ページ番号は付ける');
@@ -138,7 +141,7 @@ test('報告案件版のスライド：文章が多いと、どの枠にも入�
   const huge = 'あいうえおかきくけこ'.repeat(200);
   const {gas, g} = setup({edits: false, deals: [Object.assign({}, DEALS[0], {strategy: long}), Object.assign({}, DEALS[2], {activity: huge, reportFlag: true})]});
   const s = summarize(g, '新FMT');
-  const slides = plain(g.mtgReportSlides_(s)).filter(sl => /^報告案件：/.test(sl.title));
+  const slides = plain(g.mtgReportSlides_(s)).filter(sl => /^報告案件[①-⑳]：/.test(sl.title));
   const sizeOf = sl => byRole(sl, 'report-text')[0].size;
   const R = gas.get('MTG_OPTIONS').report;
   assert.ok(sizeOf(slides[0]) < R.maxSize && sizeOf(slides[0]) >= R.minSize, '長い戦略の分だけ小さく：' + sizeOf(slides[0]));
@@ -316,7 +319,7 @@ test('報告案件：活動状況・次回アクションの下に前回の内�
   const a = plain(s.reported[0]);
   assert.deepStrictEqual([a.activity, a.prevActivity, a.nextAction, a.prevNextAction],
     ['11/9 稟議の事前説明', '11/2 役員向けに最終提案', '11/15 稟議資料の事前確認', '11/15 稟議資料の事前確認']);
-  const slide = plain(g.mtgReportSlides_(s)).find(sl => sl.title === '報告案件：A社／店舗DX基盤の刷新');
+  const slide = plain(g.mtgReportSlides_(s)).find(sl => sl.title === '報告案件①：A社／店舗DX基盤の刷新');
   const prev = byRole(slide, 'report-prev').map(el => el.text);
   assert.deepStrictEqual(prev, ['今回と同じ（前回から更新なし）', '11/2 役員向けに最終提案', '今回と同じ（前回から更新なし）'],
     '課題・活動状況・次回アクションの順。活動状況は前回の文、課題・次回アクションは更新なし');
@@ -333,4 +336,29 @@ test('報告案件：活動状況・次回アクションの下に前回の内�
   assert.strictEqual(fresh.find(el => el.role === 'report-prev').text, '新規の案件のため、前回はありません');
   const unknown = plain(g.mtgReportPrevious_({x: 0, y: 0, w: 300, h: 160, text: 'a'}, {isNew: false}, undefined, 10, '前回'));
   assert.strictEqual(unknown.find(el => el.role === 'report-prev').text, 'データなし');
+});
+
+test('報告案件：商談記録の「格納先リンク」は、セルのリンク（ラベル付きのリンク・HYPERLINK の数式・文字の中の URL）を開く。Sheets API で読んでも同じ', () => {
+  const run = api => {
+    const {gas, g, sheet} = setup({edits: false});
+    // A社：「提案資料」という文字にリンク。C社：HYPERLINK の数式と、文字の中の URL の2つ
+    sheet.getRange('R3').setRichTextValues([[g.SpreadsheetApp.newRichTextValue().setText('提案資料').setLinkUrl('https://drive.google.com/x').build()]]);
+    sheet.getRange('R5').setFormula('=HYPERLINK("https://drive.google.com/y","音声")');
+    if (api) gas.enableSheetsApi();
+    const ss = api ? g.mtgApiBook_(g.SpreadsheetApp.getActiveSpreadsheet(), ['新FMT'], {}) : g.SpreadsheetApp.getActiveSpreadsheet();
+    const table = g.mtgReadDeals_(ss.getSheetByName('新FMT'), {headerRow: 2});
+    return plain(table.deals.map(d => d.recordLinks));
+  };
+  assert.deepStrictEqual(run(false), [['https://drive.google.com/x'], [], ['https://drive.google.com/y']]);
+  assert.deepStrictEqual(run(true), [['https://drive.google.com/x'], [], ['https://drive.google.com/y']], 'Sheets API（hyperlink）でも読む');
+
+  const {gas, g} = setup({edits: false});
+  const record = (text, links) => plain(g.mtgReportRecord_(text, true, links));
+  const two = record('a', ['https://a', 'https://b']);
+  assert.strictEqual(two.text, '商談記録：格納先リンク①　格納先リンク②');
+  assert.deepStrictEqual(two.spans.map(sp => [sp.url, two.text.slice(sp.start, sp.end)]), [['https://a', '格納先リンク①'], ['https://b', '格納先リンク②']]);
+  assert.strictEqual(record('共有ドライブの「提案」フォルダ', []).text, '商談記録：共有ドライブの「提案」フォルダ', 'リンクが無ければ文字のまま');
+  assert.strictEqual(record('', []).text, '商談記録：未入力');
+  assert.deepStrictEqual(g.mtgCellLinks_(gas.ss.getSheetByName('新FMT').getRange('R3')).map(x => plain(x)),
+    [['https://drive.google.com/drive/folders/abc']], '文字の中の URL');
 });

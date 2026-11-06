@@ -1349,6 +1349,7 @@ function createGas(options) {
       else if (v !== '' && v != null) out.effectiveValue = {stringValue: String(v)};
       if (cell.f) out.userEnteredValue = {formulaValue: cell.f};
       else if (out.effectiveValue && !cell.spill) out.userEnteredValue = Object.assign({}, out.effectiveValue);
+      if (cell.rich && cell.rich.getLinkUrl()) out.hyperlink = cell.rich.getLinkUrl();   // セル全体のリンク（Sheets API の hyperlink）
       const rule = cell.validation;
       if (rule) {
         const type = rule.getCriteriaType();

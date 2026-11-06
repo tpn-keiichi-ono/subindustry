@@ -148,7 +148,7 @@ function mtgReportSlides_(s) {
   const main = [mtgSummarySlide_(s)].concat(o.plan.enabled ? [mtgPlanSlide_(s.plan, s.now)] : [], [mtgBridgeSlide_(s)],
     o.portfolio.enabled ? mtgPortfolioSlides_(s.portfolio) : []);
   const reported = s.reported || [];
-  const reports = reported.length ? reported.map(item => mtgReportSlide_(s, item)) : [mtgReportEmptySlide_(s)];
+  const reports = reported.length ? reported.map((item, i) => mtgReportSlide_(s, item, i + 1)) : [mtgReportEmptySlide_(s)];
   return mtgNumberSlides_(mtgSheetFrame_(s), [mtgCoverSlide_(s)].concat(main, reports));
 }
 
@@ -197,13 +197,13 @@ function mtgReportLayout_() {
     prevH: 58};  // prevH：活動状況・次回アクションの枠の下の、前回の内容の帯の分（帯の上下のすき間を含む）
 }
 
-/** 報告案件の1枚（item は mtgReportItems_ の1件）。見出し・リード文は付けず、いちばん上に「報告案件：得意先／案件名」 */
-function mtgReportSlide_(s, item) {
+/** 報告案件の1枚（item は mtgReportItems_ の1件、no は番号（1 から））。ふつうの見出し・リード文の代わりに「報告案件①：得意先／案件名」（mtgReportHeader_） */
+function mtgReportSlide_(s, item, no) {
   const o = MTG_OPTIONS;
   const c = o.colors;
   const R = o.report;
   const L = mtgReportLayout_();
-  const el = mtgReportHeader_(mtgDealLabel_(item), mtgReportStaff_(item));
+  const el = mtgReportHeader_(mtgDealLabel_(item), mtgReportStaff_(item), no);
   const blank = o.blankText;
   // 右の列：文章の枠（字の大きさはスライドの中で同じ）
   const texts = [
@@ -231,7 +231,7 @@ function mtgReportSlide_(s, item) {
   el.push.apply(el, mtgReportValue_(box(2), item));
   el.push.apply(el, mtgReportMonth_(box(3), item));
   el.push.apply(el, mtgReportScenario_(box(4), item, s.scenarioColumn));
-  return {title: R.title + '：' + mtgDealLabel_(item), noTitle: true, note: R.note, footRight: mtgReportRecord_(item.record, s.recordColumn),
+  return {title: mtgReportTitle_(mtgDealLabel_(item), no), noTitle: true, note: R.note, footRight: mtgReportRecord_(item.record, s.recordColumn, item.recordLinks),
     cut: fit.cut, elements: el};
 }
 
@@ -287,29 +287,31 @@ function mtgReportEmptySlide_(s) {
 }
 
 /**
- * いちばん上の行「報告案件：得意先／案件名」（1行に入る大きさ。入らなければ「…」で切る）と、その下の緑の線。
- * staff（担当営業・BX担当の文）があれば右上に小さく書き、その分だけ案件名の幅を狭める
+ * いちばん上の行「報告案件①：得意先／案件名」（見出し。字の大きさはほかのスライドの見出しと同じ（MTG_SLIDE.titleSize。入らなければ 2pt ずつ 2回小さくし、
+ * それでも入らなければ「…」で切る。mtgTitleFit_ と同じ）。no は報告案件の番号（1 から。無ければ番号なし）。
+ * staff（担当営業・BX担当の文）があれば右上に小さく書き、その分だけ見出しの幅を狭める
  */
-function mtgReportHeader_(label, staff) {
+function mtgReportHeader_(label, staff, no) {
   const c = MTG_OPTIONS.colors;
   const R = MTG_OPTIONS.report;
   const S = MTG_SLIDE;
-  const prefix = R.prefix;
-  const full = label ? prefix + label : R.title;
+  const full = label ? mtgReportTitle_(label, no) : R.title;
   const staffW = staff ? Math.min(R.staffWidth, Math.ceil(mtgTextWidth_(staff, 8) / MTG_SLIDE.fit + MTG_SLIDE.padX + 2)) : 0;
   const w = S.w - staffW;
-  const sizes = [15, 14, 13, 12, 11];
+  const sizes = [S.titleSize, S.titleSize - 2, S.titleSize - 4];
   const size = sizes.find(pt => mtgWrap_(full, w, pt, 2).length === 1) || sizes[sizes.length - 1];
-  const text = mtgWrap_(full, w, size, 1)[0];
-  const spans = label ? [{start: 0, end: prefix.length, color: c.greenDark}] : [];
-  const el = [
-    mtgBox_(S.x, 11, w, 28, text, {size, bold: true, color: c.ink, spans, role: 'report-title'}),
-    {type: 'box', x: S.x, y: 40, w: S.w, h: 1.2, fill: c.green, shape: 'RECTANGLE', role: 'report-rule'}
-  ];
+  const el = [mtgBox_(S.x, S.titleY, w, 30, mtgWrap_(full, w, size, 1)[0], {size, bold: true, color: c.ink, role: 'report-title'})];
   if (staff) {
-    el.push(mtgBox_(S.x + w, 21, staffW, 18, mtgWrap_(staff, staffW, 8, 1)[0], {size: 8, color: c.muted, align: 'END', valign: 'BOTTOM', role: 'report-staff'}));
+    el.push(mtgBox_(S.x + w, S.titleY + 6, staffW, 18, mtgWrap_(staff, staffW, 8, 1)[0], {size: 8, color: c.muted, align: 'END', role: 'report-staff'}));
   }
   return el;
+}
+
+/** 報告案件の見出し「報告案件①：得意先／案件名」（番号は ①〜⑳、21 からは「(21)」。no が無ければ「報告案件：」） */
+function mtgReportTitle_(label, no) {
+  const R = MTG_OPTIONS.report;
+  const mark = !no ? '' : no <= 20 ? String.fromCharCode(0x2460 + no - 1) : '(' + no + ')';
+  return R.title + mark + '：' + label;
 }
 
 /** 右上の担当：「担当営業：佐藤　BX担当：田中」（空なら「未入力」。列が無い項目は出さない） */
@@ -489,18 +491,29 @@ function mtgReportScenario_(b, item, hasColumn) {
   return el;
 }
 
-/** 右下の「商談記録：」（URL ならリンク。無ければ「未入力」。列が無ければ「データなし」）。mtgFrame_ が出典の行の右に置く */
-function mtgReportRecord_(record, hasColumn) {
+/**
+ * 右下の「商談記録：格納先リンク」（「格納先リンク」を商談記録のセルのリンクへのハイパーリンクに。URL が2つ以上なら「格納先リンク①　②」と
+ * report.maxLinks 個まで）。セルにリンクが無く文字だけなら、その文字（リンクなし）。空なら「未入力」、列が無ければ「データなし」。
+ * mtgFrame_ が出典の行の右に置く
+ */
+function mtgReportRecord_(record, hasColumn, links) {
   const c = MTG_OPTIONS.colors;
   const R = MTG_OPTIONS.report;
   const head = '商談記録：';
   const value = String(record || '').trim();
-  if (!hasColumn || !value) {
-    const text = head + (hasColumn ? MTG_OPTIONS.blankText : MTG_OPTIONS.gapText);
-    return {w: R.recordWidth, text, size: 8, color: c.faint};
+  const urls = (links || []).slice(0, R.maxLinks);
+  if (!hasColumn || (!value && !urls.length)) {
+    return {w: R.recordWidth, text: head + (hasColumn ? MTG_OPTIONS.blankText : MTG_OPTIONS.gapText), size: 8, color: c.faint};
   }
-  const url = (/https?:\/\/[^\s"'<>]+/.exec(value) || [''])[0];
-  const shown = mtgWrap_(head + (url || value), R.recordWidth, 8, 1)[0];
-  const spans = url ? [{start: head.length, end: shown.length, url, color: c.link, underline: true}] : [];
-  return {w: R.recordWidth, text: shown, size: 8, color: c.faint, spans};
+  if (!urls.length) return {w: R.recordWidth, text: mtgWrap_(head + value, R.recordWidth, 8, 1)[0], size: 8, color: c.faint};
+  const marks = '①②③④⑤';
+  let text = head;
+  const spans = [];
+  urls.forEach((url, i) => {
+    const label = R.linkLabel + (urls.length > 1 ? marks[i] : '');
+    if (i) text += '　';
+    spans.push({start: text.length, end: text.length + label.length, url, color: c.link, underline: true});
+    text += label;
+  });
+  return {w: R.recordWidth, text, size: 8, color: c.faint, spans};
 }
