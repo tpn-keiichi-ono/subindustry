@@ -119,7 +119,7 @@ function newRichTextValue() {
 
 /* ---------------- 入力規則（プルダウン・日付） ---------------- */
 
-const DataValidationCriteria = {VALUE_IN_LIST: 'VALUE_IN_LIST', VALUE_IN_RANGE: 'VALUE_IN_RANGE', DATE_IS_VALID_DATE: 'DATE_IS_VALID_DATE'};
+const DataValidationCriteria = {VALUE_IN_LIST: 'VALUE_IN_LIST', VALUE_IN_RANGE: 'VALUE_IN_RANGE', DATE_IS_VALID_DATE: 'DATE_IS_VALID_DATE', CHECKBOX: 'CHECKBOX'};
 
 function newDataValidation() {
   const rule = {type: null, values: [], showDropdown: true, allowInvalid: true, helpText: ''};
@@ -138,6 +138,7 @@ function newDataValidation() {
       return builder;
     },
     requireDate() { rule.type = DataValidationCriteria.DATE_IS_VALID_DATE; rule.values = []; return builder; },
+    requireCheckbox() { rule.type = DataValidationCriteria.CHECKBOX; rule.values = []; return builder; },
     setAllowInvalid(allow) { rule.allowInvalid = !!allow; return builder; },
     setHelpText(text) { rule.helpText = String(text); return builder; },
     build() {
@@ -348,6 +349,7 @@ class Range {
   setFontColor(v) { this.each(cell => { cell.fmt = Object.assign(cell.fmt || {}, {fc: v}); }); return this; }
   setBackground() { return this; }
   setVerticalAlignment(v) { this.each(cell => { cell.fmt = Object.assign(cell.fmt || {}, {va: v}); }); return this; }
+  setHorizontalAlignment(v) { this.each(cell => { cell.fmt = Object.assign(cell.fmt || {}, {ha: v}); }); return this; }
   setWrap() { return this; }
 
   /** 書式（まとめて付ける形）。セルの fmt に残す（テストと見た目の確認用） */

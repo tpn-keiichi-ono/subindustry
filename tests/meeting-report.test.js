@@ -190,3 +190,63 @@ test('報告案件版を作る関数：前の関数はそのままで、ファ�
   assert.doesNotMatch(g.checkMeetingRun('business', true, '10/23', ['新FMT'], '').text, /報告案件版/);
   assert.match(g.getMeetingRunData('report', true).title, /報告案件版/);
 });
+
+test('addBusinessMtgReportFlagColumn：各シートの AG列に「報告フラグ」の見出しとチェックボックスを足す（値は書かない）。2回目は付け直すだけ', () => {
+  const gas = createGas();
+  const g = gas.global;
+  // 本物と同じく、最終更新日時は A列（AG列は空ける）
+  const plainHeaders = Object.assign({}, HEADERS);
+  delete plainHeaders.reportFlag;
+  delete plainHeaders.stamp;
+  const headerLine = () => Object.assign(row(plainHeaders), {0: HEADERS.stamp});
+  const lines = [row({customer: '新FMT'}), headerLine(), row({customer: 'A社', project: 'X', status: 'C-提案中(50%)'})].map(l => l.slice(0, 32));
+  // 新FMT：A〜AF の32列（本物と同じ）。新FMT2：AG列に値がある
+  const sheet = gas.addSheet('新FMT', lines, {rows: 10, columns: 32});
+  gas.addSheet('新FMT2', [row({customer: '新FMT2'}), headerLine()].concat([Object.assign(row({}), {32: 'メモ'})]), {rows: 10, columns: WIDTH});
+  g.setupDiffTracking();
+  gas.writes.length = 0;
+  const result = g.addBusinessMtgReportFlagColumn();
+  assert.deepStrictEqual(plain(result), [
+    '「新FMT」：AG列に「報告フラグ」の列を足しました（3行目から下をチェックボックスに）。',
+    '「新FMT2」：AG列に値があるため、足しませんでした（AG3：「メモ」）。MTG_OPTIONS.report.flagColumn を空いている列にしてください。'
+  ]);
+  assert.strictEqual(sheet.getMaxColumns(), 33);
+  assert.strictEqual(sheet.getRange('AG2').getValue(), '報告フラグ');
+  assert.strictEqual(sheet.getRange('AG3').getDataValidation().getCriteriaType(), 'CHECKBOX');
+  assert.strictEqual(sheet.getRange('AG10').getDataValidation().getCriteriaType(), 'CHECKBOX');
+  assert.strictEqual(sheet.getRange('AG3').getValue(), '', '値は書かない（最後の行を変えない）');
+  assert.strictEqual(sheet.getLastRow(), 3);
+  assert.strictEqual(gas.ss.getSheetByName('新FMT2').getRange('AG3').getValue(), 'メモ', '上書きしない');
+
+  // 足した列を資料が読む（チェックした案件が報告案件になる）
+  sheet.getRange('AG3').setValue(true);
+  assert.deepStrictEqual(plain(summarize(g, '新FMT').reported).map(d => d.customer), ['A社']);
+
+  // 2回目：もうある列は付け直すだけ
+  assert.strictEqual(g.addBusinessMtgReportFlagColumn()[0], '「新FMT」：「報告フラグ」の列は AG列にあります（チェックボックスを付け直しました）。');
+  assert.strictEqual(sheet.getMaxColumns(), 33);
+
+  // いいえなら何もしない
+  gas.confirmAnswer = 'NO';
+  assert.strictEqual(g.addBusinessMtgReportFlagColumn(), undefined);
+});
+
+test('addBusinessMtgReportFlagColumn：AF列まで無いシート・追跡範囲の中の列には足さない', () => {
+  const gas = createGas();
+  const g = gas.global;
+  // 本物と同じく、最終更新日時は A列（AG列は空ける）
+  const plainHeaders = Object.assign({}, HEADERS);
+  delete plainHeaders.reportFlag;
+  delete plainHeaders.stamp;
+  const headerLine = () => Object.assign(row(plainHeaders), {0: HEADERS.stamp});
+  gas.addSheet('新FMT', [row({customer: '新FMT'}), headerLine()].map(l => l.slice(0, 27)), {rows: 10, columns: 27});
+  gas.addSheet('新FMT2', [row({customer: '新FMT2'}), headerLine()], {rows: 10, columns: WIDTH});
+  g.setupDiffTracking();
+  gas.get('MTG_OPTIONS').report.flagColumn = 'AE';
+  assert.match(g.addBusinessMtgReportFlagColumn()[1], /^「新FMT2」：AE列が追跡範囲（D3:AF）の中のため、足しませんでした/);
+  gas.get('MTG_OPTIONS').report.flagColumn = 'AG';
+  const result = g.addBusinessMtgReportFlagColumn();
+  assert.strictEqual(result[0], '「新FMT」：AF列まで無いため、足しませんでした（今は AA列まで）。');
+  assert.strictEqual(gas.ss.getSheetByName('新FMT').getMaxColumns(), 27);
+  assert.deepStrictEqual([g.mtgColumnNumber_('AG'), g.mtgColumnLetter_(33), g.mtgColumnLetter_(27), g.mtgColumnLetter_(26)], [33, 'AG', 'AA', 'Z']);
+});

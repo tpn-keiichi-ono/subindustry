@@ -75,6 +75,8 @@ const MTG_OPTIONS = {
     title: '報告案件',
     prefix: '報告案件：',
     fileSuffix: '_報告案件版',
+    flagColumn: 'AG',                        // 報告フラグの列を足す場所（addBusinessMtgReportFlagColumn()。追跡範囲の外）
+    flagWidth: 60,                           // その列の幅（px）
     maxSize: 11,
     minSize: 7,
     steps: ['創注', 'D', 'C', 'B', 'A'],   // ステータスの枠の確度の段（左から）

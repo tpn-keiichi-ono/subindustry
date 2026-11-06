@@ -22,6 +22,102 @@ function previewBusinessMtgReportSummaries() {
   mschOpenRunDialog_('report', false);
 }
 
+/**
+ * 各サブインダストリーのシート（DIFF_RULES の追跡シート）の MTG_OPTIONS.report.flagColumn（AG）列に、「報告フラグ」の列を足す（エディタから実行。管理者の作業）。
+ * 見出しの行（headerRow）に「報告フラグ」と書き（書式は左の列の見出しと同じ）、その下の行をすべてチェックボックスにする（入力規則だけ。値は書かないので、
+ * シートの最後の行は変わらない）。何度実行してもよい：もう「報告フラグ」の列があるシートは、チェックボックスを付け直すだけ（AG 以外の列にあれば、そのまま）。
+ * 足さないシート：AG列に何か書いてある（上書きしない）・AG列が追跡範囲（DIFF_RULES の ranges）の中・AF列まで無い（列を増やすと追跡範囲が変わるため）。
+ * 追跡範囲の外なので、変更の記録（差分追跡）には影響しない（setupDiffTracking() の実行は要らない）
+ */
+function addBusinessMtgReportFlagColumn() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const o = MTG_OPTIONS;
+  const names = mtgTrackedNames_(ss);
+  if (!names.length) throw new Error('追跡しているシート（test.gs の DIFF_RULES）が見つかりません。');
+  const ui = mtgUiOrNull_();
+  const column = o.report.flagColumn;
+  if (ui) {
+    const answer = ui.alert(CRED_OPTIONS.menuTitle, '「' + names.join('」「') + '」の ' + column + '列に「' + o.columns.reportFlag +
+      '」の列（チェックボックス）を足します。\n' + column + '列に何か書いてあるシートには足しません。よろしいですか？', ui.ButtonSet.YES_NO);
+    if (answer !== ui.Button.YES) return;
+  }
+  const lock = LockService.getDocumentLock();
+  if (!lock.tryLock(30000)) throw new Error('ほかの処理（差分追跡など）が実行中です。少し待ってからもう一度お試しください。');
+  let lines;
+  try {
+    lines = names.map(name => '「' + name + '」：' + mtgReportAddFlagColumn_(ss.getSheetByName(name), DIFF_RULES[name], column));
+  } finally {
+    lock.releaseLock();
+  }
+  const message = '報告フラグの列\n' + lines.join('\n') + '\n\n営業リーダーが、会議で報告する案件にチェックを入れます。' +
+    '報告案件版の資料は createBusinessMtgReportSummaries()（試作は previewBusinessMtgReportSummaries()）で作ります。';
+  console.log(message);
+  if (ui) ui.alert(CRED_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+  return lines;
+}
+
+/** 1つのシートに報告フラグの列を足す（addBusinessMtgReportFlagColumn）。結果の文（足した・付け直した・足さなかった理由） */
+function mtgReportAddFlagColumn_(sheet, rule, letter) {
+  const o = MTG_OPTIONS;
+  const label = o.columns.reportFlag;
+  const col = mtgColumnNumber_(letter);
+  const headerRow = rule.headerRow;
+  const maxRows = sheet.getMaxRows();
+  const maxCols = sheet.getMaxColumns();
+  const checkbox = SpreadsheetApp.newDataValidation().requireCheckbox().build();
+  const boxes = c => (maxRows > headerRow ? sheet.getRange(headerRow + 1, c, maxRows - headerRow, 1) : null);
+  // もう列があれば、チェックボックスを付け直すだけ
+  const headers = sheet.getRange(headerRow, 1, 1, maxCols).getDisplayValues()[0];
+  const found = mtgColumnIndex_(headers, 'reportFlag');
+  if (found >= 0) {
+    if (found + 1 !== col) return '「' + label + '」の列は ' + mtgColumnLetter_(found + 1) + '列にあります（そのまま）。';
+    const range = boxes(col);
+    if (range) range.setDataValidation(checkbox);
+    return '「' + label + '」の列は ' + letter + '列にあります（チェックボックスを付け直しました）。';
+  }
+  // 追跡範囲の中には置かない（チェックのたびに変更の記録が増え、会議サマリの「その他更新」にも出るため）
+  const tracked = (rule.ranges || []).filter(a1 => {
+    const m = /^\$?([A-Z]*)\$?\d*(?::\$?([A-Z]*)\$?\d*)?$/.exec(String(a1).toUpperCase().trim());
+    if (!m) return false;
+    const from = m[1] ? mtgColumnNumber_(m[1]) : 1;
+    const to = m[2] === undefined ? from : m[2] ? mtgColumnNumber_(m[2]) : Infinity;
+    return from <= col && col <= to;
+  });
+  if (tracked.length) return letter + '列が追跡範囲（' + tracked.join('・') + '）の中のため、足しませんでした（MTG_OPTIONS.report.flagColumn を範囲の外の列にしてください）。';
+  // 左の列（AF）まで無いシートは、列を増やすと追跡範囲（D3:AF など）が広がって変更の記録の比べ方が変わるので、足さない
+  if (maxCols < col - 1) return mtgColumnLetter_(col - 1) + '列まで無いため、足しませんでした（今は ' + mtgColumnLetter_(maxCols) + '列まで）。';
+  if (maxCols < col) {
+    sheet.insertColumnsAfter(maxCols, col - maxCols);
+  } else {
+    // AG列に何か書いてあれば上書きしない
+    const values = sheet.getRange(1, col, maxRows, 1).getDisplayValues();
+    const used = values.findIndex(v => String(v[0]).trim() !== '');
+    if (used >= 0) {
+      return letter + '列に値があるため、足しませんでした（' + letter + (used + 1) + '：「' + mtgWrap_(values[used][0], 200, 9, 1)[0] + '」）。' +
+        'MTG_OPTIONS.report.flagColumn を空いている列にしてください。';
+    }
+  }
+  const head = sheet.getRange(headerRow, col);
+  if (col > 1) sheet.getRange(headerRow, col - 1).copyTo(head, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  head.setValue(label);
+  const range = boxes(col);
+  if (range) range.setDataValidation(checkbox).setHorizontalAlignment('center');
+  sheet.setColumnWidth(col, o.report.flagWidth);
+  return letter + '列に「' + label + '」の列を足しました（' + (headerRow + 1) + '行目から下をチェックボックスに）。';
+}
+
+/** 列の文字（AG）→ 番号（33） */
+function mtgColumnNumber_(letters) {
+  return String(letters).toUpperCase().split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+}
+
+/** 列の番号（33）→ 文字（AG） */
+function mtgColumnLetter_(n) {
+  let out = '';
+  for (let v = n; v > 0; v = Math.floor((v - 1) / 26)) out = String.fromCharCode(65 + (v - 1) % 26) + out;
+  return out;
+}
+
 /** 作る前の確かめ（資料を作る画面）の、報告案件版の説明（MeetingSchedule.gs の checkMeetingRun が、会議サマリの確かめの前に付ける） */
 function mtgReportCheckText_() {
   const o = MTG_OPTIONS;
