@@ -4420,48 +4420,45 @@ test('期待値の週次推移（試作）：直近12週の週末の期待値（
   assert.match(gas.alerts[gas.alerts.length - 1].message, /^期待値の週次推移の資料（試作）を作りました：\d{8}_期待値の週次推移_試作\.pdf（2ページ）/);
 });
 
-test('updateBusinessMtgWeeklySheet：全サブインダストリーの週次推移を別のスプレッドシートに書く（無ければ保存先に作ってプロパティに入れる。2回目からは同じスプレッドシートを書き直す）。横軸が週・横軸が確度', () => {
+test('backfillBusinessMtgWeeklyRecords：週次推移のスプレッドシートの「記録_週次」に、記録の無い終わった週の値を逆算して書く（記録のある週・シートは書かない。何度実行しても重ねない）', () => {
   const {gas, g, sheet} = setup({edits: false});
-  aged(gas, 30, () => g.recordDiffEdit(gas.edit(sheet, 'H3', '15')));
-  aged(gas, 10, () => g.recordDiffEdit(gas.edit(sheet, 'F5', '失注')));
-  g.recordDiffEdit(gas.edit(sheet, 'H7', '60'));
+  aged(gas, 30, () => g.recordDiffEdit(gas.edit(sheet, 'H3', '15')));   // A社：期待値 10 → 15（30日前）
+  aged(gas, 10, () => g.recordDiffEdit(gas.edit(sheet, 'F5', '失注')));  // C社：失注（10日前）
   const props = g.PropertiesService.getScriptProperties();
-  const message = g.updateBusinessMtgWeeklySheet();
-  const url = props.getProperty('MTG_WEEKLY_SPREADSHEET');
-  assert.match(url, /^https:\/\/docs\.google\.com\/spreadsheets\/d\/created-\d+\/edit$/, 'プロパティに URL を入れる');
-  const id = g.mtgFileIdOf_(url);
-  assert.match(message, /^期待値の週次推移を書きました（2サブインダストリー・直近12週）：https:\/\/docs\.google\.com\/spreadsheets\/d\/created-\d+\/edit\n（スプレッドシートを新しく作り/);
-  const book = g.SpreadsheetApp.openById(id);
-  assert.strictEqual(book.getName(), '期待値の週次推移（全サブインダストリー）');
-  assert.ok(gas.moved.some(m => m.id === id), '保存先のフォルダに移す');
-  assert.deepStrictEqual(book.getSheets().map(s => s.getName()), ['週次_案件別', '週次_確度別'], '最初のシート（シート1）は消す');
-  // 横軸が週
-  const byWeek = book.getSheetByName('週次_案件別');
-  const v = byWeek.getRange(1, 1, byWeek.getLastRow(), byWeek.getLastColumn()).getValues();
-  assert.deepStrictEqual(v[1].slice(0, 5), ['サブインダストリー', '得意先', '案件名', '今のステータス', '今の確度']);
-  assert.strictEqual(v[1].length, 5 + 12 + 1);
-  assert.match(String(v[1][16]), /（今）$/);
-  assert.deepStrictEqual(v.slice(2, 5).map(r => r.slice(0, 2)), [['全サブインダストリー', '（合計）'], ['新FMT', '（合計）'], ['新FMT2', '（合計）']]);
-  assert.deepStrictEqual([v[2][17], v[3][17]], [20, 20], '期間の増減（A社 +5・C社 ▲5・E社 +20）');
-  const names = v.slice(5).filter(r => r[0] === '新FMT').map(r => r[1]);
-  assert.deepStrictEqual(names.slice(0, 3), ['E社', 'A社', 'C社'], '案件は期間の増減の大きい順');
-  assert.deepStrictEqual([1, 2, 3, 4, 5].map(col => byWeek.getRange(6, col).getNumberFormat()), ['@', '@', '@', '@', '@'],
-    '名前の列は文字の書式（「=」で始まる名前も数式にならない）');
-  assert.strictEqual(byWeek.getFrozenRows(), 2);
-  assert.strictEqual(byWeek.getMaxRows(), byWeek.getLastRow(), '使わない行は持たない');
-  // 横軸が確度：全体とサブインダストリーごとのまとまり（名前・見出し・12週・期間の増減・空）
-  const byRank = book.getSheetByName('週次_確度別');
-  const r = byRank.getRange(1, 1, byRank.getLastRow(), byRank.getLastColumn()).getValues();
-  assert.deepStrictEqual(r[1][0], '全サブインダストリー');
-  assert.deepStrictEqual(r[2], ['週', 'A', 'B', 'C', 'D', '創注', '未設定', '合計']);
-  assert.match(String(r[14][0]), /（今）$/);
-  assert.strictEqual(r[15][0], '期間の増減');
-  assert.strictEqual(r[15][7], 20);
-  assert.strictEqual(r[17][0], '新FMT');
-  // 2回目：同じスプレッドシートを書き直す（リンクは変わらない）
-  const created = gas.created.length;
-  g.updateBusinessMtgWeeklySheet();
-  assert.strictEqual(gas.created.length, created, '新しく作らない');
-  assert.strictEqual(props.getProperty('MTG_WEEKLY_SPREADSHEET'), url);
-  assert.strictEqual(book.getSheetByName('週次_案件別').getLastRow(), byWeek.getLastRow());
+  const o = gas.get('MTG_OPTIONS').weekly;
+  assert.throws(() => g.backfillBusinessMtgWeeklyRecords(), /スクリプトのプロパティ「MTG_WEEKLY_SPREADSHEET」に、期待値の週次推移のスプレッドシートの URL を入れてください/);
+  const book = g.SpreadsheetApp.create('期待値の週次推移');
+  props.setProperty('MTG_WEEKLY_SPREADSHEET', book.getUrl());
+  assert.throws(() => g.backfillBusinessMtgWeeklyRecords(), /「記録_週次」シートがありません。.*updateWeeklyHeatmap\(\) を1回実行してから/);
+  const record = book.insertSheet('記録_週次');
+  record.getRange(1, 1, 1, 7).setValues([['週', 'サブインダストリー', '時点', '出どころ', '記録日時', '分割', '案件']]);
+  assert.throws(() => g.backfillBusinessMtgWeeklyRecords(), /1行目の見出しが「週（月曜）・サブインダストリー・時点・出どころ・記録日時・分割・案件（JSON）」ではありません/);
+  record.getRange(1, 1, 1, 7).setValues([o.recordHeader]);
+  // 時点コピーから記録した週（週次推移のスプレッドシートのプロジェクトが書いた行）は書かない
+  const weeks = g.mtgWeeklyWeeks_(new gas.Date(), o.weeks);
+  const key = k => g.Utilities.formatDate(new gas.Date(weeks.list[k].start), 'Asia/Tokyo', 'yyyy/MM/dd');
+  record.getRange(2, 1, 1, 7).setValues([[key(10), '新FMT', '', '時点コピー', '', '1/1', '[]']]);
+  const message = g.backfillBusinessMtgWeeklyRecords();
+  assert.match(message, /^期待値の週次推移の記録（逆算）を書きました（12週・23行。/, '終わった11週と、その前の週 × 2シート（時点コピーの記録がある1つを除く）');
+  const rows = record.getRange(3, 1, record.getLastRow() - 2, 7).getValues();
+  assert.strictEqual(rows.length, 23);
+  assert.ok(rows.every(r => r[3] === '逆算' && r[5] === '1/1'));
+  assert.ok(!rows.some(r => r[0] === key(10) && r[1] === '新FMT'));
+  assert.strictEqual(record.getRange(3, 7).getNumberFormat(), '@', '文字として書く（「=」で始まる名前も数式にならない）');
+  const items = (week, name) => JSON.parse(rows.find(r => r[0] === week && r[1] === name)[6]);
+  const deal = (list, customer) => list.find(x => x[0] === customer);
+  // 最初の週の前の週：A社は 10（30日前に 15 に変えた）
+  const first = g.Utilities.formatDate(new gas.Date(weeks.before - 7 * 86400000), 'Asia/Tokyo', 'yyyy/MM/dd');
+  assert.strictEqual(rows[0][0], first);
+  assert.strictEqual(rows[0][2], g.Utilities.formatDate(new gas.Date(weeks.before), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm'), '時点は週の終わり（次の月曜 0時）');
+  assert.strictEqual(deal(items(first, '新FMT'), 'A社')[3], 10);
+  assert.strictEqual(deal(items(first, '新FMT'), 'A社')[4], 3, '行');
+  // 2〜3週前の週：A社は 15、C社は失注の前（失注にしたのは10日前）
+  const mid = items(key(8), '新FMT');
+  assert.strictEqual(deal(mid, 'A社')[3], 15);
+  assert.notStrictEqual(deal(mid, 'C社')[2], '失注');
+  assert.ok(items(key(8), '新FMT2').length > 0);
+  // 2回目：書く週は無い
+  assert.match(g.backfillBusinessMtgWeeklyRecords(), /^逆算して書く週はありません/);
+  assert.strictEqual(record.getLastRow(), 25);
 });

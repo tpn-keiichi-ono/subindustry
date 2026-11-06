@@ -9,6 +9,7 @@
  * 再現している主な動き
  * - setValue / setValues の文字列は、手入力と同じく変換する：
  *   先頭が ' なら文字列のまま（' は値に含めない）、= なら数式、数字・TRUE/FALSE・日付（2026/10/01）は数値・真偽値・日時。
+ *   書式が文字（@）のセルは変換しない（本物と同じ）。
  * - setRichTextValues は変換しない（文字列のまま入る）。
  * - getRange はシートの大きさを超えるとエラーになる（行・列の追加を忘れたときに気づけるように）。
  * - スクリプトの書き込みは gas.writes に「ロックを持っていたか」と一緒に残る（利用者の入力 gas.edit() は残さない）。
@@ -753,6 +754,8 @@ function createGas(options) {
     if (value == null || value === '') { cell.v = ''; return; }
     if (typeof value !== 'string') { cell.v = value; return; }
     if (value[0] === "'") { cell.v = value.slice(1); return; }
+    // 書式が文字（@）のセルは、本物と同じく変換しない（「=」で始まっても数式にならない・日付の形も文字のまま）
+    if (cell.nf === '@') { cell.v = value; return; }
     if (value[0] === '=') { cell.v = ''; cell.f = value; return; }
     if (/^-?\d+(\.\d+)?$/.test(value)) { cell.v = Number(value); return; }
     if (/^(true|false)$/i.test(value)) { cell.v = /^true$/i.test(value); return; }
