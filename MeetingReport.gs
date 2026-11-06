@@ -197,13 +197,13 @@ function mtgReportLayout_() {
     prevH: 58};  // prevH：活動状況・次回アクションの枠の下の、前回の内容の帯の分（帯の上下のすき間を含む）
 }
 
-/** 報告案件の1枚（item は mtgReportItems_ の1件、no は番号（1 から））。ふつうの見出し・リード文の代わりに「報告案件①：得意先／案件名」（mtgReportHeader_） */
+/** 報告案件の1枚（item は mtgReportItems_ の1件、no は番号（1 から））。ふつうの見出し・リード文の代わりに「報告案件①：」と得意先・案件名の2行（mtgReportHeader_） */
 function mtgReportSlide_(s, item, no) {
   const o = MTG_OPTIONS;
   const c = o.colors;
   const R = o.report;
   const L = mtgReportLayout_();
-  const el = mtgReportHeader_(mtgDealLabel_(item), mtgReportStaff_(item), no);
+  const el = mtgReportHeader_(item, mtgReportStaff_(item), no);
   const blank = o.blankText;
   // 右の列：文章の枠（字の大きさはスライドの中で同じ）
   const texts = [
@@ -283,31 +283,41 @@ function mtgReportEmptySlide_(s) {
   const text = gap ? 'シートに「' + o.columns.reportFlag + '」の列が無い（見出しの行に列を足し、チェックボックスにしてください）'
     : R.noneText;
   return {title: R.title, noTitle: true, empty: gap ? 'gap' : 'none',
-    elements: mtgReportHeader_('').concat([mtgEmptyBox_(S.x, L.top + 40, S.w, 80, gap ? 'gap' : 'none', text)])};
+    elements: mtgReportHeader_(null).concat([mtgEmptyBox_(S.x, L.top + 40, S.w, 80, gap ? 'gap' : 'none', text)])};
 }
 
 /**
- * いちばん上の行「報告案件①：得意先／案件名」（見出し。字の大きさはほかのスライドの見出しと同じ（MTG_SLIDE.titleSize。入らなければ 2pt ずつ 2回小さくし、
- * それでも入らなければ「…」で切る。mtgTitleFit_ と同じ）。no は報告案件の番号（1 から。無ければ番号なし）。
- * staff（担当営業・BX担当の文）があれば右上に小さく書き、その分だけ見出しの幅を狭める
+ * いちばん上の見出し：左に「報告案件①：」（ほかのスライドの見出しと同じ大きさ MTG_SLIDE.titleSize の太字）、その右に2行で
+ * 1行目 得意先・2行目 案件名（2行の高さが「報告案件①：」の行の高さと同じになる大きさ（titleSize の半分）。入らなければ「…」で切る）。
+ * item が無ければ「報告案件」だけ（報告案件が無いときの1枚）。no は報告案件の番号（1 から）。
+ * staff（担当営業・BX担当の文）があれば右上に小さく書き、その分だけ得意先・案件名の幅を狭める
  */
-function mtgReportHeader_(label, staff, no) {
+function mtgReportHeader_(item, staff, no) {
   const c = MTG_OPTIONS.colors;
   const R = MTG_OPTIONS.report;
   const S = MTG_SLIDE;
-  const full = label ? mtgReportTitle_(label, no) : R.title;
-  const staffW = staff ? Math.min(R.staffWidth, Math.ceil(mtgTextWidth_(staff, 8) / MTG_SLIDE.fit + MTG_SLIDE.padX + 2)) : 0;
-  const w = S.w - staffW;
-  const sizes = [S.titleSize, S.titleSize - 2, S.titleSize - 4];
-  const size = sizes.find(pt => mtgWrap_(full, w, pt, 2).length === 1) || sizes[sizes.length - 1];
-  const el = [mtgBox_(S.x, S.titleY, w, 30, mtgWrap_(full, w, size, 1)[0], {size, bold: true, color: c.ink, role: 'report-title'})];
-  if (staff) {
-    el.push(mtgBox_(S.x + w, S.titleY + 6, staffW, 18, mtgWrap_(staff, staffW, 8, 1)[0], {size: 8, color: c.muted, align: 'END', role: 'report-staff'}));
+  const size = S.titleSize;
+  const lead = item ? mtgReportTitle_('', no) : R.title;
+  // 「報告案件①：」の箱は文字の幅に合わせる（箱の左右の余白の分を足す）。得意先・案件名の箱は、その右に余白の分だけ重ねて置く
+  const leadW = Math.ceil(mtgTextWidth_(lead, size) / S.fit + S.padX);
+  const el = [mtgBox_(S.x, S.titleY, leadW, 30, lead, {size, bold: true, color: c.ink, role: 'report-title'})];
+  if (item) {
+    const staffW = staff ? Math.min(R.staffWidth, Math.ceil(mtgTextWidth_(staff, 8) / S.fit + S.padX + 2)) : 0;
+    const x = S.x + leadW - S.padX / 2;
+    const w = S.x + S.w - staffW - x;
+    const small = size / 2;   // 2行（行の送り 1.2）の高さ = 「報告案件①：」1行の高さ
+    const line = text => mtgWrap_(text, w, small, 1)[0];
+    const customer = line(item.customer || '（得意先未入力）');
+    const project = line(item.project || '（案件名未入力）');
+    el.push(mtgBox_(x, S.titleY, w, 30, customer + '\n' + project, {size: small, bold: true, color: c.ink, role: 'report-name'}));
+    if (staff) {
+      el.push(mtgBox_(S.x + S.w - staffW, S.titleY + 6, staffW, 18, mtgWrap_(staff, staffW, 8, 1)[0], {size: 8, color: c.muted, align: 'END', role: 'report-staff'}));
+    }
   }
   return el;
 }
 
-/** 報告案件の見出し「報告案件①：得意先／案件名」（番号は ①〜⑳、21 からは「(21)」。no が無ければ「報告案件：」） */
+/** 報告案件の見出し「報告案件①：得意先／案件名」（スライドの名前。label が空なら「報告案件①：」。番号は ①〜⑳、21 からは「(21)」。no が無ければ「報告案件：」） */
 function mtgReportTitle_(label, no) {
   const R = MTG_OPTIONS.report;
   const mark = !no ? '' : no <= 20 ? String.fromCharCode(0x2460 + no - 1) : '(' + no + ')';
