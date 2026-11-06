@@ -1037,6 +1037,57 @@ test('renumberRequestIds：「いいえ」なら変えない。RX Service Meetin
   assert.deepStrictEqual(gas.writes, []);
 });
 
+test('fillAddedAtFromHistory：追加日が空の行に、変更履歴_差分 から取り込み元にリクエストが書かれた日を入れる（入っている行・決められない行は変えない）', () => {
+  const {gas, g} = setup([
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい'],
+    ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい'],   // 記録が無い
+    ['食品スーパー', 'B社', '店舗什器', '特になし'],                          // 同じ文が2行
+    ['食品スーパー', 'C社', 'EC立ち上げ', '特になし'],
+    ['食品スーパー', 'D社', '会員アプリ', 'ポイントを統合したい']             // 追加日が入っている
+  ]);
+  g.setupRequestSheet();
+  importAll(gas);
+  const request = gas.ss.getSheetByName('リクエスト');
+  gas.asUser(() => {
+    [2, 3, 4, 5].forEach(row => cellOf(request, '追加日', row).setValue(''));
+    cellOf(request, '追加日', 6).setValue('2026/09/01');
+  });
+  const header = ['記録日時', 'イベントID', '編集者メールアドレス', 'シート', 'セル', '列名', '種類', '変更前', '変更後'];
+  gas.addSheet(gas.get('DIFF_OPTIONS').logSheet, [header,
+    ['2026/09/20 10:00', 'EVT-1', 'a@example.com', '新FMT', 'F3', 'サービスのリクエスト', '編集', '（空欄）', '会員分析'],
+    ['2026/10/01 09:00', 'EVT-2', 'a@example.com', '新FMT', 'F3', 'サービスのリクエスト', '編集', '会員分析', '会員の購買分析をしたい'],
+    ['2026/10/03 18:30', 'REC-3', '不明（取りこぼし回収）', '新FMT', 'F3', 'サービスのリクエスト', '編集', '会員分析', '会員の 購買分析をしたい'],
+    ['2026/10/04 09:00', 'EVT-4', 'a@example.com', '新FMT', 'D4', '得意先', '編集', '', 'チラシの効果を測りたい'],         // ほかの列
+    ['2026/10/04 09:00', 'EVT-5', 'a@example.com', 'ほかのシート', 'F4', 'サービスのリクエスト', '編集', '', 'チラシの効果を測りたい'],   // 読むシートでない
+    ['2026/10/02 09:00', 'EVT-6', 'a@example.com', '新FMT', 'F5', 'サービスのリクエスト', '編集', '（空欄）', '特になし'],
+    ['2026/10/06 09:00', 'EVT-7', 'a@example.com', '新FMT', 'F7', 'サービスのリクエスト', '編集', '（空欄）', 'ポイントを統合したい']
+  ], {rows: 20, columns: 9});
+
+  gas.alerts.length = 0;
+  gas.writes.length = 0;
+  assert.strictEqual(g.fillAddedAtFromHistory(), true);
+  assert.strictEqual(gas.alerts[0].buttons, 'YES_NO');
+  assert.match(gas.alerts[0].message, /^追加日が空の 4行のうち 1行に、取り込み元にリクエストが書かれた日/);
+  assert.deepStrictEqual([2, 3, 4, 5, 6].map(row => cellOf(request, '追加日', row).getDisplayValue()),
+    ['2026/10/03', '', '', '', '2026/09/01'], '今の文が書かれたいちばん新しい記録の日（空白だけの違いは同じ文）。入っている行は変えない');
+  assert.strictEqual(Object.prototype.toString.call(cellOf(request, '追加日', 2).getValue()), '[object Date]', '日付として入る');
+  assert.deepStrictEqual(gas.alerts[1].message.split('\n'), [
+    '1行の追加日に、取り込み元にリクエストが書かれた日を入れました。',
+    '記録が見つからず空のままの行：3行目（差分追跡を始める前に書かれたリクエストなど）。',
+    '同じシートに同じ文のリクエストが複数あり、どの行の記録か決められなかった行：4・5行目。',
+    '必要なら、これらの行の追加日は手で入れてください。'
+  ]);
+  assert.ok(gas.writes.length > 0 && gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
+
+  // 2回目は、入れられるものが無いことを知らせて書かない
+  gas.alerts.length = 0;
+  gas.writes.length = 0;
+  assert.strictEqual(g.fillAddedAtFromHistory(), false);
+  assert.strictEqual(gas.alerts.length, 1);
+  assert.match(gas.alerts[0].message, /^追加日が空の 3行に入れられる日付が、「変更履歴_差分」に見つかりませんでした。/);
+  assert.deepStrictEqual(gas.writes, []);
+});
+
 /* ---------------- ID ---------------- */
 
 test('ID：追加するたびに SR-0001 から順に振り、削除した番号は使い回さない', () => {

@@ -1020,6 +1020,123 @@ function svcRemapTaskIds_(ss, map) {
   return result;
 }
 
+/**
+ * 追加日が空の行に、取り込み元にリクエストが書かれた日（リクエスト記入日）を入れる（管理者がエディタから実行する。何度実行してもよい）。
+ * サービスリクエストのシートは差分追跡の対象外で、行を足した日の記録が無いため、取り込み元（差分追跡の対象）の 変更履歴_差分 から、
+ * その行のシートの「サービスのリクエスト」に今の文が書かれた記録を探し、いちばん新しい記録の日を入れる（svcHistoryAddedAt_）。
+ * 追加日が入っている行は変えない。記録が見つからない行（差分追跡を始める前に書かれた）と、同じシートの複数の行に同じ文のリクエストがあって
+ * どの行の記録か決められない行は空のまま残し、行番号を知らせる。書く前に件数を見せて確かめる（確認はロックを取る前）。
+ */
+function fillAddedAtFromHistory() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const title = SVC_OPTIONS.menuTitle;
+  const sheet = svcRequestSheetOrThrow_(ss);
+  const plan = svcHistoryAddedAt_(ss, sheet);
+  if (!plan.blank) {
+    ui.alert(title, '追加日が空の行はありません。', ui.ButtonSet.OK);
+    return false;
+  }
+  if (!plan.found.length) {
+    ui.alert(title, svcHistoryAddedAtLines_(plan, false).join('\n'), ui.ButtonSet.OK);
+    return false;
+  }
+  const answer = ui.alert(title, '追加日が空の ' + plan.blank + '行のうち ' + plan.found.length + '行に、取り込み元にリクエストが書かれた日' +
+    '（「' + DIFF_OPTIONS.logSheet + '」の記録。リクエスト記入日）を入れます。追加日が入っている行は変えません。\n\n入れますか？', ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return false;
+
+  const result = taskWithLock_(() => {
+    const now = svcHistoryAddedAt_(ss, sheet);   // 確かめている間に行が動いた・追加日が入ったときのため、ロックの中で読み直す
+    const col = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns.filter(c => c.key === 'addedAt'), SVC_OPTIONS.headerRow).addedAt;
+    const found = now.found.slice().sort((a, b) => a.row - b.row);
+    // 続いている行はまとめて書く
+    for (let i = 0; i < found.length;) {
+      let j = i;
+      while (j + 1 < found.length && found[j + 1].row === found[j].row + 1) j++;
+      sheet.getRange(found[i].row, col, j - i + 1, 1).setValues(found.slice(i, j + 1).map(f => [f.date]))
+        .setNumberFormat(SVC_OPTIONS.addedAtFormat);
+      i = j + 1;
+    }
+    return now;
+  }, SVC_OPTIONS.lockWaitMs, 'fillAddedAtFromHistory()');
+  ui.alert(title, svcHistoryAddedAtLines_(result, true).join('\n'), ui.ButtonSet.OK);
+  return true;
+}
+
+/**
+ * 追加日が空の行と、変更履歴_差分 から決まる日付（読むだけ）。
+ * {blank: 追加日が空でリクエストのある行の数, found: [{row, date: 'yyyy/MM/dd'}], missing: 記録が無い行, ambiguous: 決められない行}
+ * 行のシートは、取り込み元にあるリクエストなら読んだシート、無ければ svcGroupRanker_ と同じくサブインダストリーの値で決める。
+ */
+function svcHistoryAddedAt_(ss, sheet) {
+  const out = {blank: 0, found: [], missing: [], ambiguous: [], noColumn: false};
+  const col = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns.filter(c => c.key === 'addedAt'), SVC_OPTIONS.headerRow).addedAt;
+  if (!col) {
+    out.noColumn = true;
+    return out;
+  }
+  const registered = svcRegistered_(sheet);
+  const rows = registered.rows.filter(r => !r.values.addedAt);
+  out.blank = rows.length;
+  if (!rows.length) return out;
+
+  const records = svcSourceRecords_(ss);
+  const names = svcSourceSheets_();
+  const rank = svcGroupRanker_(records);
+  const textKey = (name, text) => name + '\u0001' + credNormalize_(text);
+  // 同じシートで同じ文のリクエストの数（得意先・案件名が違えば別のリクエストなので、文だけではどの行の記録か決められない）
+  const sameText = new Map();
+  records.forEach(rec => {
+    const key = textKey(rec.sheet, rec.values[3]);
+    sameText.set(key, (sameText.get(key) || 0) + 1);
+  });
+
+  // 変更履歴_差分（A:I = 記録日時, イベントID, 編集者, シート, セル, 列名, 種類, 変更前, 変更後）の「サービスのリクエスト」の列の記録
+  const latest = new Map();   // シートと文 → いちばん新しい記録の日
+  const log = ss.getSheetByName(DIFF_OPTIONS.logSheet);
+  if (log && log.getLastRow() >= 2) {
+    const resolve = diffSheetNameResolver_();
+    const header = credNormalize_(SVC_OPTIONS.sourceHeaders[3]);
+    const empty = typeof CHG_OPTIONS !== 'undefined' ? CHG_OPTIONS.emptyMark : '（空欄）';
+    log.getRange(2, 1, log.getLastRow() - 1, 9).getDisplayValues().forEach(r => {
+      const name = resolve(String(r[3]).trim());
+      if (names.indexOf(name) < 0 || credNormalize_(r[5]) !== header) return;
+      const after = String(r[8]).trim();
+      const date = /^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/.exec(String(r[0]).trim());
+      if (!after || after === empty || !date) return;
+      const day = date[1] + '/' + date[2].padStart(2, '0') + '/' + date[3].padStart(2, '0');
+      const key = textKey(name, after);
+      if (!latest.has(key) || latest.get(key) < day) latest.set(key, day);
+    });
+  }
+
+  rows.forEach(r => {
+    const name = names[rank(r)];
+    const key = name ? textKey(name, r.values.request) : '';
+    if (key && (sameText.get(key) || 0) > 1) out.ambiguous.push(r.row);
+    else if (key && latest.has(key)) out.found.push({row: r.row, date: latest.get(key)});
+    else out.missing.push(r.row);
+  });
+  return out;
+}
+
+/** fillAddedAtFromHistory() の知らせ（行ごと）。written：書いたあとか。 */
+function svcHistoryAddedAtLines_(plan, written) {
+  if (plan.noColumn) return ['「' + SVC_OPTIONS.requestSheet + '」に追加日の列がありません。setupRequestSheet() を実行してください。'];
+  const list = rows => rows.slice(0, 30).join('・') + '行目' + (rows.length > 30 ? ' ほか ' + (rows.length - 30) + '行' : '');
+  const lines = [written
+    ? plan.found.length + '行の追加日に、取り込み元にリクエストが書かれた日を入れました。'
+    : '追加日が空の ' + plan.blank + '行に入れられる日付が、「' + DIFF_OPTIONS.logSheet + '」に見つかりませんでした。'];
+  if (plan.missing.length) {
+    lines.push('記録が見つからず空のままの行：' + list(plan.missing) + '（差分追跡を始める前に書かれたリクエストなど）。');
+  }
+  if (plan.ambiguous.length) {
+    lines.push('同じシートに同じ文のリクエストが複数あり、どの行の記録か決められなかった行：' + list(plan.ambiguous) + '。');
+  }
+  if (plan.missing.length || plan.ambiguous.length) lines.push('必要なら、これらの行の追加日は手で入れてください。');
+  return lines;
+}
+
 /** 手を付けていない行（リクエストがあり、判断が未判断か空で、フィードバック・サービス案・主管本部・担当者が空）の行番号（上から）。 */
 function svcUntouchedRows_(sheet) {
   const headerRow = SVC_OPTIONS.headerRow;
