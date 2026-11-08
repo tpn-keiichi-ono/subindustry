@@ -276,8 +276,8 @@ function mtgReportPrevious_(b, item, prev, size, label) {
     mtgBox_(band.x, band.y + 8.5, band.w, band.h - 8.5, body, {size: small, color: muted ? c.faint : c.sub, valign: 'TOP', role: 'report-prev'})
   ];
   if (same) {
-    el.push(mtgBox_(b.x + b.w - 50, b.y + 4, 46, 11, '更新なし', {size: 7, bold: true, align: 'CENTER', shape: 'ROUND_RECTANGLE',
-      fill: R.staleFill, color: c.ink, role: 'report-stale'}));
+    const badge = mtgReportBadge_(0, b.y + 8.5, '更新なし', 'stale', 'report-stale', 7);
+    el.push(Object.assign(badge, {x: b.x + b.w - badge.w - 4}));
   }
   return el;
 }
@@ -462,7 +462,7 @@ function mtgReportStatus_(b, item) {
   return el;
 }
 
-/** 左の列の3つ目：期待値（百万円。今の値と、その右に前回からの増減のバッジ・下に前回の値と想定売上） */
+/** 左の列の3つ目：期待値（百万円。1行目に今の値と、その右に前回からの増減のバッジ・2行目に前回の値と想定売上） */
 function mtgReportValue_(b, item) {
   const c = MTG_OPTIONS.colors;
   const R = MTG_OPTIONS.report;
@@ -472,22 +472,41 @@ function mtgReportValue_(b, item) {
   const delta = item.isNew || item.weighted == null || item.prevWeighted == null ? null : item.weighted - item.prevWeighted;
   const rounded = delta == null ? null : Math.round(delta * 10) / 10;
   const second = '前回：' + (item.isNew ? R.newText : mtgAmount_(item.prevWeighted)) + '　／　想定売上：' + mtgAmount_(item.amount);
-  const body = mtgReportBody_(b, [{text: now, size: R.boxSize, bold: true, color: item.weighted == null ? c.faint : c.ink},
-    {text: second, size: R.subSize, color: c.muted}]);
-  const el = [mtgReportFrame_(b.x, b.y, b.w, b.h, '期待値（百万円）'), body];
-  // 前回からの増減は、数字の右にバッジ（角の丸い枠。増 = 濃い緑・減 = 濃いグレー・同じ = 薄いグレー。「+20」「▲12」「±0」）
-  if (rounded != null) {
-    const k = body.scale;
-    const label = mtgSigned_(rounded);
-    const size = Math.round(R.subSize * k * 10) / 10;
-    const h = size + 4;
-    const w = Math.ceil(mtgTextWidth_(label, size) / 0.92 + S.padX + 4);
-    const x = b.x + S.padX / 2 + mtgTextWidth_(now, R.boxSize * k) + 6;
-    const y = b.y + L.head + S.padY / 2 + (R.boxSize * k * S.lineFactor - h) / 2;
-    const tone = rounded > 0 ? {fill: c.greenDeep, color: c.white} : rounded < 0 ? {fill: c.dark, color: c.white} : {fill: c.graySoft, color: c.sub};
-    el.push(mtgBox_(x, y, w, h, label, Object.assign({size, bold: true, align: 'CENTER', shape: 'ROUND_RECTANGLE', role: 'report-delta'}, tone)));
-  }
+  // 行ごとに高さを決めた箱に分け、上下の中央に置く（数字の行と、その下の「前回」の行。バッジは数字の行の中央にそろえる。重ならないように）
+  const rowH = 13;
+  const y1 = b.y + L.head + 5;   // 枠の見出し（下端は枠の上から約 17pt）にバッジがかからないように下げる
+  const y2 = y1 + rowH;
+  let sub = R.subSize;   // 省略しない：1行に入らなければ小さくする
+  while (sub > R.minSize && mtgWrap_(second, b.w, sub, 2).length > 1) sub -= 0.5;
+  const el = [mtgReportFrame_(b.x, b.y, b.w, b.h, '期待値（百万円）'),
+    mtgBox_(b.x, y1, b.w, rowH, now, {size: R.boxSize, bold: true, color: item.weighted == null ? c.faint : c.ink, valign: 'MIDDLE', role: 'report-value'}),
+    mtgBox_(b.x, y2, b.w, rowH, second, {size: sub, color: c.muted, valign: 'MIDDLE', role: 'report-value'})];
+  // 前回からの増減は、数字の右のバッジ（平らな四角。増 = 薄い緑の地に緑の字・減 = 薄いグレーの地に濃いグレーの字・同じ = 薄いグレーの地に灰色の字。
+  // 「+20」「▲12」「±0」）
+  if (rounded != null) el.push(mtgReportBadge_(b.x + S.padX / 2 + mtgTextWidth_(now, R.boxSize) + 6, y1 + rowH / 2, mtgSigned_(rounded),
+    rounded > 0 ? 'up' : rounded < 0 ? 'down' : 'flat', 'report-delta'));
   return el;
+}
+
+/**
+ * 平らなバッジ（角の無い四角・枠の線なし・薄い地に色の字。確度の段と同じつくり）。x は左端、cy は上下の中央、tone：'up' 緑・'down' 濃いグレー・'flat' 灰色・
+ * 'stale' 黄色（更新なし）・'chip' 緑（シナリオの番号）。size は字の大きさ（省けば MTG_OPTIONS.report.subSize）
+ */
+function mtgReportBadge_(x, cy, text, tone, role, size) {
+  const c = MTG_OPTIONS.colors;
+  const R = MTG_OPTIONS.report;
+  const pt = size || R.subSize;
+  const h = pt + 4;
+  const w = Math.ceil(mtgTextWidth_(text, pt) / 0.92 + MTG_SLIDE.padX + 2);
+  const tones = {
+    up: {fill: c.greenSoft, color: c.greenDark},
+    down: {fill: c.graySoft, color: c.dark},
+    flat: {fill: c.graySoft, color: c.faint},
+    stale: {fill: R.staleFill, color: c.ink},
+    chip: {fill: c.greenSoft, color: c.greenDark}
+  };
+  return mtgBox_(x, cy - h / 2, w, h, text, Object.assign({size: pt, bold: tone !== 'chip', align: 'CENTER', valign: 'MIDDLE', shape: 'RECTANGLE', role},
+    tones[tone] || tones.flat));
 }
 
 /** 左の列の4つ目：受注月（今の月・前回の月（遅くなったら「（延期）」・早くなったら「（前倒し）」）） */
@@ -549,8 +568,8 @@ function mtgReportScenario_(b, item, hasColumn) {
   };
   let fit = layout(R.chipSize);
   while (fit.size > R.minSize && top + fit.height > b.y + b.h - 4) fit = layout(fit.size - 0.5);
-  fit.placed.forEach(p => el.push(mtgBox_(p.x, top + p.row * (fit.h + gap), p.w, fit.h, p.text, {size: fit.size, align: 'CENTER', shape: 'ROUND_RECTANGLE',
-    fill: c.white, line: c.green, lineWeight: 0.75, color: c.greenDark, role: 'report-chip'})));
+  fit.placed.forEach(p => el.push(mtgBox_(p.x, top + p.row * (fit.h + gap), p.w, fit.h, p.text, {size: fit.size, align: 'CENTER', valign: 'MIDDLE',
+    shape: 'RECTANGLE', fill: c.greenSoft, color: c.greenDark, role: 'report-chip'})));
   return el;
 }
 
