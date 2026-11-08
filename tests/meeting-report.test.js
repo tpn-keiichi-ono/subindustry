@@ -153,7 +153,7 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.deepStrictEqual(record.spans.map(sp => [sp.url, record.text.slice(sp.start, sp.end)]), [['https://drive.google.com/drive/folders/abc', '格納先リンク']]);
   assert.ok(byRole(a, 'footer')[0].w < 676 - 60, '出典の行は商談記録の分だけ狭い');
   const foot = byRole(a, 'footer')[0];
-  assert.match(foot.text, /^出典：「新FMT」シート 3行目（\d{4}\/\d{2}\/\d{2} \d{2}:\d{2} 時点）　前回＝直近14日間（\d{2}\/\d{2}〜。初回のため）$/,
+  assert.match(foot.text, /^出典：「新FMT」シート 3行目（\d{4}\/\d{2}\/\d{2} \d{2}:\d{2} 時点）$/,
     'どのシートの何行目を、いつ読んだか：' + foot.text);
   assert.strictEqual(foot.size, 8);
   assert.match(byRole(slides[numbers.length + 1], 'footer')[0].text, /「新FMT」シート 5行目/, 'C社は5行目');
@@ -170,6 +170,9 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
     el.y > byRole(a, 'report-frame').find(f => /期待値/.test(f.text)).y && el.y < delta.y + 30);
   const prevRow = valueRows.find(el => /^前回：/.test(el.text));
   assert.ok(delta.y + delta.h <= prevRow.y + 0.01, 'バッジは「前回」の行に重ならない');
+  const number = valueRows.find(el => el.text === '70');
+  assert.ok(Math.abs(delta.h - number.size * 1.2) < 0.01, 'バッジの高さは横の数字の行の高さ');
+  assert.ok(Math.abs((delta.y + delta.h / 2) - (number.y + number.h / 2)) < 0.01, 'バッジは数字の行の上下の中央');
   assert.ok(a.elements.every(el => el.shape !== 'ROUND_RECTANGLE'), '角の丸い四角は使わない');
 });
 

@@ -284,17 +284,13 @@ function mtgReportPrevious_(b, item, prev, size, label) {
 }
 
 /**
- * 報告案件の出典の行：どのシートの何行目の値を、いつ読んだか（資料を作った時刻）と、「前回」がいつの値か。
- * 例：「出典：「スーパー・GMS」シート 12行目（2026/11/06 10:00 時点）　前回＝前回会議（10/30）の資料作成時（10/28 18:00）」。
- * 金額の単位は書かない（期待値・RXシナリオの枠の見出しに「百万円」がある）。
- * 試作は先頭に【試作】、ダミーの記録を使ったときは【ダミーデータを含む】
+ * 報告案件の出典の行：どのシートの何行目の値を、いつ読んだか（資料を作った時刻）だけ。
+ * 例：「出典：「スーパー・GMS」シート 12行目（2026/11/06 10:00 時点）」。試作の印・前回の時点は書かない（前回の時点は表紙と、枠の「前回（10/30 会議）」にある）。
+ * ダミーの記録を使ったときだけ、先頭に【ダミーデータを含む】（配る資料に紛れないように）
  */
 function mtgReportSource_(s, item) {
-  const tz = Session.getScriptTimeZone();
-  const at = Utilities.formatDate(s.now, tz, 'yyyy/MM/dd HH:mm');
-  const prev = mtgPeriodText_(s).replace(/以降$/, '');
-  return (s.final ? '' : '【試作】') + (s.dummy ? '【ダミーデータを含む】' : '') +
-    '出典：「' + s.name + '」シート ' + item.row + '行目（' + at + ' 時点）　前回＝' + prev;
+  const at = Utilities.formatDate(s.now, Session.getScriptTimeZone(), 'yyyy/MM/dd HH:mm');
+  return (s.dummy ? '【ダミーデータを含む】' : '') + '出典：「' + s.name + '」シート ' + item.row + '行目（' + at + ' 時点）';
 }
 
 /** 報告フラグにチェックのある案件が無いとき（列が無いときは「データなし」と理由） */
@@ -484,20 +480,22 @@ function mtgReportValue_(b, item) {
     mtgBox_(b.x, y2, b.w, rowH, second, {size: sub, color: c.muted, valign: 'MIDDLE', role: 'report-value'})];
   // 前回からの増減は、数字の右のバッジ（平らな四角。増 = 薄い緑の地に緑の字・減 = 薄いグレーの地に濃いグレーの字・同じ = 薄いグレーの地に灰色の字。
   // 「+20」「▲12」「±0」）
+  // バッジの高さは横の数字の行の高さ（字の大きさ × 行の送り）にそろえ、字はその中に入る大きさ
+  const numberH = R.boxSize * S.lineFactor;
   if (rounded != null) el.push(mtgReportBadge_(b.x + S.padX / 2 + mtgTextWidth_(now, R.boxSize) + 6, y1 + rowH / 2, mtgSigned_(rounded),
-    rounded > 0 ? 'up' : rounded < 0 ? 'down' : 'flat', 'report-delta'));
+    rounded > 0 ? 'up' : rounded < 0 ? 'down' : 'flat', 'report-delta', numberH - 3, numberH));
   return el;
 }
 
 /**
  * 平らなバッジ（角の無い四角・枠の線なし・薄い地に色の字。確度の段と同じつくり）。x は左端、cy は上下の中央、tone：'up' 緑・'down' 濃いグレー・'flat' 灰色・
- * 'stale' 黄色（更新なし）・'chip' 緑（シナリオの番号）。size は字の大きさ（省けば MTG_OPTIONS.report.subSize）
+ * 'stale' 黄色（更新なし）・'chip' 緑（シナリオの番号）。size は字の大きさ（省けば MTG_OPTIONS.report.subSize）、height は高さ（省けば字の大きさ + 4）
  */
-function mtgReportBadge_(x, cy, text, tone, role, size) {
+function mtgReportBadge_(x, cy, text, tone, role, size, height) {
   const c = MTG_OPTIONS.colors;
   const R = MTG_OPTIONS.report;
   const pt = size || R.subSize;
-  const h = pt + 4;
+  const h = height || pt + 4;
   const w = Math.ceil(mtgTextWidth_(text, pt) / 0.92 + MTG_SLIDE.padX + 2);
   const tones = {
     up: {fill: c.greenSoft, color: c.greenDark},
