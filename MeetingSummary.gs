@@ -70,14 +70,16 @@ const MTG_OPTIONS = {
   fileName: '{date}_{name}_RX Business Meeting用資料',
   // 前回の会議の宿題事項（報告案件版のサマリーの前のスライド。MeetingReport.gs の mtgHomeworkOf_）。シートの形：A列にサブインダストリー（行）、
   // 見出しの行に「日付」（会議日。結合したセルは右の列にも同じ日付）・「会議名」・「サブインダストリー」（その行の各列は「会議資料」「宿題」など）。
-  // 今の会議日より前の、いちばん新しい RX Business Meeting（index.kind）の「宿題」の列から、このサブインダストリーの行と全サブインダストリーの行を読む。
+  // 今の会議日より前の、いちばん新しい RX Business Meeting（index.kind）の「宿題」の列から、すべての行（サブインダストリー）を読み、1枚にまとめる。
   // 宿題のセルは改行で1件ずつ。将来 INDEX_会議資料（index.sheet）と1つにする見込み（そのときは sheet を index.sheet にする）
   homework: {
     sheet: '宿題事項',
     dateLabel: '日付',
     kindLabel: '会議名',
     nameLabel: 'サブインダストリー',
-    column: '宿題'
+    column: '宿題',
+    nameHead: 'サブイン',       // 資料の表の見出し
+    itemHead: '指摘事項'
   },
   // 報告案件版（MeetingReport.gs。createBusinessMtgReportSummaries()）：数字のページは同じで、案件のページを、報告フラグにチェックした案件の
   // 1件1枚にしたもの（Appendix なし）。ファイル名は fileName の後ろに fileSuffix（試作は、さらに「_試作」）。

@@ -419,51 +419,66 @@ test('報告案件：RXシナリオは番号だけ。案件・得意先情報は
   slide2.elements.concat(slide.elements).forEach(el => assert.ok(!/…/.test(String(el.text || '')), '省略しない：' + el.role + ' ' + el.text));
 });
 
-test('前回の宿題事項：宿題のシート（列＝会議日の「会議資料」「宿題」・行＝サブインダストリー）から、今の会議日より前のいちばん新しい RX Business Meeting の宿題を読み、サマリーの前に出す', () => {
+test('前回の宿題事項：宿題のシート（列＝会議日の「会議資料」「宿題」・行＝サブインダストリー）から、今の会議日より前のいちばん新しい RX Business Meeting の宿題を読み、すべてのサブインダストリーを1枚に（左右2つの表）', () => {
   const {gas, g} = setup({edits: false});
   // 1行目 日付（結合したセルは左の列だけ）・2行目 会議名・3行目 サブインダストリー（会議資料／宿題）
   gas.addSheet('宿題事項', [
     ['日付', '2026/10/09', '', '2026/10/16', '', '2026/10/23', '', '2026/10/30', ''],
     ['会議名', 'RX Business Meeting', '', 'RX Business Meeting', '', 'RX Service Meeting', '', 'RX Business Meeting', ''],
     ['サブインダストリー', '会議資料', '宿題', '会議資料', '宿題', '会議資料', '宿題', '会議資料', '宿題'],
-    ['全サブインダストリー', '', '古い宿題', '', '・12月末・3月末の C・D 案件を精査する', '', 'サービス会議の宿題', '', '先の宿題'],
-    ['新FMT', '', '古い宿題', '', '・A社の決裁者を確認する\n・B社の見積もりを再提出する', '', '', '', ''],
-    ['新FMT2', '', '', '', '別のシートの宿題', '', '', '', '']
+    ['新FMT', '', '古い宿題', '', '・A社の決裁者を確認する\n①B社の見積もりを再提出する', '', 'サービス会議の宿題', '', '先の宿題'],
+    ['新FMT2', '', '', '', '1. ドラッグストアの攻略方針を整理する', '', '', '', ''],
+    ['百貨店', '', '', '', '', '', '', '', ''],
+    ['住設', '', '', '', 'シナリオの組み合わせで提案を大きくする', '', '', '', '']
   ], {rows: 10, columns: 9});
   const s = summarize(g, '新FMT');   // 会議日 2026/10/23（10/23 の RX Service Meeting と 10/30 は使わない）
-  assert.deepStrictEqual(plain(s.homework), {date: '2026/10/16', own: ['A社の決裁者を確認する', 'B社の見積もりを再提出する'],
-    common: ['12月末・3月末の C・D 案件を精査する'], gap: ''});
+  assert.deepStrictEqual(plain(s.homework), {date: '2026/10/16', gap: '', rows: [
+    {name: '新FMT', items: ['A社の決裁者を確認する', 'B社の見積もりを再提出する']},
+    {name: '新FMT2', items: ['ドラッグストアの攻略方針を整理する']},
+    {name: '百貨店', items: []},
+    {name: '住設', items: ['シナリオの組み合わせで提案を大きくする']}
+  ]});
   const slides = plain(g.mtgReportSlides_(s));
   const hw = slides[1];
   assert.strictEqual(hw.title, '前回の宿題事項');
-  assert.match(texts(hw).join('\n'), /前回会議（10\/16）の宿題 3件（新FMT 2件・全サブインダストリー共通 1件）。/);
-  const table = hw.elements.find(el => el.type === 'table');
-  assert.deepStrictEqual(table.rows.map(r => r.cells.map(cell => cell.text.replace(/\n/g, ''))), [
-    ['No.', '対象', '宿題事項'],
-    ['1', '新FMT', 'A社の決裁者を確認する'],
-    ['2', '新FMT', 'B社の見積もりを再提出する'],
-    ['3', '全サブインダストリー共通', '12月末・3月末の C・D 案件を精査する']
-  ]);
+  assert.match(texts(hw).join('\n'), /前回会議（10\/16）の宿題 4件（3サブインダストリー）。/);
+  const tables = hw.elements.filter(el => el.type === 'table');
+  assert.strictEqual(tables.length, 2, '左右2つの表');
+  const cells = t => t.rows.map(r => r.cells.map(cell => cell.text.replace(/\n/g, '')));
+  assert.deepStrictEqual(cells(tables[0]), [['サブイン', '指摘事項'], ['新FMT', '①A社の決裁者を確認する②B社の見積もりを再提出する'],
+    ['新FMT2', '①ドラッグストアの攻略方針を整理する']]);
+  assert.deepStrictEqual(cells(tables[1]), [['サブイン', '指摘事項'], ['百貨店', '（宿題なし）'], ['住設', '①シナリオの組み合わせで提案を大きくする']]);
+  assert.ok(tables[1].x > tables[0].x + 300, '右の表');
+  const width = t => t.columns.reduce((x, y) => x + Number(y), 0);
+  assert.ok(tables[0].x + width(tables[0]) < tables[1].x && tables[1].x + width(tables[1]) <= 22 + 676 + 0.01, '左右の表は重ならず、ページの中に入る');
+  assert.strictEqual(tables[0].rows[1].cells[0].fill, '#70AD47', 'この資料のサブインダストリーの行は濃い緑');
+  assert.strictEqual(tables[0].rows[2].cells[0].fill, '#E2EFDA');
   assert.strictEqual(slides[2].title, gas.get('MTG_TITLES').summary, '宿題のあとにサマリー');
-  // 前回の宿題が空なら「該当なし」
-  gas.ss.getSheetByName('宿題事項').getRange('E4:E5').setValues([[''], ['']]);
+  // 前回の宿題が1件も無ければ「該当なし」
+  gas.ss.getSheetByName('宿題事項').getRange('E4:E7').setValues([[''], [''], [''], ['']]);
   const none = plain(g.mtgReportSlides_(summarize(g, '新FMT')))[1];
   assert.match(texts(none).join('\n'), /前回会議（10\/16）の宿題は登録されていない/);
-  assert.strictEqual(none.elements.find(el => el.role === 'empty').role, 'empty');
 });
 
-test('前回の宿題事項：多ければ続きのページに分け、全件を出す。宿題のシートが無ければ「データなし」', () => {
+test('前回の宿題事項：1枚に入らなければ字を小さくし、それでも入らなければ続きのページに分けて全件を出す。宿題のシートが無ければ「データなし」', () => {
   const {gas, g} = setup({edits: false});
   const gap = plain(g.mtgReportSlides_(summarize(g, '新FMT')))[1];
-  assert.strictEqual(gap.empty, undefined);
   assert.match(texts(gap).join('\n'), /「宿題事項」シートが無い/);
-  const many = Array.from({length: 30}, (_, i) => '宿題その' + (i + 1) + '：' + 'ていねいに確認して報告する'.repeat(2)).join('\n');
-  gas.addSheet('宿題事項', [['日付', '2026/10/16', ''], ['会議名', 'RX Business Meeting', ''], ['サブインダストリー', '会議資料', '宿題'], ['新FMT', '', many]],
-    {rows: 6, columns: 3});
+  const many = Array.from({length: 4}, (_, i) => '宿題その' + (i + 1) + '：' + 'ていねいに確認して報告する'.repeat(2)).join('\n');
+  const names = Array.from({length: 14}, (_, i) => 'サブ' + (i + 1));
+  gas.addSheet('宿題事項', [['日付', '2026/10/16', ''], ['会議名', 'RX Business Meeting', ''], ['サブインダストリー', '会議資料', '宿題']]
+    .concat(names.map(n => [n, '', many])), {rows: 20, columns: 3});
   const slides = plain(g.mtgReportSlides_(summarize(g, '新FMT'))).filter(sl => /^前回の宿題事項/.test(sl.title));
   assert.ok(slides.length >= 2, '続きのページ：' + slides.length);
   assert.strictEqual(slides[1].title, '前回の宿題事項（続き）');
-  const rows = slides.reduce((n, sl) => n + sl.elements.find(el => el.type === 'table').rows.length - 1, 0);
-  assert.strictEqual(rows, 30, '全件');
-  slides.forEach(sl => { const t = sl.elements.find(el => el.type === 'table'); assert.ok(t.y + t.rows.reduce((a, r) => a + r.h, 0) <= gas.get('MTG_SLIDE').bottom + 0.01); });
+  const rows = slides.reduce((n, sl) => n + sl.elements.filter(el => el.type === 'table').reduce((m, t) => m + t.rows.length - 1, 0), 0);
+  assert.strictEqual(rows, 14, '全サブインダストリー');
+  slides.forEach(sl => sl.elements.filter(el => el.type === 'table').forEach(t =>
+    assert.ok(t.y + t.rows.reduce((a, r) => a + r.h, 0) <= gas.get('MTG_SLIDE').bottom + 0.01)));
+  // 少なければ1枚（左右2つ）に入れる。字は 7pt まで小さくする
+  const few = Array.from({length: 2}, (_, i) => '宿題その' + (i + 1)).join('\n');
+  gas.ss.getSheetByName('宿題事項').getRange(4, 3, 14, 1).setValues(names.map(() => [few]));
+  const one = plain(g.mtgReportSlides_(summarize(g, '新FMT'))).filter(sl => /^前回の宿題事項/.test(sl.title));
+  assert.strictEqual(one.length, 1);
+  assert.strictEqual(one[0].elements.filter(el => el.type === 'table').length, 2);
 });
