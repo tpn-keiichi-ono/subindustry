@@ -115,7 +115,9 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
     'RXシナリオ（見込金額 80百万円）', '店舗オペレーション効率化', '需要予測', '提案を勝ち取るための戦略・差異化要素', '業務設計から運用定着まで一括で提案する',
     '想定される価値創出のケース／期待される導入効果', '11/2 役員向けに最終提案', '情報システム部門の稼働が逼迫', '11/15 稟議資料の事前確認']
     .forEach(t => assert.ok(all.indexOf(t) >= 0, t + ' が無い：\n' + all));
-  assert.strictEqual(byRole(a, 'report-staff')[0].text, '担当営業：佐藤　BX担当：山田', '右上に担当営業と BX担当');
+  const staff = byRole(a, 'report-staff')[0];
+  assert.strictEqual(staff.text, '担当営業：佐藤\nBX担当：山田', '右上に担当営業と BX担当の2行');
+  assert.ok(staff.size === name.size && staff.y === name.y && staff.h === name.h && staff.align === 'END', '得意先・案件名と同じ2行（右寄せ）');
   assert.ok(name.x + name.w <= byRole(a, 'report-staff')[0].x + 0.01, '得意先・案件名は担当の左まで');
   const bodies = byRole(a, 'report-text');
   assert.strictEqual(bodies.length, 5);

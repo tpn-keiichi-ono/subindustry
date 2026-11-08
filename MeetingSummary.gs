@@ -86,7 +86,7 @@ const MTG_OPTIONS = {
     recordWidth: 200,                        // 右下の「商談記録：」の幅（pt）
     linkLabel: '格納先リンク',               // 商談記録のリンクの文字（商談記録のセルのリンクへのハイパーリンク）
     maxLinks: 3,                             // リンクが2つ以上あるときに出す数（格納先リンク①②③）
-    staffWidth: 220,                         // 右上の「担当営業：…　BX担当：…」の幅の上限（pt）
+    staffWidth: 180,                         // 右上の「担当営業：…」「BX担当：…」（2行）の幅の上限（pt）
     noneText: '報告フラグにチェックの入った案件がありません（シートの「報告フラグ」にチェックを入れた案件を、1件1枚で載せます）'
   },
   folderId: '1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK',   // 保存先のフォルダの ID（空なら、このスプレッドシートと同じフォルダの中に folderName を作る）

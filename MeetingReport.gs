@@ -290,7 +290,7 @@ function mtgReportEmptySlide_(s) {
  * いちばん上の見出し：左に「報告案件①：」（ほかのスライドの見出しと同じ大きさ MTG_SLIDE.titleSize の太字）、その右に2行で
  * 1行目 得意先・2行目 案件名（2行の高さが「報告案件①：」の行の高さと同じになる大きさ（titleSize の半分）。入らなければ「…」で切る）。
  * item が無ければ「報告案件」だけ（報告案件が無いときの1枚）。no は報告案件の番号（1 から）。
- * staff（担当営業・BX担当の文）があれば右上に小さく書き、その分だけ得意先・案件名の幅を狭める
+ * staff（担当営業・BX担当の2行の文）があれば右上に、得意先・案件名と同じ2行（同じ大きさ・灰色の普通の字。右寄せ）で書き、その分だけ得意先・案件名の幅を狭める
  */
 function mtgReportHeader_(item, staff, no) {
   const c = MTG_OPTIONS.colors;
@@ -302,16 +302,19 @@ function mtgReportHeader_(item, staff, no) {
   const leadW = Math.ceil(mtgTextWidth_(lead, size) / S.fit + S.padX);
   const el = [mtgBox_(S.x, S.titleY, leadW, 30, lead, {size, bold: true, color: c.ink, role: 'report-title'})];
   if (item) {
-    const staffW = staff ? Math.min(R.staffWidth, Math.ceil(mtgTextWidth_(staff, 8) / S.fit + S.padX + 2)) : 0;
+    const small = size / 2;   // 2行（行の送り 1.2）の高さ = 「報告案件①：」1行の高さ
+    const staffLines = staff ? String(staff).split('\n') : [];
+    const staffW = staffLines.length
+      ? Math.min(R.staffWidth, Math.ceil(Math.max.apply(null, staffLines.map(t => mtgTextWidth_(t, small))) / S.fit + S.padX + 2)) : 0;
     const x = S.x + leadW - S.padX / 2;
     const w = S.x + S.w - staffW - x;
-    const small = size / 2;   // 2行（行の送り 1.2）の高さ = 「報告案件①：」1行の高さ
     const line = text => mtgWrap_(text, w, small, 1)[0];
     const customer = line(item.customer || '（得意先未入力）');
     const project = line(item.project || '（案件名未入力）');
     el.push(mtgBox_(x, S.titleY, w, 30, customer + '\n' + project, {size: small, bold: true, color: c.ink, role: 'report-name'}));
-    if (staff) {
-      el.push(mtgBox_(S.x + S.w - staffW, S.titleY + 6, staffW, 18, mtgWrap_(staff, staffW, 8, 1)[0], {size: 8, color: c.muted, align: 'END', role: 'report-staff'}));
+    if (staffLines.length) {
+      el.push(mtgBox_(S.x + S.w - staffW, S.titleY, staffW, 30, staffLines.map(t => mtgWrap_(t, staffW, small, 1)[0]).join('\n'),
+        {size: small, color: c.muted, align: 'END', role: 'report-staff'}));
     }
   }
   return el;
@@ -324,13 +327,13 @@ function mtgReportTitle_(label, no) {
   return R.title + mark + '：' + label;
 }
 
-/** 右上の担当：「担当営業：佐藤　BX担当：田中」（空なら「未入力」。列が無い項目は出さない） */
+/** 右上の担当：1行目「担当営業：佐藤」・2行目「BX担当：田中」（改行でつなぐ。空なら「未入力」。列が無い項目は出さない） */
 function mtgReportStaff_(item) {
   const o = MTG_OPTIONS;
   const parts = [];
   if (item.hasOwner !== false) parts.push('担当営業：' + (item.owner || o.blankText));
   if (item.hasBx !== false) parts.push('BX担当：' + (item.bx || o.blankText));
-  return parts.join('　');
+  return parts.join('\n');
 }
 
 /** 枠（四角）と、その左上の見出し（緑の太字）。opt = {fill, line}（line: null なら枠の線なし） */
