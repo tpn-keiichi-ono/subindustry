@@ -383,14 +383,19 @@ function mtgReportBody_(b, lines, bottomSpace) {
     color: MTG_OPTIONS.colors.ink, spans, valign: 'MIDDLE', role: 'report-value'});
 }
 
-/** 左の列の1つ目：先方（部署は太字・役職は普通の字。名前（先方担当氏名）は出さない） */
+/**
+ * 左の列の1つ目：得意先情報（1行目 得意先名（太字）・2行目 先方部門・3行目 先方担当役職。どれも1行に入らなければ「…」で切る。
+ * 名前（先方担当氏名）は出さない。部門・役職が空なら、その行に灰色の「未入力」）
+ */
 function mtgReportClient_(b, item) {
   const c = MTG_OPTIONS.colors;
-  const fit = (text, size) => mtgWrap_(text, b.w, size, 2).join('\n');
-  const lines = !item.clientDept && !item.clientTitle ? [{text: MTG_OPTIONS.blankText, size: 9.5, color: c.faint}]
-    : [{text: item.clientDept ? fit(item.clientDept, 10.5) : '', size: 10.5, bold: true, color: c.ink},
-      {text: item.clientTitle ? fit(item.clientTitle, 9.5) : '', size: 9.5, color: c.ink}];
-  return [mtgReportFrame_(b.x, b.y, b.w, b.h, '先方'), mtgReportBody_(b, lines)];
+  const blank = MTG_OPTIONS.blankText;
+  const line = (text, size, bold) => ({text: mtgWrap_(text || blank, b.w, size, 1)[0], size, bold: !!bold && !!text, color: text ? c.ink : c.faint});
+  return [mtgReportFrame_(b.x, b.y, b.w, b.h, MTG_OPTIONS.report.clientLabel), mtgReportBody_(b, [
+    line(item.customer, 10, true),
+    line(item.clientDept, 9),
+    line(item.clientTitle, 9)
+  ])];
 }
 
 /** 左の列の2つ目：ステータス（今のステータス・前回・確度の段（創注・D・C・B・A。今は緑・前回は薄い緑）） */
