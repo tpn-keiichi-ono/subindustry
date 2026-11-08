@@ -1001,7 +1001,7 @@ test('文字の折り返し：「前 ▶ 今」は矢印のあとで、開きか
     g.mtgWrap_('港町GMS／PB商品のパッケージ刷新（100日以上）、さくらスーパー／店舗DXの全体構想（75日）', w, 9, 9)
       .forEach(line => assert.ok(!/[（「]$/.test(line), w + 'pt：' + line));
   }
-  assert.deepStrictEqual(plain(g.mtgWrap_('決裁者（社長）に会えていない', 134, 9, 3)).map(t => t.length), [12, 2]);
+  assert.deepStrictEqual(plain(g.mtgWrap_('決裁者（社長）に会えていない', 134, 9, 3)).map(t => t.length), [13, 1]);
   assert.deepStrictEqual(plain(g.mtgBalance_('決裁者（社長）に会えていない', 134, 9, 3)), ['決裁者（社長）', 'に会えていない'],
     '最後の行に1文字だけ残さない（区切りは言葉の切れ目に）');
   assert.deepStrictEqual(plain(g.mtgBalance_('期待値・受注月', 70, 8.5, 2)), ['期待値・', '受注月']);
@@ -1011,11 +1011,10 @@ test('文字の折り返し：「前 ▶ 今」は矢印のあとで、開きか
     ['9/1初回訪問。9/15', '課題ヒアリング。9/29', '提案書の方向性確認'], '3行でも、それぞれの区切りを言葉の切れ目に');
   assert.deepStrictEqual(plain(g.mtgBalance_('短い', 142, 9, 3)), ['短い'], '1行に入るものはそのまま');
   const dated = '10/13 価格の再提示';
-  assert.strictEqual(g.mtgWrap_(dated, 86, 8.5, 2).length, 2);
-  assert.deepStrictEqual(plain(g.mtgBalance_(dated, 86, 8.5, 2)), ['10/13', '価格の再提示'], '空白で分ければ1行ずつに入るなら、言葉の途中で切らずに空白で分ける');
+  assert.strictEqual(g.mtgWrap_(dated, 98, 8.5, 2).length, 2);
+  assert.deepStrictEqual(plain(g.mtgBalance_(dated, 98, 8.5, 2)), ['10/13', '価格の再提示'], '空白で分ければ1行ずつに入るなら、言葉の途中で切らずに空白で分ける');
   const para = '東西マート／物流センターの改善（失注）、富士ストア／店舗アプリ改修（提案中→課題ヒアリング）、海風マート／来店分析（削除）';
-  assert.deepStrictEqual(plain(g.mtgBalance_(para, 360, 9, 3)), ['東西マート／物流センターの改善（失注）、富士ストア／店舗アプリ改修', '（提案中→課題ヒアリング）、海風マート／来店分析（削除）'],
-    '最後の行が十分に長ければ行の長さはそろえず、区切りだけを言葉の切れ目（かっこの前）に動かす');
+  assert.deepStrictEqual(plain(g.mtgBalance_(para, 360, 9, 3)), plain(g.mtgWrap_(para, 360, 9, 3)), '最後の行が十分に長く、区切りが言葉の切れ目なら、そのまま（行をいっぱいに使う）');
   assert.deepStrictEqual(plain(g.mtgBalance_(para, 400, 9, 3)).map(line => line.slice(-4)), ['中→課題', '（削除）'], '「ヒアリ／ング」ではなく「課題／ヒアリング」');
   const long = 'あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめも';
   assert.deepStrictEqual(plain(g.mtgBalance_(long, 100, 9, 2)), plain(g.mtgWrap_(long, 100, 9, 2)), '「…」で切れるものはそのまま');
@@ -1026,19 +1025,18 @@ test('文字の折り返し：見積もりの幅で分け、最後の行は「�
   assert.deepStrictEqual(plain(g.mtgWrap_('あいうえおかきくけこ', 92, 9, 3)), ['あいうえおかきく', 'けこ']);
   assert.deepStrictEqual(plain(g.mtgWrap_('あいうえおかきくけこさしすせそたちつてと', 92, 9, 2)), ['あいうえおかきく', 'けこさしすせそ…'],
     '最後の行は「…」の分をあけて切る');
-  assert.deepStrictEqual(plain(g.mtgWrap_('あいうえおかきく。', 96, 9, 3)), ['あいうえおかきく。'], '本当の幅に収まる「。」はぶら下げる（Noto Sans JP では「。」も全角の幅）');
+  assert.deepStrictEqual(plain(g.mtgWrap_('あいうえおかきく。', 92, 9, 3)), ['あいうえおかきく。'], '本当の幅に収まる「。」はぶら下げる');
   assert.deepStrictEqual(plain(g.mtgWrap_('期待値（前▶今）', 66, 7.5, 3)), ['期待値（前▶', '今）'], '収まらなければ前の文字と一緒に送る');
   assert.deepStrictEqual(plain(g.mtgWrap_('2026/11 ▶ 2026/12', 80, 7.5, 2)), ['2026/11 ▶', '2026/12']);
   assert.deepStrictEqual(plain(g.mtgWrap_('一行目\n二行目', 300, 9, 2)), ['一行目', '二行目']);
-  assert.strictEqual(g.mtgWrap_('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 150, 8, 3).length, 2, '英大文字は幅を広めに見積もる（Noto Sans JP では 0.33〜0.92）');
-  // Noto Sans JP（Google Fonts）をブラウザで測った幅（9pt。標準と太字の大きいほう。2026/11/08）：「2026/9」30.15pt・「B-クロージング中」72.5pt・「シナリオ提案」54pt。
-  // 見積もりはそれ以上（全角の文字・句読点・かっこはどれも 1文字分）
-  [['2026/9', 30.15], ['B-クロージング中', 72.5], ['シナリオ提案', 54], ['（社長）、', 45]].forEach(([text, real]) => {
+  assert.strictEqual(g.mtgWrap_('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 150, 8, 3).length, 2, '英大文字は幅を広めに見積もる（BIZ UDPゴシックでは 0.44〜1）');
+  // Google スライドで書き出した PDF で測った幅（9pt）：「2026/9」38.7pt・「B-クロージング中」70.6pt・「シナリオ提案」50.3pt。見積もりはそれ以上
+  [['2026/9', 38.7], ['B-クロージング中', 70.6], ['シナリオ提案', 50.3]].forEach(([text, real]) => {
     const est = g.mtgTextWidth_(text, 9);
     assert.ok(est >= real - 0.1 && est <= real * 1.06, text + '：' + est);
   });
   assert.strictEqual(g.mtgWrap_('2026/12', 62, 9, 2).length, 1, '受注月の列（62pt）に「2026/12」が1行で入る');
-  assert.strictEqual(g.mtgWrap_('2026/12', 50, 9, 2).length, 2, '50pt では入らない');
+  assert.strictEqual(g.mtgWrap_('2026/12', 56, 9, 2).length, 2, '56pt では入らない（Google スライドでも「2026/1」「2」に折り返された）');
 });
 
 test('mtgSlideRequests_：スライド・箱・表を Slides API のリクエストにする（空のセルにも空白を入れる・赤枠）', () => {
@@ -1057,7 +1055,7 @@ test('mtgSlideRequests_：スライド・箱・表を Slides API のリクエス
   const texts = requests.filter(r => r.insertText).map(r => r.insertText.text);
   assert.deepStrictEqual(texts, ['タグ', '見出し', ' ', 'A', 'B'], '空のセルには空白（既定の大きな文字で行が伸びないように）');
   const style = requests.find(r => r.updateTextStyle && r.updateTextStyle.objectId === 'mtg_p1_0').updateTextStyle.style;
-  assert.deepStrictEqual([style.fontFamily, style.fontSize.magnitude, style.bold], ['Noto Sans JP', 10, true], 'Noto Sans JP');
+  assert.deepStrictEqual([style.fontFamily, style.fontSize.magnitude, style.bold], ['BIZ UDPGothic', 10, true], 'BIZ UDPゴシック');
   const borders = requests.filter(r => r.updateTableBorderProperties).map(r => r.updateTableBorderProperties);
   assert.deepStrictEqual(borders.map(b => [b.borderPosition, b.tableRange.location.rowIndex, b.tableBorderProperties.weight.magnitude]),
     [['ALL', 0, 0.75], ['OUTER', 1, 2.25]], '区切り線は薄いグレー（0.75pt）');
