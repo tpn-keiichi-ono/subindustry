@@ -71,7 +71,8 @@ const MTG_OPTIONS = {
   // 前回の会議の宿題事項（報告案件版のサマリーの前のスライド。MeetingReport.gs の mtgHomeworkOf_）。シートの形：A列にサブインダストリー（行）、
   // 見出しの行に「日付」（会議日。結合したセルは右の列にも同じ日付）・「会議名」・「サブインダストリー」（その行の各列は「会議資料」「宿題」など）。
   // 今の会議日より前の、いちばん新しい RX Business Meeting（index.kind）の「宿題」の列から、その資料のサブインダストリーの行を読む。
-  // 宿題のセルは改行で1件ずつ。将来 INDEX_会議資料（index.sheet）と1つにする見込み（そのときは sheet を index.sheet にする）
+  // 宿題のセルは改行で1件ずつ。読むシートは sheet、無ければ名前が index.sheet で始まるシート（「INDEX_会議資料_」など）のうち「宿題」の列があるもの
+  // （今の INDEX_会議資料は行＝会議日の形なので読まない。将来 INDEX と1つにしても、そのまま読める）
   homework: {
     sheet: '宿題事項',
     dateLabel: '日付',
@@ -913,6 +914,8 @@ function mtgJobRun_(ss, job, started) {
       const fileName = mtgFileName_(summary.name, job.meeting, job.final, job.variant);
       // 上書き（job.overwrite）：前に作った同じ資料（本番は会議のフォルダ、試作は保存先）の中身を書き換える（リンクを変えない）
       const existing = job.overwrite ? mtgExistingPdf_(fileName, summary.name, job.meeting, job.final, folder) : null;
+      // 報告案件版は、前回の会議の宿題事項も読む（前の版・統合版では読まない。読む回数を増やさないように）
+      if (job.variant === 'report') summary.homework = mtgHomeworkOf_(source, summary.name, job.meeting);
       const slides = job.variant === 'report' ? mtgReportSlides_(summary) : mtgSlides_(summary);
       const out = mtgExportDeck_(fileName, slides, folder, {overwrite: existing});
       deckTimer.lap('スライドを作って PDF に保存');
@@ -3947,7 +3950,6 @@ function mtgSummarize_(ss, name, context) {
     scenarioColumn: !!table.has.scenario,
     scenarioAmountColumn: !!table.has.scenarioAmount,
     reportColumn: !!table.has.reportFlag,
-    homework: mtgHomeworkOf_(ss, name, context.meeting),   // 前回の会議の宿題事項（報告案件版。MeetingReport.gs）
     // シナリオ見込額（サービスパッケージ合算。失注除く）の合計：今と、前回の時点コピーの値（コピーと比べないときは null）。報告案件版のサマリー
     scenarioTotal: {end: mtgSum_(counted, 'scenarioAmount'),
       start: copy && copy.table ? mtgSum_(copy.table.deals.filter(d => !mtgExcludedStatus_(d.status)), 'scenarioAmount') : null},

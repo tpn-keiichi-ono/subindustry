@@ -199,6 +199,8 @@ function mtgApiBookObject_(book) {
     },
     /** 読んだシートだけ（並びの順） */
     getSheets: () => Object.keys(book.sheets).sort((a, b) => (book.props[a].index || 0) - (book.props[b].index || 0)).map(object.getSheetByName),
+    /** すべてのシートの名前（並びの順。読んでいないシートも。呼び出しは増やさない） */
+    getSheetNames: () => Object.keys(book.props).sort((a, b) => (book.props[a].index || 0) - (book.props[b].index || 0)),
     isApiBook: true
   };
   return object;

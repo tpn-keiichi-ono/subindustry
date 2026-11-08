@@ -141,9 +141,26 @@ function mtgColumnLetter_(n) {
  */
 function mtgHomeworkOf_(ss, name, meeting) {
   const H = MTG_OPTIONS.homework;
-  const out = {date: null, rows: [], gap: ''};
-  const sheet = ss.getSheetByName(H.sheet);
-  if (!sheet) return Object.assign(out, {gap: '「' + H.sheet + '」シートが無い'});
+  // 読むシート：homework.sheet、無ければ名前が index.sheet（INDEX_会議資料）で始まるシートのうち、「宿題」の列が読めるもの（シートの並びの順）。
+  // 今の INDEX_会議資料（行＝会議日の形）は「サブインダストリー」の見出しの行が無いので読まずに次へ
+  // シートの名前の一覧（Sheets API で読んだ入れ物は持っている一覧。SpreadsheetApp ならシートから。API の呼び出しを増やさない）
+  const titles = typeof ss.getSheetNames === 'function' ? ss.getSheetNames() : ss.getSheets().map(sh => sh.getName());
+  const names = [H.sheet].concat(titles.filter(t => t !== H.sheet && String(t).indexOf(MTG_OPTIONS.index.sheet) === 0));
+  let first = null;
+  for (const title of names) {
+    const sheet = ss.getSheetByName(title);
+    if (!sheet) continue;
+    const got = mtgHomeworkRead_(sheet, meeting);
+    if (!got.gap) return got;
+    if (!first) first = got;
+  }
+  return first || {date: null, rows: [], gap: '「' + H.sheet + '」シート（または名前が「' + MTG_OPTIONS.index.sheet + '」で始まり、「' + H.column + '」の列があるシート）が無い'};
+}
+
+/** 宿題のシート（sheet）を読む（mtgHomeworkOf_）。{date, rows, gap}（見出しの行が無ければ gap） */
+function mtgHomeworkRead_(sheet, meeting) {
+  const H = MTG_OPTIONS.homework;
+  const out = {date: null, rows: [], gap: '', sheet: sheet.getName()};
   const rows = sheet.getLastRow();
   const cols = sheet.getLastColumn();
   if (!rows || !cols) return out;
@@ -156,7 +173,7 @@ function mtgHomeworkOf_(ss, name, meeting) {
   const kindRow = find(H.kindLabel);
   const subRow = find(H.nameLabel);
   if (dateRow < 0 || subRow < 0) {
-    return Object.assign(out, {gap: '「' + H.sheet + '」シートの A列に「' + H.dateLabel + '」「' + H.nameLabel + '」の見出しが無い'});
+    return Object.assign(out, {gap: '「' + sheet.getName() + '」シートの A列に「' + H.dateLabel + '」「' + H.nameLabel + '」の見出しが無い'});
   }
   // 列ごとの会議日・会議名（結合したセルは左の列だけに値があるので、右へ引き継ぐ）
   const kinds = mtgIndexKinds_(MTG_OPTIONS.index.kind);
@@ -210,7 +227,7 @@ function mtgHomeworkSlides_(s) {
   const items = own.reduce((list, r) => list.concat(r.items), []);
   if (!items.length) {
     const none = !h.date ? '前の RX Business Meeting の宿題の列が無い'
-      : !own.length ? '「' + H.sheet + '」シートに「' + s.name + '」の行が無い' : when + 'の宿題は登録されていない';
+      : !own.length ? '「' + (h.sheet || H.sheet) + '」シートに「' + s.name + '」の行が無い' : when + 'の宿題は登録されていない';
     return [{title, lead: none + '。', elements: mtgEmptyTable_(columns, mtgHeadRow_(columns, labels), 'none', none)}];
   }
   const lead = when + 'で出た宿題 ' + items.length + '件。';

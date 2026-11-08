@@ -61,6 +61,11 @@ function setup(options) {
 function summarize(g, name) {
   const ss = g.SpreadsheetApp.getActiveSpreadsheet();
   const windowStart = new Date(Date.now() - 180 * 86400000);
+  // 報告案件版の資料を作るときと同じく、前回の会議の宿題事項も読む（mtgJobRun_）
+  return Object.assign(summarizeOnly(g, ss, name, windowStart), {homework: g.mtgHomeworkOf_(ss, name, '2026/10/23')});
+}
+
+function summarizeOnly(g, ss, name, windowStart) {
   return g.mtgSummarize_(ss, name, {
     since: new Date(Date.now() - 14 * 86400000), previous: null, legacy: null, baseline: null, draft: null, final: true, now: new Date(),
     meeting: '2026/10/23', windowStart, copy: null, copyError: '', trackedSince: g.mtgLogStart_(ss),
@@ -430,7 +435,7 @@ test('前回の宿題事項：宿題のシート（列＝会議日の「会議�
     ['新FMT2', '', '', '', '1. ドラッグストアの攻略方針を整理する', '', '', '', '']
   ], {rows: 10, columns: 9});
   const s = summarize(g, '新FMT');   // 会議日 2026/10/23（10/23 の RX Service Meeting と 10/30 は使わない）
-  assert.deepStrictEqual(plain(s.homework), {date: '2026/10/16', gap: '', rows: [
+  assert.deepStrictEqual(plain(s.homework), {date: '2026/10/16', gap: '', sheet: '宿題事項', rows: [
     {name: '新FMT', items: ['A社の決裁者を確認する', 'B社の見積もりを再提出する']},
     {name: '新FMT2', items: ['ドラッグストアの攻略方針を整理する']}
   ]});
@@ -455,7 +460,7 @@ test('前回の宿題事項：宿題のシート（列＝会議日の「会議�
 test('前回の宿題事項：多ければ字を小さくし（8pt まで）、それでも入らなければ続きのページに分けて全件を出す。宿題のシートが無ければ「データなし」', () => {
   const {gas, g} = setup({edits: false});
   const gap = plain(g.mtgReportSlides_(summarize(g, '新FMT')))[1];
-  assert.match(texts(gap).join('\n'), /「宿題事項」シートが無い/);
+  assert.match(texts(gap).join('\n'), /「宿題事項」シート（または名前が「INDEX_会議資料」で始まり、「宿題」の列があるシート）が無い/);
   const list = n => Array.from({length: n}, (_, i) => '宿題その' + (i + 1) + '：' + 'ていねいに確認して報告する'.repeat(3)).join('\n');
   gas.addSheet('宿題事項', [['日付', '2026/10/16', ''], ['会議名', 'RX Business Meeting', ''], ['サブインダストリー', '会議資料', '宿題'], ['新FMT', '', list(8)]],
     {rows: 6, columns: 3});
@@ -472,4 +477,28 @@ test('前回の宿題事項：多ければ字を小さくし（8pt まで）、�
   slides.forEach(sl => sl.elements.find(el => el.type === 'table').rows.slice(1).forEach(r =>
     assert.ok(r.cells[1].text.indexOf('\n') < 0 && /^宿題その\d+：(ていねいに確認して報告する){3}$/.test(r.cells[1].text), r.cells[1].text)));
   slides.forEach(sl => { const t = sl.elements.find(el => el.type === 'table'); assert.ok(t.y + t.rows.reduce((a, r) => a + r.h, 0) <= gas.get('MTG_SLIDE').bottom + 0.01); });
+});
+
+test('前回の宿題事項：「宿題事項」シートが無ければ、名前が INDEX_会議資料 で始まるシート（「INDEX_会議資料_」など）の「宿題」の列から読む。今の INDEX_会議資料（行＝会議日）は読まない', () => {
+  const {gas, g} = setup({edits: false});
+  // 今の INDEX_会議資料（行＝会議日・列＝サブインダストリー）
+  gas.addSheet('INDEX_会議資料', [['日付', '会議名', '新FMT'], ['2026/10/16', 'RX Business Meeting', '20261016_新FMT.pdf']], {rows: 5, columns: 3});
+  // 宿題の列がある INDEX（列＝会議日。10/30 の RX Service Meeting は会議資料だけ）
+  gas.addSheet('INDEX_会議資料_', [
+    ['日付', '2026/10/09', '', '2026/10/12', '2026/10/16', ''],
+    ['会議名', 'RX Business Meeting', '', 'RX Service Meeting', 'RX Business Meeting', ''],
+    ['サブインダストリー', '会議資料', '宿題', '会議資料', '会議資料', '宿題'],
+    ['全サブインダストリー', '20261009_全サブインダストリー.pdf', '', '', '20261016_全サブインダストリー.pdf', ''],
+    ['新FMT', '20261009_新FMT.pdf', '古い宿題', '', '20261016_新FMT.pdf', '①ドラッグへの入り込みに関して中部薬品、ツルハへの提案を通じて検討し報告\n②PB商品の販促やデザインを含めた販売構成案']
+  ], {rows: 8, columns: 6});
+  const s = summarize(g, '新FMT');
+  assert.strictEqual(s.homework.sheet, 'INDEX_会議資料_');
+  assert.deepStrictEqual(plain(s.homework.rows.find(r => r.name === '新FMT').items),
+    ['ドラッグへの入り込みに関して中部薬品、ツルハへの提案を通じて検討し報告', 'PB商品の販促やデザインを含めた販売構成案']);
+  const hw = plain(g.mtgReportSlides_(s))[1];
+  assert.match(texts(hw).join('\n'), /前回会議（10\/16）で出た宿題 2件。/);
+  // どちらにも宿題の列が無ければ「データなし」
+  const only = setup({edits: false});
+  only.gas.addSheet('INDEX_会議資料', [['日付', '会議名', '新FMT'], ['2026/10/16', 'RX Business Meeting', 'x']], {rows: 5, columns: 3});
+  assert.match(texts(plain(only.g.mtgReportSlides_(summarize(only.g, '新FMT')))[1]).join('\n'), /前回の会議の宿題事項はデータなし/);
 });
