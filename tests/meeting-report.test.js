@@ -101,13 +101,10 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   const a = slides[numbers.length];
   assert.ok(!byRole(a, 'title').length, '見出し（タイトル）は付けない');
   const head = byRole(a, 'report-title')[0];
-  assert.strictEqual(head.text, '報告案件①：');
+  assert.strictEqual(head.text, '報告案件①：店舗DX基盤の刷新', '見出しは案件名だけ（得意先名は得意先情報の枠）');
   assert.strictEqual(head.size, 21, '見出しはほかのスライドと同じ大きさ');
   assert.ok(!(head.spans || []).length && head.color === '#1A1A1A', '色を付けない');
-  const name = byRole(a, 'report-name')[0];
-  assert.strictEqual(name.text, 'A社\n店舗DX基盤の刷新', '1行目に得意先、2行目に案件名');
-  assert.strictEqual(name.size * 2, head.size, '2行の高さが「報告案件①：」の行の高さと同じ');
-  assert.ok(name.x > head.x && name.y === head.y && name.h === head.h, '「報告案件①：」の右（上下の中央をそろえる）');
+
   assert.ok(!byRole(a, 'report-rule').length, '見出しの下の線は無い');
   assert.strictEqual(g.mtgReportTitle_('X', 21), '報告案件(21)：X');
   const all = texts(a).join('\n');
@@ -117,8 +114,8 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
     .forEach(t => assert.ok(all.indexOf(t) >= 0, t + ' が無い：\n' + all));
   const staff = byRole(a, 'report-staff')[0];
   assert.strictEqual(staff.text, '担当営業：佐藤\nBX担当：山田', '右上に担当営業と BX担当の2行');
-  assert.ok(staff.size === name.size && staff.y === name.y && staff.h === name.h && staff.align === 'END', '得意先・案件名と同じ2行（右寄せ）');
-  assert.ok(name.x + name.w <= byRole(a, 'report-staff')[0].x + 0.01, '得意先・案件名は担当の左まで');
+  assert.ok(staff.size * 2 === head.size && staff.y === head.y && staff.h === head.h && staff.align === 'END', '2行の高さが見出しの行と同じ（右寄せ）');
+  assert.ok(head.x + head.w <= staff.x + 0.01, '見出しは担当の左まで');
   const bodies = byRole(a, 'report-text');
   assert.strictEqual(bodies.length, 5);
   assert.strictEqual(new Set(bodies.map(b => b.size)).size, 1, '文章の枠の字の大きさはスライドの中で同じ');
