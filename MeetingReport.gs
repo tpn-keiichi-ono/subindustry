@@ -548,7 +548,8 @@ function mtgReportScenario_(b, item, hasColumn) {
   const gap = 3;
   const layout = size => {
     const h = size + 4.5;
-    const width = text => Math.min(right - x0, Math.ceil(mtgTextWidth_(text, size) / 0.92 + 10));
+    // 幅は文字の幅に箱の左右の余白（MTG_SLIDE.padX）を足す（足りないと「01-05」が2行に折り返す）
+    const width = text => Math.min(right - x0, Math.ceil(mtgTextWidth_(text, size) / 0.92 + S.padX + 4));
     const placed = [];
     let x = x0;
     let row = 0;
