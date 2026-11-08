@@ -231,7 +231,7 @@ function mtgReportSlide_(s, item, no) {
   el.push.apply(el, mtgReportValue_(box(2), item));
   el.push.apply(el, mtgReportMonth_(box(3), item));
   el.push.apply(el, mtgReportScenario_(box(4), item, s.scenarioColumn));
-  return {title: mtgReportTitle_(mtgDealLabel_(item), no), noTitle: true, note: R.note, footRight: mtgReportRecord_(item.record, s.recordColumn, item.recordLinks),
+  return {title: mtgReportTitle_(mtgDealLabel_(item), no), noTitle: true, source: mtgReportSource_(s, item), footSize: R.footSize, footRight: mtgReportRecord_(item.record, s.recordColumn, item.recordLinks),
     cut: fit.cut, elements: el};
 }
 
@@ -271,6 +271,20 @@ function mtgReportPrevious_(b, item, prev, size, label) {
       fill: R.staleFill, color: c.ink, role: 'report-stale'}));
   }
   return el;
+}
+
+/**
+ * 報告案件の出典の行：どのシートの何行目の値を、いつ読んだか（資料を作った時刻）と、「前回」がいつの値か。
+ * 例：「出典：「スーパー・GMS」シート 12行目（2026/11/06 10:00 時点）　前回＝前回会議（10/30）の資料作成時（10/28 18:00）」。
+ * 金額の単位は書かない（期待値・RXシナリオの枠の見出しに「百万円」がある）。
+ * 試作は先頭に【試作】、ダミーの記録を使ったときは【ダミーデータを含む】
+ */
+function mtgReportSource_(s, item) {
+  const tz = Session.getScriptTimeZone();
+  const at = Utilities.formatDate(s.now, tz, 'yyyy/MM/dd HH:mm');
+  const prev = mtgPeriodText_(s).replace(/以降$/, '');
+  return (s.final ? '' : '【試作】') + (s.dummy ? '【ダミーデータを含む】' : '') +
+    '出典：「' + s.name + '」シート ' + item.row + '行目（' + at + ' 時点）　前回＝' + prev;
 }
 
 /** 報告フラグにチェックのある案件が無いとき（列が無いときは「データなし」と理由） */
@@ -512,10 +526,13 @@ function mtgReportRecord_(record, hasColumn, links) {
   const head = '商談記録：';
   const value = String(record || '').trim();
   const urls = (links || []).slice(0, R.maxLinks);
-  if (!hasColumn || (!value && !urls.length)) {
-    return {w: R.recordWidth, text: head + (hasColumn ? MTG_OPTIONS.blankText : MTG_OPTIONS.gapText), size: 8, color: c.faint};
-  }
-  if (!urls.length) return {w: R.recordWidth, text: mtgWrap_(head + value, R.recordWidth, 8, 1)[0], size: 8, color: c.faint};
+  // 幅は文字に合わせる（R.recordWidth まで。残りは出典の行に使う）
+  const box = (text, spans) => {
+    const w = Math.min(R.recordWidth, Math.ceil(mtgTextWidth_(text, 8) / MTG_SLIDE.fit + MTG_SLIDE.padX + 2));
+    return {w, text: mtgWrap_(text, w, 8, 1)[0], size: 8, color: c.faint, spans: spans || []};
+  };
+  if (!hasColumn || (!value && !urls.length)) return box(head + (hasColumn ? MTG_OPTIONS.blankText : MTG_OPTIONS.gapText));
+  if (!urls.length) return box(head + value);
   const marks = '①②③④⑤';
   let text = head;
   const spans = [];
@@ -525,5 +542,5 @@ function mtgReportRecord_(record, hasColumn, links) {
     spans.push({start: text.length, end: text.length + label.length, url, color: c.link, underline: true});
     text += label;
   });
-  return {w: R.recordWidth, text, size: 8, color: c.faint, spans};
+  return box(text, spans);
 }

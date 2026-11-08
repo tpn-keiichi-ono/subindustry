@@ -130,7 +130,11 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.strictEqual(record.text, '商談記録：格納先リンク', 'URL は見せずに「格納先リンク」をハイパーリンクに');
   assert.deepStrictEqual(record.spans.map(sp => [sp.url, record.text.slice(sp.start, sp.end)]), [['https://drive.google.com/drive/folders/abc', '格納先リンク']]);
   assert.ok(byRole(a, 'footer')[0].w < 676 - 60, '出典の行は商談記録の分だけ狭い');
-  assert.match(byRole(a, 'footer')[0].text, /前回＝表紙の対象期間の始まり/);
+  const foot = byRole(a, 'footer')[0];
+  assert.match(foot.text, /^出典：「新FMT」シート 3行目（\d{4}\/\d{2}\/\d{2} \d{2}:\d{2} 時点）　前回＝直近14日間（\d{2}\/\d{2}〜。初回のため）$/,
+    'どのシートの何行目を、いつ読んだか：' + foot.text);
+  assert.strictEqual(foot.size, 8);
+  assert.match(byRole(slides[numbers.length + 1], 'footer')[0].text, /「新FMT」シート 5行目/, 'C社は5行目');
   assert.ok(byRole(a, 'page').length === 1, 'ページ番号は付ける');
 
   const cSlide = slides[numbers.length + 1];

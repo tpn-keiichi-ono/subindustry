@@ -82,8 +82,8 @@ const MTG_OPTIONS = {
     newText: '（新規）',                     // 前回に無かった案件の「前回：」
     prevSize: 7,                             // 課題・活動状況・次回アクションの「前回」の帯の字の大きさ
     staleFill: '#FFE699',                    // 課題・活動状況・次回アクションが前回から変わっていないときの「更新なし」の印の色
-    note: '前回＝表紙の対象期間の始まり',     // 出典の行の後ろ
-    recordWidth: 200,                        // 右下の「商談記録：」の幅（pt）
+    footSize: 8,                             // 出典の行（どのシートの何行目を、いつ読んだか。mtgReportSource_）の字の大きさ
+    recordWidth: 200,                        // 右下の「商談記録：」の幅の上限（pt。文字に合わせて狭くし、残りを出典の行に使う）
     linkLabel: '格納先リンク',               // 商談記録のリンクの文字（商談記録のセルのリンクへのハイパーリンク）
     maxLinks: 3,                             // リンクが2つ以上あるときに出す数（格納先リンク①②③）
     clientLabel: '得意先情報',               // 左の列の1つ目の枠の見出し（得意先名・先方部門・先方担当役職）
@@ -4916,11 +4916,13 @@ function mtgFrame_(frame, slide, page) {
   // リード文は中身（いちばん上の部品）にかからない高さに収める（mtgLead_）
   if (slide.lead) el.push.apply(el, mtgLead_(slide.lead, mtgContentTop_(slide)));
   el.push({type: 'box', x: S.x, y: S.ruleY, w: S.w, h: 0.75, fill: c.rule, shape: 'RECTANGLE'});
-  // footRight = {w, text, size, color, spans}：出典の行の右（ページ番号の左）に置く文（報告案件の「商談記録：」）。出典の行はその分だけ狭くする
+  // footRight = {w, text, size, color, spans}：出典の行の右（ページ番号の左）に置く文（報告案件の「商談記録：」）。出典の行はその分だけ狭くする。
+  // slide.source があれば、出典の行は frame.source の代わりにその文（報告案件：どのシートの何行目を、いつ読んだか）。slide.footSize は出典の行の字の大きさ
   const right = slide.footRight || null;
   const sourceW = S.w - 60 - (right ? right.w : 0);
-  el.push(mtgBox_(S.x, S.footY, sourceW, 16, mtgWrap_(frame.source + (slide.note ? '　' + slide.note : ''), sourceW, 9, 1)[0],
-    {size: 9, color: c.faint, role: 'footer'}));
+  const footSize = slide.footSize || 9;
+  const sourceText = slide.source != null ? slide.source : frame.source + (slide.note ? '　' + slide.note : '');
+  el.push(mtgBox_(S.x, S.footY, sourceW, 16, mtgWrap_(sourceText, sourceW, footSize, 1)[0], {size: footSize, color: c.faint, role: 'footer'}));
   if (right) {
     el.push(mtgBox_(S.x + sourceW, S.footY, right.w, 16, right.text, {size: right.size || 9, color: right.color || c.faint, align: 'END',
       spans: right.spans || [], role: 'footer-right'}));
