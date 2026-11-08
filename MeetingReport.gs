@@ -459,7 +459,7 @@ function mtgReportStatus_(b, item) {
   return el;
 }
 
-/** 左の列の3つ目：期待値（百万円。1行目に今の値と、その右に前回からの増減のバッジ・2行目に前回の値と想定売上） */
+/** 左の列の3つ目：期待値（百万円。1行目に今の値と、その右に前回からの増減（色付きの字）・2行目に前回の値と想定売上） */
 function mtgReportValue_(b, item) {
   const c = MTG_OPTIONS.colors;
   const R = MTG_OPTIONS.report;
@@ -469,27 +469,25 @@ function mtgReportValue_(b, item) {
   const delta = item.isNew || item.weighted == null || item.prevWeighted == null ? null : item.weighted - item.prevWeighted;
   const rounded = delta == null ? null : Math.round(delta * 10) / 10;
   const second = '前回：' + (item.isNew ? R.newText : mtgAmount_(item.prevWeighted)) + '　／　想定売上：' + mtgAmount_(item.amount);
-  // 行ごとに高さを決めた箱に分け、上下の中央に置く（数字の行と、その下の「前回」の行。バッジは数字の行の中央にそろえる。重ならないように）
+  // 行ごとに高さを決めた箱に分け、上下の中央に置く（数字の行と、その下の「前回」の行）
   const rowH = 13;
   const y1 = b.y + L.head + 5;   // 枠の見出し（下端は枠の上から約 17pt）にバッジがかからないように下げる
   const y2 = y1 + rowH;
   let sub = R.subSize;   // 省略しない：1行に入らなければ小さくする
   while (sub > R.minSize && mtgWrap_(second, b.w, sub, 2).length > 1) sub -= 0.5;
-  const el = [mtgReportFrame_(b.x, b.y, b.w, b.h, '期待値（百万円）'),
-    mtgBox_(b.x, y1, b.w, rowH, now, {size: R.boxSize, bold: true, color: item.weighted == null ? c.faint : c.ink, valign: 'MIDDLE', role: 'report-value'}),
+  // 前回からの増減は、数字の右に色付きの字で（増 = 緑「+20」・減 = 濃いグレー「▲12」・同じ = 灰色「±0」。数字と同じ大きさ）
+  const deltaText = rounded == null ? '' : '　' + mtgSigned_(rounded);
+  const first = now + deltaText;
+  const spans = [{start: 0, end: now.length, bold: true, color: item.weighted == null ? c.faint : c.ink}];
+  if (deltaText) spans.push({start: now.length, end: first.length, bold: true, color: rounded > 0 ? c.greenDark : rounded < 0 ? c.dark : c.faint});
+  return [mtgReportFrame_(b.x, b.y, b.w, b.h, '期待値（百万円）'),
+    mtgBox_(b.x, y1, b.w, rowH, first, {size: R.boxSize, color: c.ink, spans, valign: 'MIDDLE', role: 'report-value'}),
     mtgBox_(b.x, y2, b.w, rowH, second, {size: sub, color: c.muted, valign: 'MIDDLE', role: 'report-value'})];
-  // 前回からの増減は、数字の右のバッジ（平らな四角。増 = 薄い緑の地に緑の字・減 = 薄いグレーの地に濃いグレーの字・同じ = 薄いグレーの地に灰色の字。
-  // 「+20」「▲12」「±0」）
-  // バッジの高さは横の数字の行の高さ（字の大きさ × 行の送り）にそろえ、字はその中に入る大きさ
-  const numberH = R.boxSize * S.lineFactor;
-  if (rounded != null) el.push(mtgReportBadge_(b.x + S.padX / 2 + mtgTextWidth_(now, R.boxSize) + 6, y1 + rowH / 2, mtgSigned_(rounded),
-    rounded > 0 ? 'up' : rounded < 0 ? 'down' : 'flat', 'report-delta', numberH - 3, numberH));
-  return el;
 }
 
 /**
- * 平らなバッジ（角の無い四角・枠の線なし・薄い地に色の字。確度の段と同じつくり）。x は左端、cy は上下の中央、tone：'up' 緑・'down' 濃いグレー・'flat' 灰色・
- * 'stale' 黄色（更新なし）・'chip' 緑（シナリオの番号）。size は字の大きさ（省けば MTG_OPTIONS.report.subSize）、height は高さ（省けば字の大きさ + 4）
+ * 平らなバッジ（角の無い四角・枠の線なし・薄い地に色の字。確度の段と同じつくり。「更新なし」の印など）。x は左端、cy は上下の中央、
+ * tone：'up' 緑・'down' 濃いグレー・'flat' 灰色・'stale' 黄色（更新なし）・'chip' 緑（シナリオの番号）。size は字の大きさ（省けば MTG_OPTIONS.report.subSize）、height は高さ（省けば字の大きさ + 4）
  */
 function mtgReportBadge_(x, cy, text, tone, role, size, height) {
   const c = MTG_OPTIONS.colors;

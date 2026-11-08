@@ -162,17 +162,13 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   const cSlide = slides[numbers.length + 1];
   assert.ok(texts(cSlide).join('\n').indexOf('前回：C-提案中(50%)') >= 0, '変化が無ければ前回も今と同じ');
   assert.strictEqual(byRole(cSlide, 'footer-right')[0].text, '商談記録：未入力');
-  assert.deepStrictEqual(byRole(cSlide, 'report-delta').map(el => [el.text, el.shape]), [['±0', 'RECTANGLE']], '期待値が同じなら ±0 のバッジ（平らな四角）');
-  assert.deepStrictEqual(byRole(a, 'report-delta').map(el => [el.text, el.fill, el.color]), [['+20', '#E2EFDA', '#38761D']], '増えたら薄い緑の地に緑の字');
-  // バッジは数字の行の中だけ（下の「前回」の行に重ならない）。バッジ・印はどれも平らな四角（角を丸めない）
-  const delta = byRole(a, 'report-delta')[0];
-  const valueRows = a.elements.filter(el => el.role === 'report-value' && el.x === byRole(a, 'report-frame').find(f => /期待値/.test(f.text)).x &&
-    el.y > byRole(a, 'report-frame').find(f => /期待値/.test(f.text)).y && el.y < delta.y + 30);
-  const prevRow = valueRows.find(el => /^前回：/.test(el.text));
-  assert.ok(delta.y + delta.h <= prevRow.y + 0.01, 'バッジは「前回」の行に重ならない');
-  const number = valueRows.find(el => el.text === '70');
-  assert.ok(Math.abs(delta.h - number.size * 1.2) < 0.01, 'バッジの高さは横の数字の行の高さ');
-  assert.ok(Math.abs((delta.y + delta.h / 2) - (number.y + number.h / 2)) < 0.01, 'バッジは数字の行の上下の中央');
+  // 期待値の増減は、数字の右の色付きの字（バッジにしない）
+  const valueRow = sl => sl.elements.find(el => el.role === 'report-value' && /^\d+　/.test(el.text || ''));
+  assert.strictEqual(valueRow(cSlide).text, '20　±0', '期待値が同じなら ±0');
+  const up = valueRow(a);
+  assert.strictEqual(up.text, '70　+20');
+  assert.deepStrictEqual(up.spans.map(sp => [up.text.slice(sp.start, sp.end), sp.color]), [['70', '#1A1A1A'], ['　+20', '#38761D']], '増えたら緑の字');
+  assert.ok(!byRole(a, 'report-delta').length, 'バッジにしない');
   assert.ok(a.elements.every(el => el.shape !== 'ROUND_RECTANGLE'), '角の丸い四角は使わない');
 });
 
