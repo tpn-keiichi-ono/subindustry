@@ -214,10 +214,16 @@ function mtgHomeworkSlides_(s) {
     return [{title, lead: none + '。', elements: mtgEmptyTable_(columns, mtgHeadRow_(columns, labels), 'none', none)}];
   }
   const lead = when + 'で出た宿題 ' + items.length + '件。';
-  const build = size => items.map((text, i) => mtgRow_(columns, [
-    {text: String(i + 1), size: size + 1.5, bold: true, color: c.greenDark, fill: c.greenSoft, align: 'CENTER'},
-    {text, size, lines: 6, fill: c.white}
-  ], Math.round(size * 3)));
+  // 指摘事項のセルには、見積もりで折り返した改行を入れず、シートの文をそのまま入れる（スライド・PDF からコピーして貼り付けたときに、文の途中で改行しない。
+  // 折り返しは Google スライドに任せる。行の高さは見積もりの行の数で決める（見積もりは本当の幅より早めに折り返すので、高さは足りる））
+  const build = size => items.map((text, i) => {
+    const row = mtgRow_(columns, [
+      {text: String(i + 1), size: size + 1.5, bold: true, color: c.greenDark, fill: c.greenSoft, align: 'CENTER'},
+      {text, size, lines: 6, fill: c.white}
+    ], Math.round(size * 3));
+    row.cells[1] = Object.assign({}, row.cells[1], {text});
+    return row;
+  });
   // 1枚に入るいちばん大きい字（10.5pt から 0.5pt ずつ 8pt まで）
   for (let size = S.leadSize; size >= 8 - 1e-9; size -= 0.5) {
     const head = mtgHeadRow_(columns, labels);

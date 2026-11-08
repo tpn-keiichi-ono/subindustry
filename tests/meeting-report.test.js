@@ -468,5 +468,8 @@ test('前回の宿題事項：多ければ字を小さくし（8pt まで）、�
   assert.ok(slides.length >= 2, '続きのページ：' + slides.length);
   assert.strictEqual(slides[1].title, '前回の宿題事項（続き）');
   assert.strictEqual(slides.reduce((n, sl) => n + sl.elements.find(el => el.type === 'table').rows.length - 1, 0), 30, '全件');
+  // コピーして貼り付けられるように、指摘事項のセルには見積もりの改行を入れない（シートの文のまま）
+  slides.forEach(sl => sl.elements.find(el => el.type === 'table').rows.slice(1).forEach(r =>
+    assert.ok(r.cells[1].text.indexOf('\n') < 0 && /^宿題その\d+：(ていねいに確認して報告する){3}$/.test(r.cells[1].text), r.cells[1].text)));
   slides.forEach(sl => { const t = sl.elements.find(el => el.type === 'table'); assert.ok(t.y + t.rows.reduce((a, r) => a + r.h, 0) <= gas.get('MTG_SLIDE').bottom + 0.01); });
 });
