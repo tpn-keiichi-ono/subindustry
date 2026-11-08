@@ -374,3 +374,21 @@ test('報告案件：商談記録の「格納先リンク」は、セルのリ�
   assert.deepStrictEqual(g.mtgCellLinks_(gas.ss.getSheetByName('新FMT').getRange('R3')).map(x => plain(x)),
     [['https://drive.google.com/drive/folders/abc']], '文字の中の URL');
 });
+
+test('報告案件：RXシナリオは番号だけ。案件・得意先情報は、長い得意先名・部門／役職も折り返して全文（枠に入らないときだけ切る）', () => {
+  const long = Object.assign({}, DEALS[0], {customer: '株式会社サンプルリテールホールディングスジャパン', clientDept: 'デジタルマーケティング本部 本部長室',
+    clientTitle: '本部長', scenario: '01-05 店舗オペレーション効率化, 02-03 需要予測'});
+  const {gas, g} = setup({edits: false, deals: [long]});
+  const slide = plain(g.mtgReportSlides_(summarize(g, '新FMT'))).find(sl => /^報告案件①/.test(sl.title));
+  assert.deepStrictEqual(byRole(slide, 'report-chip').map(el => el.text), ['01-05', '02-03'], 'シナリオは番号だけ');
+  const client = byRole(slide, 'report-value')[0].text;
+  assert.ok(client.indexOf('…') < 0, '切らない：' + client);
+  assert.strictEqual(client.replace(/\n/g, ''), '店舗DX基盤の刷新 株式会社サンプルリテールホールディングスジャパンデジタルマーケティング本部 本部長室／本部長');
+  // 枠に入らないときだけ切る（得意先名2行・部門／役職3行まで。残りを案件名に）
+  const huge = Object.assign({}, long, {project: 'とても長い案件名'.repeat(20)});
+  const s2 = setup({edits: false, deals: [huge]});
+  const box = plain(s2.g.mtgReportSlides_(summarize(s2.g, '新FMT'))).find(sl => /^報告案件①/.test(sl.title)).elements.find(el => el.role === 'report-value');
+  const lines = box.text.split('\n');
+  assert.match(lines.filter(l => /案件名/.test(l)).pop(), /…$/, '案件名を「…」で切る');
+  assert.ok(gas.global.mtgTextHeight_(lines.length, 8) <= box.h + 8, '枠の高さに収める（行の数）');
+});

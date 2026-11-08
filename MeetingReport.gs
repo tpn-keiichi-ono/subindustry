@@ -394,21 +394,36 @@ function mtgReportBody_(b, lines, bottomSpace) {
 }
 
 /**
- * 左の列の1つ目：案件・得意先情報（案件名（太字。3行まで）・得意先名・先方部門／先方担当役職。入らなければ「…」で切る。
+ * 左の列の1つ目：案件・得意先情報（案件名（太字）、1行あけて得意先名・先方部門／先方担当役職。どれも折り返して全文を書く。
+ * 枠に入る行の数を超えるときだけ、得意先名は2行・部門／役職は3行までにし、残りの行を案件名に使う（それでも入らなければ「…」で切る）。
  * 名前（先方担当氏名）は出さない。空の項目は灰色の「未入力」）
  */
 function mtgReportClient_(b, item) {
   const c = MTG_OPTIONS.colors;
   const R = MTG_OPTIONS.report;
+  const S = MTG_SLIDE;
+  const L = mtgReportLayout_();
   const blank = MTG_OPTIONS.blankText;
-  const line = (text, size, bold, max) => ({text: mtgWrap_(text || blank, b.w, size, max || 1).join('\n'), size, bold: !!bold && !!text,
-    color: text ? c.ink : c.faint});
+  const size = R.boxSize;
+  const gap = 4;   // 案件名と得意先の情報の間（字の大きさ。行の送りはその 1.2倍）
+  const wrap = (text, max) => mtgWrap_(text || blank, b.w, size, max);
   const dept = [item.clientDept, item.clientTitle].filter(Boolean).join('／');
-  return [mtgReportFrame_(b.x, b.y, b.w, b.h, MTG_OPTIONS.report.clientLabel), mtgReportBody_(b, [
-    line(item.project, R.boxSize, true, 4),
-    {text: ' ', size: 4},   // 案件名と得意先の情報の間をあける
-    line(item.customer, R.boxSize),
-    line(dept, R.boxSize)
+  // 枠に入る行の数（見出しの下・上下の余白・案件名と得意先の間を除く）
+  const room = Math.max(3, Math.floor((b.h - L.head - S.padY - gap * S.lineFactor) / (size * S.lineFactor) + 0.1));
+  let customer = wrap(item.customer, 99);
+  let place = wrap(dept, 99);
+  let project = wrap(item.project, 99);
+  if (customer.length + place.length + project.length > room) {
+    customer = wrap(item.customer, 2);
+    place = wrap(dept, 3);
+    project = wrap(item.project, Math.max(1, room - customer.length - place.length));
+  }
+  const line = (lines, text, bold) => ({text: lines.join('\n'), size, bold: !!bold && !!text, color: text ? c.ink : c.faint});
+  return [mtgReportFrame_(b.x, b.y, b.w, b.h, R.clientLabel), mtgReportBody_(b, [
+    line(project, item.project, true),
+    {text: ' ', size: gap},
+    line(customer, item.customer),
+    line(place, dept)
   ])];
 }
 
@@ -478,14 +493,15 @@ function mtgReportMonth_(b, item) {
   ])];
 }
 
-/** 左の列の5つ目：RXシナリオ（見出しに見込金額。選んだシナリオを角の丸い枠で並べる。入らない分は「ほか N件」） */
+/** 左の列の5つ目：RXシナリオ（見出しに見込金額。選んだシナリオの番号を角の丸い枠で並べる。入らない分は「ほか N件」） */
 function mtgReportScenario_(b, item, hasColumn) {
   const o = MTG_OPTIONS;
   const c = o.colors;
   const L = mtgReportLayout_();
   const heading = 'RXシナリオ（見込金額 ' + (item.scenarioAmount == null ? o.blankText : mtgAmount_(item.scenarioAmount) + '百万円') + '）';
   const el = [mtgReportFrame_(b.x, b.y, b.w, b.h, heading)];
-  const names = item.scenarios || [];
+  // シナリオは番号だけ（「01-05」など。名前は長いので。番号が無ければ名前のまま。mtgScenarioNumber_）
+  const names = (item.scenarios || []).map(mtgScenarioNumber_);
   if (!hasColumn || !names.length) {
     el.push(mtgBox_(b.x, b.y + L.head, b.w, b.h - L.head, hasColumn ? o.blankText : o.gapText, {size: o.report.boxSize, color: c.faint, valign: 'TOP', role: 'report-value'}));
     return el;
