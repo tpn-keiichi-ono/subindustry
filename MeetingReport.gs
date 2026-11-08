@@ -475,11 +475,11 @@ function mtgReportValue_(b, item) {
   const y2 = y1 + rowH;
   let sub = R.subSize;   // 省略しない：1行に入らなければ小さくする
   while (sub > R.minSize && mtgWrap_(second, b.w, sub, 2).length > 1) sub -= 0.5;
-  // 前回からの増減は、数字の右に色付きの字で（増 = 緑「+20」・減 = 濃いグレー「▲12」・同じ = 灰色「±0」。数字と同じ大きさ）
+  // 前回からの増減は、数字の右に色付きの字で（増 = 青「+20」・減 = 赤「▲12」・同じ = 灰色「±0」。数字と同じ大きさ）
   const deltaText = rounded == null ? '' : '　' + mtgSigned_(rounded);
   const first = now + deltaText;
   const spans = [{start: 0, end: now.length, bold: true, color: item.weighted == null ? c.faint : c.ink}];
-  if (deltaText) spans.push({start: now.length, end: first.length, bold: true, color: rounded > 0 ? c.greenDark : rounded < 0 ? c.dark : c.faint});
+  if (deltaText) spans.push({start: now.length, end: first.length, bold: true, color: rounded > 0 ? c.plus : rounded < 0 ? c.minus : c.faint});
   return [mtgReportFrame_(b.x, b.y, b.w, b.h, '期待値（百万円）'),
     mtgBox_(b.x, y1, b.w, rowH, first, {size: R.boxSize, color: c.ink, spans, valign: 'MIDDLE', role: 'report-value'}),
     mtgBox_(b.x, y2, b.w, rowH, second, {size: sub, color: c.muted, valign: 'MIDDLE', role: 'report-value'})];

@@ -167,7 +167,7 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.strictEqual(valueRow(cSlide).text, '20　±0', '期待値が同じなら ±0');
   const up = valueRow(a);
   assert.strictEqual(up.text, '70　+20');
-  assert.deepStrictEqual(up.spans.map(sp => [up.text.slice(sp.start, sp.end), sp.color]), [['70', '#1A1A1A'], ['　+20', '#38761D']], '増えたら緑の字');
+  assert.deepStrictEqual(up.spans.map(sp => [up.text.slice(sp.start, sp.end), sp.color]), [['70', '#1A1A1A'], ['　+20', '#0070C0']], '増えたら青の字（減ったら赤）');
   assert.ok(!byRole(a, 'report-delta').length, 'バッジにしない');
   assert.ok(a.elements.every(el => el.shape !== 'ROUND_RECTANGLE'), '角の丸い四角は使わない');
 });

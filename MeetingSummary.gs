@@ -409,6 +409,7 @@ const MTG_OPTIONS = {
     up: '#8FD36B', down: '#A6A6A6', dark: '#595959',
     ink: '#1A1A1A', body: '#1A1A1A', sub: '#404040', muted: '#595959', faint: '#7F7F7F',
     line: '#D0D0D0', frame: '#BFBFBF', rule: '#D9D9D9', white: '#FFFFFF', graySoft: '#EDEDED', link: '#1155CC',
+    plus: '#0070C0', minus: '#C00000',   // 報告案件の期待値の増減の字（増は青・減は赤）
     gap: '#F2F2F2', gapLine: '#A6A6A6',   // データなし（作れなかったところ）の塗りと点線の枠
     cover: '#3A7D22',                // 表紙の背景（画像を付けるまで・付けられないとき）
     divider: '#7F7F7F',              // 扉（Appendix）の背景（同じ。扉はグレー）
