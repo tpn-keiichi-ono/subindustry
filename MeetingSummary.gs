@@ -77,7 +77,7 @@ const MTG_OPTIONS = {
     flagColumn: 'AG',                        // 報告フラグの列を足す場所（addBusinessMtgReportFlagColumn()。追跡範囲の外）
     flagWidth: 60,                           // その列の幅（px）
     maxSize: 8,                              // 文章の字の大きさ（既定は枠の緑の見出しと同じ 8pt。長ければ minSize まで小さくする）
-    minSize: 6.5,
+    minSize: 4,                              // 字を小さくする下限（報告案件のスライドでは文を省略しない。入らなければこの大きさまで小さくする）
     steps: ['創注', 'D', 'C', 'B', 'A'],   // ステータスの枠の確度の段（左から）
     newText: '（新規）',                     // 前回に無かった案件の「前回：」
     boxSize: 8,                              // 左の列の枠の中の字の大きさ（枠の緑の見出しと同じ。見出しより大きくしない）
@@ -88,7 +88,6 @@ const MTG_OPTIONS = {
     footSize: 8,                             // 出典の行（どのシートの何行目を、いつ読んだか。mtgReportSource_）の字の大きさ
     recordWidth: 200,                        // 右下の「商談記録：」の幅の上限（pt。文字に合わせて狭くし、残りを出典の行に使う）
     linkLabel: '格納先リンク',               // 商談記録のリンクの文字（商談記録のセルのリンクへのハイパーリンク）
-    maxLinks: 3,                             // リンクが2つ以上あるときに出す数（格納先リンク①②③）
     clientLabel: '案件・得意先情報',         // 左の列の1つ目の枠の見出し（案件名・得意先名・先方部門／先方担当役職）
     staffWidth: 180,                         // 右上の「担当営業：…」「BX担当：…」（2行）の幅の上限（pt）
     noneText: '報告フラグにチェックの入った案件がありません（シートの「報告フラグ」にチェックを入れた案件を、1件1枚で載せます）'
@@ -4925,7 +4924,9 @@ function mtgFrame_(frame, slide, page) {
   const sourceW = S.w - 60 - (right ? right.w : 0);
   const footSize = slide.footSize || 9;
   const sourceText = slide.source != null ? slide.source : frame.source + (slide.note ? '　' + slide.note : '');
-  el.push(mtgBox_(S.x, S.footY, sourceW, 16, mtgWrap_(sourceText, sourceW, footSize, 1)[0], {size: footSize, color: c.faint, role: 'footer'}));
+  // slide.source（報告案件）は省略しない（字の大きさ footSize を、1行に入るように決めてある）。ほかのスライドは1行に入らなければ「…」で切る
+  el.push(mtgBox_(S.x, S.footY, sourceW, 16, slide.source != null ? sourceText : mtgWrap_(sourceText, sourceW, footSize, 1)[0],
+    {size: footSize, color: c.faint, role: 'footer'}));
   if (right) {
     el.push(mtgBox_(S.x + sourceW, S.footY, right.w, 16, right.text, {size: right.size || 9, color: right.color || c.faint, align: 'END',
       spans: right.spans || [], role: 'footer-right'}));
@@ -5043,9 +5044,11 @@ function mtgChangedLabel_(s) {
  * - 「前回以降の動き」（変化のある案件を区分ごとに1回だけ数える。行の件数を合わせると見出しの件数・「前回から変化のある案件」の件数になる）
  * - 「現在の状態」（進行中案件の受注月超過・停滞・商談記録未登録。重なることがあるので合計しない）
  * 表の件数は表の中に大きく1回だけ書く（前の版は上に受注／失注・前進／後退・停滞の箱を置いていたが、表と区分のまとめ方が違い、
- * 同じ数に見えて別のものを数えていたため、表にまとめた）
+ * 同じ数に見えて別のものを数えていたため、表にまとめた）。
+ * options.states が false なら「現在の状態」の表を出さない（報告案件版。MeetingReport.gs。下の表は「前回以降の動き」だけで、ページの高さを使う）
  */
-function mtgSummarySlide_(s) {
+function mtgSummarySlide_(s, options) {
+  const withStates = !(options && options.states === false);
   const o = MTG_OPTIONS;
   const c = o.colors;
   const S = MTG_SLIDE;
@@ -5091,7 +5094,7 @@ function mtgSummarySlide_(s) {
     ], 0);
   };
   const groups = mtgBreakdown_(s);
-  const all = groups.moves.concat(groups.states);
+  const all = withStates ? groups.moves.concat(groups.states) : groups.moves;
   const height = rows => rows.reduce((sum, r) => sum + r.h, 0);
   // 高さ：数字の箱 th・箱の下 after・表の見出し headH・2つの表の間 gap、文字の大きさ：件数 count・表 body。
   // 入りきらなければ（リード文が長いときなど）、件数の文字 → 箱の下 → 表の間 → 表の見出し → 表の文字 → … → 数字の箱 の順に、決めた下限まで小さくする
@@ -5100,7 +5103,7 @@ function mtgSummarySlide_(s) {
   const build = () => {
     const head = mtgHeadRow_(columns, ['今回のステータス', '件数', '想定売上', '主な案件（想定売上順。（）は変わったこと）'], lay.body);
     const rows = all.map(line => rowOf(line, 1, lay));
-    return {head, rows, fixed: top + lay.th + lay.after + 2 * (lay.headH + lay.headGap) + lay.gap + head.h};
+    return {head, rows, fixed: top + lay.th + lay.after + (withStates ? 2 : 1) * (lay.headH + lay.headGap) + (withStates ? lay.gap : 0) + head.h};
   };
   let plan = build();
   // （動きの行はステータスのまとまりの6行。リード文が2行でも入るよう、表の文字は 7.5pt まで）
@@ -5157,9 +5160,10 @@ function mtgSummarySlide_(s) {
       spans: [t.gap ? {start: 0, end: t.value.length, size: 11, bold: true, color: c.dark} : {start: 0, end: t.value.length, size: 15, bold: true, color: c.greenDark}]}));
   });
   el.push(heading(tablesTop, period + 'の動き（' + (lack.changes ? G + '：' + lack.changes : '変化のある案件 ' + k.changed + '件') + '）'),
-    {type: 'table', x: S.x, y: tablesTop + headH + headGap, columns, rows: moves},
-    heading(statesY, '現在の状態（進行中案件）'),
-    {type: 'table', x: S.x, y: statesY + headH + headGap, columns, rows: states});
+    {type: 'table', x: S.x, y: tablesTop + headH + headGap, columns, rows: moves});
+  if (withStates) {
+    el.push(heading(statesY, '現在の状態（進行中案件）'), {type: 'table', x: S.x, y: statesY + headH + headGap, columns, rows: states});
+  }
   return {title: MTG_TITLES.summary, lead, elements: el, note: mtgAmountNote_()};
 }
 

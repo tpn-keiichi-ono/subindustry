@@ -97,6 +97,11 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.deepStrictEqual(titles.slice(0, numbers.length), numbers, '表紙から RXシナリオまでは同じ');
   assert.deepStrictEqual(titles.slice(numbers.length), ['報告案件①：A社／店舗DX基盤の刷新', '報告案件②：C社／販促最適化']);
   assert.ok(!slides.some(sl => sl.divider || /Appendix|前回から変化のある案件|期待値上位案件/.test(sl.title)), 'Appendix・案件のページは入れない');
+  // サマリーは「現在の状態（進行中案件）」の表を出さない（前の版のサマリーには出す）
+  const summaryOf = list => list.find(sl => sl.title === gas.get('MTG_TITLES').summary);
+  assert.ok(!texts(summaryOf(slides)).some(t => /現在の状態/.test(t)), '報告案件版のサマリーに「現在の状態」は無い');
+  assert.strictEqual(summaryOf(slides).elements.filter(el => el.type === 'table').length, 1, '表は「前回以降の動き」だけ');
+  assert.ok(texts(summaryOf(normal)).some(t => /現在の状態/.test(t)), '前の版のサマリーには残す');
 
   const a = slides[numbers.length];
   assert.ok(!byRole(a, 'title').length, '見出し（タイトル）は付けない');
@@ -108,8 +113,8 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.ok(!byRole(a, 'report-rule').length, '見出しの下の線は無い');
   assert.strictEqual(g.mtgReportTitle_('X', 21), '報告案件(21)：X');
   const all = texts(a).join('\n');
-  ['案件・得意先情報', '店舗DX基盤の刷新\n \nA社\n経営企画部／部長', 'B-クロージング中(70%)', '前回：C-提案中(50%)', '70　+20', '前回：50　／　想定売上：100', '2027/02', '前回：2026/12（延期）',
-    'RXシナリオ（見込金額 80百万円）', '店舗オペレーション効率化', '需要予測', '提案を勝ち取るための戦略・差異化要素', '業務設計から運用定着まで一括で提案する',
+  ['案件・得意先情報', '店舗DX基盤の刷新\n \nA社\n経営企画部／部長', 'B-クロージング中(70%)', '前回：C-提案中(50%)', '前回：50　／　想定売上：100', '2027/02', '前回：2026/12（延期）',
+    'RXシナリオ', '見込金額：80百万円', '店舗オペレーション効率化', '需要予測', '提案を勝ち取るための戦略・差異化要素', '業務設計から運用定着まで一括で提案する',
     '想定される価値創出のケース／期待される導入効果', '11/2 役員向けに最終提案', '情報システム部門の稼働が逼迫', '11/15 稟議資料の事前確認']
     .forEach(t => assert.ok(all.indexOf(t) >= 0, t + ' が無い：\n' + all));
   const staff = byRole(a, 'report-staff')[0];
@@ -145,10 +150,11 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   const cSlide = slides[numbers.length + 1];
   assert.ok(texts(cSlide).join('\n').indexOf('前回：C-提案中(50%)') >= 0, '変化が無ければ前回も今と同じ');
   assert.strictEqual(byRole(cSlide, 'footer-right')[0].text, '商談記録：未入力');
-  assert.ok(texts(cSlide).some(t => /^20　±0\n/.test(t)), '期待値が同じなら ±0');
+  assert.deepStrictEqual(byRole(cSlide, 'report-delta').map(el => [el.text, el.shape]), [['±0', 'ROUND_RECTANGLE']], '期待値が同じなら ±0 のバッジ');
+  assert.deepStrictEqual(byRole(a, 'report-delta').map(el => [el.text, el.fill]), [['+20', '#548235']], '増えたら緑のバッジ');
 });
 
-test('報告案件版のスライド：文章が多いと、どの枠にも入る大きさまで全部の枠を小さくし、最小でも入らなければ「…」で切る', () => {
+test('報告案件版のスライド：文章が多いと、どの枠にも入る大きさまで全部の枠を小さくする。最小でも入らなくても省略しない（全文）', () => {
   const long = 'あいうえおかきくけこ'.repeat(60);
   const huge = 'あいうえおかきくけこ'.repeat(200);
   const {gas, g} = setup({edits: false, deals: [Object.assign({}, DEALS[0], {strategy: long}), Object.assign({}, DEALS[2], {activity: huge, reportFlag: true})]});
@@ -163,9 +169,7 @@ test('報告案件版のスライド：文章が多いと、どの枠にも入�
   assert.strictEqual(sizeOf(slides[1]), R.minSize, '入らなければ最小の大きさ');
   assert.strictEqual(slides[1].cut, true);
   const activity = byRole(slides[1], 'report-text')[3];   // 戦略・価値創出・課題・活動状況・次回アクションの順
-  assert.match(activity.text, /…$/, '最小でも入らなければ「…」で切る');
-  const box = activity;
-  assert.ok(g.mtgTextHeight_(activity.text.split('\n').length, R.minSize) <= box.h + 0.01, '箱の高さに収める');
+  assert.strictEqual(activity.text, huge, '最小でも入らなくても省略しない');
 });
 
 test('報告案件版のスライド：チェックのある案件が無ければ「該当なし」、報告フラグの列が無ければ「データなし」の1枚', () => {
@@ -375,7 +379,7 @@ test('報告案件：商談記録の「格納先リンク」は、セルのリ�
     [['https://drive.google.com/drive/folders/abc']], '文字の中の URL');
 });
 
-test('報告案件：RXシナリオは番号だけ。案件・得意先情報は、長い得意先名・部門／役職も折り返して全文（枠に入らないときだけ切る）', () => {
+test('報告案件：RXシナリオは番号だけ。案件・得意先情報は、長い得意先名・部門／役職も全文（入らなければ字を小さくする。省略しない）', () => {
   const long = Object.assign({}, DEALS[0], {customer: '株式会社サンプルリテールホールディングスジャパン', clientDept: 'デジタルマーケティング本部 本部長室',
     clientTitle: '本部長', scenario: '01-05 店舗オペレーション効率化, 02-03 需要予測'});
   const {gas, g} = setup({edits: false, deals: [long]});
@@ -384,11 +388,14 @@ test('報告案件：RXシナリオは番号だけ。案件・得意先情報は
   const client = byRole(slide, 'report-value')[0].text;
   assert.ok(client.indexOf('…') < 0, '切らない：' + client);
   assert.strictEqual(client.replace(/\n/g, ''), '店舗DX基盤の刷新 株式会社サンプルリテールホールディングスジャパンデジタルマーケティング本部 本部長室／本部長');
-  // 枠に入らないときだけ切る（得意先名2行・部門／役職3行まで。残りを案件名に）
-  const huge = Object.assign({}, long, {project: 'とても長い案件名'.repeat(20)});
+  // 枠に入らなければ、字を小さくして全文を入れる
+  const huge = Object.assign({}, long, {project: 'とても長い案件名'.repeat(20), scenario: Array.from({length: 12}, (_, i) => '0' + (i % 9 + 1) + '-0' + (i % 7 + 1) + ' シナリオ' + i).join(', ')});
   const s2 = setup({edits: false, deals: [huge]});
-  const box = plain(s2.g.mtgReportSlides_(summarize(s2.g, '新FMT'))).find(sl => /^報告案件①/.test(sl.title)).elements.find(el => el.role === 'report-value');
-  const lines = box.text.split('\n');
-  assert.match(lines.filter(l => /案件名/.test(l)).pop(), /…$/, '案件名を「…」で切る');
-  assert.ok(gas.global.mtgTextHeight_(lines.length, 8) <= box.h + 8, '枠の高さに収める（行の数）');
+  const slide2 = plain(s2.g.mtgReportSlides_(summarize(s2.g, '新FMT'))).find(sl => /^報告案件①/.test(sl.title));
+  const box = slide2.elements.find(el => el.role === 'report-value');
+  assert.ok(box.text.indexOf('とても長い案件名'.repeat(20)) === 0, '案件名は全文');
+  assert.ok(box.spans[0].size < 8, '字を小さくして入れる：' + box.spans[0].size);
+  assert.strictEqual(byRole(slide2, 'report-chip').length, 12, 'シナリオのバッジもすべて（「ほか N件」にしない）');
+  // どの部品にも「…」で省略した文が無い
+  slide2.elements.concat(slide.elements).forEach(el => assert.ok(!/…/.test(String(el.text || '')), '省略しない：' + el.role + ' ' + el.text));
 });
