@@ -490,8 +490,8 @@ function mtgReportScenario_(b, item, hasColumn) {
     el.push(mtgBox_(b.x, b.y + L.head, b.w, b.h - L.head, hasColumn ? o.blankText : o.gapText, {size: o.report.boxSize, color: c.faint, valign: 'TOP', role: 'report-value'}));
     return el;
   }
-  const size = 7.5;
-  const h = 12;
+  const size = o.report.chipSize;   // シナリオの枠（バッジ）の字は小さく
+  const h = size + 4.5;
   const gap = 3;
   const x0 = b.x + 7;
   const right = b.x + b.w - 7;
