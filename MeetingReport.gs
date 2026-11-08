@@ -145,8 +145,9 @@ function mtgReportCheckText_() {
  */
 function mtgReportSlides_(s) {
   const o = MTG_OPTIONS;
-  // サマリーは「現在の状態（進行中案件）」（受注月超過・停滞・商談記録未登録）の表を出さない（報告案件版は Appendix の確認事項も無いため）
-  const main = [mtgSummarySlide_(s, {states: false})].concat(o.plan.enabled ? [mtgPlanSlide_(s.plan, s.now)] : [], [mtgBridgeSlide_(s)],
+  // サマリーは「現在の状態（進行中案件）」（受注月超過・停滞・商談記録未登録）の表を出さない（報告案件版は Appendix の確認事項も無いため）。
+  // 表の金額の列は期待値、4つ目の数字はシナリオ見込額（mtgSummarySlide_ の options）
+  const main = [mtgSummarySlide_(s, {states: false, weighted: true, scenarioTile: true})].concat(o.plan.enabled ? [mtgPlanSlide_(s.plan, s.now)] : [], [mtgBridgeSlide_(s)],
     o.portfolio.enabled ? mtgPortfolioSlides_(s.portfolio) : []);
   const reported = s.reported || [];
   const reports = reported.length ? reported.map((item, i) => mtgReportSlide_(s, item, i + 1)) : [mtgReportEmptySlide_(s)];

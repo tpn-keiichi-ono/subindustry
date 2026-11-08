@@ -3931,7 +3931,11 @@ function mtgSummarize_(ss, name, context) {
     },
     recordColumn: !!table.has.record,
     scenarioColumn: !!table.has.scenario,
+    scenarioAmountColumn: !!table.has.scenarioAmount,
     reportColumn: !!table.has.reportFlag,
+    // シナリオ見込額（サービスパッケージ合算。失注除く）の合計：今と、前回の時点コピーの値（コピーと比べないときは null）。報告案件版のサマリー
+    scenarioTotal: {end: mtgSum_(counted, 'scenarioAmount'),
+      start: copy && copy.table ? mtgSum_(copy.table.deals.filter(d => !mtgExcludedStatus_(d.status)), 'scenarioAmount') : null},
     reported: mtgReportItems_(table, changed),   // 報告フラグにチェックのある案件（報告案件版。MeetingReport.gs）
     stallPending,
     gaps: gaps.parts,
@@ -5045,10 +5049,16 @@ function mtgChangedLabel_(s) {
  * - 「現在の状態」（進行中案件の受注月超過・停滞・商談記録未登録。重なることがあるので合計しない）
  * 表の件数は表の中に大きく1回だけ書く（前の版は上に受注／失注・前進／後退・停滞の箱を置いていたが、表と区分のまとめ方が違い、
  * 同じ数に見えて別のものを数えていたため、表にまとめた）。
- * options.states が false なら「現在の状態」の表を出さない（報告案件版。MeetingReport.gs。下の表は「前回以降の動き」だけで、ページの高さを使う）
+ * options（報告案件版。MeetingReport.gs）：states が false なら「現在の状態」の表を出さない（下の表は「前回以降の動き」だけで、ページの高さを使う）。
+ * weighted なら、表の金額の列を想定売上ではなく期待値（今の値の合計）にする。scenarioTile なら、4つ目の数字を「入力内容の確認事項」ではなく
+ * 「シナリオ見込額」（失注除く。前回比は時点コピーと比べるときだけ）にする
  */
 function mtgSummarySlide_(s, options) {
-  const withStates = !(options && options.states === false);
+  const opt = options || {};
+  const withStates = opt.states !== false;
+  // 表の金額の列：想定売上（既定）か期待値（今の値。前回からの変化の行は weightedTo、削除した案件は 0）
+  const amountOf = items => (opt.weighted ? items.reduce((sum, it) => sum + (('weightedTo' in it ? it.weightedTo : it.weighted) || 0), 0)
+    : mtgSum_(items, 'amount'));
   const o = MTG_OPTIONS;
   const c = o.colors;
   const S = MTG_SLIDE;
@@ -5088,12 +5098,15 @@ function mtgSummarySlide_(s, options) {
     return mtgRow_(columns, [
       label,
       {text: line.items.length + '件', size: lay.count, bold: true, color: c.greenDark, fill: c.white, align: 'CENTER'},
-      {text: line.items.length ? mtgAmount_(mtgSum_(line.items, 'amount')) : '—', size: body, fill: c.white, align: 'END'},
+      {text: line.items.length ? mtgAmount_(amountOf(line.items)) : '—', size: body, fill: c.white, align: 'END'},
       {text: line.items.length || line.prefix ? mtgNames_(line.shown || line.items, line.note, columns[3], lines, line.prefix, body)
         : line.empty || MTG_OPTIONS.noneText, size: body, lines, fill: c.white}
     ], 0);
   };
   const groups = mtgBreakdown_(s);
+  // 金額の列が期待値なら、案件の名前も期待値の大きい順に
+  const weightOf = it => ('weightedTo' in it ? it.weightedTo : it.weighted) || 0;
+  if (opt.weighted) groups.moves.forEach(line => { line.items = line.items.slice().sort((a, b) => weightOf(b) - weightOf(a)); });
   const all = withStates ? groups.moves.concat(groups.states) : groups.moves;
   const height = rows => rows.reduce((sum, r) => sum + r.h, 0);
   // 高さ：数字の箱 th・箱の下 after・表の見出し headH・2つの表の間 gap、文字の大きさ：件数 count・表 body。
@@ -5101,7 +5114,8 @@ function mtgSummarySlide_(s, options) {
   // 見出し（「…の動き」「現在の状態」）と表の間（headGap）・上の表との間（gap）をあける（前の版は見出しが表に付いていて、境目が見づらかった。2026/11/04）
   const lay = {th: 34, after: 10, headH: 16, headGap: 4, gap: 12, count: 10, body: S.bodySize};
   const build = () => {
-    const head = mtgHeadRow_(columns, ['今回のステータス', '件数', '想定売上', '主な案件（想定売上順。（）は変わったこと）'], lay.body);
+    const head = mtgHeadRow_(columns, ['今回のステータス', '件数', opt.weighted ? '期待値' : '想定売上',
+      '主な案件（' + (opt.weighted ? '期待値' : '想定売上') + '順。（）は変わったこと）'], lay.body);
     const rows = all.map(line => rowOf(line, 1, lay));
     return {head, rows, fixed: top + lay.th + lay.after + (withStates ? 2 : 1) * (lay.headH + lay.headGap) + (withStates ? lay.gap : 0) + head.h};
   };
@@ -5145,7 +5159,7 @@ function mtgSummarySlide_(s, options) {
       : {label: mtgAmountTileLabel_(), value: mtgAmount_(b.amountEnd), sub: versus(mtgSigned_(b.amountEnd - b.amountStart))},
     lack.weighted ? {label: '期待値合計（失注除く・百万円）', value: G, gap: true}
       : {label: '期待値合計（失注除く・百万円）', value: mtgAmount_(b.end), sub: versus(mtgSigned_(b.end - b.start))},
-    {label: '入力内容の確認事項', value: k.alerts + '項目', sub: k.alerts ? k.alertDeals + '案件・責任者 ' + k.owners + '名' : ''}
+    opt.scenarioTile ? mtgScenarioTile_(s, vs) : {label: '入力内容の確認事項', value: k.alerts + '項目', sub: k.alerts ? k.alertDeals + '案件・責任者 ' + k.owners + '名' : ''}
   ];
   const tw = (S.w - 3 * 8) / 4;
   const th = lay.th;
@@ -5165,6 +5179,17 @@ function mtgSummarySlide_(s, options) {
     el.push(heading(statesY, '現在の状態（進行中案件）'), {type: 'table', x: S.x, y: statesY + headH + headGap, columns, rows: states});
   }
   return {title: MTG_TITLES.summary, lead, elements: el, note: mtgAmountNote_()};
+}
+
+/**
+ * サマリーの4つ目の数字「シナリオ見込額（失注除く・百万円）」（報告案件版）。列が無ければ「データなし」。前回比は時点コピーと比べるときだけ（無ければ「前回比 データなし」）
+ */
+function mtgScenarioTile_(s, vs) {
+  const G = MTG_OPTIONS.gapText;
+  const label = 'シナリオ見込額（失注除く・百万円）';
+  const t = s.scenarioTotal || {end: 0, start: null};
+  if (!s.scenarioAmountColumn) return {label, value: G, gap: true};
+  return {label, value: mtgAmount_(t.end), sub: vs + (t.start == null ? G : mtgSigned_(t.end - t.start))};
 }
 
 /**

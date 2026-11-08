@@ -879,7 +879,8 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
 1件1枚のスライドにした版です。前の版（`createBusinessMtgSummaries()`）は残し、別の関数（`createBusinessMtgReportSummaries()`・`previewBusinessMtgReportSummaries()`）で作ります。
 
 - 並び：表紙 → 数字のページ（サマリー・計画に対する積み上げ・パイプラインの変化・RXシナリオ。会議サマリと同じ部品。サマリーは「現在の状態（進行中案件）」の表を出さない
-  （`mtgSummarySlide_` の `states: false`。報告案件版には Appendix の確認事項も無いため））→ 報告案件（シートの順）。
+  （`mtgSummarySlide_` の `states: false`。報告案件版には Appendix の確認事項も無いため）。表の金額の列は想定売上ではなく期待値（今の値の合計。名前も期待値の大きい順。`weighted`）、
+  4つ目の数字は「入力内容の確認事項」ではなく「シナリオ見込額（失注除く）」（前回比は時点コピーと比べるときだけ。`scenarioTile`））→ 報告案件（シートの順）。
   前回から変化のある案件・期待値上位案件・扉と Appendix は入れません。チェックのある案件が無ければ「該当なし」、列が無ければ「データなし」の1枚。
 - 作り方は会議サマリと同じ仕事（`mtgRunStart_`・`mtgJobRun_`）で、仕事に `variant: 'report'` を持たせて、スライドの並び（`mtgReportSlides_`）と
   ファイル名（`mtgFileName_` の後ろに `report.fileSuffix`「_報告案件版」）だけを変えます。本番なら、時点コピー・会議日の記録・会議のフォルダ・インデックスも同じように書きます

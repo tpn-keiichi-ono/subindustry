@@ -102,6 +102,18 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.ok(!texts(summaryOf(slides)).some(t => /現在の状態/.test(t)), '報告案件版のサマリーに「現在の状態」は無い');
   assert.strictEqual(summaryOf(slides).elements.filter(el => el.type === 'table').length, 1, '表は「前回以降の動き」だけ');
   assert.ok(texts(summaryOf(normal)).some(t => /現在の状態/.test(t)), '前の版のサマリーには残す');
+  // 表の金額の列は期待値（A社 70・C社 20）。4つ目の数字はシナリオ見込額（失注除く。A社 80）
+  const table = summaryOf(slides).elements.find(el => el.type === 'table');
+  assert.strictEqual(table.rows[0].cells[2].text, '期待値');
+  assert.strictEqual(table.rows[0].cells[3].text, '主な案件（期待値順。（）は変わったこと）');
+  const rowOf = label => table.rows.find(r => r.cells[0].text.indexOf(label) === 0);
+  assert.strictEqual(rowOf('B').cells[2].text, '70', 'B の行（A社）は期待値 70（想定売上は 100）');
+  assert.ok(texts(summaryOf(slides)).some(t => t === 'シナリオ見込額（失注除く・百万円）'));
+  assert.ok(texts(summaryOf(slides)).some(t => /^80　/.test(t)), 'シナリオ見込額 80');
+  assert.ok(!texts(summaryOf(slides)).some(t => /入力内容の確認事項/.test(t)));
+  const oldTable = summaryOf(normal).elements.find(el => el.type === 'table');
+  assert.strictEqual(oldTable.rows[0].cells[2].text, '想定売上', '前の版は想定売上のまま');
+  assert.ok(texts(summaryOf(normal)).some(t => /入力内容の確認事項/.test(t)), '前の版は確認事項のまま');
 
   const a = slides[numbers.length];
   assert.ok(!byRole(a, 'title').length, '見出し（タイトル）は付けない');
