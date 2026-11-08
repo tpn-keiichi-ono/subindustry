@@ -190,10 +190,9 @@ function mtgHomeworkOf_(ss, name, meeting) {
 }
 
 /**
- * 前回の宿題事項のスライド（報告案件版。表紙のあと・サマリーの前）：すべてのサブインダストリーの宿題を1枚に（シートの行の順。左右2つの表に分ける。
- * 列は「サブイン」「指摘事項」、宿題はセルの中に ①② と番号を振る。この資料のサブインダストリーの行は地の色を変える）。
- * 1枚に入らなければ字を小さくし（7pt まで）、それでも入らなければ1つの表にして続きのページに分ける（全件を出す）。
- * シートが無ければ「データなし」、宿題が1件も無ければ「該当なし」
+ * 前回の宿題事項のスライド（報告案件版。表紙のあと・サマリーの前）：この資料のサブインダストリーの宿題だけを、ページの幅いっぱいの1つの表に
+ * （「No.」「指摘事項」。件数が少ないので、字は読みやすい大きさ（リード文と同じ 10.5pt）。1枚に入らなければ 8pt まで小さくし、それでも入らなければ
+ * 続きのページに分けて全件を出す）。シートが無ければ「データなし」、宿題が無ければ（シートにこのサブインダストリーの行が無いときも）「該当なし」
  */
 function mtgHomeworkSlides_(s) {
   const S = MTG_SLIDE;
@@ -201,48 +200,34 @@ function mtgHomeworkSlides_(s) {
   const H = MTG_OPTIONS.homework;
   const h = s.homework || {date: null, rows: [], gap: ''};
   const title = MTG_TITLES.homework;
-  const labels = [H.nameHead, H.itemHead];
+  const columns = mtgColumns_([48, S.w - 48], 1);
+  const labels = ['No.', H.itemHead];
   const when = h.date ? '前回会議（' + mtgShortDate_(h.date) + '）' : '前回会議';
-  const gap = 8;
-  const half = (S.w - gap) / 2;
-  const halfColumns = mtgTableWidths_([78, half - 78]);   // mtgColumns_ はページの幅まで広げるので使わない
   if (h.gap) {
-    return [{title, lead: '前回の会議の宿題事項は' + MTG_OPTIONS.gapText + '（' + h.gap + '）。',
-      elements: mtgEmptyTable_(mtgColumns_([78, S.w - 78], 1), mtgHeadRow_(mtgColumns_([78, S.w - 78], 1), labels), 'gap', h.gap)}];
+    return [{title, lead: '前回の会議の宿題事項は' + MTG_OPTIONS.gapText + '（' + h.gap + '）。', elements: mtgEmptyTable_(columns, mtgHeadRow_(columns, labels), 'gap', h.gap)}];
   }
-  const total = h.rows.reduce((n, r) => n + r.items.length, 0);
-  if (!total) {
-    const none = h.date ? when + 'の宿題は登録されていない' : '前の RX Business Meeting の宿題の列が無い';
-    const cols = mtgColumns_([78, S.w - 78], 1);
-    return [{title, lead: none + '。', elements: mtgEmptyTable_(cols, mtgHeadRow_(cols, labels), 'none', none)}];
+  const own = h.rows.filter(r => r.name === s.name);
+  const items = own.reduce((list, r) => list.concat(r.items), []);
+  if (!items.length) {
+    const none = !h.date ? '前の RX Business Meeting の宿題の列が無い'
+      : !own.length ? '「' + H.sheet + '」シートに「' + s.name + '」の行が無い' : when + 'の宿題は登録されていない';
+    return [{title, lead: none + '。', elements: mtgEmptyTable_(columns, mtgHeadRow_(columns, labels), 'none', none)}];
   }
-  const lead = when + 'の宿題 ' + total + '件（' + h.rows.filter(r => r.items.length).length + 'サブインダストリー）。';
-  const mark = i => (i < 20 ? String.fromCharCode(0x2460 + i) : '(' + (i + 1) + ')');
-  const rowOf = (columns, r, size) => {
-    const own = r.name === s.name;
-    return mtgRow_(columns, [
-      {text: r.name, size, lines: 3, bold: true, color: c.ink, fill: own ? c.green : c.greenSoft, ...(own ? {color: c.white} : {})},
-      r.items.length ? {text: r.items.map((t, i) => mark(i) + t).join('\n'), size, lines: 4, fill: own ? c.greenSoft : c.white}
-        : {text: '（宿題なし）', size, color: c.muted, fill: c.white}
-    ], 18);
-  };
-  const height = rows => rows.reduce((n, r) => n + r.h, 0);
-  // 左右2つの表：前半の行を左、残りを右（シートの順）。1枚に入る字の大きさを探す
-  const split = Math.ceil(h.rows.length / 2);
-  for (let size = S.bodySize; size >= 7 - 1e-9; size -= 0.5) {
-    const head = mtgHeadRow_(halfColumns, labels, size);
-    const left = h.rows.slice(0, split).map(r => rowOf(halfColumns, r, size));
-    const right = h.rows.slice(split).map(r => rowOf(halfColumns, r, size));
-    if (S.top + head.h + Math.max(height(left), height(right)) > S.bottom) continue;
-    const el = [{type: 'table', x: S.x, y: S.top, columns: halfColumns, rows: [head].concat(left)}];
-    if (right.length) el.push({type: 'table', x: S.x + half + gap, y: S.top, columns: halfColumns, rows: [head].concat(right)});
-    return [{title, lead, elements: el}];
+  const lead = when + 'で出た宿題 ' + items.length + '件。';
+  const build = size => items.map((text, i) => mtgRow_(columns, [
+    {text: String(i + 1), size: size + 1.5, bold: true, color: c.greenDark, fill: c.greenSoft, align: 'CENTER'},
+    {text, size, lines: 6, fill: c.white}
+  ], Math.round(size * 3)));
+  // 1枚に入るいちばん大きい字（10.5pt から 0.5pt ずつ 8pt まで）
+  for (let size = S.leadSize; size >= 8 - 1e-9; size -= 0.5) {
+    const head = mtgHeadRow_(columns, labels);
+    const rows = build(size);
+    if (S.top + head.h + rows.reduce((n, r) => n + r.h, 0) <= S.bottom) {
+      return [{title, lead, elements: [{type: 'table', x: S.x, y: S.top, columns, rows: [head].concat(rows)}]}];
+    }
   }
-  // 1枚に入らなければ、1つの表にして続きのページに
-  const cols = mtgColumns_([110, S.w - 110], 1);
-  const head = mtgHeadRow_(cols, labels);
-  return mtgTablePages_(head, h.rows.map(r => rowOf(cols, r, S.bodySize))).map((p, n) => ({title: title + (n ? '（続き）' : ''), lead,
-    elements: [{type: 'table', x: S.x, y: S.top, columns: cols, rows: p.rows}]}));
+  return mtgTablePages_(mtgHeadRow_(columns, labels), build(8)).map((p, n) => ({title: title + (n ? '（続き）' : ''), lead,
+    elements: [{type: 'table', x: S.x, y: S.top, columns, rows: p.rows}]}));
 }
 
 /** 作る前の確かめ（資料を作る画面）の、報告案件版の説明（MeetingSchedule.gs の checkMeetingRun が、会議サマリの確かめの前に付ける） */
