@@ -68,6 +68,17 @@ const MTG_OPTIONS = {
   // ファイル名（スライド・PDF）。{date} は会議日（yyyyMMdd）、{name} はサブインダストリー（シート名）。
   // 例：20261023_スーパー・GMS_RX Business Meeting用資料.pdf（試作は末尾に「_試作」）
   fileName: '{date}_{name}_RX Business Meeting用資料',
+  // 前回の会議の宿題事項（報告案件版のサマリーの前のスライド。MeetingReport.gs の mtgHomeworkOf_）。シートの形：A列にサブインダストリー（行）、
+  // 見出しの行に「日付」（会議日。結合したセルは右の列にも同じ日付）・「会議名」・「サブインダストリー」（その行の各列は「会議資料」「宿題」など）。
+  // 今の会議日より前の、いちばん新しい RX Business Meeting（index.kind）の「宿題」の列から、このサブインダストリーの行と全サブインダストリーの行を読む。
+  // 宿題のセルは改行で1件ずつ。将来 INDEX_会議資料（index.sheet）と1つにする見込み（そのときは sheet を index.sheet にする）
+  homework: {
+    sheet: '宿題事項',
+    dateLabel: '日付',
+    kindLabel: '会議名',
+    nameLabel: 'サブインダストリー',
+    column: '宿題'
+  },
   // 報告案件版（MeetingReport.gs。createBusinessMtgReportSummaries()）：数字のページは同じで、案件のページを、報告フラグにチェックした案件の
   // 1件1枚にしたもの（Appendix なし）。ファイル名は fileName の後ろに fileSuffix（試作は、さらに「_試作」）。
   // 右の文章の枠の字の大きさは、スライドの中で同じ（maxSize から 0.5pt ずつ minSize まで。入らなければ minSize で「…」で切る）
@@ -446,6 +457,7 @@ const MTG_CATEGORIES = [
 const MTG_TITLES = {
   cover: '表紙',
   summary: 'サマリー',
+  homework: '前回の宿題事項',
   pipeline: 'パイプラインの変化',
   progress: '前回から変化のある案件',
   focus: '期待値上位案件の状況・課題',
@@ -3934,6 +3946,7 @@ function mtgSummarize_(ss, name, context) {
     scenarioColumn: !!table.has.scenario,
     scenarioAmountColumn: !!table.has.scenarioAmount,
     reportColumn: !!table.has.reportFlag,
+    homework: mtgHomeworkOf_(ss, name, context.meeting),   // 前回の会議の宿題事項（報告案件版。MeetingReport.gs）
     // シナリオ見込額（サービスパッケージ合算。失注除く）の合計：今と、前回の時点コピーの値（コピーと比べないときは null）。報告案件版のサマリー
     scenarioTotal: {end: mtgSum_(counted, 'scenarioAmount'),
       start: copy && copy.table ? mtgSum_(copy.table.deals.filter(d => !mtgExcludedStatus_(d.status)), 'scenarioAmount') : null},

@@ -133,6 +133,90 @@ function mtgColumnLetter_(n) {
   return out;
 }
 
+/* ---------------- 前回の会議の宿題事項 ---------------- */
+
+/**
+ * 前回の会議の宿題事項（MTG_OPTIONS.homework のシートから読む。読むだけ）。meeting は今の会議日（yyyy/MM/dd）。
+ * {date: 前回の会議日|null, own: [このサブインダストリーの宿題], common: [全サブインダストリーの宿題], gap: 読めない理由（シート・見出しが無い）}
+ */
+function mtgHomeworkOf_(ss, name, meeting) {
+  const H = MTG_OPTIONS.homework;
+  const out = {date: null, own: [], common: [], gap: ''};
+  const sheet = ss.getSheetByName(H.sheet);
+  if (!sheet) return Object.assign(out, {gap: '「' + H.sheet + '」シートが無い'});
+  const rows = sheet.getLastRow();
+  const cols = sheet.getLastColumn();
+  if (!rows || !cols) return out;
+  const range = sheet.getRange(1, 1, rows, cols);
+  const values = range.getValues();
+  const shown = range.getDisplayValues();
+  const label = r => String(shown[r][0] == null ? '' : shown[r][0]).trim();
+  const find = text => shown.findIndex((line, r) => label(r) === text);
+  const dateRow = find(H.dateLabel);
+  const kindRow = find(H.kindLabel);
+  const subRow = find(H.nameLabel);
+  if (dateRow < 0 || subRow < 0) {
+    return Object.assign(out, {gap: '「' + H.sheet + '」シートの A列に「' + H.dateLabel + '」「' + H.nameLabel + '」の見出しが無い'});
+  }
+  // 列ごとの会議日・会議名（結合したセルは左の列だけに値があるので、右へ引き継ぐ）
+  const kinds = mtgIndexKinds_(MTG_OPTIONS.index.kind);
+  let date = '';
+  let kind = '';
+  let best = null;
+  for (let c = 1; c < cols; c++) {
+    const d = mtgIndexDate_(values[dateRow][c]);
+    if (d) {
+      date = d;
+      kind = '';
+    }
+    const k = kindRow >= 0 ? String(shown[kindRow][c] || '').trim() : '';
+    if (k) kind = k;
+    const sub = String(shown[subRow][c] || '').trim();
+    if (sub !== H.column || !date || date >= meeting) continue;
+    if (kindRow >= 0 && kind && kinds.indexOf(kind) < 0) continue;   // RX Service Meeting などの宿題は使わない
+    if (!best || date > best.date) best = {date, col: c};
+  }
+  if (!best) return out;
+  out.date = best.date;
+  const resolve = diffSheetNameResolver_();
+  const items = text => String(text == null ? '' : text).split(/\r?\n/).map(line => line.replace(/^\s*[・●○■□\-－*＊]\s*/, '').trim()).filter(Boolean);
+  for (let r = subRow + 1; r < rows; r++) {
+    const who = resolve(label(r));
+    if (who === name) out.own = out.own.concat(items(shown[r][best.col]));
+    else if (who === MTG_OPTIONS.combined.name) out.common = out.common.concat(items(shown[r][best.col]));
+  }
+  return out;
+}
+
+/**
+ * 前回の宿題事項のスライド（報告案件版。表紙のあと・サマリーの前）：前回の会議日の宿題を1件1行で（このサブインダストリー → 全サブインダストリー共通）。
+ * 入りきらなければ続きのページ（全件を出す）。シートが無ければ「データなし」、宿題が無ければ「該当なし」
+ */
+function mtgHomeworkSlides_(s) {
+  const S = MTG_SLIDE;
+  const c = MTG_OPTIONS.colors;
+  const h = s.homework || {date: null, own: [], common: [], gap: ''};
+  const title = MTG_TITLES.homework;
+  const columns = mtgColumns_([36, 130, 510], 2);
+  const head = mtgHeadRow_(columns, ['No.', '対象', '宿題事項']);
+  const when = h.date ? '前回会議（' + mtgShortDate_(h.date) + '）' : '前回会議';
+  if (h.gap) return [{title, lead: '前回の会議の宿題事項は' + MTG_OPTIONS.gapText + '（' + h.gap + '）。', elements: mtgEmptyTable_(columns, head, 'gap', h.gap)}];
+  const list = h.own.map(text => ({who: s.name, text})).concat(h.common.map(text => ({who: MTG_OPTIONS.combined.name + '共通', text})));
+  if (!list.length) {
+    const none = h.date ? when + 'の宿題は登録されていない' : '前の RX Business Meeting の宿題の列が無い';
+    return [{title, lead: none + '。', elements: mtgEmptyTable_(columns, head, 'none', none)}];
+  }
+  const lead = when + 'の宿題 ' + list.length + '件（' + s.name + ' ' + h.own.length + '件' +
+    (h.common.length ? '・' + MTG_OPTIONS.combined.name + '共通 ' + h.common.length + '件' : '') + '）。';
+  const rows = list.map((it, i) => mtgRow_(columns, [
+    {text: String(i + 1), fill: c.white, align: 'CENTER'},
+    {text: it.who, lines: 2, bold: true, color: c.ink, fill: c.greenSoft},
+    {text: it.text, lines: 3, fill: c.white}
+  ], 22));
+  return mtgTablePages_(head, rows).map((p, n) => ({title: title + (n ? '（続き）' : ''), lead,
+    elements: [{type: 'table', x: S.x, y: S.top, columns, rows: p.rows}]}));
+}
+
 /** 作る前の確かめ（資料を作る画面）の、報告案件版の説明（MeetingSchedule.gs の checkMeetingRun が、会議サマリの確かめの前に付ける） */
 function mtgReportCheckText_() {
   const o = MTG_OPTIONS;
@@ -151,7 +235,8 @@ function mtgReportSlides_(s) {
     o.portfolio.enabled ? mtgPortfolioSlides_(s.portfolio) : []);
   const reported = s.reported || [];
   const reports = reported.length ? reported.map((item, i) => mtgReportSlide_(s, item, i + 1)) : [mtgReportEmptySlide_(s)];
-  return mtgNumberSlides_(mtgSheetFrame_(s), [mtgCoverSlide_(s)].concat(main, reports));
+  // 表紙のあと、サマリーの前に前回の会議の宿題事項
+  return mtgNumberSlides_(mtgSheetFrame_(s), [mtgCoverSlide_(s)].concat(mtgHomeworkSlides_(s), main, reports));
 }
 
 /**
