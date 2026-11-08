@@ -188,7 +188,10 @@ function mtgReportLayout_() {
   const gap = 6;
   const left = {x: S.x, w: 150};   // 左の列（数字）は狭く、右の列（文章）を広く
   const right = {x: S.x + left.w + 8, w: S.w - left.w - 8};
-  const leftH = (bottom - top - 4 * gap) / 5;
+  // 左の5つの枠の高さ：1つ目（案件・得意先情報。案件名を3行まで）は高く、残りの4つは同じ高さ
+  const firstH = 80;
+  const restH = (bottom - top - firstH - 4 * gap) / 4;
+  const leftH = [firstH, restH, restH, restH, restH];
   const strategyH = 100;
   const valueH = 56;
   const rowY = top + strategyH + gap + valueH + gap;
@@ -197,7 +200,7 @@ function mtgReportLayout_() {
     prevH: 58};  // prevH：活動状況・次回アクションの枠の下の、前回の内容の帯の分（帯の上下のすき間を含む）
 }
 
-/** 報告案件の1枚（item は mtgReportItems_ の1件、no は番号（1 から））。ふつうの見出し・リード文の代わりに「報告案件①：案件名」（mtgReportHeader_） */
+/** 報告案件の1枚（item は mtgReportItems_ の1件、no は番号（1 から））。ふつうの見出し・リード文の代わりに「報告案件①」（mtgReportHeader_） */
 function mtgReportSlide_(s, item, no) {
   const o = MTG_OPTIONS;
   const c = o.colors;
@@ -225,7 +228,7 @@ function mtgReportSlide_(s, item, no) {
     if (withPrev[b.key]) el.push.apply(el, mtgReportPrevious_(b, item, item[withPrev[b.key]], fit.size, mtgReportPrevLabel_(s)));
   });
   // 左の列：先方・ステータス・期待値・受注月・RXシナリオ
-  const box = k => ({x: L.left.x, y: L.top + k * (L.leftH + L.gap), w: L.left.w, h: L.leftH});
+  const box = k => ({x: L.left.x, y: L.top + L.leftH.slice(0, k).reduce((sum, h) => sum + h + L.gap, 0), w: L.left.w, h: L.leftH[k]});
   el.push.apply(el, mtgReportClient_(box(0), item));
   el.push.apply(el, mtgReportStatus_(box(1), item));
   el.push.apply(el, mtgReportValue_(box(2), item));
@@ -314,7 +317,8 @@ function mtgReportHeader_(item, staff, no) {
   const staffLines = item && staff ? String(staff).split('\n') : [];
   const staffW = staffLines.length
     ? Math.min(R.staffWidth, Math.ceil(Math.max.apply(null, staffLines.map(t => mtgTextWidth_(t, small))) / S.fit + S.padX + 2)) : 0;
-  const full = item ? mtgReportTitle_(item.project || '（案件名未入力）', no) : R.title;
+  // 案件名は左上の案件・得意先情報の枠に書く（見出しに入れると長い案件名が入らないため）
+  const full = item ? mtgReportTitle_('', no).replace(/：$/, '') : R.title;
   const w = S.w - staffW;
   const sizes = [S.titleSize, S.titleSize - 2, S.titleSize - 4];
   const size = sizes.find(pt => mtgWrap_(full, w, pt, 2).length === 1) || sizes[sizes.length - 1];
@@ -374,7 +378,7 @@ function mtgReportFit_(boxes) {
   return {size, texts, cut};
 }
 
-/** 本文の箱（枠の見出しの下。上下の中央）。lines = [{text, size, bold, color}]（空の行は除く） */
+/** 本文の箱（枠の見出しのすぐ下から。左の列の枠の中身）。lines = [{text, size, bold, color}]（空の行は除く） */
 function mtgReportBody_(b, lines, bottomSpace) {
   const L = mtgReportLayout_();
   const list = lines.filter(line => line && line.text);
@@ -386,21 +390,23 @@ function mtgReportBody_(b, lines, bottomSpace) {
     return span;
   });
   return mtgBox_(b.x, b.y + L.head, b.w, b.h - L.head - (bottomSpace || 0), text, {size: list.length ? list[0].size : 9,
-    color: MTG_OPTIONS.colors.ink, spans, valign: 'MIDDLE', role: 'report-value'});
+    color: MTG_OPTIONS.colors.ink, spans, valign: 'TOP', role: 'report-value'});
 }
 
 /**
- * 左の列の1つ目：得意先情報（1行目 得意先名（太字）・2行目 先方部門・3行目 先方担当役職。どれも1行に入らなければ「…」で切る。
- * 名前（先方担当氏名）は出さない。部門・役職が空なら、その行に灰色の「未入力」）
+ * 左の列の1つ目：案件・得意先情報（案件名（太字。3行まで）・得意先名・先方部門／先方担当役職。入らなければ「…」で切る。
+ * 名前（先方担当氏名）は出さない。空の項目は灰色の「未入力」）
  */
 function mtgReportClient_(b, item) {
   const c = MTG_OPTIONS.colors;
   const blank = MTG_OPTIONS.blankText;
-  const line = (text, size, bold) => ({text: mtgWrap_(text || blank, b.w, size, 1)[0], size, bold: !!bold && !!text, color: text ? c.ink : c.faint});
+  const line = (text, size, bold, max) => ({text: mtgWrap_(text || blank, b.w, size, max || 1).join('\n'), size, bold: !!bold && !!text,
+    color: text ? c.ink : c.faint});
+  const dept = [item.clientDept, item.clientTitle].filter(Boolean).join('／');
   return [mtgReportFrame_(b.x, b.y, b.w, b.h, MTG_OPTIONS.report.clientLabel), mtgReportBody_(b, [
-    line(item.customer, 10, true),
-    line(item.clientDept, 9),
-    line(item.clientTitle, 9)
+    line(item.project, 10, true, 3),
+    line(item.customer, 9),
+    line(dept, 9)
   ])];
 }
 
@@ -410,10 +416,10 @@ function mtgReportStatus_(b, item) {
   const R = MTG_OPTIONS.report;
   const blank = MTG_OPTIONS.blankText;
   const prev = item.isNew ? R.newText : item.prevStatus || blank;
-  const stepH = 11;
+  const stepH = 10;
   const el = [mtgReportFrame_(b.x, b.y, b.w, b.h, 'ステータス'),
-    mtgReportBody_(b, [{text: mtgWrap_(item.status || blank, b.w, 10.5, 1)[0], size: 10.5, bold: true, color: item.status ? c.ink : c.faint},
-      {text: mtgWrap_('前回：' + prev, b.w, 8, 1)[0], size: 8, color: c.muted}], stepH + 4)];
+    mtgReportBody_(b, [{text: mtgWrap_(item.status || blank, b.w, 10, 1)[0], size: 10, bold: true, color: item.status ? c.ink : c.faint},
+      {text: mtgWrap_('前回：' + prev, b.w, 7.5, 1)[0], size: 7.5, color: c.muted}], stepH + 4)];
   const now = mtgReportRank_(item.status);
   const before = item.isNew ? '' : mtgReportRank_(item.prevStatus);
   const steps = R.steps;
@@ -428,7 +434,7 @@ function mtgReportStatus_(b, item) {
     const sw = unit * weight(step);
     const at = x;
     x += sw + 2;
-    el.push(mtgBox_(at, b.y + b.h - stepH - 5, sw, stepH, step, {size: 7, bold: on, align: 'CENTER', shape: 'RECTANGLE',
+    el.push(mtgBox_(at, b.y + b.h - stepH - 4, sw, stepH, step, {size: 7, bold: on, align: 'CENTER', shape: 'RECTANGLE',
       fill: on ? c.green : was ? c.greenSoft : c.graySoft, color: on ? c.white : was ? c.greenDark : c.faint, role: 'report-step'}));
   });
   return el;
@@ -451,7 +457,7 @@ function mtgReportValue_(b, item) {
   const text = first + '\n' + second;
   spans.push({start: first.length + 1, end: text.length, size: 8, color: c.muted});
   return [mtgReportFrame_(b.x, b.y, b.w, b.h, '期待値（百万円）'),
-    mtgBox_(b.x, b.y + L.head, b.w, b.h - L.head, text, {size: 9.5, color: c.ink, spans, valign: 'MIDDLE', role: 'report-value'})];
+    mtgBox_(b.x, b.y + L.head, b.w, b.h - L.head, text, {size: 9.5, color: c.ink, spans, valign: 'TOP', role: 'report-value'})];
 }
 
 /** 左の列の4つ目：受注月（今の月・前回の月（遅くなったら「（延期）」・早くなったら「（前倒し）」）） */

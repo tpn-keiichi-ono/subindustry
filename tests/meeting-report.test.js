@@ -101,14 +101,14 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   const a = slides[numbers.length];
   assert.ok(!byRole(a, 'title').length, '見出し（タイトル）は付けない');
   const head = byRole(a, 'report-title')[0];
-  assert.strictEqual(head.text, '報告案件①：店舗DX基盤の刷新', '見出しは案件名だけ（得意先名は得意先情報の枠）');
+  assert.strictEqual(head.text, '報告案件①', '見出しは番号だけ（案件名・得意先名は左上の案件・得意先情報の枠）');
   assert.strictEqual(head.size, 21, '見出しはほかのスライドと同じ大きさ');
   assert.ok(!(head.spans || []).length && head.color === '#1A1A1A', '色を付けない');
 
   assert.ok(!byRole(a, 'report-rule').length, '見出しの下の線は無い');
   assert.strictEqual(g.mtgReportTitle_('X', 21), '報告案件(21)：X');
   const all = texts(a).join('\n');
-  ['得意先情報', 'A社\n経営企画部\n部長', 'B-クロージング中(70%)', '前回：C-提案中(50%)', '70　+20', '前回：50　／　想定売上：100', '2027/02', '前回：2026/12（延期）',
+  ['案件・得意先情報', '店舗DX基盤の刷新\nA社\n経営企画部／部長', 'B-クロージング中(70%)', '前回：C-提案中(50%)', '70　+20', '前回：50　／　想定売上：100', '2027/02', '前回：2026/12（延期）',
     'RXシナリオ（見込金額 80百万円）', '店舗オペレーション効率化', '需要予測', '提案を勝ち取るための戦略・差異化要素', '業務設計から運用定着まで一括で提案する',
     '想定される価値創出のケース／期待される導入効果', '11/2 役員向けに最終提案', '情報システム部門の稼働が逼迫', '11/15 稟議資料の事前確認']
     .forEach(t => assert.ok(all.indexOf(t) >= 0, t + ' が無い：\n' + all));
