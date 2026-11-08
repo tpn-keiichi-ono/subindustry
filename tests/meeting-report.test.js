@@ -108,7 +108,7 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.ok(!byRole(a, 'report-rule').length, '見出しの下の線は無い');
   assert.strictEqual(g.mtgReportTitle_('X', 21), '報告案件(21)：X');
   const all = texts(a).join('\n');
-  ['案件・得意先情報', '店舗DX基盤の刷新\nA社\n経営企画部／部長', 'B-クロージング中(70%)', '前回：C-提案中(50%)', '70　+20', '前回：50　／　想定売上：100', '2027/02', '前回：2026/12（延期）',
+  ['案件・得意先情報', '店舗DX基盤の刷新\n \nA社\n経営企画部／部長', 'B-クロージング中(70%)', '前回：C-提案中(50%)', '70　+20', '前回：50　／　想定売上：100', '2027/02', '前回：2026/12（延期）',
     'RXシナリオ（見込金額 80百万円）', '店舗オペレーション効率化', '需要予測', '提案を勝ち取るための戦略・差異化要素', '業務設計から運用定着まで一括で提案する',
     '想定される価値創出のケース／期待される導入効果', '11/2 役員向けに最終提案', '情報システム部門の稼働が逼迫', '11/15 稟議資料の事前確認']
     .forEach(t => assert.ok(all.indexOf(t) >= 0, t + ' が無い：\n' + all));
@@ -116,6 +116,11 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.strictEqual(staff.text, '担当営業：佐藤\nBX担当：山田', '右上に担当営業と BX担当の2行');
   assert.ok(staff.size * 2 === head.size && staff.y === head.y && staff.h === head.h && staff.align === 'END', '2行の高さが見出しの行と同じ（右寄せ）');
   assert.ok(head.x + head.w <= staff.x + 0.01, '見出しは担当の左まで');
+  // 枠の中の字は、枠の見出し（8pt）より大きくしない（左の列の値・前回の帯・確度の段・シナリオの枠も）
+  const heading = Math.max.apply(null, byRole(a, 'report-frame').map(el => el.size));
+  ['report-value', 'report-text', 'report-prev', 'report-step', 'report-chip'].forEach(role => byRole(a, role).forEach(el => {
+    [el.size].concat((el.spans || []).map(sp => sp.size).filter(Boolean)).forEach(size => assert.ok(size <= heading, role + '：' + size + 'pt'));
+  }));
   const bodies = byRole(a, 'report-text');
   assert.strictEqual(bodies.length, 5);
   assert.strictEqual(new Set(bodies.map(b => b.size)).size, 1, '文章の枠の字の大きさはスライドの中で同じ');
