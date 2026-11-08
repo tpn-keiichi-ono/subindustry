@@ -188,13 +188,13 @@ function mtgReportLayout_() {
   const gap = 6;
   const left = {x: S.x, w: 150};   // 左の列（数字）は狭く、右の列（文章）を広く
   const right = {x: S.x + left.w + 8, w: S.w - left.w - 8};
-  // 左の5つの枠の高さ：1つ目（案件・得意先情報。案件名を3行まで）は高く、残りの4つは同じ高さ
-  const firstH = 80;
-  const restH = (bottom - top - firstH - 4 * gap) / 4;
-  const leftH = [firstH, restH, restH, restH, restH];
   const strategyH = 100;
   const valueH = 56;
   const rowY = top + strategyH + gap + valueH + gap;
+  // 左の5つの枠の高さは右の列の段にそろえる：案件・得意先情報 = 戦略の枠、ステータス = 価値創出の枠、
+  // 期待値・受注月・RXシナリオ = 下の段（課題・活動状況・次回アクション）を3つに分けた高さ
+  const lowH = (bottom - rowY - 2 * gap) / 3;
+  const leftH = [strategyH, valueH, lowH, lowH, lowH];
   return {top, bottom, gap, left, right, leftH, strategyH, valueH, rowY, rowH: bottom - rowY, rowW: (right.w - 2 * gap) / 3,
     head: 12,    // head：枠の見出しの分（枠の上端から本文の箱の上端まで）
     prevH: 58};  // prevH：活動状況・次回アクションの枠の下の、前回の内容の帯の分（帯の上下のすき間を含む）
@@ -418,8 +418,8 @@ function mtgReportStatus_(b, item) {
   const prev = item.isNew ? R.newText : item.prevStatus || blank;
   const stepH = 10;
   const el = [mtgReportFrame_(b.x, b.y, b.w, b.h, 'ステータス'),
-    mtgReportBody_(b, [{text: mtgWrap_(item.status || blank, b.w, 10, 1)[0], size: 10, bold: true, color: item.status ? c.ink : c.faint},
-      {text: mtgWrap_('前回：' + prev, b.w, 7.5, 1)[0], size: 7.5, color: c.muted}], stepH + 4)];
+    mtgReportBody_(b, [{text: mtgWrap_(item.status || blank, b.w, 9.5, 1)[0], size: 9.5, bold: true, color: item.status ? c.ink : c.faint},
+      {text: mtgWrap_('前回：' + prev, b.w, 7, 1)[0], size: 7, color: c.muted}], stepH + 4)];
   const now = mtgReportRank_(item.status);
   const before = item.isNew ? '' : mtgReportRank_(item.prevStatus);
   const steps = R.steps;
@@ -448,14 +448,14 @@ function mtgReportValue_(b, item) {
   const delta = item.isNew || item.weighted == null || item.prevWeighted == null ? null : item.weighted - item.prevWeighted;
   const rounded = delta == null ? null : Math.round(delta * 10) / 10;
   const first = now + (rounded == null ? '' : '　' + mtgSigned_(rounded));
-  const spans = [{start: 0, end: now.length, size: item.weighted == null ? 10.5 : 18, bold: true, color: item.weighted == null ? c.faint : c.ink}];
+  const spans = [{start: 0, end: now.length, size: item.weighted == null ? 10.5 : 14, bold: true, color: item.weighted == null ? c.faint : c.ink}];
   if (rounded != null) {
     spans.push({start: now.length, end: first.length, size: 9.5, bold: true, color: rounded > 0 ? c.greenDark : rounded < 0 ? c.dark : c.faint});
   }
-  const second = mtgWrap_('前回：' + (item.isNew ? R.newText : mtgAmount_(item.prevWeighted)) + '　／　想定売上：' + mtgAmount_(item.amount), b.w, 8, 1)[0];
+  const second = mtgWrap_('前回：' + (item.isNew ? R.newText : mtgAmount_(item.prevWeighted)) + '　／　想定売上：' + mtgAmount_(item.amount), b.w, 7.5, 1)[0];
   const L = mtgReportLayout_();
   const text = first + '\n' + second;
-  spans.push({start: first.length + 1, end: text.length, size: 8, color: c.muted});
+  spans.push({start: first.length + 1, end: text.length, size: 7.5, color: c.muted});
   return [mtgReportFrame_(b.x, b.y, b.w, b.h, '期待値（百万円）'),
     mtgBox_(b.x, b.y + L.head, b.w, b.h - L.head, text, {size: 9.5, color: c.ink, spans, valign: 'TOP', role: 'report-value'})];
 }
@@ -471,8 +471,8 @@ function mtgReportMonth_(b, item) {
   const nowText = now ? label(now) : String(item.orderMonthText || '').trim() || MTG_OPTIONS.blankText;
   const prevText = item.isNew ? R.newText : before ? label(before) : String(item.prevMonthText || '').trim() || MTG_OPTIONS.blankText;
   return [mtgReportFrame_(b.x, b.y, b.w, b.h, '受注月'), mtgReportBody_(b, [
-    {text: nowText, size: now ? 13.5 : 10.5, bold: true, color: now || item.orderMonthText ? c.ink : c.faint},
-    {text: '前回：' + prevText + (move > 0 ? '（延期）' : move < 0 ? '（前倒し）' : ''), size: 8, color: c.muted}
+    {text: nowText, size: now ? 12 : 10, bold: true, color: now || item.orderMonthText ? c.ink : c.faint},
+    {text: '前回：' + prevText + (move > 0 ? '（延期）' : move < 0 ? '（前倒し）' : ''), size: 7.5, color: c.muted}
   ])];
 }
 
