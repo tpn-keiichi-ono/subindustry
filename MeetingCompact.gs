@@ -95,7 +95,7 @@ function mtgCompactFront_(summaries, meeting, final, now) {
  * 目盛りは、いちばん大きい計画の planScale 倍（か、それより大きい確定）を棒の幅いっぱいにする。進捗率（A＋B）＝ 確定（A＋B）÷ 計画。
  * 確定・見込・進捗率は今年度の積み上げ（plan.monthColumn の月が今年度の案件。mtgPlanOf_）、期待値合計・前回比・案件数・変化のある案件は失注を除くすべて
  * （統合版の状況のページと同じ）。期待値・月の列が無いシートは、棒の場所に「データなし」と理由。
- * options.withC：次のページ（見込（C）を含む）。棒の確定（A・B）の右に、少しあけて見込（C）を薄い地と細かい点線の枠で足す（compact.prospect。
+ * options.withC：次のページ（見込（C）を含む）。棒の確定（A・B）に続けて見込（C）を、薄い地と上・下・右の細かい点線で足す（compact.prospect。
  * 並び・右の数字は同じ。目盛りは A＋B＋C も入るように）
  */
 function mtgCompactOverviewSlide_(summaries, options) {
@@ -229,13 +229,22 @@ function mtgCompactOverviewSlide_(summaries, options) {
       let end = barX;
       shown.forEach((r, k) => {
         const v = p.byRank[r.key];
-        // 見込（C）は確定の棒から gap だけあけて、薄い地に細かい点線の枠（枠が B の端に重ならないように）
-        const gap = r.dashed && level > 0 ? P.gap : 0;
-        const bx = barX + level * scale + gap;
-        const bw = Math.max(v * scale - gap, 0.75);
-        el.push(r.dashed ? {type: 'box', x: bx, y: ry + (rowH - bh) / 2, w: bw, h: bh, fill: r.color, alpha: P.alpha, line: P.line, lineWeight: P.lineWeight,
-          dashStyle: P.dashStyle, shape: 'RECTANGLE', role: 'compact-bar'}
-          : {type: 'box', x: bx, y: ry + (rowH - bh) / 2, w: bw, h: bh, fill: r.color, line: c.white, lineWeight: 0.5, shape: 'RECTANGLE', role: 'compact-bar'});
+        const bx = barX + level * scale;
+        const bw = Math.max(v * scale, 0.75);
+        const by = ry + (rowH - bh) / 2;
+        if (r.dashed) {
+          // 見込（C）は確定の棒に続けて（積み上げ）、薄い地（枠なし）と、上・下・右の3辺の細かい点線（左の辺は確定の棒との境目なので引かない。
+          // 左の辺が確定の棒の端に重なると、つなぎ目が乱れて見えるため）。確定の棒が無ければ左の辺も引く
+          el.push({type: 'box', x: bx, y: by, w: bw, h: bh, fill: r.color, alpha: P.alpha, shape: 'RECTANGLE', role: 'compact-bar', prospect: true});
+          const edge = (x1, y1, w1, h1) => el.push({type: 'line', x: x1, y: y1, w: w1, h: h1, color: P.line, weight: P.lineWeight, dashStyle: P.dashStyle,
+            role: 'compact-bar-edge'});
+          edge(bx, by, bw, 0);
+          edge(bx, by + bh, bw, 0);
+          edge(bx + bw, by, 0, bh);
+          if (level === 0) edge(bx, by, 0, bh);
+        } else {
+          el.push({type: 'box', x: bx, y: by, w: bw, h: bh, fill: r.color, line: c.white, lineWeight: 0.5, shape: 'RECTANGLE', role: 'compact-bar'});
+        }
         end = bx + bw;
         // データラベル：棒の中（白い字。見込は濃い緑の字。入らなければ 6pt まで小さく）。それでも入らない値は、棒のいちばん右（最後の確度）なら
         // 棒のすぐ右に「C 8」のように出し、間の確度（右に別の確度が続く）は出さない（離れた場所に出すと、どの棒の値か分かりにくいため。値は右の表にある）

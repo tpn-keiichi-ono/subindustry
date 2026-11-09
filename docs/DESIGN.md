@@ -880,7 +880,9 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
 
 - 並び（`mtgCompactSlides_`）：表紙（統合版と同じひな形。見出しの下は `compact.coverWord`「報告資料」。`mtgCombinedCover_` の docWord）→
   全サブインダストリーの状況・計画進捗（`mtgCompactOverviewSlide_`）→ 同じ（見込（C）を含む。`mtgCompactOverviewSlide_(…, {withC: true})`。棒の右に見込（C）を
-  白地・C の色の点線の枠（`dash`）で足し、目盛りは A＋B＋C も入るように。並び・右の数字は同じ。リード文は確定＋見込の計画比）→
+  続けて（積み上げなので、あけない）、C の色の薄い地（`compact.prospect.alpha`）と上・下・右の3辺の細かい点線（`dashStyle: 'DOT'` の線。
+  左の辺は確定の棒との境目なので引かない）で足す。棒の中に入らない値は、いちばん右の確度だけ棒のすぐ右に出す。凡例の見本は横長の点線の枠。
+  目盛りは A＋B＋C も入るように。並び・右の数字は同じ。リード文は確定＋見込の計画比）→
   計画に対する積み上げ（全体。`mtgPlanSlide_(mtgMergePlans_(…))`。`plan.enabled` のとき）と、確定（`compact.sureRanks`。A・B）だけの積み上げ
   （`mtgPlanRanksOnly_` で月・合計・積み上げに含まない案件を A・B の分に絞り、`mtgPlanSlide_(…, {only, label})` で凡例・見出し・リード文を「確定（A＋B）」・進捗率にする。
   積み上げに含まない案件の確度ごとの件数は `counts`）→ 変化のあった案件：{サブインダストリー}（`mtgCompactChangeSlides_`。`DIFF_RULES` の順）。
