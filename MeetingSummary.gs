@@ -158,7 +158,10 @@ const MTG_OPTIONS = {
     // 上・下・右の3辺だけに引く（左の辺は確定の棒との境目なので引かない。点線の枠が B の端に重なって、つなぎ目が乱れて見えないように）
     prospect: {alpha: 0.3, line: '#548235', lineWeight: 1, dashStyle: 'DOT'},
     sureLabel: '確定（A＋B）',
-    salesPage: true,                // 状況・計画進捗の次に、今年度の売上（FY前半期＋後半期の列）で集計したページも入れる（false で入れない）
+    salesPage: true,
+    // FY売上の計画に対する積み上げの積み方：'orderMonth' 案件の今年度の売上の合計を受注月の月に置く（想定売上の積み上げと同じ月別の図）・
+    // 'half' 前半期 → 後半期の列ごと（mtgSalesPlanSlide_）
+    salesPlanBy: 'orderMonth',                // 状況・計画進捗の次に、今年度の売上（FY前半期＋後半期の列）で集計したページも入れる（false で入れない）
     measure: '想定売上'             // 集計する金額（期待値ではなく想定売上。積み上げ・確定・見込・合計・前回比・変化のあった案件の金額）
   },
   // Apps Script の1回の実行は6分まで（入力・確かめの画面を出している時間も含む）。作り始めてから limitMs を過ぎそうなら、そこで区切り、
@@ -4017,6 +4020,7 @@ function mtgSummarize_(ss, name, context) {
     plan: mtgPlanOf_(deals, name, context.now, table.has),
     planAmount: mtgPlanOf_(deals, name, context.now, table.has, 'amount'),   // 想定売上の積み上げ（統合版（報告用）。MeetingCompact.gs）
     planSales: mtgSalesPlanOf_(deals, name, context.now, table),             // 今年度の売上（FY前半期＋後半期の列）の確度別（統合版（報告用））
+    planSalesByMonth: mtgSalesPlanByMonthOf_(deals, name, context.now, table),   // 今年度の売上の合計を受注月で積み上げたもの（統合版（報告用））
     portfolio: mtgPortfolioWithPrevious_(mtgPortfolioOf_(deals, context.now, table, statusTable), copy, context, statusTable),
     changes,
     stalled,
@@ -4808,6 +4812,7 @@ function mtgCombinedLite_(s) {
   return JSON.parse(JSON.stringify({name: s.name, dummy: s.dummy || 0, first: s.first || false, kpi: s.kpi, gaps: s.gaps || {},
     bridge: {start: s.bridge.start, end: s.bridge.end, startCount: s.bridge.startCount, endCount: s.bridge.endCount,
       amountStart: s.bridge.amountStart, amountEnd: s.bridge.amountEnd}, plan: s.plan || null, planAmount: s.planAmount || null, planSales: s.planSales || null,
+    planSalesByMonth: s.planSalesByMonth || null,
     changedNow: s.changes ? mtgCompactChangedNow_(s) : null,   // 変化のある案件のうち今ある案件（統合版（報告用）の状況のページ）
     previous: prev ? {date: prev.date, cutoff: prev.cutoff, baseline: !!prev.baseline, chosen: !!prev.chosen} : null}));
 }
@@ -6546,6 +6551,23 @@ function mtgSalesPlanOf_(deals, name, now, table) {
   return out;
 }
 
+/**
+ * 今年度の売上の合計（前半期＋後半期の列）を、案件の受注月（plan.monthColumn）の月に置いて積み上げたもの（mtgPlanOf_ と同じ形。統合版（報告用）の
+ * 計画に対する積み上げ（FY売上。compact.salesPlanBy: 'orderMonth'）。受注月が空・今年度の外・失注の案件は、積み上げに含めず参考（undated など）。
+ * 今年度の売上が空・0 の案件は入れない（件数にも数えない。売上が無いのがふつうの案件もあるため）。今年度の列が無ければ gap に理由
+ */
+function mtgSalesPlanByMonthOf_(deals, name, now, table) {
+  const year = mtgFiscalYearKey_(now);
+  const has = (table.salesYears || []).indexOf(year) >= 0;
+  // 今年度の売上がある案件だけ（売上が無い案件は 0 なので、積み上げに含まない案件の件数にも数えない）
+  const list = deals.filter(d => (d.sales || {})[year]).map(d => Object.assign({}, d, {salesFy: d.sales[year]}));
+  const out = mtgPlanOf_(list, name, now, Object.assign({}, table.has || {}, {salesFy: true}), 'salesFy');
+  out.missing = 0;
+  out.year = year;
+  if (!has) out.gap = 'シートに「FY' + year + '前半期売上」「FY' + year + '後半期売上」の列が無い';
+  return out;
+}
+
 /** 今年度の売上の確度別（mtgSalesPlanOf_）を足したもの（mtgMergePlans_ に半期ごと（halves）も足す） */
 function mtgMergeSalesPlans_(plans) {
   const out = mtgMergePlans_(plans);
@@ -6709,7 +6731,9 @@ function mtgPlanSlide_(p, now, name, options) {
   // options.measure：積み上げた金額の名前（既定は「期待値」。統合版（報告用）は「想定売上」。p は mtgPlanOf_(…, 'amount')）
   const measure = options && options.measure || '期待値';
   const what = only ? options.label + 'の' + measure : measure;
-  const title = MTG_TITLES.plan + (name || only ? '（' + [name, only ? options.label : ''].filter(Boolean).join('・') + '）' : '');
+  // options.titleNote：見出しの名前の後ろに足す言葉（「FY26売上」。同じ名前のページと見分ける）
+  const note = options && options.titleNote || '';
+  const title = MTG_TITLES.plan + (name || only || note ? '（' + [name, note, only ? options.label : ''].filter(Boolean).join('・') + '）' : '');
   const first = mtgMonthOf_(p.start);
   const last = mtgMonthOf_(p.start + 11);
   const period = String(first.y).slice(2) + '/' + first.m + '〜' + String(last.y).slice(2) + '/' + last.m;

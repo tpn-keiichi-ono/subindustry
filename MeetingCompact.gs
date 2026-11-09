@@ -88,10 +88,20 @@ function mtgCompactFront_(summaries, meeting, final, now) {
     // FY売上の計画に対する積み上げ（前半期・後半期）：全確度と確定（A＋B）だけ（compact.salesPage）
     if (merged && C.salesPage) {
       // 売上の列が無いシートは除いて足す（どのシートにも無ければ「データなし」）
-      const list = summaries.map(s => s.planSales || mtgSalesPlanOf_([], s.name, now, {}));
-      const sales = mtgMergeSalesPlans_(list.some(x => !x.gap) ? list.filter(x => !x.gap) : list.slice(0, 1));
-      plan.push(mtgSalesPlanSlide_(sales, o.combined.name), mtgSalesPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), o.combined.name,
-        {only: C.sureRanks, label: C.sureLabel}));
+      const pick = list => (list.some(x => !x.gap) ? list.filter(x => !x.gap) : list.slice(0, 1));
+      if (C.salesPlanBy === 'half') {
+        const sales = mtgMergeSalesPlans_(pick(summaries.map(s => s.planSales || mtgSalesPlanOf_([], s.name, now, {}))));
+        plan.push(mtgSalesPlanSlide_(sales, o.combined.name), mtgSalesPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), o.combined.name,
+          {only: C.sureRanks, label: C.sureLabel}));
+      } else {
+        // 案件の今年度の売上の合計を、受注月の月に置いて積み上げる（想定売上の積み上げと同じ形）
+        const sales = mtgMergePlans_(pick(summaries.map(s => s.planSalesByMonth || mtgSalesPlanByMonthOf_([], s.name, now, {}))));
+        sales.year = sales.year || mtgFiscalYearKey_(now);
+        const fy = 'FY' + sales.year;
+        const measure = fy + '売上';
+        plan.push(mtgPlanSlide_(sales, now, o.combined.name, {measure, titleNote: measure}),
+          mtgPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure, titleNote: measure}));
+      }
     }
     return mtgNumberSlides_(mtgCombinedFrame_(summaries, meeting, final),
       [mtgCombinedCover_(summaries, meeting, final, now, C.coverWord), mtgCompactOverviewSlide_(summaries),

@@ -538,8 +538,9 @@ test('状況・計画進捗（FY売上）：今年度の売上の列が無いシ
   assert.ok(slide.elements.some(e => /^データなし（シートに「FY\d+/.test(e.text || "")));
 });
 
-test('計画に対する積み上げ（FY売上）：今年度の売上の列を前半期 → 後半期と積み上げ、合計・計画・不足。確定（A＋B）だけのページも。失注は参考', () => {
+test('計画に対する積み上げ（FY売上・salesPlanBy: half）：今年度の売上の列を前半期 → 後半期と積み上げ、合計・計画・不足。確定（A＋B）だけのページも。失注は参考', () => {
   const {gas, g} = setup();
+  gas.get('MTG_OPTIONS').compact.salesPlanBy = 'half';
   const fy = 'FY' + fiscalYear();
   const s1 = summarize(g, '新FMT');
   const s2 = summarize(g, '新FMT2');
@@ -560,4 +561,26 @@ test('計画に対する積み上げ（FY売上）：今年度の売上の列を
   // 出さない設定（compact.salesPage: false）なら、この2枚も入れない
   gas.get('MTG_OPTIONS').compact.salesPage = false;
   assert.ok(!plain(g.mtgCompactSlides_([s1, s2], '2026/11/13', true)).some(sl => sl.title.indexOf(fy + '売上') >= 0));
+});
+
+test('計画に対する積み上げ（FY売上・salesPlanBy: orderMonth。既定）：案件の今年度の売上の合計を受注月の月に置き、想定売上の積み上げと同じ月別の図にする', () => {
+  const {gas, g} = setup();
+  const T = gas.get('MTG_TITLES');
+  const fy = 'FY' + fiscalYear();
+  const s1 = summarize(g, '新FMT');
+  const s2 = summarize(g, '新FMT2');
+  // 月（テストでは売上開始月）ごと：8か月目 A社 70 + F社 10 = 80、9か月目 B社 30、10か月目 C社 10。E社（失注）の 50 は参考の「失注」
+  const merged = plain(g.mtgMergePlans_([s1.planSalesByMonth, s2.planSalesByMonth]));
+  assert.deepStrictEqual(merged.months.map(m => m.total).slice(7, 11), [0, 80, 30, 10]);
+  assert.deepStrictEqual([merged.total, merged.excluded.value, merged.plan], [120, 50, 300]);
+  const slides = plain(g.mtgCompactSlides_([s1, s2], '2026/11/13', true));
+  const all = slides.find(sl => sl.title === T.plan + '（全サブインダストリー・' + fy + '売上）');
+  const sure = slides.find(sl => sl.title === T.plan + '（全サブインダストリー・' + fy + '売上・確定（A＋B））');
+  assert.ok(all && sure && slides.indexOf(all) === 7 && slides.indexOf(sure) === 8);
+  assert.ok(all.elements.some(e => /月別 FY\d+売上の積み上げ（百万円）$/.test(e.text || '')), '月別の図');
+  assert.match(leadOf(all), new RegExp('^今年度（[^）]+）の' + fy + '売上の積み上げは 120百万円。計画 300百万円に対して ▲180（達成率 40%）。'));
+  assert.match(leadOf(sure), new RegExp('^今年度（[^）]+）の確定（A＋B）の' + fy + '売上の積み上げは 120百万円。.*（進捗率 40%）'));
+  assert.ok(!all.elements.some(e => /空・数値でない/.test(e.text || '')), '売上が空の案件の件数は書かない');
+  // 今年度の売上が無い案件（D社・G社）は数えない（積み上げに含まない案件は、失注の E社 1件だけ）
+  assert.strictEqual(merged.undated.count + merged.before.count + merged.after.count + merged.excluded.count, 1);
 });
