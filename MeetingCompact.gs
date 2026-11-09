@@ -4,13 +4,14 @@
  *
  * ページの並び：
  *   1. 表紙（統合版と同じひな形の表紙。見出しの下は「事前資料」ではなく「報告資料」（compact.coverWord）。mtgCombinedCover_）
- *   2. 全サブインダストリーの状況・計画進捗（mtgCompactOverviewSlide_）：サブインダストリーごとに、今年度の確定（確度 A＋B）の期待値の横棒（A・B を積み上げ、
- *      データラベル付き）と計画線（透明度のあるグレーの点線。上に「計画」）。右に「今年度の計画進捗」（計画・進捗率（A＋B）・確定（A＋B）/件・見込（C）/件）と
- *      「案件の状況（失注除く）」（期待値合計・前回比（比べた日付。増は青・減は赤）・案件数・変化のある案件）。進捗率（A＋B）の高い順、いちばん下に合計
- *   2'. 同じ（見込（C）を含む。棒の右に見込（C）を点線の枠で足す。mtgCompactOverviewSlide_(…, {withC: true})）
- *   3. 計画に対する積み上げ（全体。統合版と同じ mtgPlanSlide_）と、確定（A＋B）だけの積み上げ（mtgPlanRanksOnly_。凡例・見出し・リード文も確定の言葉）
- *   4〜 変化のあった案件：{サブインダストリー}（mtgCompactChangeSlides_。シートの順にサブインダストリーごと）：No.（資料の通し番号）・得意先／案件名・
- *      ステータス・期待値・受注月（前回▶今回）・活動状況・活動における課題。変化が無ければ「該当なし」の1ページ
+ *   2. 全サブインダストリーの状況・計画進捗（mtgCompactOverviewSlide_）：サブインダストリーごとに、今年度の確定（確度 A＋B）の想定売上の横棒（A・B を積み上げ、
+ *      データラベル付き）と計画線（透明度のあるグレーの点線。上に「計画」）。右に、計画・進捗率（A＋B）・確定（A＋B）/件・見込（C）/件と、
+ *      想定売上合計（失注除く）・前回比（比べた日付。増は青・減は赤）・案件数・変化のある案件（まとまりの見出しは付けない）。進捗率（A＋B）の高い順、いちばん下に合計
+ *   2'. 同じ（見込（C）を含む。棒に続けて見込（C）を点線で足す。mtgCompactOverviewSlide_(…, {withC: true})）
+ *   3. 計画に対する積み上げ（全体。統合版と同じ mtgPlanSlide_ で、想定売上を積み上げる）と、確定（A＋B）だけの積み上げ（mtgPlanRanksOnly_）
+ *   4〜 変化のあった案件：{サブインダストリー}（mtgCompactChangeSlides_。シートの順にサブインダストリーごと）：No（資料の通し番号）・得意先／案件名・
+ *      ステータス・想定売上・受注月（前回▶今回）・活動状況・活動における課題。変化が無ければ「該当なし」の1ページ
+ * 集計はどれも期待値ではなく想定売上（summary.planAmount = mtgPlanOf_(…, 'amount')・bridge.amountStart / amountEnd。2026/11/09）。
  * 金額は小数点以下を繰り上げた整数で出す（compact.ceilAmounts。mtgWithAmountCeil_）
  *
  * 作り方は統合版と同じ：エディタで createBusinessMtgReportingSummary() を実行し、画面（MeetingRunDialog）で会議日を選ぶ。すべての追跡シートの会議サマリを
@@ -79,22 +80,27 @@ function mtgCompactFront_(summaries, meeting, final, now) {
   const o = MTG_OPTIONS;
   const C = o.compact;
   return mtgWithAmountCeil_(() => {
-    const merged = o.plan.enabled ? mtgMergePlans_(summaries.map(s => s.plan)) : null;
-    // 計画に対する積み上げ：全確度（統合版と同じ）のあとに、確定（A＋B）だけ
-    const plan = merged ? [mtgPlanSlide_(merged, now, o.combined.name),
-      mtgPlanSlide_(mtgPlanRanksOnly_(merged, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel})] : [];
+    const merged = o.plan.enabled ? mtgMergePlans_(summaries.map(mtgCompactPlanOf_)) : null;
+    // 計画に対する積み上げ（想定売上）：全確度（統合版と同じ形）のあとに、確定（A＋B）だけ
+    const plan = merged ? [mtgPlanSlide_(merged, now, o.combined.name, {measure: C.measure}),
+      mtgPlanSlide_(mtgPlanRanksOnly_(merged, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure: C.measure})] : [];
     return mtgNumberSlides_(mtgCombinedFrame_(summaries, meeting, final),
       [mtgCombinedCover_(summaries, meeting, final, now, C.coverWord), mtgCompactOverviewSlide_(summaries),
         mtgCompactOverviewSlide_(summaries, {withC: true})].concat(plan));
   });
 }
 
+/** 統合版（報告用）で積み上げる計画（想定売上。summary.planAmount。前の版で保存した仕事の中身に無ければ期待値の plan） */
+function mtgCompactPlanOf_(s) {
+  return s.planAmount || s.plan;
+}
+
 /**
  * 全サブインダストリーの状況・計画進捗（統合版の「計画に対する積み上げ（サブインダストリー別）」の図に、「全サブインダストリーの状況」の数字をまとめたもの）。
  * 横棒は確定（確度 A・B）だけを積み上げる（棒の中に値。入らない値は、いちばん右の確度なら棒のすぐ右に「B 7」、間の確度は出さない）。計画線は計画の位置に、透明度のあるグレーの点線（上に「計画」）。
  * 目盛りは、いちばん大きい計画の planScale 倍（か、それより大きい確定）を棒の幅いっぱいにする。進捗率（A＋B）＝ 確定（A＋B）÷ 計画。
- * 確定・見込・進捗率は今年度の積み上げ（plan.monthColumn の月が今年度の案件。mtgPlanOf_）、期待値合計・前回比・案件数・変化のある案件は失注を除くすべて
- * （統合版の状況のページと同じ）。期待値・月の列が無いシートは、棒の場所に「データなし」と理由。
+ * 金額はどれも想定売上：確定・見込・進捗率は今年度の想定売上の積み上げ（plan.monthColumn の月が今年度の案件。summary.planAmount）、
+ * 想定売上合計・前回比（bridge.amountEnd − amountStart）・案件数・変化のある案件は失注を除くすべて。想定売上・月の列が無いシートは、棒の場所に「データなし」と理由。
  * options.withC：次のページ（見込（C）を含む）。棒の確定（A・B）に続けて見込（C）を、薄い地と上・下・右の細かい点線で足す（compact.prospect。
  * 並び・右の数字は同じ。目盛りは A＋B＋C も入るように）
  */
@@ -121,7 +127,7 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const cnt = (p, keys) => keys.reduce((t, k) => t + ((p.byRankCount || {})[k] || 0), 0);
   const rate = p => (p.gap || !(p.plan > 0) ? null : sum(p, ['A', 'B']) / p.plan * 100);
   const order = p => (rate(p) == null ? -1 : rate(p));
-  const items = summaries.map(s => ({s, p: s.plan, lack: s.gaps || {}}))
+  const items = summaries.map(s => ({s, p: mtgCompactPlanOf_(s), lack: s.gaps || {}}))
     .sort((a, b) => (order(b.p) - order(a.p)) || (sum(b.p, ['A', 'B']) - sum(a.p, ['A', 'B'])));
   const ok = items.filter(x => !x.p.gap);
   const merged = mtgMergePlans_(ok.map(x => x.p));
@@ -129,22 +135,22 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const last = mtgMonthOf_(merged.start + 11);
   const period = String(first.y).slice(2) + '/' + first.m + '〜' + String(last.y).slice(2) + '/' + last.m;
   // 合計（作れたシートの分だけ。作れないシートがあれば ※）
-  const total = {active: 0, weighted: 0, delta: 0, changed: 0, lack: {}};
+  const total = {active: 0, amount: 0, delta: 0, changed: 0, lack: {}};
   items.forEach(({s, lack}) => {
     const b = s.bridge;
     total.active += b.endCount;
-    if (lack.weighted) total.lack.weighted = true;
-    else total.weighted += b.end;
-    if (lack.weighted || lack.changes) total.lack.delta = true;
-    else total.delta += b.end - b.start;
+    if (lack.amount) total.lack.amount = true;
+    else total.amount += b.amountEnd || 0;
+    if (lack.amount || lack.changes) total.lack.delta = true;
+    else total.delta += (b.amountEnd || 0) - (b.amountStart || 0);
     if (lack.changes) total.lack.changed = true;
     else total.changed += s.kpi.changed;
   });
   const reached = ok.filter(x => rate(x.p) >= 100).length;
   const totalRate = ok.length ? rate(merged) : null;
   const lead = '進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '（計画に届いているのは ' + ok.length + 'のうち ' + reached + '）。' +
-    '案件 ' + total.active + '件・期待値合計 ' + mtgAmount_(total.weighted) + '百万円（失注除く）。\n' +
-    '進捗率（A＋B）の高い順。進捗率・確定（A＋B）・見込（C）は今年度（' + period + '）の' + mtgPlanMonthName_() + 'の案件の期待値（進捗率 ＝ A＋B ÷ 計画）。';
+    '案件 ' + total.active + '件・想定売上合計 ' + mtgAmount_(total.amount) + '百万円（失注除く）。\n' +
+    '進捗率（A＋B）の高い順。進捗率・確定（A＋B）・見込（C）は今年度（' + period + '）の' + mtgPlanMonthName_() + 'の案件の想定売上（進捗率 ＝ A＋B ÷ 計画）。';
   // 見込（C）を含むページのリード文：確定＋見込の計画比
   const withCRate = ok.length && merged.plan > 0 ? Math.round(sum(merged, ['A', 'B', 'C']) / merged.plan * 100) : null;
   const leadC = '確定（A＋B）に見込（C）を足すと ' + mtgAmount_(sum(merged, ['A', 'B', 'C'])) + '百万円で、計画の ' + (withCRate == null ? '—' : withCRate + '%') +
@@ -153,22 +159,23 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const x = S.x;
   const w = S.w;
   const y = S.top;
-  const el = [mtgBox_(x, y - 2, 480, 20, '今年度（' + period + '）の確定（A＋B）' + (withC ? 'と見込（C）' : '') + 'の期待値と計画（百万円）',
+  const el = [mtgBox_(x, y - 2, 480, 20, '今年度（' + period + '）の確定（A＋B）' + (withC ? 'と見込（C）' : '') + 'の想定売上と計画（百万円）',
     {size: 10.5, bold: true, color: c.ink})];
-  // 列：名前・横棒｜今年度の計画進捗（計画・進捗率（A＋B）・確定（A＋B）/件・見込（C）/件）｜案件の状況（期待値合計・前回比・案件数・変化のある案件）
+  // 列：名前・横棒｜計画・進捗率（A＋B）・確定（A＋B）/件・見込（C）/件｜想定売上合計・前回比・案件数・変化のある案件
   const nameW = 96;
   const groups = [
-    {label: '今年度の計画進捗', cols: [{key: 'plan', label: '計画', w: 36}, {key: 'rate', label: '進捗率\n（A＋B）', w: 44},
+    {cols: [{key: 'plan', label: '計画', w: 36}, {key: 'rate', label: '進捗率\n（A＋B）', w: 44},
       {key: 'ab', label: '確定（A＋B）\n/件', w: 66}, {key: 'c', label: '見込（C）\n/件', w: 60}]},
-    {label: '案件の状況（失注除く）', cols: [{key: 'weighted', label: '期待値\n合計', w: 46}, {key: 'delta', label: deltaLabel, w: 46},
+    {cols: [{key: 'amount', label: '想定売上\n合計', w: 46}, {key: 'delta', label: deltaLabel, w: 46},
       {key: 'active', label: '案件数', w: 34}, {key: 'changed', label: '変化の\nある案件', w: 42}]}
   ];
-  const colsW = groups.reduce((t, gr) => t + gr.cols.reduce((u, col) => u + col.w, 0), 0) + 8;
+  // 列はまとまりに分けて見出しを付けない（2026/11/09。計画進捗と案件の状況を分ける必要はないため）。groups は列の並びのまとまり
+  const colsW = groups.reduce((t, gr) => t + gr.cols.reduce((u, col) => u + col.w, 0), 0);
   const barX = x + nameW + 6;
   const barW = w - nameW - 6 - colsW - 10;
-  // まとまりの見出し（「今年度の計画進捗」など）と下線：上（グラフの見出しとの間）と下（列の見出しとの間）に少し余白
-  const groupY = y + 23;
-  const headY = groupY + 19;
+  // 計画線の見出し（「計画」）の行と、列の見出しの行
+  const groupY = y + 21;
+  const headY = groupY + 15;
   const headH = 20;
   const rows = items.concat([{total: true, s: {name: '合計'}, p: merged, lack: total.lack}]);
   const rowH = Math.min(22, (S.bottom - headY - headH - 2) / rows.length);
@@ -176,11 +183,7 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const max = Math.max.apply(null, [1].concat(ok.map(item => Math.max(sum(item.p, ['A', 'B']), item.p.plan * C.planScale))).concat(ok.map(item => sum(item.p, barKeys))));
   const scale = barW / max;
   let cx = barX + barW + 10;
-  groups.forEach((gr, gi) => {
-    if (gi) cx += 8;
-    const gw = gr.cols.reduce((u, col) => u + col.w, 0);
-    el.push(mtgBox_(cx - S.padX / 2 + 4, groupY, gw + S.padX - 4, 12, gr.label, {size: 8, bold: true, color: c.greenDark, align: 'CENTER', role: 'compact-group'}));
-    el.push({type: 'box', x: cx + 4, y: groupY + 14, w: gw - 4, h: 0.75, fill: c.greenDark, shape: 'RECTANGLE'});
+  groups.forEach(gr => {
     gr.cols.forEach(col => {
       el.push(mtgBox_(cx - S.padX / 2, headY, col.w + S.padX, headH, col.label, {size: 7.5, color: c.sub, align: 'CENTER', role: 'compact-head'}));
       col.x = cx;
@@ -211,7 +214,7 @@ function mtgCompactOverviewSlide_(summaries, options) {
   });
   planXs.forEach(px => {
     el.push(mtgBox_(px - 30, groupY, 60, 12, '計画', {size: 8, bold: true, color: line.color, align: 'CENTER', role: 'compact-plan-label'}));
-    el.push({type: 'line', x: px, y: groupY + 14, w: 0, h: headY + headH + 3 - groupY - 14, color: line.color, alpha: line.alpha, weight: line.weight,
+    el.push({type: 'line', x: px, y: groupY + 13, w: 0, h: headY + headH + 3 - groupY - 13, color: line.color, alpha: line.alpha, weight: line.weight,
       dash: true, role: 'compact-plan'});
   });
   rows.forEach((item, i) => {
@@ -275,12 +278,12 @@ function mtgCompactOverviewSlide_(summaries, options) {
     const mark = key => (total.lack[key] ? '※' : '');
     const values = item.total ? {
       plan: ok.length ? mtgAmount_(p.plan) : G, ab: amountCount(['A', 'B']), c: amountCount(['C']),
-      weighted: items.every(z => z.lack.weighted) ? G : mtgAmount_(total.weighted) + mark('weighted'),
-      delta: items.every(z => z.lack.weighted || z.lack.changes) ? G : mtgSigned_(total.delta) + mark('delta'),
+      amount: items.every(z => z.lack.amount) ? G : mtgAmount_(total.amount) + mark('amount'),
+      delta: items.every(z => z.lack.amount || z.lack.changes) ? G : mtgSigned_(total.delta) + mark('delta'),
       active: total.active + '件', changed: items.every(z => z.lack.changes) ? G : total.changed + '件' + mark('changed')
     } : {
       plan: p.gap ? G : mtgAmount_(p.plan), ab: amountCount(['A', 'B']), c: amountCount(['C']),
-      weighted: lack.weighted ? G : mtgAmount_(b.end), delta: lack.weighted || lack.changes ? G : mtgSigned_(b.end - b.start),
+      amount: lack.amount ? G : mtgAmount_(b.amountEnd || 0), delta: lack.amount || lack.changes ? G : mtgSigned_((b.amountEnd || 0) - (b.amountStart || 0)),
       active: b.endCount + '件', changed: lack.changes ? G : s.kpi.changed + '件'
     };
     cols.forEach(col => {
@@ -304,7 +307,7 @@ function mtgCompactOverviewSlide_(summaries, options) {
 
 /**
  * 変化のあった案件：{サブインダストリー}（1つのサブインダストリーのページ。行が入らなければ次のページに分け、どのページにも「（1/2ページ）」）。変化のある案件（その他の項目のみの更新を除く。
- * 各サブインダストリーの資料の「前回から変化のある案件」と同じ案件。期待値の大きい順）を、No.（start + 1 からの資料の通し番号）とともに全件。
+ * 各サブインダストリーの資料の「前回から変化のある案件」と同じ案件・同じ並び：今回のステータスの確度 A から順（失注・保留・削除は最後）、その中は想定売上の大きい順）を、No.（start + 1 からの資料の通し番号）とともに全件。
  * 変化が無ければ表の見出しの下に「該当なし」（変更の記録が無ければ「データなし」と理由）。
  * 表は出典の行にかからないよう、区切り線より tableMargin 上までで次のページに分ける。戻り値 {slides（ページ番号・出典の行は付けない）, count: 載せた案件の数}
  */
@@ -321,7 +324,7 @@ function mtgCompactChangeSlidesOf_(s, start) {
   const title = o.compact.changesTitle + s.name;
   // No は3桁が 7.5pt で余裕をもって1行に入る幅（26pt・8pt では、Google スライドで「39／2」と折り返した。2026/11/09）
   const columns = mtgColumns_([30, 120, 130, 80, 66, 130, 112], 5);
-  const head = mtgHeadRow_(columns, ['No', '得意先／案件名', 'ステータス\n' + word + '▶今回', '期待値\n' + word + '▶今回',
+  const head = mtgHeadRow_(columns, ['No', '得意先／案件名', 'ステータス\n' + word + '▶今回', '想定売上\n' + word + '▶今回',
     '受注月\n' + word + '▶今回', '活動状況（最新）', '活動における課題']);
   const lack = s.gaps || {};
   const noSize = text => {
@@ -329,14 +332,11 @@ function mtgCompactChangeSlidesOf_(s, start) {
     while (mtgTextWidth_(text, size) > (columns[0] - S.cellPadX) * 0.8 && size > 5.5) size -= 0.5;
     return size;
   };
-  // 並びは期待値（今の値）の大きい順。同じなら想定売上の大きい順、それも同じならシートの資料と同じ順（今回のステータスの順）。
-  // 期待値が空・削除した案件は後ろ
-  const value = v => (v == null ? -Infinity : v);
-  const moves = s.changes.filter(ch => ch.category !== 'updated').map((ch, i) => ({ch, i}))
-    .sort((a, b) => (value(b.ch.weightedTo) - value(a.ch.weightedTo)) || (value(b.ch.amount) - value(a.ch.amount)) || (a.i - b.i)).map(x => x.ch);
+  // 並びは各サブインダストリーの資料と同じ（summary.changes：今回のステータスの確度 A → B → … → 創注 → 失注・保留・削除、その中は想定売上の大きい順）
+  const moves = s.changes.filter(ch => ch.category !== 'updated');
   const lead = lack.changes ? mtgChangedLabel_(s) + 'は' + o.gapText + '（' + lack.changes + '）。'
     : moves.length ? mtgChangedLabel_(s) + 'は ' + moves.length + '件' + mtgUpdatedNote_(s) + '。\n' +
-      'ステータス・期待値・受注月・活動状況が変わった案件（期待値の大きい順）。No は資料の通し番号。'
+      'ステータス・期待値・受注月・活動状況が変わった案件。確度 A から順に、同じ確度は想定売上の大きい順。No は資料の通し番号。'
       : mtgPeriodShort_(s) + '、ステータス・期待値・受注月・活動状況に変化のある案件なし' + mtgUpdatedNote_(s) + '。';
   if (!moves.length) {
     return {slides: [{title, lead, elements: mtgEmptyTable_(columns, head, lack.changes ? 'gap' : 'none', lack.changes || '')}], count: 0};
@@ -350,7 +350,8 @@ function mtgCompactChangeSlidesOf_(s, start) {
       mtgDealCell_(ch, columns[1]),
       // ステータスの動きが1行に入らなければ「▶」の前で改行（「B-／クロージング中」のように名前の途中で切らない）
       {text: mtgWrap_(status, columns[2], S.bodySize, 2).length > 1 ? status.replace(' ▶ ', '\n▶ ') : status, lines: 3, fill: c.white},
-      mtgFieldCell_(s, 'weighted', mtgValueMove_(ch.weightedFrom, ch.weightedTo, ch), {lines: 2, fill: c.white, align: 'CENTER'}),
+      // 想定売上（前回▶今回。変わっていなければ今の値）
+      mtgFieldCell_(s, 'amount', mtgValueMove_(ch.base ? ch.base.amount : null, ch.deal ? ch.amount : null, ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'orderMonth', mtgMonthMove_(ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'activity', ch.activity, {lines: 3, fill: c.white, fit: true, grow: true}),
       mtgFieldCell_(s, 'issue', ch.issue, {lines: 3, fill: c.white, fit: true, grow: true})

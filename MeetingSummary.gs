@@ -157,7 +157,8 @@ const MTG_OPTIONS = {
     // 見込（C）を含むページの、見込の棒：確定の棒に続けて（積み上げなので、あけない）、C の色の薄い地（alpha）に、細かい点線（DOT）の線（line）を
     // 上・下・右の3辺だけに引く（左の辺は確定の棒との境目なので引かない。点線の枠が B の端に重なって、つなぎ目が乱れて見えないように）
     prospect: {alpha: 0.3, line: '#548235', lineWeight: 1, dashStyle: 'DOT'},
-    sureLabel: '確定（A＋B）'
+    sureLabel: '確定（A＋B）',
+    measure: '想定売上'             // 集計する金額（期待値ではなく想定売上。積み上げ・確定・見込・合計・前回比・変化のあった案件の金額）
   },
   // Apps Script の1回の実行は6分まで（入力・確かめの画面を出している時間も含む）。作り始めてから limitMs を過ぎそうなら、そこで区切り、
   // 残りは continueAfterMs あとに自動で続ける（時間主導のトリガー continueBusinessMtgSummaries。1回きり）。次の仕事にかかる時間の見積もり：
@@ -4007,6 +4008,7 @@ function mtgSummarize_(ss, name, context) {
     stages: mtgStages_(deals, table.statusOrder),
     quarters: mtgQuarters_(counted, context.now),
     plan: mtgPlanOf_(deals, name, context.now, table.has),
+    planAmount: mtgPlanOf_(deals, name, context.now, table.has, 'amount'),   // 想定売上の積み上げ（統合版（報告用）。MeetingCompact.gs）
     portfolio: mtgPortfolioWithPrevious_(mtgPortfolioOf_(deals, context.now, table, statusTable), copy, context, statusTable),
     changes,
     stalled,
@@ -4796,7 +4798,8 @@ function mtgCombinedFrame_(summaries, meeting, final) {
 function mtgCombinedLite_(s) {
   const prev = s.previous;
   return JSON.parse(JSON.stringify({name: s.name, dummy: s.dummy || 0, first: s.first || false, kpi: s.kpi, gaps: s.gaps || {},
-    bridge: {start: s.bridge.start, end: s.bridge.end, startCount: s.bridge.startCount, endCount: s.bridge.endCount}, plan: s.plan || null,
+    bridge: {start: s.bridge.start, end: s.bridge.end, startCount: s.bridge.startCount, endCount: s.bridge.endCount,
+      amountStart: s.bridge.amountStart, amountEnd: s.bridge.amountEnd}, plan: s.plan || null, planAmount: s.planAmount || null,
     previous: prev ? {date: prev.date, cutoff: prev.cutoff, baseline: !!prev.baseline, chosen: !!prev.chosen} : null}));
 }
 
@@ -6431,11 +6434,13 @@ function mtgPlanAmount_(name) {
  *  undated: 月が空・読めない, before: 今年度より前, after: 来年度以降, excluded: 失注（どれも {count, value, values: {確度: 期待値}, counts: {確度: 件数}}）,
  *  missing: 期待値が空の件数, gap}
  */
-function mtgPlanOf_(deals, name, now, has) {
+function mtgPlanOf_(deals, name, now, has, field) {
   const o = MTG_OPTIONS.plan;
+  // field：積み上げる金額の列（'weighted' 期待値（既定）・'amount' 想定売上（統合版（報告用）。summary.planAmount））
+  const key = field || 'weighted';
   const start = mtgFiscalStart_(now);
   const columns = MTG_OPTIONS.columns;
-  const lack = ['weighted', o.monthColumn].filter(key => has && !has[key]).map(key => '「' + String(columns[key]).replace(/\s+/g, '') + '」');
+  const lack = [key, o.monthColumn].filter(key => has && !has[key]).map(key => '「' + String(columns[key]).replace(/\s+/g, '') + '」');
   const bucket = () => ({count: 0, value: 0, values: {}, counts: {}});
   const out = {plan: mtgPlanAmount_(name), start, months: [], total: 0, byRank: {}, byRankCount: {}, undated: bucket(), before: bucket(), after: bucket(),
     excluded: bucket(), missing: 0, gap: lack.length ? 'シートに' + lack.join('・') + 'の列が無い' : ''};
@@ -6445,11 +6450,11 @@ function mtgPlanOf_(deals, name, now, has) {
   }
   o.ranks.map(r => r.key).concat([o.otherLabel]).forEach(k => { out.byRank[k] = 0; out.byRankCount[k] = 0; });
   deals.forEach(d => {
-    const v = d.weighted || 0;
+    const v = d[key] || 0;
     const rank = mtgPlanRank_(d.status);
     const i = d.planMonth ? mtgMonthIndex_(d.planMonth) - start : null;
     const lost = mtgExcludedStatus_(d.status);   // 失注だけを除く（2026/11/05 から保留も積み上げる。資料のほかの合計と同じ）
-    if (!lost && d.weighted == null) out.missing++;
+    if (!lost && d[key] == null) out.missing++;
     const aside = lost ? out.excluded : i == null ? out.undated : i < 0 ? out.before : i >= 12 ? out.after : null;
     if (aside) {
       aside.count++;
@@ -6538,7 +6543,9 @@ function mtgPlanSlide_(p, now, name, options) {
   const o = MTG_OPTIONS.plan;
   // options.only = ['A', 'B']：その確度だけの積み上げ（統合版（報告用）の「確定（A＋B）」のページ。p は mtgPlanRanksOnly_ で絞ったもの）。options.label は「確定（A＋B）」
   const only = options && options.only;
-  const what = only ? options.label : '期待値';
+  // options.measure：積み上げた金額の名前（既定は「期待値」。統合版（報告用）は「想定売上」。p は mtgPlanOf_(…, 'amount')）
+  const measure = options && options.measure || '期待値';
+  const what = only ? options.label + 'の' + measure : measure;
   const title = MTG_TITLES.plan + (name || only ? '（' + [name, only ? options.label : ''].filter(Boolean).join('・') + '）' : '');
   const first = mtgMonthOf_(p.start);
   const last = mtgMonthOf_(p.start + 11);
@@ -6570,7 +6577,7 @@ function mtgPlanSlide_(p, now, name, options) {
     (peak && peak.total > 0 ? '最大は' + peak.m + '月の ' + mtgAmount_(peak.total) + '（積み上げの ' + share(peak.total) + '）' +
       (only ? '。' : '、確度A・B は ' + mtgAmount_(sure) + '（' + share(sure) + '）。') : '今年度に' + monthName + 'がある案件の' + what + 'はなし。') +
     (asideCount ? '積み上げに含まない ' + asideCount + '件（' + mtgAmount_(asideValue) + '）は右に表示。' : '') +
-    (p.missing ? '期待値が空・数値でない ' + p.missing + '件は 0 として数えた。' : '');
+    (p.missing ? measure + 'が空・数値でない ' + p.missing + '件は 0 として数えた。' : '');
 
   const x = S.x;
   const w = S.w;
