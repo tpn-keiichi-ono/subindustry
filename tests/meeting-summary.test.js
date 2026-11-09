@@ -543,9 +543,9 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
   // 案件数・期待値合計は失注を除く（A社・B社（受注）・D社・E社。C社（失注）は除く。前回は C社・F社（削除）も含めて6件）
   assert.strictEqual(lead(slides[1]), '案件 4件（失注除く）（直近14日間で ▲2件）、期待値合計 100百万円（直近14日間で ▲8）。' +
     'ステータス未入力 1件は進行中に含め、想定売上が空・数値でない 1件・期待値が空・数値でない 1件は金額の合計に含めていない。');
-  assert.deepStrictEqual(roleOf(slides[1], 'lead').map(el => el.text.split('\n').length), [1, 1],
-    '空欄の扱い（D社：ステータス・想定売上・期待値が空）は補足の行に書く（推定で補わない）');
-  assert.deepStrictEqual(roleOf(slides[3], 'lead').map(el => [el.color, el.size]), [[c.ink, S.leadSize], [c.ink, S.leadSize]]);
+  assert.deepStrictEqual(roleOf(slides[1], 'lead').map(el => el.text.split('\n').length), [2],
+    '空欄の扱い（D社：ステータス・想定売上・期待値が空）は補足の行に書く（推定で補わない）。1つのテキストボックスに2行');
+  assert.deepStrictEqual(roleOf(slides[3], 'lead').map(el => [el.color, el.size]), [[c.ink, S.leadSize]]);
   slides.forEach((slide, i) => roleOf(slide, 'lead').forEach(el => assert.deepStrictEqual([el.size, el.color], [S.leadSize, c.ink], (i + 1) + '枚目：リード文の大きさ・色')));
   assert.match(lead(slides[3]), /^期待値（失注除く）は 108 → 100百万円（▲8）。増加 ±0・減少 ▲8、内訳の最大は失注（1件・▲5）。受注月が今年度の期待値は /);
   assert.strictEqual(lead(slides[4]), '直近14日間に変化のある案件は 4件。', '区分ごとの件数（サマリーにある）・0件のものは書かない');
@@ -664,8 +664,9 @@ test('スライド：表紙、本編5枚（サマリー → 計画に対する�
   assert.deepStrictEqual(appendixRows.map(r => r.cells[0].text.split('\n')[0]), ['A社', 'C社', 'F社', 'D社'], 'P4 と同じ順');
   assert.strictEqual(lead(slides[9]), '進行中案件のうち、同一ステータスに 45日以上滞留している案件は 2件（想定売上合計 80百万円。想定売上未入力の 1件を除く）。' +
     'うち直近14日間の更新なし 1件。', '合計に含めていない空欄の件数を書く');
-  assert.deepStrictEqual(roleOf(slides[9], 'lead').map(el => el.text.split('\n').length).slice(1), [1], '1つ目の文と、更新なしの件数は行を分ける');
-  assert.ok(roleOf(slides[9], 'lead')[1].text.indexOf('うち直近14日間の更新なし') === 0);
+  assert.strictEqual(roleOf(slides[9], 'lead').length, 1, 'リード文は1つのテキストボックス');
+  assert.strictEqual(roleOf(slides[9], 'lead')[0].text.split('\n').pop(), 'うち直近14日間の更新なし 1件。', '1つ目の文と、更新なしの件数は行を分ける');
+  assert.ok(roleOf(slides[9], 'lead')[0].text.split('\n')[1].indexOf('うち直近14日間の更新なし') === 0);
   assert.strictEqual(lead(slides[11]), '入力内容の確認事項は 3項目（3案件）。');
   assert.ok(all.indexOf('Appendix ④') < 0 && all.indexOf('Appendix ⑤') < 0, '無い Appendix を案内しない');
   // Appendix ③：責任者別は表だけ（種類の説明は置かない。内容は一覧に書く）。見出しの無いシートでは資料なしを見ない
@@ -2391,7 +2392,8 @@ test('統合版のスライド：表紙・目次・全サブインダストリ�
   const contents = slides[1];
   assert.deepStrictEqual([contents.title, leadOf(contents)], ['目次', '名前かページ番号を押すと、そのページに移ります。' +
     '※ ブラウザの Google ドライブのプレビュー画面ではリンクは動きません（ダウンロードして Acrobat などで開いてください）。']);
-  assert.ok(roleOf(contents, 'lead').every(el => el.text.indexOf('\n') < 0) && roleOf(contents, 'lead').length === 2, 'リード文は2行（補足は1行に入る）');
+  assert.ok(roleOf(contents, 'lead').length === 1 && roleOf(contents, 'lead')[0].text.split('\n').length === 2,
+    'リード文は1つのテキストボックスに2行（補足は1行に入る）');
   assert.deepStrictEqual(roleOf(contents, 'toc').map(el => [el.text, el.link]), [
     ['全サブインダストリーの状況', 2], ['3', 2], ['計画に対する積み上げ', 3], ['4', 3], ['1.　新FMT', 5], ['6', 5], ['2.　新FMT2', start2 - 1],
     [String(start2), start2 - 1]]);

@@ -402,7 +402,7 @@ test('状況・計画進捗の次のページ（見込（C）を含む）：棒�
   assert.match(leadOf(withC), /^確定（A＋B）に見込（C）を足すと 230百万円で、計画の 77%（進捗率（A＋B）は 70%）。/);
 });
 
-test('見込（C）を含むページ：見込の棒は確定の棒に続け、薄い地と上・下・右の細かい点線（DOT）。凡例の見本は横長。入らない値は、いちばん右の確度だけ棒のすぐ右に出す', () => {
+test('見込（C）を含むページ：見込の棒は確定の棒に続け、薄い地と上・下・右の細かい点線（DOT）。凡例の見本は A・B と同じ大きさ。入らない値は、いちばん右の確度だけ棒のすぐ右に出す', () => {
   const {gas, g} = setup();
   const o = gas.get('MTG_OPTIONS');
   const P = o.compact.prospect;
@@ -420,7 +420,10 @@ test('見込（C）を含むページ：見込の棒は確定の棒に続け、�
   assert.ok(!edges.some(e => e.w === 0 && Math.abs(e.x - cBar.x) < 0.01), '左の辺は無い');
   assert.ok(edges.some(e => e.w === 0 && Math.abs(e.x - (cBar.x + cBar.w)) < 0.01), '右の辺');
   const swatch = withC.elements.find(e => e.role === 'legend' && e.dashStyle);
-  assert.ok(swatch.w > swatch.h && swatch.w >= 14, '凡例の見本は横長');
+  const swatches = withC.elements.filter(e => e.role === 'legend' && !e.text);
+  assert.ok(swatches.every(e => e.w === swatch.w && e.h === swatch.h), '凡例の見本は A・B・C とも同じ大きさ');
+  const legendText = withC.elements.filter(e => e.role === 'legend' && e.text);
+  swatches.forEach((sw, i) => assert.ok(legendText[i].x + 7.2 - (sw.x + sw.w) >= 5 - 0.01, '見本と文字の間は 5pt 以上'));
   // 間の確度の値が入らなくても、離れた場所（棒の右）には出さない
   const narrow = Object.assign({}, s1, {planAmount: Object.assign({}, s1.planAmount, {byRank: {A: 1, B: 150, C: 0}})});
   const labels = plain(g.mtgCompactOverviewSlide_([narrow])).elements.filter(e => e.role === 'compact-bar-label').map(e => e.text);
@@ -433,4 +436,19 @@ test('見込（C）を含むページ：見込の棒は確定の棒に続け、�
   assert.strictEqual(req.updateLineProperties.lineProperties.dashStyle, 'DOT');
   const swatchReq = plain(g.mtgSlideRequests_({title: 't', elements: [swatch]}, 'p1', 1)).find(r => r.updateShapeProperties);
   assert.strictEqual(swatchReq.updateShapeProperties.shapeProperties.outline.dashStyle, 'DOT', '凡例の見本は点線の枠');
+});
+
+test('リード文は1つのテキストボックス（1つ目の文と補足を行で分け、行の送りは文字の大きさ × leadLine）', () => {
+  const {gas, g} = setup();
+  const S = gas.get('MTG_SLIDE');
+  const slides = plain(g.mtgCompactSlides_([summarize(g, '新FMT'), summarize(g, '新FMT2')], '2026/11/13', true));
+  slides.filter(sl => !sl.cover).forEach(sl => {
+    const leads = sl.elements.filter(e => e.role === 'lead');
+    assert.strictEqual(leads.length, 1, sl.title + ' のリード文は1つの箱');
+    assert.ok(Math.abs(leads[0].lineSpacing - S.leadLine / S.lineFactor * 100) < 0.1, '行間');
+  });
+  // Slides API：段落の行間に入る
+  const lead = slides[1].elements.find(e => e.role === 'lead');
+  const req = plain(g.mtgSlideRequests_({title: 't', elements: [lead]}, 'p1', 1)).find(r => r.updateParagraphStyle);
+  assert.strictEqual(req.updateParagraphStyle.style.lineSpacing, lead.lineSpacing);
 });

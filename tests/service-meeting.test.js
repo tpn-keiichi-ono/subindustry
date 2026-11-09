@@ -216,7 +216,7 @@ test('smtgView_：サブインダストリーの資料は、そのシートの�
   assert.strictEqual(slides[0].template.title, '新FMT');
   assert.strictEqual(slides[1].elements.find(el => el.role === 'footer').text, '【試作】新FMT（10/30 RX Service Meeting 資料）　金額の単位：百万円');
   assert.strictEqual(slides[2].elements.find(el => el.type === 'table').rows[1].cells[1].text, '2件\n全体3');
-  assert.match(slides.find(sl => sl.title === 'サービス案：購買分析').elements.find(el => el.role === 'lead').text,
+  assert.match(slides.find(sl => sl.title === 'サービス案：購買分析').elements.find(el => el.role === 'lead').text.split('\n')[0],
     /^リクエスト 2件（ほかのサブインダストリーに 1件）・得意先 2社、元の案件の期待値 50百万円（失注を除く 2案件）。$/);
 });
 
@@ -360,7 +360,7 @@ test('createServiceMtgSummaries：本番は会議日と判断・状況・資料�
     data.moves.completed.map(t => t.task), data.moves.newTasks.map(t => t.task)]),
   [['SR-0005'], [['SR-0004', '未判断', 'サービス化検討']], ['指標を試算する'], ['料金を考える']]);
   const slides = plain(g.smtgSlides_(data, data.meeting, true));
-  assert.match(slides[1].elements.find(el => el.role === 'lead').text + slides[1].elements.filter(el => el.role === 'lead')[1].text,
+  assert.match(slides[1].elements.filter(el => el.role === 'lead').map(el => el.text.replace(/\n/g, '')).join(''),
     /前回の会議（\d+\/\d+）以降：新規リクエスト 1件・判断の変更 1件・完了したタスク 1件・新しいタスク 1件。/);
   const tiles = slides[1].elements.filter(el => el.role === 'tile-value').map(el => el.text);
   assert.deepStrictEqual(tiles, ['5件　前回比 +1', '1件　前回比 ±0', '3件　前回比 +1', '1件　前回比 ±0', '2／4件　完了 前回比 +1']);

@@ -5040,13 +5040,12 @@ function mtgLead_(text, bottom) {
     const step = lines => lines * size * S.leadLine;
     const first = mtgWrap_(head, S.w, size, rest ? Math.max(1, maxLines - 1) : maxLines);
     const second = rest ? mtgWrap_(rest, S.w, size, Math.max(1, maxLines - first.length)) : [];
+    // 1つのテキストボックスに入れる（2026/11/09 から。前の版は1つ目の文と補足を別の箱にしていた。スライドで直すときに1つの箱のほうが扱いやすい）。
+    // 行の送りは leadLine（文字の大きさ × 1.35）になるよう、行間を lineFactor（行間「1」の送り）に対する割合で指定する。
     // 箱の高さは、上の余白（padY の半分）と文字の行の分（文字は箱の上にそろえるので、下の余白は数えない）
-    const el = [mtgBox_(S.x, S.leadY, S.w, step(first.length) + S.padY / 2, first.join('\n'), {size, color: c.ink, valign: 'TOP', role: 'lead'})];
-    if (second.length) {
-      el.push(mtgBox_(S.x, S.leadY + step(first.length), S.w, step(second.length) + S.padY / 2, second.join('\n'),
-        {size, color: c.ink, valign: 'TOP', role: 'lead'}));
-    }
-    return el;
+    const lines = first.concat(second);
+    return [mtgBox_(S.x, S.leadY, S.w, step(lines.length) + S.padY / 2, lines.join('\n'),
+      {size, color: c.ink, valign: 'TOP', role: 'lead', lineSpacing: Math.round(S.leadLine / S.lineFactor * 1000) / 10})];
   };
   const bottomOf = el => Math.max.apply(null, el.map(e => e.y + e.h));
   for (let size = S.leadSize; size >= S.leadMinSize - 0.01; size = Math.round((size - 0.5) * 10) / 10) {

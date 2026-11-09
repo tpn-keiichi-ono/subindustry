@@ -193,17 +193,17 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const cols = [].concat.apply([], groups.map(gr => gr.cols));
   // 凡例：グラフの上（列の見出しの行の、棒の左端から）に確度 A・B の色。計画線は線の上に見出し（「計画」）を付けるので凡例に入れない
   let lx = barX;
-  // 見込（C）の見本は、棒と同じ薄い地と細かい点線の枠で、点線が見えるように横長（16 × 9）にする
+  // 見本は A・B・C とも同じ大きさ（8 × 8）。見込（C）は棒と同じ薄い地と細かい点線の枠。見本と文字の間は 5pt あける
   const P = C.prospect;
   ranks.forEach(r => {
-    const sw = r.dashed ? 16 : 7;
-    const sh = r.dashed ? 9 : 7;
+    const sw = 8;
+    const sh = 8;
     el.push(r.dashed ? {type: 'box', x: lx, y: headY + headH / 2 - sh / 2, w: sw, h: sh, fill: r.color, alpha: P.alpha, line: P.line,
       lineWeight: P.lineWeight, dashStyle: P.dashStyle, shape: 'RECTANGLE', role: 'legend'}
       : {type: 'box', x: lx, y: headY + headH / 2 - sh / 2, w: sw, h: sh, fill: r.color, shape: 'RECTANGLE', role: 'legend'});
     const bw = mtgTextWidth_(r.key, 8.5) + S.padX + 2;
-    el.push(mtgBox_(lx + sw + 3 - S.padX / 2, headY, bw, headH, r.key, {size: 8.5, color: c.sub, role: 'legend'}));
-    lx += sw + 3 + bw - S.padX + 10;
+    el.push(mtgBox_(lx + sw + 5 - S.padX / 2, headY, bw, headH, r.key, {size: 8.5, color: c.sub, role: 'legend'}));
+    lx += sw + 5 + bw - S.padX + 10;
   });
   // 計画線の見出し：まとまりの見出しの高さに「計画」と、そこから1行目までの点線（計画の位置ごと。近い位置（24pt 以内）は1つにまとめる）
   const line = C.planLine;
