@@ -164,11 +164,12 @@ function mtgCompactOverviewSlide_(summaries, options) {
   // 列：名前・横棒｜計画・進捗率（A＋B）・確定（A＋B）/件・見込（C）/件｜想定売上合計・前回比・案件数・変化のある案件
   const nameW = 96;
   const groups = [
-    {cols: [{key: 'plan', label: '計画', w: 36}, {key: 'rate', label: '進捗率\n（A＋B）', w: 44},
-      {key: 'ab', label: '確定（A＋B）\n/件', w: 66}, {key: 'c', label: '見込（C）\n/件', w: 60}]},
-    // 想定売上合計・前回比・案件数・変化のある案件は、受注月で絞らない（今年度の計画進捗の列と違う）ので、見出しの下に「（全期間）」（period）
-    {cols: [{key: 'amount', label: '想定売上\n合計', w: 46, period: true}, {key: 'delta', label: deltaLabel, w: 46, period: true},
-      {key: 'active', label: '案件数', w: 42, period: true}, {key: 'changed', label: '変化の\nある案件', w: 42, period: true}]}
+    // 計画・進捗率・確定・見込は今年度の受注月の案件だけ：見出しの下に「（今年度）」
+    {cols: [{key: 'plan', label: '計画', w: 36, period: '（今年度）'}, {key: 'rate', label: '進捗率\n（A＋B）', w: 44, period: '（今年度）'},
+      {key: 'ab', label: '確定（A＋B）\n/件', w: 66, period: '（今年度）'}, {key: 'c', label: '見込（C）\n/件', w: 60, period: '（今年度）'}]},
+    // 想定売上合計・前回比・案件数・変化のある案件は、受注月で絞らない（今年度の列と違う）ので、見出しの下に「（全期間）」
+    {cols: [{key: 'amount', label: '想定売上\n合計', w: 46, period: '（全期間）'}, {key: 'delta', label: deltaLabel, w: 46, period: '（全期間）'},
+      {key: 'active', label: '案件数', w: 42, period: '（全期間）'}, {key: 'changed', label: '変化の\nある案件', w: 42, period: '（全期間）'}]}
   ];
   // 列はまとまりに分けて見出しを付けない（2026/11/09。計画進捗と案件の状況を分ける必要はないため）。groups は列の並びのまとまり
   const colsW = groups.reduce((t, gr) => t + gr.cols.reduce((u, col) => u + col.w, 0), 0);
@@ -177,7 +178,6 @@ function mtgCompactOverviewSlide_(summaries, options) {
   // 計画線の見出し（「計画」）の行と、列の見出しの行
   const groupY = y + 21;
   const headY = groupY + 15;
-  const periodText = '（全期間）';
   const headH = groups.some(gr => gr.cols.some(col => col.period && col.label.split('\n').length >= 2)) ? 28 : 20;
   const rows = items.concat([{total: true, s: {name: '合計'}, p: merged, lack: total.lack}]);
   const rowH = Math.min(22, (S.bottom - headY - headH - 2) / rows.length);
@@ -187,8 +187,8 @@ function mtgCompactOverviewSlide_(summaries, options) {
   let cx = barX + barW + 10;
   groups.forEach(gr => {
     gr.cols.forEach(col => {
-      // 「（全期間）」は小さめの灰色の字で、見出しの最後の行に
-      const text = col.period ? col.label + '\n' + periodText : col.label;
+      // 対象の期間（「（今年度）」「（全期間）」）は小さめの灰色の字で、見出しの最後の行に
+      const text = col.period ? col.label + '\n' + col.period : col.label;
       el.push(mtgBox_(cx - S.padX / 2, headY, col.w + S.padX, headH, text, Object.assign({size: 7.5, color: c.sub, align: 'CENTER', role: 'compact-head'},
         col.period ? {spans: [{start: col.label.length + 1, end: text.length, size: 6.5, color: c.muted}]} : {})));
       col.x = cx;
