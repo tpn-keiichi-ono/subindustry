@@ -178,7 +178,8 @@ function mtgCompactOverviewSlide_(summaries, options) {
   // 計画線の見出し（「計画」）の行と、列の見出しの行
   const groupY = y + 21;
   const headY = groupY + 15;
-  const headH = groups.some(gr => gr.cols.some(col => col.period && col.label.split('\n').length >= 2)) ? 28 : 20;
+  const periodH = 9;   // 期間の行の高さ
+  const headH = 20 + periodH;
   const rows = items.concat([{total: true, s: {name: '合計'}, p: merged, lack: total.lack}]);
   const rowH = Math.min(22, (S.bottom - headY - headH - 2) / rows.length);
   // 目盛り：いちばん大きい計画が棒の幅の 1/planScale ほどの位置に来るように（計画線の右に、計画を超えた分を描ける）
@@ -187,10 +188,14 @@ function mtgCompactOverviewSlide_(summaries, options) {
   let cx = barX + barW + 10;
   groups.forEach(gr => {
     gr.cols.forEach(col => {
-      // 対象の期間（「（今年度）」「（全期間）」）は小さめの灰色の字で、見出しの最後の行に
-      const text = col.period ? col.label + '\n' + col.period : col.label;
-      el.push(mtgBox_(cx - S.padX / 2, headY, col.w + S.padX, headH, text, Object.assign({size: 7.5, color: c.sub, align: 'CENTER', role: 'compact-head'},
-        col.period ? {spans: [{start: col.label.length + 1, end: text.length, size: 6.5, color: c.muted}]} : {})));
+      // 見出しの高さをそろえる：見出し（1行か2行）は下にそろえ、その下の決まった行に対象の期間（「（今年度）」「（全期間）」。小さめの灰色の字）。
+      // 行の数が違っても、見出しの最後の行と期間の行がどの列も同じ高さに並ぶ
+      el.push(mtgBox_(cx - S.padX / 2, headY, col.w + S.padX, headH - periodH, col.label,
+        {size: 7.5, color: c.sub, align: 'CENTER', valign: 'BOTTOM', role: 'compact-head'}));
+      if (col.period) {
+        el.push(mtgBox_(cx - S.padX / 2, headY + headH - periodH, col.w + S.padX, periodH, col.period,
+          {size: 6.5, color: c.muted, align: 'CENTER', valign: 'TOP', role: 'compact-head-period'}));
+      }
       col.x = cx;
       cx += col.w;
     });
@@ -203,11 +208,13 @@ function mtgCompactOverviewSlide_(summaries, options) {
   ranks.forEach(r => {
     const sw = 8;
     const sh = 8;
-    el.push(r.dashed ? {type: 'box', x: lx, y: headY + headH / 2 - sh / 2, w: sw, h: sh, fill: r.color, alpha: P.alpha, line: P.line,
+    // 凡例は期間の行の高さ（棒のすぐ上）
+    const ly = headY + headH - periodH / 2 - sh / 2;
+    el.push(r.dashed ? {type: 'box', x: lx, y: ly, w: sw, h: sh, fill: r.color, alpha: P.alpha, line: P.line,
       lineWeight: P.lineWeight, dashStyle: P.dashStyle, shape: 'RECTANGLE', role: 'legend'}
-      : {type: 'box', x: lx, y: headY + headH / 2 - sh / 2, w: sw, h: sh, fill: r.color, shape: 'RECTANGLE', role: 'legend'});
+      : {type: 'box', x: lx, y: ly, w: sw, h: sh, fill: r.color, shape: 'RECTANGLE', role: 'legend'});
     const bw = mtgTextWidth_(r.key, 8.5) + S.padX + 2;
-    el.push(mtgBox_(lx + sw + 5 - S.padX / 2, headY, bw, headH, r.key, {size: 8.5, color: c.sub, role: 'legend'}));
+    el.push(mtgBox_(lx + sw + 5 - S.padX / 2, ly - 4, bw, sh + 8, r.key, {size: 8.5, color: c.sub, role: 'legend'}));
     lx += sw + 5 + bw - S.padX + 10;
   });
   // 計画線の見出し：まとまりの見出しの高さに「計画」と、そこから1行目までの点線（計画の位置ごと。近い位置（24pt 以内）は1つにまとめる）

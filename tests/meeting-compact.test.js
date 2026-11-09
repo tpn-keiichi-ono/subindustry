@@ -166,8 +166,14 @@ test('状況・計画進捗：確定（A＋B）の横棒（A・B だけ・デー
   const all = texts(slide);
   // 列の見出し
   assert.ok(all.indexOf('今年度の計画進捗') < 0 && all.indexOf('案件の状況（失注除く）') < 0, 'まとまりの見出しは無い');
-  ['計画\n（今年度）', '進捗率\n（A＋B）\n（今年度）', '確定（A＋B）\n/件\n（今年度）', '見込（C）\n/件\n（今年度）', '想定売上\n合計\n（全期間）', '前回比\n（10/30）\n（全期間）', '案件数\n（全期間）',
-    '変化の\nある案件\n（全期間）'].forEach(label => assert.ok(all.indexOf(label) >= 0, label));
+  ['計画', '進捗率\n（A＋B）', '確定（A＋B）\n/件', '見込（C）\n/件', '想定売上\n合計', '前回比\n（10/30）', '案件数', '変化の\nある案件']
+    .forEach(label => assert.ok(all.indexOf(label) >= 0, label));
+  // 対象の期間：計画・進捗率・確定・見込は「（今年度）」、右の4列は「（全期間）」。どの列も同じ高さの行に置き、見出しは下にそろえる
+  const periods = slide.elements.filter(e => e.role === 'compact-head-period');
+  assert.deepStrictEqual(periods.map(e => e.text), ['（今年度）', '（今年度）', '（今年度）', '（今年度）', '（全期間）', '（全期間）', '（全期間）', '（全期間）']);
+  assert.strictEqual(new Set(periods.map(e => e.y)).size, 1, '期間の行は同じ高さ');
+  const heads = slide.elements.filter(e => e.role === 'compact-head');
+  assert.ok(heads.every(e => e.valign === 'BOTTOM' && e.y === heads[0].y && e.h === heads[0].h), '見出しは同じ箱で下にそろえる');
   assert.ok(all.indexOf('停滞') < 0 && all.indexOf('確認\n事項') < 0, '停滞・確認事項の列は無い');
   // 集計はどれも想定売上（期待値ではない）。進捗率（A＋B）＝ 確定 ÷ 計画。新FMT：A 100 + B（B社 50 + C社 50）= 200 / 200 = 100%、
   // 新FMT2：B 20 / 100 = 20%。高い順。想定売上合計（失注除く）：新FMT 100 + 50 + 50 + 20 = 220（前回比 +10）、新FMT2 30
@@ -209,7 +215,7 @@ test('状況・計画進捗：確定（A＋B）の横棒（A・B だけ・デー
 test('状況・計画進捗：前回の会議でなく基準・直近14日間と比べるときは、前回比の見出しに日付を付けない。想定売上・月の列が無いシートは「データなし」', () => {
   const {g} = setup();
   const first = plain(g.mtgCompactOverviewSlide_([summarize(g, '新FMT', null)]));
-  assert.ok(texts(first).indexOf('直近14日間の増減\n（全期間）') >= 0);
+  assert.ok(texts(first).indexOf('直近14日間の増減') >= 0);
   const s = summarize(g, '新FMT');
   const gap = Object.assign({}, s, {planAmount: Object.assign({}, s.planAmount, {gap: 'シートに「想定売上規模（百万）」の列が無い'})});
   const slide = plain(g.mtgCompactOverviewSlide_([gap, summarize(g, '新FMT2')]));
