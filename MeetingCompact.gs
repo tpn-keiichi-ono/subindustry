@@ -304,7 +304,7 @@ function mtgCompactChangeSlidesOf_(s, start) {
   const c = o.colors;
   const word = mtgFromWord_(s);
   const title = o.compact.changesTitle + s.name;
-  const columns = mtgColumns_([34, 120, 130, 80, 66, 130, 108], 5);
+  const columns = mtgColumns_([26, 120, 130, 80, 66, 130, 116], 5);   // No. は3桁が 8pt で1行に入る幅
   const head = mtgHeadRow_(columns, ['No.', '得意先／案件名', 'ステータス\n' + word + '▶今回', '期待値\n' + word + '▶今回',
     '受注月\n' + word + '▶今回', '活動状況（最新）', '活動における課題']);
   const lack = s.gaps || {};
