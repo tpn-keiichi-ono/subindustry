@@ -166,8 +166,8 @@ test('状況・計画進捗：確定（A＋B）の横棒（A・B だけ・デー
   const all = texts(slide);
   // 列の見出し
   assert.ok(all.indexOf('今年度の計画進捗') < 0 && all.indexOf('案件の状況（失注除く）') < 0, 'まとまりの見出しは無い');
-  ['計画', '進捗率\n（A＋B）', '確定（A＋B）\n/件', '見込（C）\n/件', '想定売上\n合計', '前回比\n（10/30）', '案件数',
-    '変化の\nある案件'].forEach(label => assert.ok(all.indexOf(label) >= 0, label));
+  ['計画', '進捗率\n（A＋B）', '確定（A＋B）\n/件', '見込（C）\n/件', '想定売上\n合計\n（全期間）', '前回比\n（10/30）\n（全期間）', '案件数\n（全期間）',
+    '変化の\nある案件\n（全期間）'].forEach(label => assert.ok(all.indexOf(label) >= 0, label));
   assert.ok(all.indexOf('停滞') < 0 && all.indexOf('確認\n事項') < 0, '停滞・確認事項の列は無い');
   // 集計はどれも想定売上（期待値ではない）。進捗率（A＋B）＝ 確定 ÷ 計画。新FMT：A 100 + B（B社 50 + C社 50）= 200 / 200 = 100%、
   // 新FMT2：B 20 / 100 = 20%。高い順。想定売上合計（失注除く）：新FMT 100 + 50 + 50 + 20 = 220（前回比 +10）、新FMT2 30
@@ -202,14 +202,14 @@ test('状況・計画進捗：確定（A＋B）の横棒（A・B だけ・デー
   const far = Math.max.apply(null, head.map(l => l.x));
   const right = Math.max.apply(null, slide.elements.filter(e => e.role === 'compact-head').map(e => e.x));
   assert.ok(far > barX && far < right, '計画線は棒の場所の中');
-  assert.match(slide.lead, /^進捗率（A＋B）は 73%（計画に届いているのは 2のうち 1）。案件 6件・想定売上合計 250百万円（失注除く）。\n進捗率（A＋B）の高い順。.*の案件の想定売上/);
+  assert.match(slide.lead, /^進捗率（A＋B）は 73%（計画に届いているのは 2のうち 1）。案件 6件・想定売上合計 250百万円（全期間・失注除く）。\n進捗率（A＋B）の高い順。.*の案件の想定売上/);
   assert.ok(slide.elements.some(e => /の確定（A＋B）の想定売上と計画（百万円）$/.test(e.text || '')));
 });
 
 test('状況・計画進捗：前回の会議でなく基準・直近14日間と比べるときは、前回比の見出しに日付を付けない。想定売上・月の列が無いシートは「データなし」', () => {
   const {g} = setup();
   const first = plain(g.mtgCompactOverviewSlide_([summarize(g, '新FMT', null)]));
-  assert.ok(texts(first).indexOf('直近14日間の増減') >= 0);
+  assert.ok(texts(first).indexOf('直近14日間の増減\n（全期間）') >= 0);
   const s = summarize(g, '新FMT');
   const gap = Object.assign({}, s, {planAmount: Object.assign({}, s.planAmount, {gap: 'シートに「想定売上規模（百万）」の列が無い'})});
   const slide = plain(g.mtgCompactOverviewSlide_([gap, summarize(g, '新FMT2')]));

@@ -149,7 +149,7 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const reached = ok.filter(x => rate(x.p) >= 100).length;
   const totalRate = ok.length ? rate(merged) : null;
   const lead = '進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '（計画に届いているのは ' + ok.length + 'のうち ' + reached + '）。' +
-    '案件 ' + total.active + '件・想定売上合計 ' + mtgAmount_(total.amount) + '百万円（失注除く）。\n' +
+    '案件 ' + total.active + '件・想定売上合計 ' + mtgAmount_(total.amount) + '百万円（全期間・失注除く）。\n' +
     '進捗率（A＋B）の高い順。進捗率・確定（A＋B）・見込（C）は今年度（' + period + '）の' + mtgPlanMonthName_() + 'の案件の想定売上（進捗率 ＝ A＋B ÷ 計画）。';
   // 見込（C）を含むページのリード文：確定＋見込の計画比
   const withCRate = ok.length && merged.plan > 0 ? Math.round(sum(merged, ['A', 'B', 'C']) / merged.plan * 100) : null;
@@ -166,8 +166,9 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const groups = [
     {cols: [{key: 'plan', label: '計画', w: 36}, {key: 'rate', label: '進捗率\n（A＋B）', w: 44},
       {key: 'ab', label: '確定（A＋B）\n/件', w: 66}, {key: 'c', label: '見込（C）\n/件', w: 60}]},
-    {cols: [{key: 'amount', label: '想定売上\n合計', w: 46}, {key: 'delta', label: deltaLabel, w: 46},
-      {key: 'active', label: '案件数', w: 34}, {key: 'changed', label: '変化の\nある案件', w: 42}]}
+    // 想定売上合計・前回比・案件数・変化のある案件は、受注月で絞らない（今年度の計画進捗の列と違う）ので、見出しの下に「（全期間）」（period）
+    {cols: [{key: 'amount', label: '想定売上\n合計', w: 46, period: true}, {key: 'delta', label: deltaLabel, w: 46, period: true},
+      {key: 'active', label: '案件数', w: 42, period: true}, {key: 'changed', label: '変化の\nある案件', w: 42, period: true}]}
   ];
   // 列はまとまりに分けて見出しを付けない（2026/11/09。計画進捗と案件の状況を分ける必要はないため）。groups は列の並びのまとまり
   const colsW = groups.reduce((t, gr) => t + gr.cols.reduce((u, col) => u + col.w, 0), 0);
@@ -176,7 +177,8 @@ function mtgCompactOverviewSlide_(summaries, options) {
   // 計画線の見出し（「計画」）の行と、列の見出しの行
   const groupY = y + 21;
   const headY = groupY + 15;
-  const headH = 20;
+  const periodText = '（全期間）';
+  const headH = groups.some(gr => gr.cols.some(col => col.period && col.label.split('\n').length >= 2)) ? 28 : 20;
   const rows = items.concat([{total: true, s: {name: '合計'}, p: merged, lack: total.lack}]);
   const rowH = Math.min(22, (S.bottom - headY - headH - 2) / rows.length);
   // 目盛り：いちばん大きい計画が棒の幅の 1/planScale ほどの位置に来るように（計画線の右に、計画を超えた分を描ける）
@@ -185,7 +187,10 @@ function mtgCompactOverviewSlide_(summaries, options) {
   let cx = barX + barW + 10;
   groups.forEach(gr => {
     gr.cols.forEach(col => {
-      el.push(mtgBox_(cx - S.padX / 2, headY, col.w + S.padX, headH, col.label, {size: 7.5, color: c.sub, align: 'CENTER', role: 'compact-head'}));
+      // 「（全期間）」は小さめの灰色の字で、見出しの最後の行に
+      const text = col.period ? col.label + '\n' + periodText : col.label;
+      el.push(mtgBox_(cx - S.padX / 2, headY, col.w + S.padX, headH, text, Object.assign({size: 7.5, color: c.sub, align: 'CENTER', role: 'compact-head'},
+        col.period ? {spans: [{start: col.label.length + 1, end: text.length, size: 6.5, color: c.muted}]} : {})));
       col.x = cx;
       cx += col.w;
     });
