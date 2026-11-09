@@ -158,6 +158,7 @@ const MTG_OPTIONS = {
     // 上・下・右の3辺だけに引く（左の辺は確定の棒との境目なので引かない。点線の枠が B の端に重なって、つなぎ目が乱れて見えないように）
     prospect: {alpha: 0.3, line: '#548235', lineWeight: 1, dashStyle: 'DOT'},
     sureLabel: '確定（A＋B）',
+    salesPage: true,                // 状況・計画進捗の次に、今年度の売上（FY前半期＋後半期の列）で集計したページも入れる（false で入れない）
     measure: '想定売上'             // 集計する金額（期待値ではなく想定売上。積み上げ・確定・見込・合計・前回比・変化のあった案件の金額）
   },
   // Apps Script の1回の実行は6分まで（入力・確かめの画面を出している時間も含む）。作り始めてから limitMs を過ぎそうなら、そこで区切り、
@@ -4009,6 +4010,7 @@ function mtgSummarize_(ss, name, context) {
     quarters: mtgQuarters_(counted, context.now),
     plan: mtgPlanOf_(deals, name, context.now, table.has),
     planAmount: mtgPlanOf_(deals, name, context.now, table.has, 'amount'),   // 想定売上の積み上げ（統合版（報告用）。MeetingCompact.gs）
+    planSales: mtgSalesPlanOf_(deals, name, context.now, table),             // 今年度の売上（FY前半期＋後半期の列）の確度別（統合版（報告用））
     portfolio: mtgPortfolioWithPrevious_(mtgPortfolioOf_(deals, context.now, table, statusTable), copy, context, statusTable),
     changes,
     stalled,
@@ -4799,7 +4801,7 @@ function mtgCombinedLite_(s) {
   const prev = s.previous;
   return JSON.parse(JSON.stringify({name: s.name, dummy: s.dummy || 0, first: s.first || false, kpi: s.kpi, gaps: s.gaps || {},
     bridge: {start: s.bridge.start, end: s.bridge.end, startCount: s.bridge.startCount, endCount: s.bridge.endCount,
-      amountStart: s.bridge.amountStart, amountEnd: s.bridge.amountEnd}, plan: s.plan || null, planAmount: s.planAmount || null,
+      amountStart: s.bridge.amountStart, amountEnd: s.bridge.amountEnd}, plan: s.plan || null, planAmount: s.planAmount || null, planSales: s.planSales || null,
     changedNow: s.changes ? mtgCompactChangedNow_(s) : null,   // 変化のある案件のうち今ある案件（統合版（報告用）の状況のページ）
     previous: prev ? {date: prev.date, cutoff: prev.cutoff, baseline: !!prev.baseline, chosen: !!prev.chosen} : null}));
 }
@@ -6493,6 +6495,33 @@ function mtgPlanRanksOnly_(p, keys) {
     b.counts = pick(b.counts);
     b.value = total(b.values);
     b.count = total(b.counts);
+  });
+  return out;
+}
+
+/**
+ * 今年度の売上（年度別の売上の列のうち今年度の前半期＋後半期。今は P・Q列「FY26前半期売上（百万）」「FY26後半期売上（百万）」）を、確度ごとに足したもの
+ * （統合版（報告用）の「状況・計画進捗（FY26売上）」のページ）。失注を除く案件が対象で、受注月では絞らない（売上の列そのものが今年度の分）。
+ * 件数は今年度の売上が 0 でない案件。mtgPlanOf_ と同じ形（mtgMergePlans_ で足せる。months は空）。今年度の列が無ければ gap に理由。
+ * 戻り値に year（'26'）
+ */
+function mtgSalesPlanOf_(deals, name, now, table) {
+  const o = MTG_OPTIONS.plan;
+  const year = mtgFiscalYearKey_(now);
+  const bucket = () => ({count: 0, value: 0, values: {}, counts: {}});
+  const has = (table.salesYears || []).indexOf(year) >= 0;
+  const out = {plan: mtgPlanAmount_(name), start: mtgFiscalStart_(now), months: [], total: 0, byRank: {}, byRankCount: {}, undated: bucket(), before: bucket(),
+    after: bucket(), excluded: bucket(), missing: 0, year, gap: has ? '' : 'シートに「FY' + year + '前半期売上」「FY' + year + '後半期売上」の列が無い'};
+  o.ranks.map(r => r.key).concat([o.otherLabel]).forEach(k => { out.byRank[k] = 0; out.byRankCount[k] = 0; });
+  if (!has) return out;
+  deals.forEach(d => {
+    if (mtgExcludedStatus_(d.status)) return;
+    const v = (d.sales || {})[year] || 0;
+    if (!v) return;
+    const rank = mtgPlanRank_(d.status);
+    out.byRank[rank] += v;
+    out.byRankCount[rank]++;
+    out.total += v;
   });
   return out;
 }

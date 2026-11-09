@@ -881,7 +881,8 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
 統合版の「別バージョン」として、数字の要点と変化のあった案件だけの資料を、別の関数 `createBusinessMtgReportingSummary()` で作ります（統合版の関数・ページは変えない）。
 
 - 並び（`mtgCompactSlides_`）：表紙（統合版と同じひな形。見出しの下は `compact.coverWord`「報告資料」。`mtgCombinedCover_` の docWord）→
-  全サブインダストリーの状況・計画進捗（`mtgCompactOverviewSlide_`）→ 同じ（見込（C）を含む。`mtgCompactOverviewSlide_(…, {withC: true})`。棒の右に見込（C）を
+  全サブインダストリーの状況・計画進捗（`mtgCompactOverviewSlide_`）→ 同じ形で今年度の売上の列（年度別の売上の列のうち今年度の前半期＋後半期。今は P・Q列）で
+  集計したページ（`{sales: true}`。`summary.planSales` = `mtgSalesPlanOf_`：失注を除く案件の今年度の売上を確度別に足す。受注月では絞らない。`compact.salesPage` で出す・出さない）→ 同じ（見込（C）を含む。`mtgCompactOverviewSlide_(…, {withC: true})`。棒の右に見込（C）を
   続けて（積み上げなので、あけない）、C の色の薄い地（`compact.prospect.alpha`）と上・下・右の3辺の細かい点線（`dashStyle: 'DOT'` の線。
   左の辺は確定の棒との境目なので引かない）で足す。棒の中に入らない値は、いちばん右の確度だけ棒のすぐ右に出す。凡例の見本は A・B・C とも同じ大きさ（8 × 8。C は点線の枠）で、見本と文字の間は 5pt。
   目盛りは A＋B＋C も入るように。並び・右の数字は同じ。リード文は確定＋見込の計画比）→
