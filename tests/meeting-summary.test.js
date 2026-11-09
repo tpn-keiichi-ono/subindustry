@@ -2901,8 +2901,9 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
   ];
   const p = plain(g.mtgPlanOf_(deals, '新FMT', now, {weighted: true, startMonth: true}));
   assert.deepStrictEqual([p.plan, p.total, p.missing], [400, 78, 1]);
-  assert.deepStrictEqual([p.undated, p.before, p.after, p.excluded], [{count: 1, value: 6, values: {C: 6}}, {count: 1, value: 8, values: {D: 8}},
-    {count: 1, value: 9, values: {C: 9}}, {count: 1, value: 0, values: {'未設定': 0}}]);
+  assert.deepStrictEqual([p.undated, p.before, p.after, p.excluded], [{count: 1, value: 6, values: {C: 6}, counts: {C: 1}},
+    {count: 1, value: 8, values: {D: 8}, counts: {D: 1}}, {count: 1, value: 9, values: {C: 9}, counts: {C: 1}},
+    {count: 1, value: 0, values: {'未設定': 0}, counts: {'未設定': 1}}]);
   assert.deepStrictEqual(p.months.map(m => [m.y + '/' + m.m, m.total]).filter(m => m[1]), [['2026/6', 4], ['2026/10', 50], ['2026/11', 3], ['2027/3', 21]]);
   assert.deepStrictEqual(p.months[6].values, {B: 35, C: 15});
   assert.deepStrictEqual(p.byRank, {A: 20, B: 35, C: 15, D: 0, '創注': 1, '未設定': 7});
@@ -2955,7 +2956,7 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
   assert.strictEqual(p2.plan, 500);
   const merged = plain(g.mtgMergePlans_([p, p2]));
   assert.deepStrictEqual([merged.plan, merged.total, merged.months[6].values, merged.byRank.B, merged.excluded.count], [900, 128, {B: 70, C: 30}, 70, 1]);
-  assert.deepStrictEqual([merged.undated, merged.after.values], [{count: 1, value: 6, values: {C: 6}}, {C: 9}]);
+  assert.deepStrictEqual([merged.undated, merged.after.values], [{count: 1, value: 6, values: {C: 6}, counts: {C: 1}}, {C: 9}]);
   assert.strictEqual(plain(g.mtgPlanSlide_(merged, now, '全サブインダストリー')).title, '計画に対する積み上げ（全サブインダストリー）');
 
   // 統合版の2ページ目：サブインダストリー別（達成率の高い順。棒は確度別、計画は点線。右に積み上げ・達成率・差・確度A・B・時期未定。いちばん下に合計）

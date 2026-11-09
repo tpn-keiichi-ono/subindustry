@@ -3,13 +3,15 @@
  * 統合版（createBusinessMtgCombinedSummary()。目次・全サブインダストリーの状況・計画・各サブインダストリーの資料のページ）とは別の資料で、統合版は変えない。
  *
  * ページの並び：
- *   1. 表紙（統合版と同じひな形の表紙。mtgCombinedCover_）
+ *   1. 表紙（統合版と同じひな形の表紙。見出しの下は「事前資料」ではなく「報告資料」（compact.coverWord）。mtgCombinedCover_）
  *   2. 全サブインダストリーの状況・計画進捗（mtgCompactOverviewSlide_）：サブインダストリーごとに、今年度の確定（確度 A＋B）の期待値の横棒（A・B を積み上げ、
  *      データラベル付き）と計画線（透明度のあるグレーの点線。上に「計画」）。右に「今年度の計画進捗」（計画・進捗率（A＋B）・確定（A＋B）/件・見込（C）/件）と
  *      「案件の状況（失注除く）」（期待値合計・前回比（比べた日付。増は青・減は赤）・案件数・変化のある案件）。進捗率（A＋B）の高い順、いちばん下に合計
- *   3. 計画に対する積み上げ（全体。統合版と同じ mtgPlanSlide_）
+ *   2'. 同じ（見込（C）を含む。棒の右に見込（C）を点線の枠で足す。mtgCompactOverviewSlide_(…, {withC: true})）
+ *   3. 計画に対する積み上げ（全体。統合版と同じ mtgPlanSlide_）と、確定（A＋B）だけの積み上げ（mtgPlanRanksOnly_。凡例・見出し・リード文も確定の言葉）
  *   4〜 変化のあった案件：{サブインダストリー}（mtgCompactChangeSlides_。シートの順にサブインダストリーごと）：No.（資料の通し番号）・得意先／案件名・
  *      ステータス・期待値・受注月（前回▶今回）・活動状況・活動における課題。変化が無ければ「該当なし」の1ページ
+ * 金額は小数点以下を繰り上げた整数で出す（compact.ceilAmounts。mtgWithAmountCeil_）
  *
  * 作り方は統合版と同じ：エディタで createBusinessMtgReportingSummary() を実行し、画面（MeetingRunDialog）で会議日を選ぶ。すべての追跡シートの会議サマリを
  * 今の値で作り（読むだけ。会議日・時点コピーは記録しない）、本番として保存して会議のフォルダに格納する。インデックス（INDEX_会議資料）には書かない
@@ -27,9 +29,23 @@ function mtgCompactLabel_() {
   return MTG_OPTIONS.compact.label + '（' + MTG_OPTIONS.combined.name + '）';
 }
 
-/** 変化のあった案件のページの前に入るページの数（表紙・全サブインダストリーの状況・計画進捗（・計画に対する積み上げ）） */
+/** 変化のあった案件のページの前に入るページの数（表紙・全サブインダストリーの状況・計画進捗（見込（C）を含むページも）（・計画に対する積み上げ 2枚）） */
 function mtgCompactFrontCount_() {
-  return MTG_OPTIONS.plan.enabled ? 3 : 2;
+  return MTG_OPTIONS.plan.enabled ? 5 : 3;
+}
+
+/** fn を、金額の小数点以下を繰り上げる設定（MTG_OPTIONS.amountCeil。mtgAmount_）で作る（compact.ceilAmounts のとき。終わったら元に戻す） */
+function mtgWithAmountCeil_(fn) {
+  const o = MTG_OPTIONS;
+  if (!o.compact.ceilAmounts) return fn();
+  const before = o.amountCeil;
+  o.amountCeil = true;
+  try {
+    return fn();
+  } finally {
+    if (before === undefined) delete o.amountCeil;
+    else o.amountCeil = before;
+  }
 }
 
 /** ファイル名（統合版の名前の後ろに fileSuffix。「20261113_全サブインダストリー_報告用」） */
@@ -61,9 +77,16 @@ function mtgCompactSlides_(summaries, meeting, final) {
  */
 function mtgCompactFront_(summaries, meeting, final, now) {
   const o = MTG_OPTIONS;
-  const plan = o.plan.enabled ? [mtgPlanSlide_(mtgMergePlans_(summaries.map(s => s.plan)), now, o.combined.name)] : [];
-  return mtgNumberSlides_(mtgCombinedFrame_(summaries, meeting, final),
-    [mtgCombinedCover_(summaries, meeting, final, now), mtgCompactOverviewSlide_(summaries)].concat(plan));
+  const C = o.compact;
+  return mtgWithAmountCeil_(() => {
+    const merged = o.plan.enabled ? mtgMergePlans_(summaries.map(s => s.plan)) : null;
+    // 計画に対する積み上げ：全確度（統合版と同じ）のあとに、確定（A＋B）だけ
+    const plan = merged ? [mtgPlanSlide_(merged, now, o.combined.name),
+      mtgPlanSlide_(mtgPlanRanksOnly_(merged, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel})] : [];
+    return mtgNumberSlides_(mtgCombinedFrame_(summaries, meeting, final),
+      [mtgCombinedCover_(summaries, meeting, final, now, C.coverWord), mtgCompactOverviewSlide_(summaries),
+        mtgCompactOverviewSlide_(summaries, {withC: true})].concat(plan));
+  });
 }
 
 /**
@@ -71,15 +94,20 @@ function mtgCompactFront_(summaries, meeting, final, now) {
  * 横棒は確定（確度 A・B）だけを積み上げる（棒の中に値。入らなければ棒の右に「A 36」）。計画線は計画の位置に、透明度のあるグレーの点線（上に「計画」）。
  * 目盛りは、いちばん大きい計画の planScale 倍（か、それより大きい確定）を棒の幅いっぱいにする。進捗率（A＋B）＝ 確定（A＋B）÷ 計画。
  * 確定・見込・進捗率は今年度の積み上げ（plan.monthColumn の月が今年度の案件。mtgPlanOf_）、期待値合計・前回比・案件数・変化のある案件は失注を除くすべて
- * （統合版の状況のページと同じ）。期待値・月の列が無いシートは、棒の場所に「データなし」と理由
+ * （統合版の状況のページと同じ）。期待値・月の列が無いシートは、棒の場所に「データなし」と理由。
+ * options.withC：次のページ（見込（C）を含む）。棒の確定（A・B）の右に見込（C）を点線の枠で足す（並び・右の数字は同じ。目盛りは A＋B＋C も入るように）
  */
-function mtgCompactOverviewSlide_(summaries) {
+function mtgCompactOverviewSlide_(summaries, options) {
   const S = MTG_SLIDE;
   const o = MTG_OPTIONS;
   const c = o.colors;
   const G = o.gapText;
   const C = o.compact;
-  const ranks = o.plan.ranks.filter(r => r.key === 'A' || r.key === 'B');
+  const withC = !!(options && options.withC);
+  // 棒は確定（A・B）。withC なら見込（C）を点線の枠で続ける（dashed）
+  const ranks = o.plan.ranks.filter(r => r.key === 'A' || r.key === 'B' || (withC && r.key === 'C'))
+    .map(r => Object.assign({}, r, {dashed: r.key === 'C'}));
+  const barKeys = ranks.map(r => r.key);
   // 前回比の見出し：いちばん多い比べ方（統合版の状況のページと同じ）。前回の会議と比べるなら、比べた会議日を括弧書き（「前回比（11/6）」）
   const versus = s => mtgVersus_(s).trim().replace(/で$/, '');
   const counts = {};
@@ -116,10 +144,16 @@ function mtgCompactOverviewSlide_(summaries) {
   const lead = '進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '（計画に届いているのは ' + ok.length + 'のうち ' + reached + '）。' +
     '案件 ' + total.active + '件・期待値合計 ' + mtgAmount_(total.weighted) + '百万円（失注除く）。\n' +
     '進捗率（A＋B）の高い順。進捗率・確定（A＋B）・見込（C）は今年度（' + period + '）の' + mtgPlanMonthName_() + 'の案件の期待値（進捗率 ＝ A＋B ÷ 計画）。';
+  // 見込（C）を含むページのリード文：確定＋見込の計画比
+  const withCRate = ok.length && merged.plan > 0 ? Math.round(sum(merged, ['A', 'B', 'C']) / merged.plan * 100) : null;
+  const leadC = '確定（A＋B）に見込（C）を足すと ' + mtgAmount_(sum(merged, ['A', 'B', 'C'])) + '百万円で、計画の ' + (withCRate == null ? '—' : withCRate + '%') +
+    '（進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '）。\n' +
+    '見込（C）は点線の枠。並び・右の数字は前のページと同じ（進捗率（A＋B）の高い順）。';
   const x = S.x;
   const w = S.w;
   const y = S.top;
-  const el = [mtgBox_(x, y - 2, 420, 20, '今年度（' + period + '）の確定（A＋B）の期待値と計画（百万円）', {size: 10.5, bold: true, color: c.ink})];
+  const el = [mtgBox_(x, y - 2, 480, 20, '今年度（' + period + '）の確定（A＋B）' + (withC ? 'と見込（C）' : '') + 'の期待値と計画（百万円）',
+    {size: 10.5, bold: true, color: c.ink})];
   // 列：名前・横棒｜今年度の計画進捗（計画・進捗率（A＋B）・確定（A＋B）/件・見込（C）/件）｜案件の状況（期待値合計・前回比・案件数・変化のある案件）
   const nameW = 96;
   const groups = [
@@ -138,7 +172,7 @@ function mtgCompactOverviewSlide_(summaries) {
   const rows = items.concat([{total: true, s: {name: '合計'}, p: merged, lack: total.lack}]);
   const rowH = Math.min(22, (S.bottom - headY - headH - 2) / rows.length);
   // 目盛り：いちばん大きい計画が棒の幅の 1/planScale ほどの位置に来るように（計画線の右に、計画を超えた分を描ける）
-  const max = Math.max.apply(null, [1].concat(ok.map(item => Math.max(sum(item.p, ['A', 'B']), item.p.plan * C.planScale))));
+  const max = Math.max.apply(null, [1].concat(ok.map(item => Math.max(sum(item.p, ['A', 'B']), item.p.plan * C.planScale))).concat(ok.map(item => sum(item.p, barKeys))));
   const scale = barW / max;
   let cx = barX + barW + 10;
   groups.forEach((gr, gi) => {
@@ -156,7 +190,9 @@ function mtgCompactOverviewSlide_(summaries) {
   // 凡例：グラフの上（列の見出しの行の、棒の左端から）に確度 A・B の色。計画線は線の上に見出し（「計画」）を付けるので凡例に入れない
   let lx = barX;
   ranks.forEach(r => {
-    el.push({type: 'box', x: lx, y: headY + headH / 2 - 3.5, w: 7, h: 7, fill: r.color, shape: 'RECTANGLE', role: 'legend'});
+    el.push(r.dashed ? {type: 'box', x: lx, y: headY + headH / 2 - 3.5, w: 7, h: 7, fill: c.white, line: r.color, lineWeight: 1, dash: true,
+      shape: 'RECTANGLE', role: 'legend'}
+      : {type: 'box', x: lx, y: headY + headH / 2 - 3.5, w: 7, h: 7, fill: r.color, shape: 'RECTANGLE', role: 'legend'});
     const bw = mtgTextWidth_(r.key, 8.5) + S.padX + 2;
     el.push(mtgBox_(lx + 10 - S.padX / 2, headY, bw, headH, r.key, {size: 8.5, color: c.sub, role: 'legend'}));
     lx += 10 + bw - S.padX + 10;
@@ -190,14 +226,17 @@ function mtgCompactOverviewSlide_(summaries) {
         if (v <= 0) return;
         const bx = barX + level * scale;
         const bw = Math.max(v * scale, 0.75);
-        el.push({type: 'box', x: bx, y: ry + (rowH - bh) / 2, w: bw, h: bh, fill: r.color, line: c.white, lineWeight: 0.5, shape: 'RECTANGLE',
-          role: 'compact-bar'});
-        // データラベル：棒の中（白い字）。入らなければ棒の右に、確度を付けて確度の色の字で（「A 36」）
+        // 見込（C）は白地に確度の色の点線の枠（確定と見分ける）
+        el.push(r.dashed ? {type: 'box', x: bx, y: ry + (rowH - bh) / 2, w: bw, h: bh, fill: c.white, line: r.color, lineWeight: 1, dash: true,
+          shape: 'RECTANGLE', role: 'compact-bar'}
+          : {type: 'box', x: bx, y: ry + (rowH - bh) / 2, w: bw, h: bh, fill: r.color, line: c.white, lineWeight: 0.5, shape: 'RECTANGLE', role: 'compact-bar'});
+        // データラベル：棒の中（白い字。見込は緑の字）。入らなければ棒の右に、確度を付けて確度の色の字で（「A 36」）
         const label = mtgAmount_(Math.round(v * 10) / 10);
         if (mtgTextWidth_(label, 7.5) + 4 <= bw) {
-          el.push(mtgBox_(bx - S.padX / 2, ry, bw + S.padX, rowH, label, {size: 7.5, bold: true, color: c.white, align: 'CENTER', role: 'compact-bar-label'}));
+          el.push(mtgBox_(bx - S.padX / 2, ry, bw + S.padX, rowH, label, {size: 7.5, bold: true, color: r.dashed ? c.greenDark : c.white, align: 'CENTER',
+            role: 'compact-bar-label'}));
         } else {
-          outside.push({label: r.key + ' ' + label, color: r.color});
+          outside.push({label: r.key + ' ' + label, color: r.dashed ? c.greenDark : r.color});
         }
         level += v;
       });
@@ -245,29 +284,38 @@ function mtgCompactOverviewSlide_(summaries) {
     });
   });
   const marked = Object.keys(total.lack).length > 0;
-  return Object.assign({title: MTG_TITLES.compactOverview, lead, elements: el}, marked ? {note: '※ は「' + G + '」のシートを除いた合計'} : {});
+  return Object.assign({title: MTG_TITLES.compactOverview + (withC ? '（見込（C）を含む）' : ''), lead: withC ? leadC : lead, elements: el}, marked ? {note: '※ は「' + G + '」のシートを除いた合計'} : {});
 }
 
 /**
  * 変化のあった案件：{サブインダストリー}（1つのサブインダストリーのページ。行が入らなければ「（続き）」のページ）。変化のある案件（その他の項目のみの更新を除く。
- * 今回のステータスの順。各サブインダストリーの資料の「前回から変化のある案件」と同じ）を、No.（start + 1 からの資料の通し番号）とともに全件。
+ * 各サブインダストリーの資料の「前回から変化のある案件」と同じ案件。期待値の大きい順）を、No.（start + 1 からの資料の通し番号）とともに全件。
  * 変化が無ければ表の見出しの下に「該当なし」（変更の記録が無ければ「データなし」と理由）。
  * 表は出典の行にかからないよう、区切り線より tableMargin 上までで次のページに分ける。戻り値 {slides（ページ番号・出典の行は付けない）, count: 載せた案件の数}
  */
 function mtgCompactChangeSlides_(s, start) {
+  return mtgWithAmountCeil_(() => mtgCompactChangeSlidesOf_(s, start));
+}
+
+/** mtgCompactChangeSlides_ の中身（金額の繰り上げの設定の中で作る） */
+function mtgCompactChangeSlidesOf_(s, start) {
   const S = MTG_SLIDE;
   const o = MTG_OPTIONS;
   const c = o.colors;
   const word = mtgFromWord_(s);
   const title = o.compact.changesTitle + s.name;
-  const columns = mtgColumns_([30, 120, 130, 80, 66, 130, 112], 5);
+  const columns = mtgColumns_([34, 120, 130, 80, 66, 130, 108], 5);
   const head = mtgHeadRow_(columns, ['No.', '得意先／案件名', 'ステータス\n' + word + '▶今回', '期待値\n' + word + '▶今回',
     '受注月\n' + word + '▶今回', '活動状況（最新）', '活動における課題']);
   const lack = s.gaps || {};
-  const moves = s.changes.filter(ch => ch.category !== 'updated');
+  // 並びは期待値（今の値）の大きい順。同じなら想定売上の大きい順、それも同じならシートの資料と同じ順（今回のステータスの順）。
+  // 期待値が空・削除した案件は後ろ
+  const value = v => (v == null ? -Infinity : v);
+  const moves = s.changes.filter(ch => ch.category !== 'updated').map((ch, i) => ({ch, i}))
+    .sort((a, b) => (value(b.ch.weightedTo) - value(a.ch.weightedTo)) || (value(b.ch.amount) - value(a.ch.amount)) || (a.i - b.i)).map(x => x.ch);
   const lead = lack.changes ? mtgChangedLabel_(s) + 'は' + o.gapText + '（' + lack.changes + '）。'
     : moves.length ? mtgChangedLabel_(s) + 'は ' + moves.length + '件' + mtgUpdatedNote_(s) + '。\n' +
-      'ステータス・期待値・受注月・活動状況が変わった案件（今回のステータスの順）。No. は資料の通し番号。'
+      'ステータス・期待値・受注月・活動状況が変わった案件（期待値の大きい順）。No. は資料の通し番号。'
       : mtgPeriodShort_(s) + '、ステータス・期待値・受注月・活動状況に変化のある案件なし' + mtgUpdatedNote_(s) + '。';
   if (!moves.length) {
     return {slides: [{title, lead, elements: mtgEmptyTable_(columns, head, lack.changes ? 'gap' : 'none', lack.changes || '')}], count: 0};
@@ -275,7 +323,8 @@ function mtgCompactChangeSlides_(s, start) {
   const rows = moves.map((ch, i) => {
     const status = mtgStatusMove_(ch);
     return mtgRow_(columns, [
-      {text: String(start + i + 1), align: 'CENTER', fill: c.greenSoft, color: c.ink, bold: true},
+      // No.：3桁（「380」）でも折り返さないように、小さめの字（8pt）で1行。入らなければさらに小さくする
+      {text: String(start + i + 1), size: 8, lines: 1, fit: true, minSize: 6, align: 'CENTER', fill: c.greenSoft, color: c.ink, bold: true},
       mtgDealCell_(ch, columns[1]),
       // ステータスの動きが1行に入らなければ「▶」の前で改行（「B-／クロージング中」のように名前の途中で切らない）
       {text: mtgWrap_(status, columns[2], S.bodySize, 2).length > 1 ? status.replace(' ▶ ', '\n▶ ') : status, lines: 3, fill: c.white},

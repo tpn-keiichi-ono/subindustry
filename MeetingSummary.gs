@@ -138,10 +138,11 @@ const MTG_OPTIONS = {
   },
   // 統合版（報告用。MeetingCompact.gs。エディタで createBusinessMtgReportingSummary() を実行して作る。2026/11/09 から）：表紙（統合版と同じひな形）→
   // 全サブインダストリーの状況・計画進捗（確定（A＋B）の横棒と計画線・計画・進捗率（A＋B）・確定（A＋B）/件・見込（C）/件・期待値合計・前回比・案件数・
-  // 変化のある案件）→ 計画に対する積み上げ（全体。統合版と同じ）→ 変化のあった案件（サブインダストリーごと）。目次と各サブインダストリーの資料のページは入れない。
+  // 変化のある案件）→ 計画に対する積み上げ（全体。統合版と同じ・確定（A＋B）だけ）→ 変化のあった案件（サブインダストリーごと）。目次と各サブインダストリーの資料のページは入れない。
   //   fileSuffix：ファイル名（統合版と同じ名前）の後ろに付ける。planScale：いちばん大きい計画の 何倍を横棒の幅いっぱいにするか（1.4 なら計画線は幅の 7割ほど。
   //   計画を超えた分を右に描けるように）。planLine：計画線（透明度のあるグレーの点線）。tableMargin：変化のあった案件の表を、出典の行の上の区切り線より
-  //   この分だけ上で次のページに分ける（表の行が見積もりより伸びても、出典の行にかからないように）
+  //   この分だけ上で次のページに分ける（表の行が見積もりより伸びても、出典の行にかからないように）。
+  //   計画に対する積み上げは、全確度のページのあとに、確定（sureRanks）だけのページも入れる
   compact: {
     enabled: true,
     label: '統合版（報告用）',
@@ -149,7 +150,11 @@ const MTG_OPTIONS = {
     planScale: 1.4,
     planLine: {color: '#808080', alpha: 0.6, weight: 1.25},
     tableMargin: 12,
-    changesTitle: '変化のあった案件：'
+    changesTitle: '変化のあった案件：',
+    coverWord: '報告資料',          // 表紙の見出しの下（統合版・各資料は「事前資料」）
+    ceilAmounts: true,              // 金額は小数点以下を繰り上げた整数で出す（12.1 → 13。合計も繰り上げるので、行を足した数と合わないことがある）
+    sureRanks: ['A', 'B'],          // 確定の確度（計画に対する積み上げの「確定（A＋B）」のページ）
+    sureLabel: '確定（A＋B）'
   },
   // Apps Script の1回の実行は6分まで（入力・確かめの画面を出している時間も含む）。作り始めてから limitMs を過ぎそうなら、そこで区切り、
   // 残りは continueAfterMs あとに自動で続ける（時間主導のトリガー continueBusinessMtgSummaries。1回きり）。次の仕事にかかる時間の見積もり：
@@ -4670,7 +4675,8 @@ function mtgSum_(list, key) {
 /** 金額（百万）の表示：「1,234.5」（整数なら小数なし）。空（null）は「未入力」（blankText。0 とは書かない）。 */
 function mtgAmount_(value) {
   if (value == null) return MTG_OPTIONS.blankText;
-  const rounded = Math.round(value * 10) / 10;
+  // MTG_OPTIONS.amountCeil の間（統合版（報告用）を作る間。mtgWithAmountCeil_）は、小数点以下を繰り上げた整数（12.1 → 13。負の数は絶対値を繰り上げる）
+  const rounded = MTG_OPTIONS.amountCeil ? Math.sign(value) * Math.ceil(Math.abs(value) - 1e-9) : Math.round(value * 10) / 10;
   const parts = String(Math.abs(rounded)).split('.');
   return (rounded < 0 ? '-' : '') + parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (parts[1] ? '.' + parts[1] : '');
 }
@@ -4753,7 +4759,7 @@ function mtgCombinedFront_(sections, meeting, final, now) {
  * 統合版の表紙（ひな形の統合版の表紙（緑）。見出しは全サブインダストリー、その下に会議の名前と「事前資料」・会議日。下に収録したサブインダストリーと出典）。
  * 統合版（報告用。MeetingCompact.gs）も同じ表紙
  */
-function mtgCombinedCover_(summaries, meeting, final, now) {
+function mtgCombinedCover_(summaries, meeting, final, now, docWord) {
   const o = MTG_OPTIONS;
   const c = o.colors;
   const S = MTG_SLIDE;
@@ -4763,7 +4769,8 @@ function mtgCombinedCover_(summaries, meeting, final, now) {
     title: MTG_TITLES.cover,
     cover: true,
     combined: true,   // 統合版の表紙（緑。MTG_OPTIONS.combined.coverTone・templatePages.combined）
-    template: {title: o.combined.name, subtitle: o.meetingName + '　事前資料' + (final ? '' : '【試作】'), date: mtgDateLabel_(meeting), name: ''},
+    // docWord：見出しの下の「事前資料」の代わりの言葉（統合版（報告用）は「報告資料」）
+    template: {title: o.combined.name, subtitle: o.meetingName + '　' + (docWord || '事前資料') + (final ? '' : '【試作】'), date: mtgDateLabel_(meeting), name: ''},
     elements: [
       line(350, '収録：' + summaries.map(s => s.name).join('・') + '（' + summaries.length + 'サブインダストリー）'),
       line(365, '出典：各サブインダストリーのシートおよび変更履歴（' + (dummy ? 'ダミーデータを含む。' : '') +
@@ -6418,7 +6425,7 @@ function mtgPlanAmount_(name) {
  * 失注を除く案件（進行中・受注・保留）が対象。積み上げに入らない案件（時期未定・今年度より前・来年度以降・失注）は、それぞれの件数と期待値（確度別も）を残す
  * （資料では積み上げの右に参考として出す）。期待値が空の案件は 0 として数え、件数を残す。has はシートの列があるか（期待値・月の列が無ければ gap に理由）。
  * 戻り値 {plan, start: 今年度の最初の月の番号, months: [{y, m, values: {確度: 期待値}, total, count}], total, byRank: {確度: 期待値}, byRankCount: {確度: 件数},
- *  undated: 月が空・読めない, before: 今年度より前, after: 来年度以降, excluded: 失注（どれも {count, value, values: {確度: 期待値}}）,
+ *  undated: 月が空・読めない, before: 今年度より前, after: 来年度以降, excluded: 失注（どれも {count, value, values: {確度: 期待値}, counts: {確度: 件数}}）,
  *  missing: 期待値が空の件数, gap}
  */
 function mtgPlanOf_(deals, name, now, has) {
@@ -6426,7 +6433,7 @@ function mtgPlanOf_(deals, name, now, has) {
   const start = mtgFiscalStart_(now);
   const columns = MTG_OPTIONS.columns;
   const lack = ['weighted', o.monthColumn].filter(key => has && !has[key]).map(key => '「' + String(columns[key]).replace(/\s+/g, '') + '」');
-  const bucket = () => ({count: 0, value: 0, values: {}});
+  const bucket = () => ({count: 0, value: 0, values: {}, counts: {}});
   const out = {plan: mtgPlanAmount_(name), start, months: [], total: 0, byRank: {}, byRankCount: {}, undated: bucket(), before: bucket(), after: bucket(),
     excluded: bucket(), missing: 0, gap: lack.length ? 'シートに' + lack.join('・') + 'の列が無い' : ''};
   for (let i = 0; i < 12; i++) {
@@ -6445,6 +6452,7 @@ function mtgPlanOf_(deals, name, now, has) {
       aside.count++;
       aside.value += v;
       aside.values[rank] = (aside.values[rank] || 0) + v;
+      aside.counts[rank] = (aside.counts[rank] || 0) + 1;
       return;
     }
     const mo = out.months[i];
@@ -6458,6 +6466,29 @@ function mtgPlanOf_(deals, name, now, has) {
   return out;
 }
 
+/**
+ * 計画に対する積み上げ（mtgPlanOf_ の戻り値）を、確度 keys（['A', 'B'] など）の案件だけに絞ったもの（月・合計・積み上げに含まない案件の値と件数も、その確度の分だけ）。
+ * 統合版（報告用）の「計画に対する積み上げ（全サブインダストリー・確定（A＋B））」のページ
+ */
+function mtgPlanRanksOnly_(p, keys) {
+  const out = JSON.parse(JSON.stringify(p));
+  const pick = values => { const o2 = {}; keys.forEach(k => { if (values && values[k] != null) o2[k] = values[k]; }); return o2; };
+  const total = values => keys.reduce((t, k) => t + ((values || {})[k] || 0), 0);
+  out.months.forEach(mo => { mo.values = pick(mo.values); mo.total = total(mo.values); mo.count = null; });
+  out.byRank = pick(out.byRank);
+  out.byRankCount = pick(out.byRankCount);
+  out.total = total(out.byRank);
+  out.missing = 0;   // 期待値が空の件数は確度ごとに数えていないので、絞ったページには書かない
+  ['undated', 'before', 'after', 'excluded'].forEach(k => {
+    const b = out[k];
+    b.values = pick(b.values);
+    b.counts = pick(b.counts);
+    b.value = total(b.values);
+    b.count = total(b.counts);
+  });
+  return out;
+}
+
 /** 統合版の計画に対する積み上げ：各サブインダストリーの mtgPlanOf_ の戻り値を足したもの（計画も合計。どれかに gap があれば最初の gap） */
 function mtgMergePlans_(plans) {
   const out = JSON.parse(JSON.stringify(plans[0] || mtgPlanOf_([], '', new Date(), null)));
@@ -6465,7 +6496,7 @@ function mtgMergePlans_(plans) {
   out.total = 0;
   out.missing = 0;
   const asides = ['undated', 'before', 'after', 'excluded'];
-  asides.forEach(k => { out[k] = {count: 0, value: 0, values: {}}; });
+  asides.forEach(k => { out[k] = {count: 0, value: 0, values: {}, counts: {}}; });
   Object.keys(out.byRank).forEach(k => { out.byRank[k] = 0; });
   out.byRankCount = {};
   out.months.forEach(mo => { mo.values = {}; mo.total = 0; mo.count = 0; });
@@ -6477,6 +6508,7 @@ function mtgMergePlans_(plans) {
       out[k].count += p[k].count;
       out[k].value += p[k].value;
       Object.keys(p[k].values).forEach(r => { out[k].values[r] = (out[k].values[r] || 0) + p[k].values[r]; });
+      Object.keys(p[k].counts || {}).forEach(r => { out[k].counts[r] = (out[k].counts[r] || 0) + p[k].counts[r]; });
     });
     Object.keys(p.byRank).forEach(k => { out.byRank[k] = (out.byRank[k] || 0) + p.byRank[k]; });
     Object.keys(p.byRankCount || {}).forEach(k => { out.byRankCount[k] = (out.byRankCount[k] || 0) + p.byRankCount[k]; });
@@ -6497,21 +6529,24 @@ function mtgMergePlans_(plans) {
  * 計画の高さに点線の横線を引く（どの月で計画に届くかが分かる）。右に区切って、積み上げに含まない案件（時期未定・今年度より前・来年度以降・失注）を
  * 参考として 0 からの確度別の棒で出す（期待値と件数）。p は mtgPlanOf_（統合版は mtgMergePlans_）の戻り値。name は統合版のときだけ（見出しに付ける）
  */
-function mtgPlanSlide_(p, now, name) {
+function mtgPlanSlide_(p, now, name, options) {
   const S = MTG_SLIDE;
   const c = MTG_OPTIONS.colors;
   const o = MTG_OPTIONS.plan;
-  const title = MTG_TITLES.plan + (name ? '（' + name + '）' : '');
+  // options.only = ['A', 'B']：その確度だけの積み上げ（統合版（報告用）の「確定（A＋B）」のページ。p は mtgPlanRanksOnly_ で絞ったもの）。options.label は「確定（A＋B）」
+  const only = options && options.only;
+  const what = only ? options.label : '期待値';
+  const title = MTG_TITLES.plan + (name || only ? '（' + [name, only ? options.label : ''].filter(Boolean).join('・') + '）' : '');
   const first = mtgMonthOf_(p.start);
   const last = mtgMonthOf_(p.start + 11);
   const period = String(first.y).slice(2) + '/' + first.m + '〜' + String(last.y).slice(2) + '/' + last.m;
   const monthName = mtgPlanMonthName_();
-  const heading = '今年度（' + period + '）の' + monthName + '別 期待値の積み上げ（百万円）';
+  const heading = '今年度（' + period + '）の' + monthName + '別 ' + what + 'の積み上げ（百万円）';
   if (p.gap) {
     return {title, lead: '計画に対する積み上げは' + MTG_OPTIONS.gapText + '（' + p.gap + '）。', elements: [
       mtgBox_(S.x, S.top - 2, 420, 20, heading, {size: 10.5, bold: true, color: c.ink}), mtgEmptyBox_(S.x, S.top + 26, 360, 64, 'gap', p.gap)]};
   }
-  const ranks = o.ranks.concat([{key: o.otherLabel, color: o.otherColor}]);
+  const ranks = o.ranks.concat([{key: o.otherLabel, color: o.otherColor}]).filter(r => !only || only.indexOf(r.key) >= 0);
   const diff = p.total - p.plan;
   const rate = p.plan > 0 ? Math.round(p.total / p.plan * 100) : null;
   const peak = p.months.slice().sort((a, b) => b.total - a.total)[0];
@@ -6527,10 +6562,10 @@ function mtgPlanSlide_(p, now, name) {
   ];
   const asideCount = asides.reduce((sum, a) => sum + p[a.key].count, 0);
   const asideValue = asides.reduce((sum, a) => sum + p[a.key].value, 0);
-  const lead = '今年度（' + period + '）の期待値の積み上げは ' + mtgAmount_(p.total) + '百万円。計画 ' + mtgAmount_(p.plan) + '百万円に対して ' +
-    mtgSigned_(diff) + (rate == null ? '' : '（達成率 ' + rate + '%）') + '。\n' +
-    (peak && peak.total > 0 ? '最大は' + peak.m + '月の ' + mtgAmount_(peak.total) + '（積み上げの ' + share(peak.total) + '）、確度A・B は ' +
-      mtgAmount_(sure) + '（' + share(sure) + '）。' : '今年度に' + monthName + 'がある案件の期待値はなし。') +
+  const lead = '今年度（' + period + '）の' + what + 'の積み上げは ' + mtgAmount_(p.total) + '百万円。計画 ' + mtgAmount_(p.plan) + '百万円に対して ' +
+    mtgSigned_(diff) + (rate == null ? '' : '（' + (only ? '進捗率' : '達成率') + ' ' + rate + '%）') + '。\n' +
+    (peak && peak.total > 0 ? '最大は' + peak.m + '月の ' + mtgAmount_(peak.total) + '（積み上げの ' + share(peak.total) + '）' +
+      (only ? '。' : '、確度A・B は ' + mtgAmount_(sure) + '（' + share(sure) + '）。') : '今年度に' + monthName + 'がある案件の' + what + 'はなし。') +
     (asideCount ? '積み上げに含まない ' + asideCount + '件（' + mtgAmount_(asideValue) + '）は右に表示。' : '') +
     (p.missing ? '期待値が空・数値でない ' + p.missing + '件は 0 として数えた。' : '');
 
@@ -6563,9 +6598,10 @@ function mtgPlanSlide_(p, now, name) {
   const max = Math.max.apply(null, [p.total, p.plan, 1].concat(asides.map(a => p[a.key].value)));
   const scale = (axis - top) / max;
   const ypos = v => axis - v * scale;
-  // 棒の上の数：100 以上は整数に丸める（隣の棒の数と重ならないように。リード文は丸めない）
+  // 棒の上の数：100 以上は整数に丸める（隣の棒の数と重ならないように。リード文は丸めない）。金額を繰り上げるとき（amountCeil）は、
+  // 先に丸めずに繰り上げる（リード文の数と同じになるように）
   const num = (v, signed) => {
-    const r = Math.abs(v) >= 100 ? Math.round(v) : v;
+    const r = Math.abs(v) >= 100 && !MTG_OPTIONS.amountCeil ? Math.round(v) : v;
     return signed ? mtgSigned_(r) : mtgAmount_(r);
   };
   // 名前・数の箱は、文字の左右の余白（padX）の分だけ棒の幅より広く（折り返さないように）
