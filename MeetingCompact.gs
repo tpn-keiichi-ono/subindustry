@@ -32,7 +32,7 @@ function mtgCompactLabel_() {
 
 /** 変化のあった案件のページの前に入るページの数（表紙・全サブインダストリーの状況・計画進捗（見込（C）を含むページも）（・計画に対する積み上げ 2枚）） */
 function mtgCompactFrontCount_() {
-  return (MTG_OPTIONS.plan.enabled ? 5 : 3) + (MTG_OPTIONS.compact.salesPage ? 1 : 0);
+  return (MTG_OPTIONS.plan.enabled ? 5 : 3) + (MTG_OPTIONS.compact.salesPage ? 2 : 0);
 }
 
 /** fn を、金額の小数点以下を繰り上げる設定（MTG_OPTIONS.amountCeil。mtgAmount_）で作る（compact.ceilAmounts のとき。終わったら元に戻す） */
@@ -86,7 +86,8 @@ function mtgCompactFront_(summaries, meeting, final, now) {
       mtgPlanSlide_(mtgPlanRanksOnly_(merged, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure: C.measure})] : [];
     return mtgNumberSlides_(mtgCombinedFrame_(summaries, meeting, final),
       [mtgCombinedCover_(summaries, meeting, final, now, C.coverWord), mtgCompactOverviewSlide_(summaries),
-        mtgCompactOverviewSlide_(summaries, {withC: true})].concat(C.salesPage ? [mtgCompactOverviewSlide_(summaries, {sales: true})] : [], plan));
+        mtgCompactOverviewSlide_(summaries, {withC: true})].concat(C.salesPage ? [mtgCompactOverviewSlide_(summaries, {sales: true}),
+        mtgCompactOverviewSlide_(summaries, {sales: true, withC: true})] : [], plan));
   });
 }
 
@@ -140,8 +141,10 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const rate = p => (p.gap || !(p.plan > 0) ? null : sum(p, ['A', 'B']) / p.plan * 100);
   const order = p => (rate(p) == null ? -1 : rate(p));
   const planOf = s => (bySales ? s.planSales || mtgSalesPlanOf_([], s.name, new Date(), {}) : mtgCompactPlanOf_(s));
-  const items = summaries.map(s => ({s, p: planOf(s), lack: s.gaps || {}}))
-    .sort((a, b) => (order(b.p) - order(a.p)) || (sum(b.p, ['A', 'B']) - sum(a.p, ['A', 'B'])));
+  // 並び：想定売上の進捗率（A＋B）の高い順。売上のページ（bySales）も同じ並び（想定売上で決める。ページによってサブインダストリーの順が変わらないように）
+  const base = s => mtgCompactPlanOf_(s);
+  const items = summaries.map(s => ({s, p: planOf(s), base: base(s), lack: s.gaps || {}}))
+    .sort((a, b) => (order(b.base) - order(a.base)) || (sum(b.base, ['A', 'B']) - sum(a.base, ['A', 'B'])));
   const ok = items.filter(x => !x.p.gap);
   const merged = mtgMergePlans_(ok.map(x => x.p));
   const first = mtgMonthOf_(merged.start);
@@ -164,13 +167,14 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const totalRate = ok.length ? rate(merged) : null;
   const lead = '進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '（計画に届いているのは ' + ok.length + 'のうち ' + reached + '）。' +
     '案件 ' + total.active + '件・想定売上合計 ' + mtgAmount_(total.amount) + '百万円（全期間・失注除く）。\n' +
-    (bySales ? '進捗率（A＋B）の高い順。進捗率・確定・見込は ' + fy + ' の売上（前半期＋後半期。受注月によらない）。進捗率 ＝ A＋B ÷ 計画。'
+    (bySales ? '並びは最初のページと同じ。進捗率・確定・見込は ' + fy + ' の売上（前半期＋後半期。受注月によらない）。進捗率 ＝ A＋B ÷ 計画。'
       : '進捗率（A＋B）の高い順。進捗率・確定（A＋B）・見込（C）は今年度（' + period + '）の' + mtgPlanMonthName_() + 'の案件の想定売上（進捗率 ＝ A＋B ÷ 計画）。');
   // 見込（C）を含むページのリード文：確定＋見込の計画比
   const withCRate = ok.length && merged.plan > 0 ? Math.round(sum(merged, ['A', 'B', 'C']) / merged.plan * 100) : null;
   const leadC = '確定（A＋B）に見込（C）を足すと ' + mtgAmount_(sum(merged, ['A', 'B', 'C'])) + '百万円で、計画の ' + (withCRate == null ? '—' : withCRate + '%') +
     '（進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '）。\n' +
-    '見込（C）は点線の枠。並び・右の数字は前のページと同じ（進捗率（A＋B）の高い順）。';
+    (bySales ? '見込（C）は点線の枠。' + fy + ' の売上（前半期＋後半期。受注月によらない）。並び・右の数字は最初のページと同じ。'
+      : '見込（C）は点線の枠。並び・右の数字は前のページと同じ（進捗率（A＋B）の高い順）。');
   const x = S.x;
   const w = S.w;
   const y = S.top;
@@ -336,7 +340,9 @@ function mtgCompactOverviewSlide_(summaries, options) {
     });
   });
   const marked = Object.keys(total.lack).length > 0;
-  return Object.assign({title: MTG_TITLES.compactOverview + (withC ? '（見込（C）を含む）' : '') + (bySales ? '（' + fy + '売上）' : ''), lead: withC ? leadC : lead, elements: el}, marked ? {note: '※ は「' + G + '」のシートを除いた合計'} : {});
+  // タイトル：「（見込（C）を含む）」「（FY26売上）」「（FY26売上・見込（C）を含む）」
+  const suffix = [bySales ? fy + '売上' : '', withC ? '見込（C）を含む' : ''].filter(Boolean).join('・');
+  return Object.assign({title: MTG_TITLES.compactOverview + (suffix ? '（' + suffix + '）' : ''), lead: withC ? leadC : lead, elements: el}, marked ? {note: '※ は「' + G + '」のシートを除いた合計'} : {});
 }
 
 /**
