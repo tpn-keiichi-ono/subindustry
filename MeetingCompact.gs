@@ -1,5 +1,5 @@
 /**
- * 統合版（簡易版）：全サブインダストリーの資料を、数字の要点と変化のあった案件だけにまとめた資料（RX Business Meeting）。2026/11/09 から。
+ * 統合版（報告用）：全サブインダストリーの資料を、数字の要点と変化のあった案件だけにまとめた資料（RX Business Meeting）。2026/11/09 から。
  * 統合版（createBusinessMtgCombinedSummary()。目次・全サブインダストリーの状況・計画・各サブインダストリーの資料のページ）とは別の資料で、統合版は変えない。
  *
  * ページの並び：
@@ -11,18 +11,18 @@
  *   4〜 変化のあった案件：{サブインダストリー}（mtgCompactChangeSlides_。シートの順にサブインダストリーごと）：No.（資料の通し番号）・得意先／案件名・
  *      ステータス・期待値・受注月（前回▶今回）・活動状況・活動における課題。変化が無ければ「該当なし」の1ページ
  *
- * 作り方は統合版と同じ：エディタで createBusinessMtgCompactSummary() を実行し、画面（MeetingRunDialog）で会議日を選ぶ。すべての追跡シートの会議サマリを
+ * 作り方は統合版と同じ：エディタで createBusinessMtgReportingSummary() を実行し、画面（MeetingRunDialog）で会議日を選ぶ。すべての追跡シートの会議サマリを
  * 今の値で作り（読むだけ。会議日・時点コピーは記録しない）、本番として保存して会議のフォルダに格納する。インデックス（INDEX_会議資料）には書かない
  * （統合版の列は統合版のもの）。各サブインダストリーの本番の資料ができていなくても作れる。時間がかかれば区切って続ける（統合版と同じトリガー
  * continueBusinessMtgSummaries。仕事の種類 job.kind = 'compact'。mtgDeckJob_）
  */
 
-/** 統合版（簡易版）を作る（エディタから実行）。画面で会議日（と比べる時点）を選ぶ */
-function createBusinessMtgCompactSummary() {
+/** 統合版（報告用）を作る（エディタから実行）。画面で会議日（と比べる時点）を選ぶ */
+function createBusinessMtgReportingSummary() {
   mschOpenRunDialog_('compact', true);
 }
 
-/** 「統合版（簡易版）（全サブインダストリー）」（知らせの名前） */
+/** 「統合版（報告用）（全サブインダストリー）」（知らせの名前） */
 function mtgCompactLabel_() {
   return MTG_OPTIONS.compact.label + '（' + MTG_OPTIONS.combined.name + '）';
 }
@@ -32,13 +32,13 @@ function mtgCompactFrontCount_() {
   return MTG_OPTIONS.plan.enabled ? 3 : 2;
 }
 
-/** ファイル名（統合版の名前の後ろに fileSuffix。「20261113_全サブインダストリー_簡易版」） */
+/** ファイル名（統合版の名前の後ろに fileSuffix。「20261113_全サブインダストリー_報告用」） */
 function mtgCompactFileName_(meeting) {
   return mtgFileName_(MTG_OPTIONS.combined.name, meeting, true) + MTG_OPTIONS.compact.fileSuffix;
 }
 
 /**
- * 統合版（簡易版）のスライドの並び（一度に作るとき。テストと見た目の確認に使う。実際の資料は mtgCompactRun_ で区切りながら同じ並びに作る）。
+ * 統合版（報告用）のスライドの並び（一度に作るとき。テストと見た目の確認に使う。実際の資料は mtgCompactRun_ で区切りながら同じ並びに作る）。
  * summaries はシートの順。ページ番号は表紙を1枚目とした通し番号
  */
 function mtgCompactSlides_(summaries, meeting, final) {
@@ -303,11 +303,11 @@ function mtgCompactChangeSlides_(s, start) {
 
 /* ---------------- 作る（区切りながら） ---------------- */
 
-/** 統合版（簡易版）を作れるか（作れなければ {error: 理由}、作れれば {text: 確かめの文}） */
+/** 統合版（報告用）を作れるか（作れなければ {error: 理由}、作れれば {text: 確かめの文}） */
 function mtgCompactCheck_(meeting, point) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const o = MTG_OPTIONS;
-  if (!o.compact.enabled) return {error: '統合版（簡易版）を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.compact.enabled）。'};
+  if (!o.compact.enabled) return {error: '統合版（報告用）を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.compact.enabled）。'};
   const pending = mtgJobLoad_();
   if (pending) {
     return {error: (mtgDeckJob_(pending) ? mtgDeckJob_(pending).label : 'サブインダストリーの資料') + 'を作っている途中です（自動で続けています）。' +
@@ -322,7 +322,7 @@ function mtgCompactCheck_(meeting, point) {
 }
 
 /**
- * 統合版（簡易版）を作り始める（画面の「作成する」から）。時間がかかれば区切って続ける（mtgCompactRun_。続きは continueBusinessMtgSummaries）。
+ * 統合版（報告用）を作り始める（画面の「作成する」から）。時間がかかれば区切って続ける（mtgCompactRun_。続きは continueBusinessMtgSummaries）。
  * 戻り値は終わり（区切ったとき）の知らせ
  */
 function mtgCompactStart_(meeting, point, overwrite) {
@@ -349,7 +349,7 @@ function mtgCompactStart_(meeting, point, overwrite) {
 }
 
 /**
- * 統合版（簡易版）を作る仕事を、時間の許す限り進める（統合版の mtgCombinedRun_ と同じ進め方）。
+ * 統合版（報告用）を作る仕事を、時間の許す限り進める（統合版の mtgCombinedRun_ と同じ進め方）。
  * job = {kind: 'compact', final: true, meeting, now, names, point, items: [{name, start, pages, lite: mtgCombinedLite_}], page: 次のページの前のページの数,
  *  no: 載せた変化のあった案件の数（通し番号）, deck, result, folderUrl, sourceError, overwrite}。
  * 順に、各サブインダストリーの変化のあった案件のページ（sheetsPerRead シートずつ読む）→ 前のページ（表紙・状況と計画進捗・計画）を足して仕上げ（PDF）→
@@ -409,7 +409,7 @@ function mtgCompactRun_(ss, job, started) {
   return true;
 }
 
-/** 統合版（簡易版）の仕事の、終わり（done）・区切ったときの知らせ */
+/** 統合版（報告用）の仕事の、終わり（done）・区切ったときの知らせ */
 function mtgCompactMessage_(job, done) {
   const label = mtgCompactLabel_();
   if (!done) {

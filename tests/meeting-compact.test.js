@@ -6,7 +6,7 @@ const {withRunDialog} = require('./lib/meeting-run');
 const createGas = options => withRunDialog(createMockGas(options));
 
 /*
- * 統合版（簡易版。MeetingCompact.gs）：表紙 → 全サブインダストリーの状況・計画進捗 → 計画に対する積み上げ（全体）→ 変化のあった案件（サブインダストリーごと）
+ * 統合版（報告用。MeetingCompact.gs）：表紙 → 全サブインダストリーの状況・計画進捗 → 計画に対する積み上げ（全体）→ 変化のあった案件（サブインダストリーごと）
  * 追跡シート（2行目が見出し）：D 得意先 / E 案件名 / F 案件ステータス / G 想定売上 / H 期待値 / I 受注月 / J 活動状況 / K 課題 / L 責任者 / M 売上開始月
  * （テストでは計画に対する積み上げを売上開始月で数える設定。tests/lib/gas-mock.js）
  */
@@ -85,7 +85,7 @@ const tableOf = slide => slide.elements.find(e => e.type === 'table');
 const leadOf = slide => slide.elements.filter(e => e.role === 'lead').map(e => e.text).join('');
 const cellTexts = table => table.rows.map(r => r.cells.map(c => String(c.text)));
 
-test('統合版（簡易版）のスライド：表紙（統合版と同じひな形）→ 状況・計画進捗 → 計画に対する積み上げ → 変化のあった案件（サブインダストリーごと）。目次・各資料のページは無い', () => {
+test('統合版（報告用）のスライド：表紙（統合版と同じひな形）→ 状況・計画進捗 → 計画に対する積み上げ → 変化のあった案件（サブインダストリーごと）。目次・各資料のページは無い', () => {
   const {gas, g} = setup();
   const T = gas.get('MTG_TITLES');
   const slides = plain(g.mtgCompactSlides_([summarize(g, '新FMT'), summarize(g, '新FMT2')], '2026/11/13', true));
@@ -221,7 +221,7 @@ test('計画線の透明度は Slides API の線の色に入る（alpha）。透
   assert.deepStrictEqual(props.map(p => p.alpha), [0.6, undefined]);
 });
 
-test('createBusinessMtgCompactSummary：会議日を選んで作り、ファイル名に「_簡易版」。会議のフォルダに格納し、インデックスには書かない。統合版とは別の資料', () => {
+test('createBusinessMtgReportingSummary：会議日を選んで作り、ファイル名に「_報告用」。会議のフォルダに格納し、インデックスには書かない。統合版とは別の資料', () => {
   const {gas, g, o} = setup();
   const meeting = g.mtgParseDate_('11/13', new Date());
   const parent = 'SubIndustryFolder0001';
@@ -230,26 +230,26 @@ test('createBusinessMtgCompactSummary：会議日を選んで作り、ファイ�
   o.meetingFolder = 'https://drive.google.com/drive/folders/' + parent;
   gas.confirmAnswer = 'YES';
   gas.promptAnswers = ['11/13'];
-  g.createBusinessMtgCompactSummary();
+  g.createBusinessMtgReportingSummary();
   const check = gas.alerts[gas.alerts.length - 2].message;
-  assert.match(check, /^「全サブインダストリー」の統合版（簡易版）（2サブインダストリーの状況・計画進捗と、変化のあった案件）を、今のシートの値で作ります。/);
+  assert.match(check, /^「全サブインダストリー」の統合版（報告用）（2サブインダストリーの状況・計画進捗と、変化のあった案件）を、今のシートの値で作ります。/);
   const done = gas.alerts[gas.alerts.length - 1].message;
-  assert.match(done, /^「統合版（簡易版）（全サブインダストリー）」：\d{8}_全サブインダストリー_RX Business Meeting用資料_簡易版\.pdf（5ページ）/);
+  assert.match(done, /^「統合版（報告用）（全サブインダストリー）」：\d{8}_全サブインダストリー_RX Business Meeting用資料_報告用\.pdf（5ページ）/);
   assert.match(done, /会議のフォルダ「\d{6}_第6回会議」に格納しました/);
-  assert.ok(gas.driveFiles.some(f => f.folder === 'meeting-folder-0' && /_簡易版\.pdf$/.test(f.name)));
+  assert.ok(gas.driveFiles.some(f => f.folder === 'meeting-folder-0' && /_報告用\.pdf$/.test(f.name)));
   const deck = gas.decks[gas.decks.length - 1];
   assert.deepStrictEqual(deck.slides.map(sl => sl.objectId), ['mtg_p1', 'mtg_p2', 'mtg_p3', 'mtg_p4', 'mtg_p5'], '前のページは最後に足して、番号の順に並べる');
   const index = gas.ss.getSheetByName(o.index.sheet);
-  assert.ok(!index || !/_簡易版/.test(JSON.stringify(index.getDataRange().getDisplayValues())), 'インデックスには書かない');
+  assert.ok(!index || !/_報告用/.test(JSON.stringify(index.getDataRange().getDisplayValues())), 'インデックスには書かない');
   assert.strictEqual(g.PropertiesService.getScriptProperties().getProperty('MTG_JOB'), null);
 });
 
-test('createBusinessMtgCompactSummary：時間がかかれば区切り、続き（continueBusinessMtgSummaries）で残りと仕上げを作る。できあがりは区切らずに作ったときと同じ', () => {
+test('createBusinessMtgReportingSummary：時間がかかれば区切り、続き（continueBusinessMtgSummaries）で残りと仕上げを作る。できあがりは区切らずに作ったときと同じ', () => {
   const once = (() => {
     const {gas, g} = setup();
     gas.confirmAnswer = 'YES';
     gas.promptAnswers = ['11/13'];
-    g.createBusinessMtgCompactSummary();
+    g.createBusinessMtgReportingSummary();
     const deck = gas.decks[gas.decks.length - 1];
     return {slides: deck.slides.map(sl => sl.objectId), texts: deck.requests.filter(r => r.insertText).map(r => r.insertText.text)
       .filter(t => !/\d{1,2}:\d{2}/.test(t)).sort()};
@@ -263,16 +263,16 @@ test('createBusinessMtgCompactSummary：時間がかかれば区切り、続き�
   o.run.limitMs = 150000;
   gas.confirmAnswer = 'YES';
   gas.promptAnswers = ['11/13'];
-  g.createBusinessMtgCompactSummary();
+  g.createBusinessMtgReportingSummary();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /^時間がかかるため、ここで区切りました（Apps Script の1回の実行は6分まで）。残りは約1分後に自動で続けます：変化のあった案件のページ 1件（新FMT2）・/);
   const saved = JSON.parse(sprops.getProperty('MTG_JOB'));
   assert.deepStrictEqual([saved.kind, saved.page, saved.no], ['compact', 4, 2]);
   // 途中：ほかの資料・統合版はすぐには作らない。結果の画面に途中と出す
   g.showBusinessMtgSummariesResult();
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版（簡易版）（全サブインダストリー）を作っている途中です（会議日 \d{4}\/11\/13。1\/2サブインダストリーのページ）。/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版（報告用）（全サブインダストリー）を作っている途中です（会議日 \d{4}\/11\/13。1\/2サブインダストリーのページ）。/);
   gas.promptAnswers = ['11/13'];
-  g.createBusinessMtgCompactSummary();
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版（簡易版）（全サブインダストリー）を作っている途中です（自動で続けています）。/);
+  g.createBusinessMtgReportingSummary();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版（報告用）（全サブインダストリー）を作っている途中です（自動で続けています）。/);
   o.run.limitMs = 400000;
   clock.t = 0;
   g.continueBusinessMtgSummaries();
@@ -282,10 +282,10 @@ test('createBusinessMtgCompactSummary：時間がかかれば区切り、続き�
   assert.deepStrictEqual(deck.requests.filter(r => r.insertText).map(r => r.insertText.text).filter(t => !/\d{1,2}:\d{2}/.test(t)).sort(), once.texts,
     '区切らずに作ったときと同じ文字');
   g.showBusinessMtgSummariesResult();
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /「統合版（簡易版）（全サブインダストリー）」：.*_簡易版\.pdf（5ページ）/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「統合版（報告用）（全サブインダストリー）」：.*_報告用\.pdf（5ページ）/);
 });
 
-test('統合版（簡易版）：作っている途中で止まったら、作りかけの資料をゴミ箱に移し、createBusinessMtgCompactSummary() での作り直しを案内する', () => {
+test('統合版（報告用）：作っている途中で止まったら、作りかけの資料をゴミ箱に移し、createBusinessMtgReportingSummary() での作り直しを案内する', () => {
   const {gas, g, o} = setup();
   const clock = {t: 0};
   g.mtgNow_ = () => clock.t;
@@ -294,7 +294,7 @@ test('統合版（簡易版）：作っている途中で止まったら、作�
   o.run.limitMs = 150000;
   gas.confirmAnswer = 'YES';
   gas.promptAnswers = ['11/13'];
-  g.createBusinessMtgCompactSummary();
+  g.createBusinessMtgReportingSummary();
   const id = gas.decks[gas.decks.length - 1].id;
   g.mtgDeckAdd_ = () => { throw new Error('Slides API の失敗'); };
   clock.t = 0;
@@ -303,5 +303,5 @@ test('統合版（簡易版）：作っている途中で止まったら、作�
   assert.ok(gas.trashed.indexOf(id) >= 0);
   g.showBusinessMtgSummariesResult();
   assert.match(gas.alerts[gas.alerts.length - 1].message,
-    /統合版（簡易版）（全サブインダストリー）を作る途中で止まりました：Slides API の失敗\ncreateBusinessMtgCompactSummary\(\) で、作り直してください。/);
+    /統合版（報告用）（全サブインダストリー）を作る途中で止まりました：Slides API の失敗\ncreateBusinessMtgReportingSummary\(\) で、作り直してください。/);
 });

@@ -1,7 +1,7 @@
 /**
  * 会議資料を作る画面（MeetingRunDialog）の代わり（テスト用）。
  * 資料を作る関数（createBusinessMtgSummaries など）は画面を開くだけなので、テストでは、画面での操作を gas.promptAnswers の答えでまねる：
- *   1つ目の答え：作るシートの番号（空欄なら、画面で初めに選ばれているシート。「1,3」のように複数も。統合版・統合版（簡易版）には無い）
+ *   1つ目の答え：作るシートの番号（空欄なら、画面で初めに選ばれているシート。「1,3」のように複数も。統合版・統合版（報告用）には無い）
  *   2つ目の答え：会議日（「10/23」など。画面のプルダウンで選んだ会議日、または「一覧に無い日を入力」）
  * 比べる時点は gas.runPoint（画面のプルダウンの key。関数なら画面の内容から選ぶ。空なら前回の会議）。
  * 作っている途中の仕事があれば、画面の知らせを gas.alerts に残し、gas.confirmAnswer が YES なら「やめて新しく作る」を選んだとみなす。
@@ -16,7 +16,7 @@ const RUNS = {
   createBusinessMtgReportSummaries: ['report', true],
   previewBusinessMtgReportSummaries: ['report', false],
   createBusinessMtgCombinedSummary: ['combined', true],
-  createBusinessMtgCompactSummary: ['compact', true],
+  createBusinessMtgReportingSummary: ['compact', true],
   createServiceMtgSummaries: ['service', true],
   previewServiceMtgSummaries: ['service', false]
 };

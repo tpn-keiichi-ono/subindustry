@@ -22,7 +22,7 @@
 | タスク管理 | `TaskManagement.gs` | 別のシート「タスク管理」で、サービス案ごとの検討の進捗をタスクで管理する |
 | 会議サマリ（RX Business Meeting） | `MeetingSummary.gs` | RX Business Meeting（パイプライン会議）の事前資料（16:9 の Google スライドと PDF）を、サブインダストリー（追跡シート）ごとに作ってドライブに保存する（サマリー・計画に対する積み上げ・パイプラインの変化・RXシナリオのポートフォリオ・前回から変化のある案件・期待値上位案件の状況・課題、扉、Appendix。書くのは事実だけ）。サブインダストリーごとの Google チャットに、管理フォーマットの更新のお願いと事前資料のご案内を送る（webhook。`remindBusinessMtgUpdate()`・`notifySubBusinessMtgSummaries()`） |
 | 会議資料の中身を読む | `MeetingRead.gs` | 会議サマリの中身（追跡シート・変更の記録など）を Sheets API でまとめて読み、SpreadsheetApp と同じ使い方ができる入れ物にする（大勢が編集している間も待たされにくい） |
-| 統合版（簡易版） | `MeetingCompact.gs` | 全サブインダストリーの状況・計画進捗（確定（A＋B）の横棒と計画線）・計画に対する積み上げ・サブインダストリーごとの変化のあった案件だけの資料。統合版とは別の関数で、作る仕事（区切って続ける）は統合版と共通 |
+| 統合版（報告用） | `MeetingCompact.gs` | 全サブインダストリーの状況・計画進捗（確定（A＋B）の横棒と計画線）・計画に対する積み上げ・サブインダストリーごとの変化のあった案件だけの資料。統合版とは別の関数で、作る仕事（区切って続ける）は統合版と共通 |
 | 会議サマリの報告案件版 | `MeetingReport.gs` | 会議サマリの数字のページのあとに、報告フラグにチェックを入れた案件を1件1枚で載せる版（Appendix なし）。作る仕事は `MeetingSummary.gs` と共通 |
 | 会議の日程と資料を作る画面 | `MeetingSchedule.gs`・`MeetingRunDialog.html` | Google カレンダーから RX Business Meeting・RX Service Meeting の日程を読み、`INDEX_会議資料` に会議日と会議名の行を先に出す。資料を作る関数は画面を開き、その一覧から会議日程をプルダウンで選んで作る |
 | RX Service Meeting の事前資料 | `ServiceMeeting.gs` | RX Service Meeting（サービス改善）の事前資料（16:9 の Google スライドと PDF。紫）を、リクエスト・タスク管理のシートから、サブインダストリーごと（と全サブインダストリー）に作る。スライドの部品・ひな形・保存・インデックスは会議サマリと共通 |
@@ -874,9 +874,9 @@ Appendix のリード文は件数だけです（区分の決め方・並びの�
 ② は「…滞留している案件は N件（想定売上合計 N百万円）。」と、補足に「うち前回以降の更新なし N件。」。
 Appendix の番号は ①〜③（A〜C ではない）。前の版にあった ④ ステータスの分類・⑤ 用語の定義は、不要とのことで置きません。
 
-#### 統合版（簡易版）（`MeetingCompact.gs`。2026/11/09）
+#### 統合版（報告用）（`MeetingCompact.gs`。2026/11/09）
 
-統合版の「別バージョン」として、数字の要点と変化のあった案件だけの資料を、別の関数 `createBusinessMtgCompactSummary()` で作ります（統合版の関数・ページは変えない）。
+統合版の「別バージョン」として、数字の要点と変化のあった案件だけの資料を、別の関数 `createBusinessMtgReportingSummary()` で作ります（統合版の関数・ページは変えない）。
 
 - 並び（`mtgCompactSlides_`）：表紙（統合版と同じ。`mtgCombinedCover_`）→ 全サブインダストリーの状況・計画進捗（`mtgCompactOverviewSlide_`）→
   計画に対する積み上げ（全体。`mtgPlanSlide_(mtgMergePlans_(…))`。`plan.enabled` のとき）→ 変化のあった案件：{サブインダストリー}（`mtgCompactChangeSlides_`。`DIFF_RULES` の順）。
@@ -898,7 +898,7 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
   順に、サブインダストリーごとに変化のあった案件のページを足し（`job.no` に通し番号の続き）、最後に前のページ（表紙・状況と計画進捗・計画。`mtgCompactFront_`。
   保存した中身の一部 `mtgCombinedLite_` から作る）を先頭に足して PDF にし、会議のフォルダに格納する（`mtgStoreToMeetingFolder_`）。インデックスには書かない。
   実行の条件は統合版と違い、各サブインダストリーの本番の資料（PDF）を求めない（読むだけで、統合版のように個別の資料と合わせる必要が無いため）。
-- 画面（`MeetingRunDialog`）は kind `'compact'`（統合版と同じく、シートを選ばない）。ファイル名は `mtgFileName_(combined.name, 会議日, true)` の後ろに `compact.fileSuffix`（「_簡易版」）。
+- 画面（`MeetingRunDialog`）は kind `'compact'`（統合版と同じく、シートを選ばない）。ファイル名は `mtgFileName_(combined.name, 会議日, true)` の後ろに `compact.fileSuffix`（「_報告用」）。
 
 #### 報告案件版（`MeetingReport.gs`。2026/11/06）
 

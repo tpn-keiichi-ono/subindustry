@@ -7,7 +7,7 @@
  *   RX Business Meeting・RX Service Meeting の予定（予定の名前に MSCH_OPTIONS.titles の言葉を含むもの）を探し、会議資料のインデックス
  *   （MTG_OPTIONS.index.sheet）に、会議日と会議名の行を先に足す（ある行はそのまま。資料ができたら、その行のセルに書く）。
  * - 資料を作る関数（createBusinessMtgSummaries()・previewBusinessMtgSummaries()・createBusinessMtgCombinedSummary()・
- *   createBusinessMtgCompactSummary()・createServiceMtgSummaries()・previewServiceMtgSummaries()）は、画面（MeetingRunDialog）を開く。画面で、インデックスにある会議日程を
+ *   createBusinessMtgReportingSummary()・createServiceMtgSummaries()・previewServiceMtgSummaries()）は、画面（MeetingRunDialog）を開く。画面で、インデックスにある会議日程を
  *   プルダウンで選び、作るシート（サブインダストリー）を選んで、確かめてから作る。前回の会議からの変化を出す（前回の資料の記録が無ければ、
  *   一覧の前の会議日から。RX Business Meeting）。比べる時点（保存先のフォルダの時点コピー・会議日・日時。RX Service Meeting は記録した会議）も選べる。
  *   画面の「カレンダーから読み込む」でも importMeetingSchedules() と同じことをする。
@@ -127,7 +127,7 @@ function mschImport_() {
 
 /**
  * 会議資料を作る画面の種類（kind）：'business' 会議サマリ・'report' 会議サマリの報告案件版（MeetingReport.gs。画面と作り方は business と同じ）・
- * 'combined' 統合版・'compact' 統合版（簡易版。MeetingCompact.gs。画面と作り方は combined と同じ）・'service' RX Service Meeting。それ以外は止める
+ * 'combined' 統合版・'compact' 統合版（報告用。MeetingCompact.gs。画面と作り方は combined と同じ）・'service' RX Service Meeting。それ以外は止める
  */
 function mschCheckKind_(kind) {
   if (['business', 'report', 'combined', 'compact', 'service'].indexOf(kind) < 0) throw new Error('資料の種類「' + kind + '」が分かりません。');

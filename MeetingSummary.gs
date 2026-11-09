@@ -136,7 +136,7 @@ const MTG_OPTIONS = {
     name: '全サブインダストリー',     // 表紙の見出し・ファイル名の {name}・インデックスの列の見出し
     coverTone: 'cover'                // ひな形が無いときの表紙の色（'cover' 緑・'combined' 紫。MTG_COVER）
   },
-  // 統合版（簡易版。MeetingCompact.gs。エディタで createBusinessMtgCompactSummary() を実行して作る。2026/11/09 から）：表紙（統合版と同じひな形）→
+  // 統合版（報告用。MeetingCompact.gs。エディタで createBusinessMtgReportingSummary() を実行して作る。2026/11/09 から）：表紙（統合版と同じひな形）→
   // 全サブインダストリーの状況・計画進捗（確定（A＋B）の横棒と計画線・計画・進捗率（A＋B）・確定（A＋B）/件・見込（C）/件・期待値合計・前回比・案件数・
   // 変化のある案件）→ 計画に対する積み上げ（全体。統合版と同じ）→ 変化のあった案件（サブインダストリーごと）。目次と各サブインダストリーの資料のページは入れない。
   //   fileSuffix：ファイル名（統合版と同じ名前）の後ろに付ける。planScale：いちばん大きい計画の 何倍を横棒の幅いっぱいにするか（1.4 なら計画線は幅の 7割ほど。
@@ -144,8 +144,8 @@ const MTG_OPTIONS = {
   //   この分だけ上で次のページに分ける（表の行が見積もりより伸びても、出典の行にかからないように）
   compact: {
     enabled: true,
-    label: '統合版（簡易版）',
-    fileSuffix: '_簡易版',
+    label: '統合版（報告用）',
+    fileSuffix: '_報告用',
     planScale: 1.4,
     planLine: {color: '#808080', alpha: 0.6, weight: 1.25},
     tableMargin: 12,
@@ -484,7 +484,7 @@ const MTG_TITLES = {
   scenarioMap: 'RXシナリオのポートフォリオ図',
   contents: '目次',                         // 統合版の2枚目
   overview: '全サブインダストリーの状況',   // 統合版の3枚目
-  compactOverview: '全サブインダストリーの状況・計画進捗',   // 統合版（簡易版）の2枚目（MeetingCompact.gs）
+  compactOverview: '全サブインダストリーの状況・計画進捗',   // 統合版（報告用）の2枚目（MeetingCompact.gs）
   appendix: 'Appendix',
   changes: 'Appendix ①　前回から変化のある案件（一覧）',
   stalled: 'Appendix ②　停滞案件（一覧）',
@@ -869,7 +869,7 @@ function mtgRunStart_(final, meeting, names, cancelJob, point, overwrite, varian
   const pending = mtgJobLoad_();
   if (pending) {
     if (!cancelJob) throw new Error(mtgJobPendingText_());
-    if (mtgDeckJob_(pending)) mtgDeckDiscard_(pending.deck);   // 作りかけの統合版（簡易版も）はゴミ箱へ
+    if (mtgDeckJob_(pending)) mtgDeckDiscard_(pending.deck);   // 作りかけの統合版（報告用も）はゴミ箱へ
     mtgJobClear_();
     mtgJobDeleteTriggers_();
   }
@@ -1190,7 +1190,7 @@ function continueBusinessMtgSummaries() {
   mtgJobDeleteTriggers_();
   const job = mtgJobLoad_();
   if (!job) return;
-  // 統合版・統合版（簡易版）は、1つの資料にページを足していく仕事（mtgDeckJob_。作り直しの関数・続きの関数がそれぞれにある）
+  // 統合版・統合版（報告用）は、1つの資料にページを足していく仕事（mtgDeckJob_。作り直しの関数・続きの関数がそれぞれにある）
   const deckJob = mtgDeckJob_(job);
   const combined = !!deckJob;
   // 前の実行が終わらずに止められた（メモリ不足・6分の上限など。保存した進み具合が「実行中」のまま）：同じところで maxCrashes 回までは続きから
@@ -1293,7 +1293,7 @@ function mtgJobPendingText_() {
   if (!job) return '';
   const at = Utilities.formatDate(new Date(job.savedAt || job.now), Session.getScriptTimeZone(), 'M/d HH:mm');
   if (mtgDeckJob_(job)) {
-    // 統合版は「統合版（全サブインダストリー。会議日 …」、統合版（簡易版）は「統合版（簡易版）（全サブインダストリー）（会議日 …」
+    // 統合版は「統合版（全サブインダストリー。会議日 …」、統合版（報告用）は「統合版（報告用）（全サブインダストリー）（会議日 …」
     const what = job.kind === 'combined' ? '統合版（' + MTG_OPTIONS.combined.name + '。' : mtgDeckJob_(job).label + '（';
     return '前に始めた' + what + '会議日 ' + job.meeting + '。' + job.items.length + '/' + job.names.length + 'サブインダストリーのページ。' +
       at + ' に区切り）を、自動で続けている途中です。やめて新しく作るときは「やめて新しく作る」にチェックを入れてください' +
@@ -2470,7 +2470,7 @@ function mtgCombinedRecover_(job, frontCount) {
   if (!state) return true;
   if (state.finishing) return false;
   try {
-    const front = frontCount == null ? mtgCombinedFrontCount_() : frontCount;   // 前のページの数（統合版（簡易版）は mtgCompactFrontCount_）
+    const front = frontCount == null ? mtgCombinedFrontCount_() : frontCount;   // 前のページの数（統合版（報告用）は mtgCompactFrontCount_）
     const keep = new Set();
     for (let i = front; i < job.page; i++) keep.add((state.dups.indexOf(i) >= 0 ? 'mtg_t' : 'mtg_p') + (i + 1));
     const extra = (Slides.Presentations.get(state.id, {fields: MTG_SLIDES_FIELDS.count}).slides || []).map(sl => sl.objectId)
@@ -2600,7 +2600,7 @@ function mtgCombinedPlain_(c) {
 }
 
 /**
- * 1つの資料にページを足していく仕事（統合版・統合版（簡易版））なら、その仕事の名前・作り直す関数・続きの関数・知らせ・前のページの数。ほかの仕事なら null
+ * 1つの資料にページを足していく仕事（統合版・統合版（報告用））なら、その仕事の名前・作り直す関数・続きの関数・知らせ・前のページの数。ほかの仕事なら null
  * （continueBusinessMtgSummaries・showBusinessMtgSummariesResult などが、仕事の種類（job.kind）で使い分ける）
  */
 function mtgDeckJob_(job) {
@@ -2610,7 +2610,7 @@ function mtgDeckJob_(job) {
       message: mtgCombinedMessage_, front: mtgCombinedFrontCount_};
   }
   if (job.kind === 'compact') {
-    return {label: mtgCompactLabel_(), again: 'createBusinessMtgCompactSummary()', run: mtgCompactRun_, message: mtgCompactMessage_,
+    return {label: mtgCompactLabel_(), again: 'createBusinessMtgReportingSummary()', run: mtgCompactRun_, message: mtgCompactMessage_,
       front: mtgCompactFrontCount_};
   }
   return null;
@@ -4751,7 +4751,7 @@ function mtgCombinedFront_(sections, meeting, final, now) {
 
 /**
  * 統合版の表紙（ひな形の統合版の表紙（緑）。見出しは全サブインダストリー、その下に会議の名前と「事前資料」・会議日。下に収録したサブインダストリーと出典）。
- * 統合版（簡易版。MeetingCompact.gs）も同じ表紙
+ * 統合版（報告用。MeetingCompact.gs）も同じ表紙
  */
 function mtgCombinedCover_(summaries, meeting, final, now) {
   const o = MTG_OPTIONS;
@@ -4772,7 +4772,7 @@ function mtgCombinedCover_(summaries, meeting, final, now) {
   };
 }
 
-/** 統合版のいちばん下の行（どの会議日の資料か。試作は先頭に【試作】）{source}。統合版（簡易版）も同じ */
+/** 統合版のいちばん下の行（どの会議日の資料か。試作は先頭に【試作】）{source}。統合版（報告用）も同じ */
 function mtgCombinedFrame_(summaries, meeting, final) {
   const dummy = summaries.some(s => s.dummy);
   return {source: (final ? '' : '【試作】') + (dummy ? '【ダミーデータを含む】' : '') + MTG_OPTIONS.combined.name + '（' + mtgShortDate_(meeting) +
@@ -7958,7 +7958,7 @@ function mtgSlideRequests_(slide, pageId, index, options) {
         elementProperties.size.height = pt(Math.max(height, 0.01));
       }
       requests.push({createLine: {objectId: id, lineCategory: 'STRAIGHT', elementProperties}});
-      // alpha があれば線の色に透明度（1 が不透明。統合版（簡易版）の計画線）
+      // alpha があれば線の色に透明度（1 が不透明。統合版（報告用）の計画線）
       const lineFill = {solidFill: Object.assign({color: {rgbColor: mtgRgb_(el.color)}}, el.alpha != null ? {alpha: el.alpha} : {})};
       const lineProperties = {lineFill, weight: pt(el.weight || 0.75), dashStyle: el.dash ? 'DASH' : 'SOLID'};
       if (el.arrow) lineProperties.endArrow = 'FILL_ARROW';
