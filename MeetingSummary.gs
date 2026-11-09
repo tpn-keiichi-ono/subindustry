@@ -154,6 +154,8 @@ const MTG_OPTIONS = {
     coverWord: '報告資料',          // 表紙の見出しの下（統合版・各資料は「事前資料」）
     ceilAmounts: true,              // 金額は小数点以下を繰り上げた整数で出す（12.1 → 13。合計も繰り上げるので、行を足した数と合わないことがある）
     sureRanks: ['A', 'B'],          // 確定の確度（計画に対する積み上げの「確定（A＋B）」のページ）
+    // 見込（C）を含むページの、見込の棒：C の色の薄い地（alpha）に、細かい点線（DOT）の枠（line）。確定の棒とは gap だけあける（枠が B の端に重ならないように）
+    prospect: {alpha: 0.3, line: '#548235', lineWeight: 1, dashStyle: 'DOT', gap: 1.5},
     sureLabel: '確定（A＋B）'
   },
   // Apps Script の1回の実行は6分まで（入力・確かめの画面を出している時間も含む）。作り始めてから limitMs を過ぎそうなら、そこで区切り、
@@ -7996,7 +7998,8 @@ function mtgSlideRequests_(slide, pageId, index, options) {
       requests.push({createLine: {objectId: id, lineCategory: 'STRAIGHT', elementProperties}});
       // alpha があれば線の色に透明度（1 が不透明。統合版（報告用）の計画線）
       const lineFill = {solidFill: Object.assign({color: {rgbColor: mtgRgb_(el.color)}}, el.alpha != null ? {alpha: el.alpha} : {})};
-      const lineProperties = {lineFill, weight: pt(el.weight || 0.75), dashStyle: el.dash ? 'DASH' : 'SOLID'};
+      // dashStyle があればその線の種類（'DOT' 細かい点線など）。無ければ dash で点線（'DASH'）
+      const lineProperties = {lineFill, weight: pt(el.weight || 0.75), dashStyle: el.dashStyle || (el.dash ? 'DASH' : 'SOLID')};
       if (el.arrow) lineProperties.endArrow = 'FILL_ARROW';
       requests.push({updateLineProperties: {objectId: id, lineProperties, fields: 'lineFill,weight,dashStyle' + (el.arrow ? ',endArrow' : '')}});
       return;
@@ -8005,7 +8008,8 @@ function mtgSlideRequests_(slide, pageId, index, options) {
     requests.push({updateShapeProperties: {objectId: id, shapeProperties: {
       shapeBackgroundFill: fill(el.fill, el.alpha),
       outline: el.line
-        ? {outlineFill: {solidFill: {color: {rgbColor: mtgRgb_(el.line)}}}, weight: pt(el.lineWeight || 2.25), dashStyle: el.dash ? 'DASH' : 'SOLID'}
+        ? {outlineFill: {solidFill: {color: {rgbColor: mtgRgb_(el.line)}}}, weight: pt(el.lineWeight || 2.25),
+          dashStyle: el.dashStyle || (el.dash ? 'DASH' : 'SOLID')}
         : {propertyState: 'NOT_RENDERED'},
       contentAlignment: el.valign || 'MIDDLE'
     }, fields: 'shapeBackgroundFill,outline,contentAlignment'}});

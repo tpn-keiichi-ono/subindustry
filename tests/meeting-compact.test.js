@@ -111,7 +111,7 @@ test('変化のあった案件：サブインダストリーごとのページ�
   const slides = plain(g.mtgCompactSlides_([s1, s2], '2026/11/13', true));
   const t1 = tableOf(slides[5]);
   const head = cellTexts(t1)[0];
-  assert.deepStrictEqual(head, ['No.', '得意先／案件名', 'ステータス\n前回▶今回', '期待値\n前回▶今回', '受注月\n前回▶今回', '活動状況（最新）', '活動における課題']);
+  assert.deepStrictEqual(head, ['No', '得意先／案件名', 'ステータス\n前回▶今回', '期待値\n前回▶今回', '受注月\n前回▶今回', '活動状況（最新）', '活動における課題']);
   const rows1 = cellTexts(t1).slice(1);
   assert.deepStrictEqual(rows1.map(r => r[0]), ['1', '2'], '新FMT は 1 から');
   assert.deepStrictEqual(rows1.map(r => r[1].split('\n')[0]), ['C社', 'D社'], '期待値の大きい順（28・4）');
@@ -132,7 +132,7 @@ test('変化のあった案件：サブインダストリーごとのページ�
   assert.match(leadOf(empty), /変化のある案件なし/);
 });
 
-test('変化のあった案件：行が入らなければ「（続き）」のページに分ける。表は出典の行の上の区切り線より tableMargin 上までに収める', () => {
+test('変化のあった案件：行が入らなければ次のページに分け、タイトルに「（1/2ページ）」。表は出典の行の上の区切り線より tableMargin 上までに収める', () => {
   const {gas, g} = setup();
   const S = gas.get('MTG_SLIDE');
   const o = gas.get('MTG_OPTIONS');
@@ -143,12 +143,12 @@ test('変化のあった案件：行が入らなければ「（続き）」の�
   const part = plain(g.mtgCompactChangeSlides_(s, 10));
   assert.ok(part.slides.length >= 2, '続きのページ');
   assert.strictEqual(part.count, 4);
-  assert.deepStrictEqual(part.slides.map(sl => sl.title), ['変化のあった案件：新FMT'].concat(part.slides.slice(1).map(() => '変化のあった案件：新FMT（続き）')));
+  assert.deepStrictEqual(part.slides.map(sl => sl.title), part.slides.map((_, n) => '変化のあった案件：新FMT（' + (n + 1) + '/' + part.slides.length + 'ページ）'));
   part.slides.forEach(sl => {
     const t = tableOf(sl);
     const bottom = t.y + t.rows.reduce((h, r) => h + r.h, 0);
     assert.ok(bottom <= S.bottom - o.compact.tableMargin + 0.01, '表の下端 ' + bottom + ' が出典の行にかからない');
-    assert.strictEqual(cellTexts(t)[0][0], 'No.', '各ページに見出しの行');
+    assert.strictEqual(cellTexts(t)[0][0], 'No', '各ページに見出しの行');
   });
   const numbers = [].concat.apply([], part.slides.map(sl => cellTexts(tableOf(sl)).slice(1).map(r => r[0])));
   assert.deepStrictEqual(numbers, ['11', '12', '13', '14'], '前のサブインダストリーの続きの番号から');
@@ -370,7 +370,7 @@ test('変化のあった案件は、サブインダストリーの中で期待�
   assert.match(part.slides[0].lead, /期待値の大きい順/);
 });
 
-test('状況・計画進捗の次のページ（見込（C）を含む）：棒の確定（A・B）の右に、見込（C）を白地に点線の枠で足す。並び・右の数字は前のページと同じ', () => {
+test('状況・計画進捗の次のページ（見込（C）を含む）：棒の確定（A・B）の右に、見込（C）を薄い地と点線の枠で足す。並び・右の数字は前のページと同じ', () => {
   const {gas, g} = setup();
   const o = gas.get('MTG_OPTIONS');
   const s1 = summarize(g, '新FMT');
@@ -383,10 +383,35 @@ test('状況・計画進捗の次のページ（見込（C）を含む）：棒�
   const names = sl => sl.elements.filter(e => e.role === 'compact-name').map(e => e.text);
   assert.deepStrictEqual(names(withC), names(base), '並びは同じ');
   const cColor = o.plan.ranks.find(r => r.key === 'C').color;
-  const dashed = withC.elements.filter(e => e.role === 'compact-bar' && e.dash);
+  const dashed = withC.elements.filter(e => e.role === 'compact-bar' && e.dashStyle);
   assert.strictEqual(dashed.length, 1, '新FMT の見込（C）D社 4');
-  assert.deepStrictEqual([dashed[0].fill, dashed[0].line], [o.colors.white, cColor]);
-  assert.ok(!base.elements.some(e => e.role === 'compact-bar' && e.dash), '前のページには見込（C）は無い');
+  assert.deepStrictEqual([dashed[0].fill, dashed[0].alpha, dashed[0].dashStyle], [cColor, o.compact.prospect.alpha, 'DOT'], 'C の色の薄い地に細かい点線');
+  assert.ok(!base.elements.some(e => e.role === 'compact-bar' && e.dashStyle), '前のページには見込（C）は無い');
   assert.deepStrictEqual(withC.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text), ['A', 'B', 'C']);
   assert.match(leadOf(withC), /^確定（A＋B）に見込（C）を足すと 171百万円で、計画の 57%（進捗率（A＋B）は 56%）。/);
+});
+
+test('見込（C）を含むページ：見込の棒は確定の棒から少しあけ、薄い地に細かい点線（DOT）の枠。凡例の見本は横長。入らない値は、いちばん右の確度だけ棒のすぐ右に出す', () => {
+  const {gas, g} = setup();
+  const o = gas.get('MTG_OPTIONS');
+  const P = o.compact.prospect;
+  const s1 = summarize(g, '新FMT');
+  const withC = plain(g.mtgCompactOverviewSlide_([s1], {withC: true}));
+  const bars = withC.elements.filter(e => e.role === 'compact-bar');
+  const cBar = bars.find(e => e.dashStyle);
+  const bBar = bars[bars.indexOf(cBar) - 1];
+  assert.deepStrictEqual([cBar.dashStyle, cBar.alpha, cBar.line], [P.dashStyle, P.alpha, P.line]);
+  assert.ok(Math.abs(cBar.x - (bBar.x + bBar.w) - P.gap) < 0.01, 'B の端から gap だけあける');
+  const swatch = withC.elements.find(e => e.role === 'legend' && e.dashStyle);
+  assert.ok(swatch.w > swatch.h && swatch.w >= 14, '凡例の見本は横長');
+  // 間の確度の値が入らなくても、離れた場所（棒の右）には出さない
+  const narrow = Object.assign({}, s1, {plan: Object.assign({}, s1.plan, {byRank: {A: 1, B: 150, C: 0}})});
+  const labels = plain(g.mtgCompactOverviewSlide_([narrow])).elements.filter(e => e.role === 'compact-bar-label').map(e => e.text);
+  assert.ok(labels.indexOf('150') >= 0);
+  assert.ok(!labels.some(t => /^A /.test(t)), '間の確度（A）の値は棒の右に出さない');
+  const last = Object.assign({}, s1, {plan: Object.assign({}, s1.plan, {byRank: {A: 150, B: 1, C: 0}})});
+  assert.ok(plain(g.mtgCompactOverviewSlide_([last])).elements.some(e => e.role === 'compact-bar-label' && e.text === 'B 1'), 'いちばん右の確度は棒のすぐ右に');
+  // Slides API：細かい点線の枠
+  const req = plain(g.mtgSlideRequests_({title: 't', elements: [cBar]}, 'p1', 1)).find(r => r.updateShapeProperties);
+  assert.strictEqual(req.updateShapeProperties.shapeProperties.outline.dashStyle, 'DOT');
 });
