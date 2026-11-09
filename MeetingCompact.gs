@@ -32,7 +32,8 @@ function mtgCompactLabel_() {
 
 /** 変化のあった案件のページの前に入るページの数（表紙・全サブインダストリーの状況・計画進捗（見込（C）を含むページも）（・計画に対する積み上げ 2枚）） */
 function mtgCompactFrontCount_() {
-  return (MTG_OPTIONS.plan.enabled ? 5 : 3) + (MTG_OPTIONS.compact.salesPage ? 2 : 0);
+  const C = MTG_OPTIONS.compact;
+  return (MTG_OPTIONS.plan.enabled ? 5 : 3) + (C.salesPage ? 2 : 0) + (C.salesPage && MTG_OPTIONS.plan.enabled ? 2 : 0);
 }
 
 /** fn を、金額の小数点以下を繰り上げる設定（MTG_OPTIONS.amountCeil。mtgAmount_）で作る（compact.ceilAmounts のとき。終わったら元に戻す） */
@@ -84,6 +85,14 @@ function mtgCompactFront_(summaries, meeting, final, now) {
     // 計画に対する積み上げ（想定売上）：全確度（統合版と同じ形）のあとに、確定（A＋B）だけ
     const plan = merged ? [mtgPlanSlide_(merged, now, o.combined.name, {measure: C.measure}),
       mtgPlanSlide_(mtgPlanRanksOnly_(merged, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure: C.measure})] : [];
+    // FY売上の計画に対する積み上げ（前半期・後半期）：全確度と確定（A＋B）だけ（compact.salesPage）
+    if (merged && C.salesPage) {
+      // 売上の列が無いシートは除いて足す（どのシートにも無ければ「データなし」）
+      const list = summaries.map(s => s.planSales || mtgSalesPlanOf_([], s.name, now, {}));
+      const sales = mtgMergeSalesPlans_(list.some(x => !x.gap) ? list.filter(x => !x.gap) : list.slice(0, 1));
+      plan.push(mtgSalesPlanSlide_(sales, o.combined.name), mtgSalesPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), o.combined.name,
+        {only: C.sureRanks, label: C.sureLabel}));
+    }
     return mtgNumberSlides_(mtgCombinedFrame_(summaries, meeting, final),
       [mtgCombinedCover_(summaries, meeting, final, now, C.coverWord), mtgCompactOverviewSlide_(summaries),
         mtgCompactOverviewSlide_(summaries, {withC: true})].concat(C.salesPage ? [mtgCompactOverviewSlide_(summaries, {sales: true}),

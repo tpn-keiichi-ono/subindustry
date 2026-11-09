@@ -889,7 +889,8 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
   目盛りは A＋B＋C も入るように。並び・右の数字は同じ。リード文は確定＋見込の計画比）→
   計画に対する積み上げ（全体。`mtgPlanSlide_(mtgMergePlans_(…))`。`plan.enabled` のとき）と、確定（`compact.sureRanks`。A・B）だけの積み上げ
   （`mtgPlanRanksOnly_` で月・合計・積み上げに含まない案件を A・B の分に絞り、`mtgPlanSlide_(…, {only, label})` で凡例・見出し・リード文を「確定（A＋B）」・進捗率にする。
-  積み上げに含まない案件の確度ごとの件数は `counts`）→ 変化のあった案件：{サブインダストリー}（`mtgCompactChangeSlides_`。`DIFF_RULES` の順）。
+  積み上げに含まない案件の確度ごとの件数は `counts`）→ 計画に対する積み上げ（FY売上。`mtgSalesPlanSlide_`：前半期 → 後半期の滝の図・合計・計画・差、参考に失注。全確度と確定（A＋B）。
+  半期ごとの値は `deal.salesHalves`（「26前」「26後」）・`planSales.halves`、足すのは `mtgMergeSalesPlans_`。`compact.salesPage` のとき）→ 変化のあった案件：{サブインダストリー}（`mtgCompactChangeSlides_`。`DIFF_RULES` の順）。
   目次・統合版の「全サブインダストリーの状況」・「計画に対する積み上げ（サブインダストリー別）」・各サブインダストリーの資料のページは入れない。
 - 状況・計画進捗は、統合版の「計画に対する積み上げ（サブインダストリー別）」の図を土台に、「全サブインダストリーの状況」の数字をまとめたもの：
   - 横棒は確定（確度 A・B）だけを積み上げる（`plan.byRank`。棒の中に白い字で値、入らなければ棒の右に「A 36」）。凡例は棒の上に A・B。
