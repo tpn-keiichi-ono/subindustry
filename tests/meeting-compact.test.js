@@ -166,8 +166,12 @@ test('状況・計画進捗：確定（A＋B）の横棒（A・B だけ・デー
   const all = texts(slide);
   // 列の見出し
   assert.ok(all.indexOf('今年度の計画進捗') < 0 && all.indexOf('案件の状況（失注除く）') < 0, 'まとまりの見出しは無い');
-  ['計画', '進捗率\n（A＋B）', '確定（A＋B）\n/件', '見込（C）\n/件', '想定売上\n合計', '前回比\n（10/30）', '案件数', '変化の\nある案件']
+  ['計画', '進捗率（A＋B）', '確定（A＋B）/件', '見込（C）/件', '想定売上合計', '前回比（10/30）', '案件数', '変化のある案件']
     .forEach(label => assert.ok(all.indexOf(label) >= 0, label));
+  // 見出しは折り返さずに1行（列の幅の 9割に入る大きさ）
+  slide.elements.filter(e => e.role === 'compact-head').forEach(e => {
+    assert.ok(e.text.indexOf('\n') < 0 && g.mtgTextWidth_(e.text, e.size) <= (e.w - 14.4) * 0.9 + 0.01, e.text + ' は1行');
+  });
   // 対象の期間：計画・進捗率・確定・見込は「（今年度）」、右の4列は「（全期間）」。どの列も同じ高さの行に置き、見出しは下にそろえる
   const periods = slide.elements.filter(e => e.role === 'compact-head-period');
   assert.deepStrictEqual(periods.map(e => e.text), ['（今年度）', '（今年度）', '（今年度）', '（今年度）', '（全期間）', '（全期間）', '（全期間）', '（全期間）']);
@@ -457,4 +461,18 @@ test('リード文は1つのテキストボックス（1つ目の文と補足を
   const lead = slides[1].elements.find(e => e.role === 'lead');
   const req = plain(g.mtgSlideRequests_({title: 't', elements: [lead]}, 'p1', 1)).find(r => r.updateParagraphStyle);
   assert.strictEqual(req.updateParagraphStyle.style.lineSpacing, lead.lineSpacing);
+});
+
+test('状況のページの「変化のある案件」は、今ある案件（失注を除く。案件数と同じ）だけを数える。削除した行・失注になった案件は数えない', () => {
+  const {gas, g} = setup();
+  const sheet = gas.ss.getSheetByName('新FMT');
+  g.recordDiffEdit(gas.edit(sheet, 'F4', '失注'));   // B社：失注になった（変化はあるが、案件数に入らない）
+  const s1 = summarize(g, '新FMT');
+  assert.ok(s1.kpi.changed >= 3, '資料の「変化のある案件」には失注も入る');
+  assert.strictEqual(g.mtgCompactChangedNow_(s1), 2, 'C社・D社だけ');
+  const values = plain(g.mtgCompactOverviewSlide_([s1])).elements.filter(e => e.role === 'compact-value').map(e => e.text);
+  assert.deepStrictEqual(values.slice(6, 8), ['3件', '2件'], '案件数 3件（A社・C社・D社）・変化のある案件 2件');
+  // 区切って作るときの中身の一部にも入れる
+  assert.strictEqual(plain(g.mtgCombinedLite_(s1)).changedNow, 2);
+  assert.strictEqual(g.mtgCompactChangedNow_(plain(g.mtgCombinedLite_(s1))), 2);
 });
