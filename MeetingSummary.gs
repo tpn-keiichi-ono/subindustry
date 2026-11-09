@@ -136,6 +136,21 @@ const MTG_OPTIONS = {
     name: '全サブインダストリー',     // 表紙の見出し・ファイル名の {name}・インデックスの列の見出し
     coverTone: 'cover'                // ひな形が無いときの表紙の色（'cover' 緑・'combined' 紫。MTG_COVER）
   },
+  // 統合版（簡易版。MeetingCompact.gs。エディタで createBusinessMtgCompactSummary() を実行して作る。2026/11/09 から）：表紙（統合版と同じひな形）→
+  // 全サブインダストリーの状況・計画進捗（確定（A＋B）の横棒と計画線・計画・進捗率（A＋B）・確定（A＋B）/件・見込（C）/件・期待値合計・前回比・案件数・
+  // 変化のある案件）→ 計画に対する積み上げ（全体。統合版と同じ）→ 変化のあった案件（サブインダストリーごと）。目次と各サブインダストリーの資料のページは入れない。
+  //   fileSuffix：ファイル名（統合版と同じ名前）の後ろに付ける。planScale：いちばん大きい計画の 何倍を横棒の幅いっぱいにするか（1.4 なら計画線は幅の 7割ほど。
+  //   計画を超えた分を右に描けるように）。planLine：計画線（透明度のあるグレーの点線）。tableMargin：変化のあった案件の表を、出典の行の上の区切り線より
+  //   この分だけ上で次のページに分ける（表の行が見積もりより伸びても、出典の行にかからないように）
+  compact: {
+    enabled: true,
+    label: '統合版（簡易版）',
+    fileSuffix: '_簡易版',
+    planScale: 1.4,
+    planLine: {color: '#808080', alpha: 0.6, weight: 1.25},
+    tableMargin: 12,
+    changesTitle: '変化のあった案件：'
+  },
   // Apps Script の1回の実行は6分まで（入力・確かめの画面を出している時間も含む）。作り始めてから limitMs を過ぎそうなら、そこで区切り、
   // 残りは continueAfterMs あとに自動で続ける（時間主導のトリガー continueBusinessMtgSummaries。1回きり）。次の仕事にかかる時間の見積もり：
   // summaryMs 中身を作る（シートと記録を読む）・deckMs 資料1つ・copyMs 時点コピーと記録・storeMs 会議のフォルダへの格納とインデックス1つ
@@ -469,6 +484,7 @@ const MTG_TITLES = {
   scenarioMap: 'RXシナリオのポートフォリオ図',
   contents: '目次',                         // 統合版の2枚目
   overview: '全サブインダストリーの状況',   // 統合版の3枚目
+  compactOverview: '全サブインダストリーの状況・計画進捗',   // 統合版（簡易版）の2枚目（MeetingCompact.gs）
   appendix: 'Appendix',
   changes: 'Appendix ①　前回から変化のある案件（一覧）',
   stalled: 'Appendix ②　停滞案件（一覧）',
@@ -853,7 +869,7 @@ function mtgRunStart_(final, meeting, names, cancelJob, point, overwrite, varian
   const pending = mtgJobLoad_();
   if (pending) {
     if (!cancelJob) throw new Error(mtgJobPendingText_());
-    if (pending.kind === 'combined') mtgDeckDiscard_(pending.deck);   // 作りかけの統合版はゴミ箱へ
+    if (mtgDeckJob_(pending)) mtgDeckDiscard_(pending.deck);   // 作りかけの統合版（簡易版も）はゴミ箱へ
     mtgJobClear_();
     mtgJobDeleteTriggers_();
   }
@@ -1125,7 +1141,7 @@ function mtgJobPause_(job) {
   mtgJobSave_(job);
   mtgJobDeleteTriggers_();
   ScriptApp.newTrigger(R.handler).timeBased().after(R.continueAfterMs).create();
-  console.log((job.kind === 'combined' ? '統合版：' : '会議サマリ：') + '時間がかかるため区切りました（資料 ' + job.items.length + '/' + job.names.length + '）。続きを予約しました。');
+  console.log((mtgDeckJob_(job) ? mtgDeckJob_(job).label + '：' : '会議サマリ：') + '時間がかかるため区切りました（資料 ' + job.items.length + '/' + job.names.length + '）。続きを予約しました。');
   return false;
 }
 
@@ -1174,17 +1190,19 @@ function continueBusinessMtgSummaries() {
   mtgJobDeleteTriggers_();
   const job = mtgJobLoad_();
   if (!job) return;
-  const combined = job.kind === 'combined';
+  // 統合版・統合版（簡易版）は、1つの資料にページを足していく仕事（mtgDeckJob_。作り直しの関数・続きの関数がそれぞれにある）
+  const deckJob = mtgDeckJob_(job);
+  const combined = !!deckJob;
   // 前の実行が終わらずに止められた（メモリ不足・6分の上限など。保存した進み具合が「実行中」のまま）：同じところで maxCrashes 回までは続きから
   if (job.running) {
     job.crashes = (job.crashes || 0) + 1;
     console.warn('会議サマリ：前の実行が途中で止められました（' + job.crashes + '回目）。最後に保存した進み具合から続けます。');
-    const recovered = job.crashes <= R.maxCrashes && (!combined || mtgCombinedRecover_(job));
+    const recovered = job.crashes <= R.maxCrashes && (!combined || mtgCombinedRecover_(job, deckJob.front()));
     if (!recovered) {
       if (combined) mtgDeckDiscard_(job.deck);
-      const message = (combined ? '統合版（' + MTG_OPTIONS.combined.name + '）' : '会議サマリ') + 'を作る実行が、同じところで ' + job.crashes +
+      const message = (combined ? deckJob.label : '会議サマリ') + 'を作る実行が、同じところで ' + job.crashes +
         '回止められました（メモリ不足・6分の上限など。実行数のログで確かめてください）。' +
-        (combined ? '\ncreateBusinessMtgCombinedSummary() で、作り直してください。'
+        (combined ? '\n' + deckJob.again + ' で、作り直してください。'
           : '\ncreateBusinessMtgSummaries()（試作なら previewBusinessMtgSummaries()）で、作り直してください。\n\n' + mtgJobMessage_(job, true));
       mtgJobClear_();
       mtgJobSaveResult_(message);
@@ -1195,15 +1213,15 @@ function continueBusinessMtgSummaries() {
   mtgJobSafetyTrigger_();
   let message;
   try {
-    const run = combined ? mtgCombinedRun_ : mtgJobRun_;
+    const run = combined ? deckJob.run : mtgJobRun_;
     if (!run(SpreadsheetApp.getActiveSpreadsheet(), job, started)) return;   // また区切った（次を予約した）
-    message = combined ? mtgCombinedMessage_(job, true) : mtgJobMessage_(job, true);
+    message = combined ? deckJob.message(job, true) : mtgJobMessage_(job, true);
   } catch (error) {
     console.error(error && error.stack || error);
     if (combined) {
       mtgDeckDiscard_(job.deck);   // 作りかけの資料はゴミ箱へ
-      message = '統合版（' + MTG_OPTIONS.combined.name + '）を作る途中で止まりました：' + (error && error.message || error) +
-        '\ncreateBusinessMtgCombinedSummary() で、作り直してください。';
+      message = deckJob.label + 'を作る途中で止まりました：' + (error && error.message || error) +
+        '\n' + deckJob.again + ' で、作り直してください。';
     } else {
       message = '途中で止まりました：' + (error && error.message || error) + '\ncreateBusinessMtgSummaries()（試作なら previewBusinessMtgSummaries()）で、作り直してください。\n\n' +
         mtgJobMessage_(job, true);
@@ -1253,12 +1271,12 @@ function showBusinessMtgSummariesResult() {
   let message;
   if (job) {
     const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === R.handler).length;
-    message = (job.kind === 'combined'
-      ? '統合版（' + MTG_OPTIONS.combined.name + '）を作っている途中です（会議日 ' + job.meeting + '。' + job.items.length + '/' + job.names.length + 'サブインダストリーのページ）。'
+    message = (mtgDeckJob_(job)
+      ? mtgDeckJob_(job).label + 'を作っている途中です（会議日 ' + job.meeting + '。' + job.items.length + '/' + job.names.length + 'サブインダストリーのページ）。'
       : '会議サマリを作っている途中です（会議日 ' + job.meeting + '。資料 ' + job.items.length + '/' + job.names.length + '件' +
         (job.final ? '・格納 ' + job.stored + '/' + job.names.length + '件' : '') + '）。') +
       (triggers ? '自動で続けています。少し待ってから、もう一度実行してください。'
-        : '続きの予約がありません。' + (job.kind === 'combined' ? 'createBusinessMtgCombinedSummary()'
+        : '続きの予約がありません。' + (mtgDeckJob_(job) ? mtgDeckJob_(job).again
           : 'createBusinessMtgSummaries()（試作なら previewBusinessMtgSummaries()）') + 'で作り直してください。');
   } else {
     const props = PropertiesService.getScriptProperties();
@@ -1274,10 +1292,12 @@ function mtgJobPendingText_() {
   const job = mtgJobLoad_();
   if (!job) return '';
   const at = Utilities.formatDate(new Date(job.savedAt || job.now), Session.getScriptTimeZone(), 'M/d HH:mm');
-  if (job.kind === 'combined') {
-    return '前に始めた統合版（' + MTG_OPTIONS.combined.name + '。会議日 ' + job.meeting + '。' + job.items.length + '/' + job.names.length + 'サブインダストリーのページ。' +
+  if (mtgDeckJob_(job)) {
+    // 統合版は「統合版（全サブインダストリー。会議日 …」、統合版（簡易版）は「統合版（簡易版）（全サブインダストリー）（会議日 …」
+    const what = job.kind === 'combined' ? '統合版（' + MTG_OPTIONS.combined.name + '。' : mtgDeckJob_(job).label + '（';
+    return '前に始めた' + what + '会議日 ' + job.meeting + '。' + job.items.length + '/' + job.names.length + 'サブインダストリーのページ。' +
       at + ' に区切り）を、自動で続けている途中です。やめて新しく作るときは「やめて新しく作る」にチェックを入れてください' +
-      '（作りかけの統合版はゴミ箱に移します。続きが終わったら showBusinessMtgSummariesResult() で結果を見られます）。';
+      '（作りかけの' + (job.kind === 'combined' ? '統合版' : '資料') + 'はゴミ箱に移します。続きが終わったら showBusinessMtgSummariesResult() で結果を見られます）。';
   }
   return '前に始めた会議サマリ（会議日 ' + job.meeting + '・' + (job.final ? '本番' : '試作') + '。資料 ' + job.items.length + '/' + job.names.length + '件。' +
     at + ' に区切り）を、自動で続けている途中です。やめて新しく作るときは「やめて新しく作る」にチェックを入れてください' +
@@ -2445,12 +2465,12 @@ function mtgCombinedRun_(ss, job, started) {
  * 統合版を作る実行が止められたあと（continueBusinessMtgSummaries）、続きから作れるようにする：保存した進み具合のあとに足しかけたスライド
  * （mtg_p{番号}・mtg_t{番号} のうち、保存した資料のページ（前のページの数 〜 job.page）でないもの）を消す。仕上げの途中なら続けられない（false）
  */
-function mtgCombinedRecover_(job) {
+function mtgCombinedRecover_(job, frontCount) {
   const state = job.deck;
   if (!state) return true;
   if (state.finishing) return false;
   try {
-    const front = mtgCombinedFrontCount_();
+    const front = frontCount == null ? mtgCombinedFrontCount_() : frontCount;   // 前のページの数（統合版（簡易版）は mtgCompactFrontCount_）
     const keep = new Set();
     for (let i = front; i < job.page; i++) keep.add((state.dups.indexOf(i) >= 0 ? 'mtg_t' : 'mtg_p') + (i + 1));
     const extra = (Slides.Presentations.get(state.id, {fields: MTG_SLIDES_FIELDS.count}).slides || []).map(sl => sl.objectId)
@@ -2498,7 +2518,8 @@ function mtgCombinedCheck_(meeting, point) {
   if (!o.enabled) return {error: '統合版を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.combined.enabled）。'};
   const pending = mtgJobLoad_();
   if (pending) {
-    return {error: (pending.kind === 'combined' ? '統合版' : 'サブインダストリーの資料') + 'を作っている途中です（自動で続けています）。' +
+    return {error: (pending.kind === 'combined' ? '統合版' : mtgDeckJob_(pending) ? mtgDeckJob_(pending).label : 'サブインダストリーの資料') +
+      'を作っている途中です（自動で続けています）。' +
       '終わってから（showBusinessMtgSummariesResult() で確かめてから）実行してください。'};
   }
   const names = mtgTrackedNames_(ss);
@@ -2576,6 +2597,23 @@ function mtgCombinedPlain_(c) {
   return {fileName: c.file.getName(), fileUrl: c.file.getUrl(), pages: c.pages, overwritten: !!c.overwritten,
     folderName: c.stored ? c.stored.folder.getName() : '', folderUrl: c.stored ? c.stored.folder.getUrl() : '', created: !!(c.stored && c.stored.created),
     indexError: c.index && c.index.error || '', storeError: c.storeError || ''};
+}
+
+/**
+ * 1つの資料にページを足していく仕事（統合版・統合版（簡易版））なら、その仕事の名前・作り直す関数・続きの関数・知らせ・前のページの数。ほかの仕事なら null
+ * （continueBusinessMtgSummaries・showBusinessMtgSummariesResult などが、仕事の種類（job.kind）で使い分ける）
+ */
+function mtgDeckJob_(job) {
+  if (!job) return null;
+  if (job.kind === 'combined') {
+    return {label: '統合版（' + MTG_OPTIONS.combined.name + '）', again: 'createBusinessMtgCombinedSummary()', run: mtgCombinedRun_,
+      message: mtgCombinedMessage_, front: mtgCombinedFrontCount_};
+  }
+  if (job.kind === 'compact') {
+    return {label: mtgCompactLabel_(), again: 'createBusinessMtgCompactSummary()', run: mtgCompactRun_, message: mtgCompactMessage_,
+      front: mtgCompactFrontCount_};
+  }
+  return null;
 }
 
 /**
@@ -4702,27 +4740,43 @@ function mtgCombinedFrontCount_() {
  */
 function mtgCombinedFront_(sections, meeting, final, now) {
   const o = MTG_OPTIONS;
-  const c = o.colors;
-  const S = MTG_SLIDE;
   const name = o.combined.name;
   const summaries = sections.map(x => x.summary);
-  const dummy = summaries.some(s => s.dummy);
   const planOn = !!o.plan.enabled;
+  const cover = mtgCombinedCover_(summaries, meeting, final, now);
+  const frame = mtgCombinedFrame_(summaries, meeting, final);
+  const plan = planOn ? [mtgPlanSlide_(mtgMergePlans_(summaries.map(s => s.plan)), now, name), mtgPlanBySubSlide_(summaries, now)] : [];
+  return mtgNumberSlides_(frame, [cover, mtgContentsSlide_(sections), mtgOverviewSlide_(sections)].concat(plan));
+}
+
+/**
+ * 統合版の表紙（ひな形の統合版の表紙（緑）。見出しは全サブインダストリー、その下に会議の名前と「事前資料」・会議日。下に収録したサブインダストリーと出典）。
+ * 統合版（簡易版。MeetingCompact.gs）も同じ表紙
+ */
+function mtgCombinedCover_(summaries, meeting, final, now) {
+  const o = MTG_OPTIONS;
+  const c = o.colors;
+  const S = MTG_SLIDE;
+  const dummy = summaries.some(s => s.dummy);
   const line = (y, text) => mtgBox_(S.x, y, S.w, 16, mtgWrap_(text, S.w, 9, 1)[0], {size: 9, color: c.white, align: 'CENTER'});
-  const cover = {
+  return {
     title: MTG_TITLES.cover,
     cover: true,
     combined: true,   // 統合版の表紙（緑。MTG_OPTIONS.combined.coverTone・templatePages.combined）
-    template: {title: name, subtitle: o.meetingName + '　事前資料' + (final ? '' : '【試作】'), date: mtgDateLabel_(meeting), name: ''},
+    template: {title: o.combined.name, subtitle: o.meetingName + '　事前資料' + (final ? '' : '【試作】'), date: mtgDateLabel_(meeting), name: ''},
     elements: [
       line(350, '収録：' + summaries.map(s => s.name).join('・') + '（' + summaries.length + 'サブインダストリー）'),
       line(365, '出典：各サブインダストリーのシートおよび変更履歴（' + (dummy ? 'ダミーデータを含む。' : '') +
         Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy/M/d HH:mm') + ' 時点）')
     ]
   };
-  const frame = {source: (final ? '' : '【試作】') + (dummy ? '【ダミーデータを含む】' : '') + name + '（' + mtgShortDate_(meeting) + ' 会議資料）　金額の単位：百万円'};
-  const plan = planOn ? [mtgPlanSlide_(mtgMergePlans_(summaries.map(s => s.plan)), now, name), mtgPlanBySubSlide_(summaries, now)] : [];
-  return mtgNumberSlides_(frame, [cover, mtgContentsSlide_(sections), mtgOverviewSlide_(sections)].concat(plan));
+}
+
+/** 統合版のいちばん下の行（どの会議日の資料か。試作は先頭に【試作】）{source}。統合版（簡易版）も同じ */
+function mtgCombinedFrame_(summaries, meeting, final) {
+  const dummy = summaries.some(s => s.dummy);
+  return {source: (final ? '' : '【試作】') + (dummy ? '【ダミーデータを含む】' : '') + MTG_OPTIONS.combined.name + '（' + mtgShortDate_(meeting) +
+    ' 会議資料）　金額の単位：百万円'};
 }
 
 /**
@@ -6363,7 +6417,7 @@ function mtgPlanAmount_(name) {
  * 計画に対する積み上げの中身。今年度（MTG_OPTIONS.fiscalStartMonth から12か月）の月（plan.monthColumn。今は受注月）ごとの期待値を、確度（mtgPlanRank_）ごとに足す。
  * 失注を除く案件（進行中・受注・保留）が対象。積み上げに入らない案件（時期未定・今年度より前・来年度以降・失注）は、それぞれの件数と期待値（確度別も）を残す
  * （資料では積み上げの右に参考として出す）。期待値が空の案件は 0 として数え、件数を残す。has はシートの列があるか（期待値・月の列が無ければ gap に理由）。
- * 戻り値 {plan, start: 今年度の最初の月の番号, months: [{y, m, values: {確度: 期待値}, total, count}], total, byRank: {確度: 期待値},
+ * 戻り値 {plan, start: 今年度の最初の月の番号, months: [{y, m, values: {確度: 期待値}, total, count}], total, byRank: {確度: 期待値}, byRankCount: {確度: 件数},
  *  undated: 月が空・読めない, before: 今年度より前, after: 来年度以降, excluded: 失注（どれも {count, value, values: {確度: 期待値}}）,
  *  missing: 期待値が空の件数, gap}
  */
@@ -6373,13 +6427,13 @@ function mtgPlanOf_(deals, name, now, has) {
   const columns = MTG_OPTIONS.columns;
   const lack = ['weighted', o.monthColumn].filter(key => has && !has[key]).map(key => '「' + String(columns[key]).replace(/\s+/g, '') + '」');
   const bucket = () => ({count: 0, value: 0, values: {}});
-  const out = {plan: mtgPlanAmount_(name), start, months: [], total: 0, byRank: {}, undated: bucket(), before: bucket(), after: bucket(),
+  const out = {plan: mtgPlanAmount_(name), start, months: [], total: 0, byRank: {}, byRankCount: {}, undated: bucket(), before: bucket(), after: bucket(),
     excluded: bucket(), missing: 0, gap: lack.length ? 'シートに' + lack.join('・') + 'の列が無い' : ''};
   for (let i = 0; i < 12; i++) {
     const mo = mtgMonthOf_(start + i);
     out.months.push({y: mo.y, m: mo.m, values: {}, total: 0, count: 0});
   }
-  o.ranks.map(r => r.key).concat([o.otherLabel]).forEach(k => { out.byRank[k] = 0; });
+  o.ranks.map(r => r.key).concat([o.otherLabel]).forEach(k => { out.byRank[k] = 0; out.byRankCount[k] = 0; });
   deals.forEach(d => {
     const v = d.weighted || 0;
     const rank = mtgPlanRank_(d.status);
@@ -6398,6 +6452,7 @@ function mtgPlanOf_(deals, name, now, has) {
     mo.total += v;
     mo.count++;
     out.byRank[rank] += v;
+    out.byRankCount[rank]++;
     out.total += v;
   });
   return out;
@@ -6412,6 +6467,7 @@ function mtgMergePlans_(plans) {
   const asides = ['undated', 'before', 'after', 'excluded'];
   asides.forEach(k => { out[k] = {count: 0, value: 0, values: {}}; });
   Object.keys(out.byRank).forEach(k => { out.byRank[k] = 0; });
+  out.byRankCount = {};
   out.months.forEach(mo => { mo.values = {}; mo.total = 0; mo.count = 0; });
   plans.forEach(p => {
     out.plan += p.plan;
@@ -6423,6 +6479,7 @@ function mtgMergePlans_(plans) {
       Object.keys(p[k].values).forEach(r => { out[k].values[r] = (out[k].values[r] || 0) + p[k].values[r]; });
     });
     Object.keys(p.byRank).forEach(k => { out.byRank[k] = (out.byRank[k] || 0) + p.byRank[k]; });
+    Object.keys(p.byRankCount || {}).forEach(k => { out.byRankCount[k] = (out.byRankCount[k] || 0) + p.byRankCount[k]; });
     p.months.forEach((mo, i) => {
       const to = out.months[i];
       Object.keys(mo.values).forEach(k => { to.values[k] = (to.values[k] || 0) + mo.values[k]; });
@@ -7901,7 +7958,9 @@ function mtgSlideRequests_(slide, pageId, index, options) {
         elementProperties.size.height = pt(Math.max(height, 0.01));
       }
       requests.push({createLine: {objectId: id, lineCategory: 'STRAIGHT', elementProperties}});
-      const lineProperties = {lineFill: {solidFill: {color: {rgbColor: mtgRgb_(el.color)}}}, weight: pt(el.weight || 0.75), dashStyle: el.dash ? 'DASH' : 'SOLID'};
+      // alpha があれば線の色に透明度（1 が不透明。統合版（簡易版）の計画線）
+      const lineFill = {solidFill: Object.assign({color: {rgbColor: mtgRgb_(el.color)}}, el.alpha != null ? {alpha: el.alpha} : {})};
+      const lineProperties = {lineFill, weight: pt(el.weight || 0.75), dashStyle: el.dash ? 'DASH' : 'SOLID'};
       if (el.arrow) lineProperties.endArrow = 'FILL_ARROW';
       requests.push({updateLineProperties: {objectId: id, lineProperties, fields: 'lineFill,weight,dashStyle' + (el.arrow ? ',endArrow' : '')}});
       return;

@@ -7,7 +7,7 @@
  *   RX Business Meeting・RX Service Meeting の予定（予定の名前に MSCH_OPTIONS.titles の言葉を含むもの）を探し、会議資料のインデックス
  *   （MTG_OPTIONS.index.sheet）に、会議日と会議名の行を先に足す（ある行はそのまま。資料ができたら、その行のセルに書く）。
  * - 資料を作る関数（createBusinessMtgSummaries()・previewBusinessMtgSummaries()・createBusinessMtgCombinedSummary()・
- *   createServiceMtgSummaries()・previewServiceMtgSummaries()）は、画面（MeetingRunDialog）を開く。画面で、インデックスにある会議日程を
+ *   createBusinessMtgCompactSummary()・createServiceMtgSummaries()・previewServiceMtgSummaries()）は、画面（MeetingRunDialog）を開く。画面で、インデックスにある会議日程を
  *   プルダウンで選び、作るシート（サブインダストリー）を選んで、確かめてから作る。前回の会議からの変化を出す（前回の資料の記録が無ければ、
  *   一覧の前の会議日から。RX Business Meeting）。比べる時点（保存先のフォルダの時点コピー・会議日・日時。RX Service Meeting は記録した会議）も選べる。
  *   画面の「カレンダーから読み込む」でも importMeetingSchedules() と同じことをする。
@@ -127,10 +127,10 @@ function mschImport_() {
 
 /**
  * 会議資料を作る画面の種類（kind）：'business' 会議サマリ・'report' 会議サマリの報告案件版（MeetingReport.gs。画面と作り方は business と同じ）・
- * 'combined' 統合版・'service' RX Service Meeting。それ以外は止める
+ * 'combined' 統合版・'compact' 統合版（簡易版。MeetingCompact.gs。画面と作り方は combined と同じ）・'service' RX Service Meeting。それ以外は止める
  */
 function mschCheckKind_(kind) {
-  if (['business', 'report', 'combined', 'service'].indexOf(kind) < 0) throw new Error('資料の種類「' + kind + '」が分かりません。');
+  if (['business', 'report', 'combined', 'compact', 'service'].indexOf(kind) < 0) throw new Error('資料の種類「' + kind + '」が分かりません。');
   return kind;
 }
 
@@ -188,7 +188,8 @@ function getMeetingRunData(kind, final) {
     timer.lap('比べる時点（' + MTG_OPTIONS.copyName + ' ' + points.length + '件）');
   }
   console.log('資料を作る画面の読み込み：' + timer.text());
-  const titles = {business: '会議サマリ（' + meetingName + '）', report: '会議サマリ・報告案件版（' + meetingName + '）', combined: '統合版（' + MTG_OPTIONS.combined.name + '）', service: meetingName + ' の事前資料'};
+  const titles = {business: '会議サマリ（' + meetingName + '）', report: '会議サマリ・報告案件版（' + meetingName + '）', combined: '統合版（' + MTG_OPTIONS.combined.name + '）',
+    compact: mtgCompactLabel_(), service: meetingName + ' の事前資料'};
   // 直前の「作成する」（画面が読み込み直されたとき・開き直したときに、作っている途中なら待ち、終わっていれば結果を出す）
   const run = getMeetingRunState(kind);
   return {kind, final: !!final, title: titles[kind] + (final ? 'を作る' : 'を試しに作る'), meetingName,
@@ -426,7 +427,7 @@ function importMeetingSchedulesFromDialog(kind, final) {
 function mschCheckInput_(kind, meeting, names) {
   const date = mtgParseDate_(String(meeting || ''), new Date());
   if (!date) throw new Error('会議日を選んでください。');
-  if (kind === 'combined') return date;
+  if (kind === 'combined' || kind === 'compact') return date;
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const allowed = kind === 'service' ? svcSourceSheets_().filter(name => ss.getSheetByName(name)).concat([MTG_OPTIONS.combined.name])
     : mtgTrackedNames_(ss);
@@ -445,6 +446,7 @@ function checkMeetingRun(kind, final, meeting, names, point) {
   if (kind === 'service') return {text: smtgRunCheckText_(!!final, date, names, smtgCheckPoint_(point))};
   const resolved = mtgResolvePoint_(point);
   if (kind === 'combined') return mtgCombinedCheck_(date, resolved);
+  if (kind === 'compact') return mtgCompactCheck_(date, resolved);
   const text = mtgRunCheckText_(!!final, names, date, resolved);
   return {text: kind === 'report' ? mtgReportCheckText_() + '\n\n' + text : text};
 }
@@ -471,6 +473,7 @@ function runMeetingMaterials(kind, final, meeting, names, cancelJob, point, over
     } else {
       const resolved = mtgResolvePoint_(point);
       message = kind === 'combined' ? mtgCombinedStart_(date, resolved, !!overwrite)
+        : kind === 'compact' ? mtgCompactStart_(date, resolved, !!overwrite)
         : mtgRunStart_(!!final, date, names, !!cancelJob, resolved, !!overwrite, kind === 'report' ? 'report' : '');
     }
     mschRunStateSave_(Object.assign({status: 'done', message, finishedAt: Date.now()}, base));

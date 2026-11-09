@@ -99,7 +99,7 @@
     }
   </style>
 </head>
-<!-- data-kind：'business' 会議サマリ・'combined' 統合版・'service' RX Service Meeting。data-final：本番なら true（MeetingSchedule.gs の mschOpenRunDialog_ が入れる） -->
+<!-- data-kind：'business' 会議サマリ・'report' 報告案件版・'combined' 統合版・'compact' 統合版（簡易版）・'service' RX Service Meeting。data-final：本番なら true（MeetingSchedule.gs の mschOpenRunDialog_ が入れる） -->
 <body data-kind="<?= kind ?>" data-final="<?= final ?>">
   <div class="loading" id="loading" role="status" aria-live="polite">
     <div class="spinner"></div>
@@ -260,7 +260,7 @@
         : '時点コピー（資料作成時・日次・基準に保存したシートの値）と今を比べます。会議日・日時を選んだときは、変更の記録から変化を出します。';
       onMeetingChange();
       // 作る資料（統合版は選ばない）
-      $('sheetsField').hidden = KIND === 'combined';
+      $('sheetsField').hidden = KIND === 'combined' || KIND === 'compact';
       const box = $('sheets');
       box.textContent = '';
       d.sheets.forEach(s => {
@@ -347,7 +347,7 @@
     }
 
     function updateNext() {
-      const ok = !!meetingValue() && (KIND === 'combined' || pickedSheets().length > 0) && (!data || !data.job || $('cancelJob').checked) &&
+      const ok = !!meetingValue() && (KIND === 'combined' || KIND === 'compact' || pickedSheets().length > 0) && (!data || !data.job || $('cancelJob').checked) &&
         ($('point').value !== TIME || !!pointValue());
       $('next').disabled = !ok;
     }
