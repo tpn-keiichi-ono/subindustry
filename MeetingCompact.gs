@@ -186,9 +186,10 @@ function mtgCompactOverviewSlide_(summaries, options) {
   // 想定売上のページは、全期間の想定売上合計と、その前回比（summary.bridge）
   const yearKey = merged.year || mtgFiscalYearKey_(summaries.length && summaries[0].now ? new Date(summaries[0].now) : new Date());
   const span = 'FY' + yearKey + '〜' + ('0' + ((Number(yearKey) + 2) % 100)).slice(-2);
-  const lackOf = s => (bySales ? (s.planSales && s.planSales.gap) || !s.salesBridge : (s.gaps || {}).amount);
+  const lackOf = s => (bySales ? (s.planSales && s.planSales.gap) || !s.salesBridge || s.salesBridge.sureStart == null : (s.gaps || {}).amount);
   const endOf = s => (bySales ? s.salesBridge.total : s.bridge.amountEnd || 0);
-  const deltaOf = s => (bySales ? s.salesBridge.end - s.salesBridge.start : (s.bridge.amountEnd || 0) - (s.bridge.amountStart || 0));
+  // 前回比：売上のページは確定（A＋B）の今年度の売上の増減（確定（A＋B）/件の右の列）。想定売上のページは全期間の想定売上の増減
+  const deltaOf = s => (bySales ? s.salesBridge.sureEnd - s.salesBridge.sureStart : (s.bridge.amountEnd || 0) - (s.bridge.amountStart || 0));
   items.forEach(z => { z.lackAmount = !!lackOf(z.s); });
   const total = {active: 0, amount: 0, delta: 0, changed: 0, lack: {}};
   items.forEach(({s, lack, lackAmount}) => {
@@ -224,18 +225,21 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const el = [mtgBox_(x, y - 2, 480, 20, bySales ? fy + ' の売上（前半期＋後半期）の確定（A＋B）' + (withC ? 'と見込（C）' : '') + 'と計画（百万円）'
     : '今年度（' + period + '）の確定（A＋B）' + (withC ? 'と見込（C）' : '') + 'の想定売上と計画（百万円）',
     {size: 10.5, bold: true, color: c.ink})];
-  // 列：名前・横棒｜計画・進捗率（A＋B）・確定（A＋B）/件・見込（C）/件｜想定売上合計・前回比・案件数・変化のある案件
+  // 列：名前・横棒｜計画・進捗率（A＋B）・確定（A＋B）/件・（売上のページは前回比）・見込（C）/件｜想定売上合計（売上のページは売上合計）・（想定売上のページは前回比）・案件数・変化のある案件
   const nameW = 96;
   const groups = [
     // 計画・進捗率・確定・見込は今年度の受注月の案件だけ：見出しの下に「（今年度）」
     // 見出しは折り返さず1行（入らなければ字を小さくする）。その下の行に対象の期間
     {cols: [{key: 'plan', label: '計画', w: 36, period: '（今年度）'}, {key: 'rate', label: '進捗率（A＋B）', w: 52, period: '（今年度）'},
-      {key: 'ab', label: '確定（A＋B）/件', w: 66, period: '（今年度）'}, {key: 'c', label: '見込（C）/件', w: 60, period: '（今年度）'}]},
+      {key: 'ab', label: '確定（A＋B）/件', w: 66, period: '（今年度）'}]
+      // 売上のページの前回比は確定（A＋B）の増減なので、確定（A＋B）/件の右
+      .concat(bySales ? [{key: 'delta', label: deltaLabel, w: 58, period: '（今年度）'}] : [])
+      .concat([{key: 'c', label: '見込（C）/件', w: 60, period: '（今年度）'}])},
     // 想定売上合計・前回比・案件数・変化のある案件は、受注月で絞らない（今年度の列と違う）ので、見出しの下に「（全期間）」
-    // 売上のページは、売上合計（3年度分。見出しの下に「（FY26〜28）」）・前回比（今年度の売上。「（FY26）」）
-    {cols: [bySales ? {key: 'amount', label: '売上合計', w: 48, period: '（' + span + '）'} : {key: 'amount', label: '想定売上合計', w: 48, period: '（全期間）'},
-      {key: 'delta', label: deltaLabel, w: 58, period: bySales ? '（FY' + yearKey + '）' : '（全期間）'},
-      {key: 'active', label: '案件数', w: 36, period: '（全期間）'}, {key: 'changed', label: '変化のある案件', w: 56, period: '（全期間）'}]}
+    // 売上のページは、売上合計（3年度分。見出しの下に「（FY26〜28）」）。前回比は左のまとまり（確定（A＋B）の右）
+    {cols: [bySales ? {key: 'amount', label: '売上合計', w: 48, period: '（' + span + '）'} : {key: 'amount', label: '想定売上合計', w: 48, period: '（全期間）'}]
+      .concat(bySales ? [] : [{key: 'delta', label: deltaLabel, w: 58, period: '（全期間）'}]).concat([
+      {key: 'active', label: '案件数', w: 36, period: '（全期間）'}, {key: 'changed', label: '変化のある案件', w: 56, period: '（全期間）'}])}
   ];
   // 列はまとまりに分けて見出しを付けない（2026/11/09。計画進捗と案件の状況を分ける必要はないため）。groups は列の並びのまとまり
   const colsW = groups.reduce((t, gr) => t + gr.cols.reduce((u, col) => u + col.w, 0), 0);

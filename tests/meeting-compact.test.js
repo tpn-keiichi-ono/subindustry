@@ -537,14 +537,18 @@ test('状況・計画進捗（FY売上）：今年度の売上の列（前半期
   const slide = slides.find(sl => sl.title === '全サブインダストリーの状況・計画進捗（' + fy + '売上）');
   assert.ok(slide && slides.indexOf(slide) === 1, '表紙の次（集計の元は今年度の売上）');
   const values = slide.elements.filter(e => e.role === 'compact-value').map(e => e.text);
-  assert.deepStrictEqual(values.slice(0, 4), ['200', '55%', '110/3件', '0/0件'], '新FMT の行（左の4列は売上）');
-  assert.deepStrictEqual(values.slice(8, 12), ['100', '10%', '10/1件', '0/0件'], '新FMT2 の行');
-  // 右の4列：売上合計は3年度分（今年度から）の売上（テストのシートは今年度の列だけ。新FMT は E社（失注）を除く 110）、前回比は今年度の売上の増減。
+  // 列：計画・進捗率・確定（A＋B）/件・前回比（確定（A＋B）の売上の増減。確定の右）・見込（C）/件｜売上合計・案件数・変化のある案件
+  // 新FMT の前回比 +10：C社（売上 10）が C → B に前進して確定に入った
+  assert.deepStrictEqual(values.slice(0, 5), ['200', '55%', '110/3件', '+10', '0/0件'], '新FMT の行（左の5列は売上）');
+  assert.deepStrictEqual(values.slice(8, 13), ['100', '10%', '10/1件', '±0', '0/0件'], '新FMT2 の行');
+  // 売上合計は3年度分（今年度から）の売上（テストのシートは今年度の列だけ。新FMT は E社（失注）を除く 110）。
   // 案件数・変化のある案件は、想定売上のページ（amountPages）と同じ
-  assert.deepStrictEqual([values.slice(4, 6), values.slice(12, 14)], [['110', '±0'], ['10', '±0']]);
+  assert.deepStrictEqual([values[5], values[13]], ['110', '10']);
   const heads = slide.elements.filter(e => e.role === 'compact-head').map(e => e.text);
   const periods = slide.elements.filter(e => e.role === 'compact-head-period').map(e => e.text);
-  assert.deepStrictEqual([heads[4], periods[4], periods[5], periods[6]], ['売上合計', '（' + fy + '〜' + (Number(fiscalYear()) + 2) + '）', '（' + fy + '）', '（全期間）']);
+  assert.deepStrictEqual(heads, ['計画', '進捗率（A＋B）', '確定（A＋B）/件', heads[3], '見込（C）/件', '売上合計', '案件数', '変化のある案件']);
+  assert.match(heads[3], /^前回比（\d+\/\d+）$/);
+  assert.deepStrictEqual(periods.slice(3), ['（今年度）', '（今年度）', '（' + fy + '〜' + (Number(fiscalYear()) + 2) + '）', '（全期間）', '（全期間）']);
   assert.match(leadOf(slide), new RegExp('案件 6件・' + fy + '〜' + (Number(fiscalYear()) + 2) + '売上合計 120百万円（失注除く）'));
   gas.get('MTG_OPTIONS').compact.amountPages = true;
   const both = plain(g.mtgCompactSlides_([s1, s2], '2026/11/13', true));
@@ -554,6 +558,9 @@ test('状況・計画進捗（FY売上）：今年度の売上の列（前半期
   const base = amountPage.elements.filter(e => e.role === 'compact-value').map(e => e.text);
   assert.deepStrictEqual([values.slice(6, 8), values.slice(14, 16)], [base.slice(6, 8), base.slice(14, 16)]);
   assert.deepStrictEqual([base[4], base[12]], ['210', '30'], '想定売上のページは全期間の想定売上合計');
+  // 想定売上のページは前と同じ列（前回比は全期間の想定売上の増減で、想定売上合計の右）
+  assert.deepStrictEqual(amountPage.elements.filter(e => e.role === 'compact-head').map(e => e.text).slice(2, 6),
+    ['確定（A＋B）/件', '見込（C）/件', '想定売上合計', heads[3]]);
   assert.ok(slide.elements.some(e => e.text === fy + ' の売上（前半期＋後半期）の確定（A＋B）と計画（百万円）'));
   assert.match(leadOf(slide), new RegExp('進捗率・確定・見込は ' + fy + ' の売上（前半期＋後半期。受注月によらない）'));
   assert.strictEqual(slide.elements.find(e => e.role === 'lead').text.split('\n').length, 2, 'リード文は2行');
@@ -580,7 +587,7 @@ test('状況・計画進捗（FY売上）：今年度の売上の列（前半期
   assert.strictEqual(g.mtgCompactFrontCount_(), 5);
 });
 
-test('状況・計画進捗（FY売上）の前回比：今年度の売上の増減。前回の値は、変更の記録（売上の列の変更前）から。失注になった案件は前回の分だけ減る。売上合計は3年度分', () => {
+test('状況・計画進捗（FY売上）の前回比：確定（A＋B）の今年度の売上の増減（前回は前回のステータスで A・B の案件）。前回の値は、変更の記録（売上の列の変更前）から。失注になった案件は前回の分だけ減る。売上合計は3年度分', () => {
   const {gas, g, sheet} = setup();
   const fy = fiscalYear();
   const next = String(Number(fy) + 1);
@@ -592,11 +599,14 @@ test('状況・計画進捗（FY売上）の前回比：今年度の売上の増
   g.recordDiffEdit(gas.edit(sheet, 'F4', '失注'));   // B社：失注（前回の 30 の分だけ減る）
   g.recordDiffEdit(gas.edit(sheet, 'P7', 80));   // E社（失注のまま）：入れない
   const s1 = summarize(g, '新FMT');
-  assert.deepStrictEqual(plain(s1.salesBridge), {year: fy, years: [fy, next, String(Number(fy) + 2)], start: 110, end: 115, total: 215});
+  // 確定（A＋B）の分：前回 A社 70・B社 30 = 100（C社は前回 C）→ 今 A社 90・C社 25 = 115（B社は失注）
+  assert.deepStrictEqual(plain(s1.salesBridge), {year: fy, years: [fy, next, String(Number(fy) + 2)], start: 110, end: 115, total: 215,
+    sureStart: 100, sureEnd: 115});
+  assert.strictEqual(s1.salesBridge.sureEnd, s1.planSales.byRank.A + s1.planSales.byRank.B, '今の分は棒の確定（A＋B）と同じ');
   // 売上の列の変更は、資料の「変化」には出さない（ignoreHeaders）。B社（失注）・C社・D社は前からの変化
   assert.ok(!s1.changes.some(c => c.customer === 'A社'));
   const values = plain(g.mtgCompactOverviewSlide_([s1], {sales: true})).elements.filter(e => e.role === 'compact-value').map(e => e.text);
-  assert.deepStrictEqual(values.slice(4, 6), ['215', '+5']);
+  assert.deepStrictEqual([values[3], values[5]], ['+15', '215'], '前回比は確定（A＋B）の増減（+15）、売上合計は3年度分');
   // 区切って作るときの中身の一部にも入れる
   assert.deepStrictEqual(plain(g.mtgCombinedLite_(s1)).salesBridge.start, 110);
   // 想定売上のページは、全期間の想定売上合計と、その前回比のまま
@@ -620,6 +630,8 @@ test('状況・計画進捗（FY売上）の前回比：前回の時点コピー
     final: true, now, meeting: '2026/11/13', windowStart, copy, copyError: '', trackedSince: g.mtgLogStart_(ss),
     log: g.mtgReadLog_(ss, windowStart), snapshots: g.mtgReadSnapshots_(ss, windowStart), credentials: g.hsCredentialIndex_(ss)});
   assert.deepStrictEqual([s1.salesBridge.start, s1.salesBridge.end], [110, 147]);
+  // 確定（A＋B）：コピーのステータスで A・B の案件（A社 70・B社 30・C社 10）→ 今（A社 100・B社 30・C社 10。H社は C）
+  assert.deepStrictEqual([s1.salesBridge.sureStart, s1.salesBridge.sureEnd], [110, 140]);
 });
 
 test('状況・計画進捗（FY売上）：今年度の売上の列が無いシートは、棒の場所に「データなし」と理由', () => {

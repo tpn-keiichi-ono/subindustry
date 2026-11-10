@@ -4631,13 +4631,17 @@ function mtgSalesHalvesOf_(content) {
  * - 時点コピーと比べるとき（ctx.before。コピーに売上の列があるとき）は、コピーの行の値（コピーに無い案件は 0）
  * - 無ければ、前回（since）より前でいちばん新しいスナップショットの値。それも無ければ、前回より後で最初の変更の「変更前」（変更が無ければ今の値）
  * 前回の時点で失注・まだ無かった案件は 0、削除した案件は今 0。
- * {year, years: ['26', '27', '28'], start, end, total}
+ * sureStart / sureEnd は、そのうち確定（compact.sureRanks。A・B）の案件の分（前回は前回のステータス、今は今のステータスで。
+ * 今の分は planSales.byRank の A＋B と同じ。統合版（報告用）の前回比）。
+ * {year, years: ['26', '27', '28'], start, end, total, sureStart, sureEnd}
  */
 function mtgSalesBridge_(deals, byKey, changed, changes, ctx) {
   const year = ctx.year;
   const years = [0, 1, 2].map(k => ('0' + ((Number(year) + k) % 100)).slice(-2));
   const inScope = status => !mtgExcludedStatus_(status);
-  const out = {year, years, start: 0, end: 0, total: 0};
+  const out = {year, years, start: 0, end: 0, total: 0, sureStart: 0, sureEnd: 0};
+  const sureRanks = (MTG_OPTIONS.compact && MTG_OPTIONS.compact.sureRanks) || ['A', 'B'];
+  const sure = status => sureRanks.indexOf(mtgPlanRank_(status)) >= 0;
   const halfKeys = ['前', '後'].map(h => year + h);
   const valueOf = halves => halfKeys.reduce((t, k) => t + ((halves || {})[k] || 0), 0);
   // 前回の時点の今年度の売上（halves は今の値・削除した行の値）
@@ -4659,21 +4663,32 @@ function mtgSalesBridge_(deals, byKey, changed, changes, ctx) {
     const value = valueOf(d.salesHalves);
     if (now) {
       out.end += value;
+      if (sure(d.status)) out.sureEnd += value;
       out.total += years.reduce((t, y) => t + ((d.sales || {})[y] || 0), 0);
     }
     // 同じ名前の2行目以降は、前回も同じ値とみなす（mtgBridge_ と同じ）
     if (byKey.get(d.key) !== d) {
-      if (now) out.start += value;
+      if (now) {
+        out.start += value;
+        if (sure(d.status)) out.sureStart += value;
+      }
       return;
     }
     const item = changed.get(d.key);
     const prev = ctx.beforeStatus ? ctx.beforeStatus.get(d.key) : null;
     const was = ctx.beforeStatus ? !!prev && inScope(prev.status) : item ? !!item.base && inScope(item.base.status) : now;
-    if (was) out.start += before(d.key, d.salesHalves);
+    const status = ctx.beforeStatus ? prev && prev.status : item ? item.base && item.base.status : d.status;   // 前回のステータス
+    if (was) {
+      const v = before(d.key, d.salesHalves);
+      out.start += v;
+      if (sure(status)) out.sureStart += v;
+    }
   });
   changes.filter(c => c.removed && c.base && inScope(c.base.status)).forEach(c => {
     const line = (ctx.removedLines || []).filter(r => ctx.history.root(r.key) === c.key || r.key === c.key).pop();
-    out.start += before(c.key, line ? line.salesHalves : null);
+    const v = before(c.key, line ? line.salesHalves : null);
+    out.start += v;
+    if (sure(c.base.status)) out.sureStart += v;
   });
   return out;
 }
