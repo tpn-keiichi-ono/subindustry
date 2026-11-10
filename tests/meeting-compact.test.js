@@ -105,15 +105,15 @@ test('統合版（報告用）のスライド：表紙（統合版と同じひ�
   // 集計の元は今年度の売上（2026/11/10 から）。想定売上のページは入れない（compact.amountPages）
   assert.deepStrictEqual(slides.map(s => s.title), [T.cover, '全サブインダストリーの状況・計画進捗（' + fy + '売上）',
     '全サブインダストリーの状況・計画進捗（' + fy + '売上・見込（C）を含む）',
-    T.plan + '（全サブインダストリー・' + fy + '売上）', T.plan + '（全サブインダストリー・' + fy + '売上・確定（A＋B））',
+    T.plan, T.plan + '：確定（A＋B）',
     '変化のあった案件：新FMT', '変化のあった案件：新FMT2']);
   // 想定売上のページも入れる（amountPages）：状況・計画進捗、計画に対する積み上げのそれぞれ、今年度の売上のページのあと
   gas.get('MTG_OPTIONS').compact.amountPages = true;
   assert.deepStrictEqual(plain(g.mtgCompactSlides_([summarize(g, '新FMT'), summarize(g, '新FMT2')], '2026/11/13', true)).map(s => s.title),
     [T.cover, '全サブインダストリーの状況・計画進捗（' + fy + '売上）', '全サブインダストリーの状況・計画進捗（' + fy + '売上・見込（C）を含む）',
       '全サブインダストリーの状況・計画進捗', '全サブインダストリーの状況・計画進捗（見込（C）を含む）',
-      T.plan + '（全サブインダストリー・' + fy + '売上）', T.plan + '（全サブインダストリー・' + fy + '売上・確定（A＋B））',
-      T.plan + '（全サブインダストリー）', T.plan + '（全サブインダストリー・確定（A＋B））', '変化のあった案件：新FMT', '変化のあった案件：新FMT2']);
+      T.plan, T.plan + '：確定（A＋B）',
+      T.plan + '：想定売上', T.plan + '：想定売上・確定（A＋B）', '変化のあった案件：新FMT', '変化のあった案件：新FMT2']);
   assert.strictEqual(g.mtgCompactFrontCount_(), 9);
   gas.get('MTG_OPTIONS').compact.amountPages = false;
   // 表紙は統合版と同じひな形。見出しの下は「事前資料」ではなく「報告資料」
@@ -633,6 +633,10 @@ test('状況・計画進捗（FY売上）：今年度の売上の列（前半期
   const periods = slide.elements.filter(e => e.role === 'compact-head-period').map(e => e.text);
   assert.deepStrictEqual(heads, ['計画', '進捗率（A＋B）', '確定（A＋B）/件', heads[3], '見込（C）/件', '売上合計', '案件数', '変化のある案件']);
   assert.match(heads[3], /^前回比（\d+\/\d+）$/);
+  // 期間の字は折り返さない（「（FY26〜28）」も1行。案件数の列は広げてある）
+  slide.elements.filter(e => e.role === 'compact-head-period').forEach(e => {
+    assert.ok(g.mtgTextWidth_(e.text, e.size) <= e.w - 14.4 + 0.01, e.text + ' は1行（' + e.size + 'pt）');
+  });
   // 今年度の列は「（FY26）」（想定売上のページは「（今年度）」）
   assert.deepStrictEqual(periods, ['（' + fy + '）', '（' + fy + '）', '（' + fy + '）', '（' + fy + '）', '（' + fy + '）',
     '（' + fy + '〜' + (Number(fiscalYear()) + 2) + '）', '（' + fy + '〜' + (Number(fiscalYear()) + 2) + '）', '（' + fy + '〜' + (Number(fiscalYear()) + 2) + '）']);
@@ -765,8 +769,8 @@ test('計画に対する積み上げ（FY売上・salesPlanBy: half）：今年�
   const merged = plain(g.mtgMergeSalesPlans_([s1.planSales, s2.planSales]));
   assert.deepStrictEqual([merged.halves.map(h => h.total), merged.total, merged.plan, merged.excluded.value], [[65, 55], 120, 300, 50]);
   const slides = plain(g.mtgCompactSlides_([s1, s2], '2026/11/13', true));
-  const all = slides.find(sl => sl.title === gas.get('MTG_TITLES').plan + '（全サブインダストリー・' + fy + '売上）');
-  const sure = slides.find(sl => sl.title === gas.get('MTG_TITLES').plan + '（全サブインダストリー・' + fy + '売上・確定（A＋B））');
+  const all = slides.find(sl => sl.title === gas.get('MTG_TITLES').plan);
+  const sure = slides.find(sl => sl.title === gas.get('MTG_TITLES').plan + '：確定（A＋B）');
   assert.ok(all && sure && slides.indexOf(sure) === slides.indexOf(all) + 1 && slides.indexOf(all) === 3, '状況・計画進捗の2枚の次');
   assert.deepStrictEqual(all.elements.filter(e => e.role === 'plan-label').map(e => e.text), ['前半期', '後半期', '合計', '計画', '不足', '失注\n1件']);
   assert.deepStrictEqual(all.elements.filter(e => e.role === 'plan-value').map(e => e.text), ['+65', '+55', '120', '300', '▲180', '50']);
@@ -790,8 +794,8 @@ test('計画に対する積み上げ（FY売上・salesPlanBy: orderMonth。既�
   assert.deepStrictEqual(merged.months.map(m => m.total).slice(7, 11), [0, 80, 30, 10]);
   assert.deepStrictEqual([merged.total, merged.excluded.value, merged.plan], [120, 50, 300]);
   const slides = plain(g.mtgCompactSlides_([s1, s2], '2026/11/13', true));
-  const all = slides.find(sl => sl.title === T.plan + '（全サブインダストリー・' + fy + '売上）');
-  const sure = slides.find(sl => sl.title === T.plan + '（全サブインダストリー・' + fy + '売上・確定（A＋B））');
+  const all = slides.find(sl => sl.title === T.plan);
+  const sure = slides.find(sl => sl.title === T.plan + '：確定（A＋B）');
   assert.ok(all && sure && slides.indexOf(all) === 3 && slides.indexOf(sure) === 4);
   assert.ok(all.elements.some(e => /月別 FY\d+売上の積み上げ（百万円）$/.test(e.text || '')), '月別の図');
   assert.match(leadOf(all), new RegExp('^今年度（[^）]+）の' + fy + '売上の積み上げは 120百万円。計画 300百万円に対して ▲180（達成率 40%）。'));

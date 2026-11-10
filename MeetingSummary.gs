@@ -6822,7 +6822,7 @@ function mtgSalesPlanSlide_(p, name, options) {
   const o = MTG_OPTIONS.plan;
   const only = options && options.only;
   const fy = 'FY' + (p.year || '');
-  const title = MTG_TITLES.plan + '（' + [name, fy + '売上', only ? options.label : ''].filter(Boolean).join('・') + '）';
+  const title = options && options.title ? options.title : MTG_TITLES.plan + '（' + [name, fy + '売上', only ? options.label : ''].filter(Boolean).join('・') + '）';
   const what = (only ? options.label + 'の' : '') + fy + ' の売上';
   const heading = fy + ' の売上（前半期・後半期）の' + (only ? options.label + 'の' : '') + '積み上げ（百万円）';
   if (p.gap) {
@@ -6964,7 +6964,9 @@ function mtgPlanSlide_(p, now, name, options) {
   const what = only ? options.label + 'の' + measure : measure;
   // options.titleNote：見出しの名前の後ろに足す言葉（「FY26売上」。同じ名前のページと見分ける）
   const note = options && options.titleNote || '';
-  const title = MTG_TITLES.plan + (name || only || note ? '（' + [name, note, only ? options.label : ''].filter(Boolean).join('・') + '）' : '');
+  // options.title：タイトルをそのまま使う（統合版（報告用）。括弧書きを付けない。2026/11/10）
+  const title = options && options.title ? options.title
+    : MTG_TITLES.plan + (name || only || note ? '（' + [name, note, only ? options.label : ''].filter(Boolean).join('・') + '）' : '');
   const first = mtgMonthOf_(p.start);
   const last = mtgMonthOf_(p.start + 11);
   const period = String(first.y).slice(2) + '/' + first.m + '〜' + String(last.y).slice(2) + '/' + last.m;

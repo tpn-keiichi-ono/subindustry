@@ -101,26 +101,34 @@ function mtgCompactFront_(summaries, meeting, final, now) {
     const merged = o.plan.enabled ? mtgMergePlans_(summaries.map(mtgCompactPlanOf_)) : null;
     // 計画に対する積み上げ：今年度の売上（全確度・確定（A＋B））のあとに、想定売上（同じ2枚。amountPages のとき）
     const plan = [];
+    // タイトルは括弧書きを付けない（2026/11/10）：「計画に対する積み上げ」「計画に対する積み上げ：確定（A＋B）」。今年度の売上と想定売上の両方を
+    // 入れるとき（amountPages）は、想定売上のページに「：想定売上」を付けて見分ける
+    const T = MTG_TITLES.plan;
+    const amountWord = C.salesPage ? C.measure : '';
+    const titles = {sales: T, salesSure: T + '：' + C.sureLabel,
+      amount: T + (amountWord ? '：' + amountWord : ''), amountSure: T + '：' + [amountWord, C.sureLabel].filter(Boolean).join('・')};
     if (merged && C.salesPage) {
       // 売上の列が無いシートは除いて足す（どのシートにも無ければ「データなし」）
       const pick = list => (list.some(x => !x.gap) ? list.filter(x => !x.gap) : list.slice(0, 1));
       if (C.salesPlanBy === 'half') {
         const sales = mtgMergeSalesPlans_(pick(summaries.map(s => s.planSales || mtgSalesPlanOf_([], s.name, now, {}))));
-        plan.push(mtgSalesPlanSlide_(sales, o.combined.name), mtgSalesPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), o.combined.name,
-          {only: C.sureRanks, label: C.sureLabel}));
+        plan.push(mtgSalesPlanSlide_(sales, o.combined.name, {title: titles.sales}), mtgSalesPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), o.combined.name,
+          {only: C.sureRanks, label: C.sureLabel, title: titles.salesSure}));
       } else {
         // 案件の今年度の売上の合計を、受注月の月に置いて積み上げる（想定売上の積み上げと同じ形）
         const sales = mtgMergePlans_(pick(summaries.map(s => s.planSalesByMonth || mtgSalesPlanByMonthOf_([], s.name, now, {}))));
         sales.year = sales.year || mtgFiscalYearKey_(now);
         const fy = 'FY' + sales.year;
         const measure = fy + '売上';
-        plan.push(mtgPlanSlide_(sales, now, o.combined.name, {measure, titleNote: measure}),
-          mtgPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure, titleNote: measure}));
+        plan.push(mtgPlanSlide_(sales, now, o.combined.name, {measure, titleNote: measure, title: titles.sales}),
+          mtgPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure, titleNote: measure,
+            title: titles.salesSure}));
       }
     }
     if (merged && amountOn) {
-      plan.push(mtgPlanSlide_(merged, now, o.combined.name, {measure: C.measure}),
-        mtgPlanSlide_(mtgPlanRanksOnly_(merged, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure: C.measure}));
+      plan.push(mtgPlanSlide_(merged, now, o.combined.name, {measure: C.measure, title: titles.amount}),
+        mtgPlanSlide_(mtgPlanRanksOnly_(merged, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure: C.measure,
+          title: titles.amountSure}));
     }
     // 状況・計画進捗：今年度の売上（と見込（C）を含む）のあとに、想定売上（同じ2枚。amountPages のとき）
     const status = [].concat(C.salesPage ? [mtgCompactOverviewSlide_(summaries, {sales: true}), mtgCompactOverviewSlide_(summaries, {sales: true, withC: true})] : [],
@@ -247,7 +255,8 @@ function mtgCompactOverviewSlide_(summaries, options) {
     // 売上のページは、売上合計（3年度分。見出しの下に「（FY26〜28）」）。前回比は左のまとまり（確定（A＋B）の右）
     {cols: [bySales ? {key: 'amount', label: '売上合計', w: 48, period: '（' + span + '）'} : {key: 'amount', label: '想定売上合計', w: 48, period: '（全期間）'}]
       .concat(bySales ? [] : [{key: 'delta', label: deltaLabel, w: 58, period: '（全期間）'}]).concat([
-      {key: 'active', label: '案件数', w: 36, period: allYears}, {key: 'changed', label: '変化のある案件', w: 56, period: allYears}])}
+      // 売上のページは期間が「（FY26〜28）」と長いので、案件数の列を広げる（折り返さないように。2026/11/10）
+      {key: 'active', label: '案件数', w: bySales ? 44 : 36, period: allYears}, {key: 'changed', label: '変化のある案件', w: 56, period: allYears}])}
   ];
   // 列はまとまりに分けて見出しを付けない（2026/11/09。計画進捗と案件の状況を分ける必要はないため）。groups は列の並びのまとまり
   const colsW = groups.reduce((t, gr) => t + gr.cols.reduce((u, col) => u + col.w, 0), 0);
@@ -271,13 +280,17 @@ function mtgCompactOverviewSlide_(summaries, options) {
   let size = 7.5;
   const fitsAll = pt => groups.every(gr => gr.cols.every(col => mtgTextWidth_(col.label, pt) <= col.w * 0.9));
   while (!fitsAll(size) && size > 6) size -= 0.5;
+  // 期間の字も折り返さない：どの列も同じ大きさで、いちばん長い期間が列の幅に入る大きさ（6.5pt から 5.5pt まで）
+  let periodSize = 6.5;
+  const periodsFit = pt => groups.every(gr => gr.cols.every(col => !col.period || mtgTextWidth_(col.period, pt) <= col.w));
+  while (!periodsFit(periodSize) && periodSize > 5.5) periodSize -= 0.5;
   groups.forEach(gr => {
     gr.cols.forEach(col => {
       el.push(mtgBox_(cx - S.padX / 2, headY, col.w + S.padX, labelH, col.label,
         {size, color: c.sub, align: 'CENTER', valign: 'BOTTOM', role: 'compact-head'}));
       if (col.period) {
         el.push(mtgBox_(cx - S.padX / 2, headY + labelH, col.w + S.padX, periodH, col.period,
-          {size: 6.5, color: c.muted, align: 'CENTER', valign: 'MIDDLE', role: 'compact-head-period'}));
+          {size: periodSize, color: c.muted, align: 'CENTER', valign: 'MIDDLE', role: 'compact-head-period'}));
       }
       col.x = cx;
       cx += col.w;
