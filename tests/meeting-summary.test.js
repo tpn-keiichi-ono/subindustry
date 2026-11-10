@@ -165,7 +165,11 @@ test('削除した行の「見出し: 値」は、シートの見出しで区切
   const headers = Object.values(HEADERS);
   const text = '得意先: F社\n案件名: ブランド刷新\n期待値調整済\n想定売上規模（百万）: 3\n想定売上規模（百万）: 10\n活動状況: 1行目\n2行目\nアカウント責任者: 高橋';
   assert.deepStrictEqual(plain(g.mtgParseRemoved_(text, headers)), {customer: 'F社', project: 'ブランド刷新', status: '', amount: 10,
-    weighted: 3, orderMonth: null, orderMonthText: '', owner: '高橋', clientDept: '', clientTitle: '', scenarios: []});
+    weighted: 3, orderMonth: null, orderMonthText: '', owner: '高橋', clientDept: '', clientTitle: '', scenarios: [], salesHalves: null});
+  // 年度別の売上の列（統合版（報告用）の売上の前回比。削除した案件の前回の値）：「26前」→ 値。空は入れない
+  const sales = plain(g.mtgParseRemoved_('得意先: F社\nFY26前半期売上（百万）: 12\nFY26後半期売上（百万）: \nFY27前半期売上（百万）: 5',
+    headers.concat(['FY26前半期売上（百万）', 'FY26後半期売上（百万）', 'FY27前半期売上（百万）'])));
+  assert.deepStrictEqual(sales.salesHalves, {'26前': 12, '27前': 5});
   // 先方部門・役職・RXシナリオ構成も読む（前回から変化のある案件の列。削除した行にも出す）
   const more = headers.concat(['先方部門', '先方担当役職', 'RXシナリオ構成']);
   const removed = plain(g.mtgParseRemoved_('得意先: F社\n先方部門: 営業本部\n先方担当役職: 部長\nRXシナリオ構成: 01-04.顧客情報活用パッケージ, 01-05.バックオフィス業務PF', more));

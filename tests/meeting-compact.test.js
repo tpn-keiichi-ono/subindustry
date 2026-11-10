@@ -539,14 +539,21 @@ test('状況・計画進捗（FY売上）：今年度の売上の列（前半期
   const values = slide.elements.filter(e => e.role === 'compact-value').map(e => e.text);
   assert.deepStrictEqual(values.slice(0, 4), ['200', '55%', '110/3件', '0/0件'], '新FMT の行（左の4列は売上）');
   assert.deepStrictEqual(values.slice(8, 12), ['100', '10%', '10/1件', '0/0件'], '新FMT2 の行');
-  // 右の4列（全期間の想定売上合計・前回比・案件数・変化のある案件）は、想定売上のページ（amountPages）と同じ
+  // 右の4列：売上合計は3年度分（今年度から）の売上（テストのシートは今年度の列だけ。新FMT は E社（失注）を除く 110）、前回比は今年度の売上の増減。
+  // 案件数・変化のある案件は、想定売上のページ（amountPages）と同じ
+  assert.deepStrictEqual([values.slice(4, 6), values.slice(12, 14)], [['110', '±0'], ['10', '±0']]);
+  const heads = slide.elements.filter(e => e.role === 'compact-head').map(e => e.text);
+  const periods = slide.elements.filter(e => e.role === 'compact-head-period').map(e => e.text);
+  assert.deepStrictEqual([heads[4], periods[4], periods[5], periods[6]], ['売上合計', '（' + fy + '〜' + (Number(fiscalYear()) + 2) + '）', '（' + fy + '）', '（全期間）']);
+  assert.match(leadOf(slide), new RegExp('案件 6件・' + fy + '〜' + (Number(fiscalYear()) + 2) + '売上合計 120百万円（失注除く）'));
   gas.get('MTG_OPTIONS').compact.amountPages = true;
   const both = plain(g.mtgCompactSlides_([s1, s2], '2026/11/13', true));
   gas.get('MTG_OPTIONS').compact.amountPages = false;
   const amountPage = both.find(sl => sl.title === '全サブインダストリーの状況・計画進捗');
   assert.strictEqual(both.indexOf(amountPage), 3, '想定売上のページは、売上の2枚のあと');
   const base = amountPage.elements.filter(e => e.role === 'compact-value').map(e => e.text);
-  assert.deepStrictEqual([values.slice(4, 8), values.slice(12, 16)], [base.slice(4, 8), base.slice(12, 16)]);
+  assert.deepStrictEqual([values.slice(6, 8), values.slice(14, 16)], [base.slice(6, 8), base.slice(14, 16)]);
+  assert.deepStrictEqual([base[4], base[12]], ['210', '30'], '想定売上のページは全期間の想定売上合計');
   assert.ok(slide.elements.some(e => e.text === fy + ' の売上（前半期＋後半期）の確定（A＋B）と計画（百万円）'));
   assert.match(leadOf(slide), new RegExp('進捗率・確定・見込は ' + fy + ' の売上（前半期＋後半期。受注月によらない）'));
   assert.strictEqual(slide.elements.find(e => e.role === 'lead').text.split('\n').length, 2, 'リード文は2行');
@@ -571,6 +578,48 @@ test('状況・計画進捗（FY売上）：今年度の売上の列（前半期
   gas.get('MTG_OPTIONS').compact.salesPage = false;
   assert.ok(!plain(g.mtgCompactSlides_([s1, s2], '2026/11/13', true)).some(sl => /売上）$/.test(sl.title)));
   assert.strictEqual(g.mtgCompactFrontCount_(), 5);
+});
+
+test('状況・計画進捗（FY売上）の前回比：今年度の売上の増減。前回の値は、変更の記録（売上の列の変更前）から。失注になった案件は前回の分だけ減る。売上合計は3年度分', () => {
+  const {gas, g, sheet} = setup();
+  const fy = fiscalYear();
+  const next = String(Number(fy) + 1);
+  // 来年度の列（FY27前半期）を足す（3年度分の売上合計に入る。前回比には入らない）
+  sheet.getRange('R2').setValue('FY' + next + '前半期売上（百万）');
+  sheet.getRange('R3').setValue(100);   // A社
+  g.recordDiffEdit(gas.edit(sheet, 'P3', 50));   // A社：今年度の前半期 30 → 50（+20）
+  g.recordDiffEdit(gas.edit(sheet, 'Q5', 15));   // C社：今年度の後半期 空 → 15（+15）
+  g.recordDiffEdit(gas.edit(sheet, 'F4', '失注'));   // B社：失注（前回の 30 の分だけ減る）
+  g.recordDiffEdit(gas.edit(sheet, 'P7', 80));   // E社（失注のまま）：入れない
+  const s1 = summarize(g, '新FMT');
+  assert.deepStrictEqual(plain(s1.salesBridge), {year: fy, years: [fy, next, String(Number(fy) + 2)], start: 110, end: 115, total: 215});
+  // 売上の列の変更は、資料の「変化」には出さない（ignoreHeaders）。B社（失注）・C社・D社は前からの変化
+  assert.ok(!s1.changes.some(c => c.customer === 'A社'));
+  const values = plain(g.mtgCompactOverviewSlide_([s1], {sales: true})).elements.filter(e => e.role === 'compact-value').map(e => e.text);
+  assert.deepStrictEqual(values.slice(4, 6), ['215', '+5']);
+  // 区切って作るときの中身の一部にも入れる
+  assert.deepStrictEqual(plain(g.mtgCombinedLite_(s1)).salesBridge.start, 110);
+  // 想定売上のページは、全期間の想定売上合計と、その前回比のまま
+  const amount = plain(g.mtgCompactOverviewSlide_([s1])).elements.filter(e => e.role === 'compact-value').map(e => e.text);
+  assert.deepStrictEqual(amount.slice(4, 6), ['160', '▲50']);
+});
+
+test('状況・計画進捗（FY売上）の前回比：前回の時点コピーと比べるときは、コピーの売上の列の値と比べる（コピーに無い案件は 0）', () => {
+  const {gas, g, sheet} = setup();
+  const ss = g.SpreadsheetApp.getActiveSpreadsheet();
+  // 前回の時点コピー：今のシートの写し（売上を書き換える前）
+  const copySheet = gas.addSheet('前回コピー', sheet.getRange(1, 1, sheet.getLastRow(), WIDTH).getValues(), {rows: 30, columns: WIDTH});
+  const copy = {table: g.mtgReadDeals_(copySheet, gas.get('DIFF_RULES')['新FMT']), title: '前回', url: ''};
+  sheet.getRange('P3').setValue(60);   // A社：30 → 60（変更の記録が無くても、コピーと比べる）
+  // H社：前回の後に足した案件（コピーに無い。前回は 0）。今年度の前半期（P列）7
+  sheet.getRange('D8:Q8').setValues([['H社', '新規', 'C-提案中(50%)', 10, 5, fiscalMonth(9), '', '', '', '', '', '', 7, '']]);
+  const now = new Date();
+  const since = new Date(Date.now() - 14 * 86400000);
+  const windowStart = new Date(Date.now() - 180 * 86400000);
+  const s1 = g.mtgSummarize_(ss, '新FMT', {since, previous: {date: '2026/10/30', cutoff: since.getTime()}, legacy: null, baseline: null, draft: null,
+    final: true, now, meeting: '2026/11/13', windowStart, copy, copyError: '', trackedSince: g.mtgLogStart_(ss),
+    log: g.mtgReadLog_(ss, windowStart), snapshots: g.mtgReadSnapshots_(ss, windowStart), credentials: g.hsCredentialIndex_(ss)});
+  assert.deepStrictEqual([s1.salesBridge.start, s1.salesBridge.end], [110, 147]);
 });
 
 test('状況・計画進捗（FY売上）：今年度の売上の列が無いシートは、棒の場所に「データなし」と理由', () => {

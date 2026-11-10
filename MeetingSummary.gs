@@ -3666,7 +3666,8 @@ function mtgReadSnapshots_(ss, since) {
       status: pick(cols.status),
       // その時点の行の値（変更のあとの値。数式の列も計算した値）。前回の時点の値に使う
       values: {status: pick(cols.status), amount: mtgNumber_(pick(cols.amount)), weighted: mtgNumber_(pick(cols.weighted)),
-        monthText: pick(cols.orderMonth), activity: pick(cols.activity), issue: pick(cols.issue), nextAction: pick(cols.nextAction)}
+        monthText: pick(cols.orderMonth), activity: pick(cols.activity), issue: pick(cols.issue), nextAction: pick(cols.nextAction),
+        salesHalves: mtgSalesHalvesOf_(content)}   // 年度別の売上（「26前」→ 値。売上の列が無い記録は null）
     });
   });
   return map;
@@ -3857,10 +3858,11 @@ function mtgSummarize_(ss, name, context) {
     r.key = mtgDealKey_(r.customer, r.project);
     return r;
   });
+  let before = null;   // 前回の時点コピーの案件（キー → 行）。コピーと比べないときは null
   if (copy) {
     // 前回の時点コピーの行と今の行を、得意先＋案件名で突き合わせる（名前を書き換えた案件は、変更の記録で前の名前とつなげる）。
     // コピーに無い案件は新規、今のシートに無い案件は削除
-    const before = new Map();
+    before = new Map();
     copy.table.deals.forEach(d => {
       const key = history.root(d.key);
       if (!before.has(key)) before.set(key, d);
@@ -3894,6 +3896,10 @@ function mtgSummarize_(ss, name, context) {
 
   // 期待値の増減（前回の時点で進行中だった案件の期待値 → 今の進行中の期待値）。進行中から外れた分・入った分も内訳にする
   const bridge = mtgBridge_(deals, byKey, changed, changes);
+  // 今年度の売上の増減と、3年度分の売上の合計（統合版（報告用）の状況・計画進捗の右の列。MeetingCompact.gs）
+  const salesBridge = mtgSalesBridge_(deals, byKey, changed, changes,
+    {year: mtgFiscalYearKey_(context.now), since, history, before: before && copy.table && copy.table.salesYears.indexOf(mtgFiscalYearKey_(context.now)) >= 0 ? before : null,
+      beforeStatus: before, removedLines});
 
   // 進行中の案件の、ステータスが同じ日数：最後に変わってから（または案件ができてから）。変わった記録が無ければ、
   // 記録を読んだ期間の始まり・最終更新日時の古いほうからの「N日以上」（どちらも無ければ分からない）。
@@ -4019,6 +4025,7 @@ function mtgSummarize_(ss, name, context) {
     gaps: gaps.parts,
     alertGaps: gaps.alerts,
     bridge,
+    salesBridge,
     stages: mtgStages_(deals, table.statusOrder),
     quarters: mtgQuarters_(counted, context.now),
     plan: mtgPlanOf_(deals, name, context.now, table.has),
@@ -4173,11 +4180,22 @@ function mtgHistory_(name, context) {
   const alias = new Map();
   const items = [];
   const removed = [];
+  const salesItems = [];
+  const salesPattern = new RegExp(MTG_OPTIONS.portfolio.salesHeader);
   let unmatched = 0;
   let dummy = 0;   // ダミーの記録（DMY-。addBusinessMtgDummyHistory()）の数。あれば資料に【ダミーデータを含む】と出す
   context.log.forEach(e => {
     if (resolve(e.sheet) !== name || e.at == null || /^(SMP|CRD)-/.test(e.eventId)) return;
-    if (mtgIgnoredHeader_(e.column)) return;   // 資料に含めない列（FY別の売上など）の変更は、変化にも更新項目にも出さない
+    if (mtgIgnoredHeader_(e.column)) {
+      // 資料に含めない列（FY別の売上など）の変更は、変化にも更新項目にも出さない。年度別の売上の列は、前回の時点の値
+      // （統合版（報告用）の今年度の売上の前回比。mtgSalesBridge_）に使うので、変更前の値を覚えておく
+      const m = salesPattern.exec(credNormalize_(e.column));
+      const snap = m && e.type !== DIFF_ROW_OPTIONS.kindDelete ? context.snapshots.get(e.eventId + '#' + mtgCellRow_(e.cell)) : null;
+      if (snap && (snap.customer || snap.project)) {
+        salesItems.push({key: mtgDealKey_(snap.customer, snap.project), at: e.at, half: String(m[1]).slice(-2) + m[2], before: empty(e.before)});
+      }
+      return;
+    }
     if (/^DMY-/.test(e.eventId)) dummy++;
     if (e.type === DIFF_ROW_OPTIONS.kindDelete) {
       removed.push({at: e.at, text: e.before});
@@ -4228,7 +4246,14 @@ function mtgHistory_(name, context) {
     states.get(key).push({at: snap.at, values: snap.values});
   });
   states.forEach(list => list.sort((a, b) => a.at - b.at));
-  return {events, removed, unmatched, states, dummy, root};
+  // 案件ごとの、年度別の売上の列の変更（古い順。{at, half: 「26前」など, before}）
+  const sales = new Map();
+  salesItems.forEach(item => {
+    const key = root(item.key);
+    if (!sales.has(key)) sales.set(key, []);
+    sales.get(key).push(item);
+  });
+  return {events, removed, unmatched, states, dummy, root, sales};
 }
 
 /**
@@ -4578,7 +4603,79 @@ function mtgParseRemoved_(text, headers) {
   return {customer: get(cols.customer), project: get(cols.project), status: get(cols.status),
     amount: mtgNumber_(get(cols.amount)), weighted: mtgNumber_(get(cols.weighted)),
     orderMonth: mtgMonth_(get(cols.orderMonth)), orderMonthText: get(cols.orderMonth), owner: get(cols.owner),
-    clientDept: get(cols.clientDept), clientTitle: get(cols.clientTitle), scenarios: mtgScenarioList_(get(cols.scenario))};
+    clientDept: get(cols.clientDept), clientTitle: get(cols.clientTitle), scenarios: mtgScenarioList_(get(cols.scenario)),
+    salesHalves: mtgSalesHalvesOf_(values)};
+}
+
+/**
+ * 見出し（正規化）→ 値の Map（変更時点スナップショットの行の内容・削除した行）から、年度別の売上の列（portfolio.salesHeader）の値。
+ * {「26前」: 値, …}（空・数値でない値は入れない）。売上の列が1つも無ければ null
+ */
+function mtgSalesHalvesOf_(content) {
+  const pattern = new RegExp(MTG_OPTIONS.portfolio.salesHeader);
+  let found = false;
+  const out = {};
+  content.forEach((v, k) => {
+    const m = pattern.exec(credNormalize_(k));
+    if (!m) return;
+    found = true;
+    const n = mtgNumber_(String(v == null ? '' : v).trim());
+    if (n != null) out[String(m[1]).slice(-2) + m[2]] = (out[String(m[1]).slice(-2) + m[2]] || 0) + n;
+  });
+  return found ? out : null;
+}
+
+/**
+ * 今年度の売上（年度別の売上の列の前半期＋後半期）の、前回の時点（start）と今（end）の合計と、今の3年度分（今年度から）の売上の合計（total）。
+ * 対象は失注を除く案件（mtgBridge_ と同じ）。前回の時点の値（推定で補わない）：
+ * - 時点コピーと比べるとき（ctx.before。コピーに売上の列があるとき）は、コピーの行の値（コピーに無い案件は 0）
+ * - 無ければ、前回（since）より前でいちばん新しいスナップショットの値。それも無ければ、前回より後で最初の変更の「変更前」（変更が無ければ今の値）
+ * 前回の時点で失注・まだ無かった案件は 0、削除した案件は今 0。
+ * {year, years: ['26', '27', '28'], start, end, total}
+ */
+function mtgSalesBridge_(deals, byKey, changed, changes, ctx) {
+  const year = ctx.year;
+  const years = [0, 1, 2].map(k => ('0' + ((Number(year) + k) % 100)).slice(-2));
+  const inScope = status => !mtgExcludedStatus_(status);
+  const out = {year, years, start: 0, end: 0, total: 0};
+  const halfKeys = ['前', '後'].map(h => year + h);
+  const valueOf = halves => halfKeys.reduce((t, k) => t + ((halves || {})[k] || 0), 0);
+  // 前回の時点の今年度の売上（halves は今の値・削除した行の値）
+  const before = (key, halves) => {
+    if (ctx.before) {
+      const prev = ctx.before.get(key);
+      return prev ? valueOf(prev.salesHalves) : 0;
+    }
+    const prior = (ctx.history.states.get(key) || []).filter(st => st.at <= ctx.since).pop();
+    if (prior && prior.values.salesHalves) return valueOf(prior.values.salesHalves);
+    const events = (ctx.history.sales.get(key) || []).filter(e => e.at > ctx.since);
+    return halfKeys.reduce((t, k) => {
+      const e = events.find(x => x.half === k);
+      return t + ((e ? mtgNumber_(e.before) : (halves || {})[k]) || 0);
+    }, 0);
+  };
+  deals.forEach(d => {
+    const now = inScope(d.status);
+    const value = valueOf(d.salesHalves);
+    if (now) {
+      out.end += value;
+      out.total += years.reduce((t, y) => t + ((d.sales || {})[y] || 0), 0);
+    }
+    // 同じ名前の2行目以降は、前回も同じ値とみなす（mtgBridge_ と同じ）
+    if (byKey.get(d.key) !== d) {
+      if (now) out.start += value;
+      return;
+    }
+    const item = changed.get(d.key);
+    const prev = ctx.beforeStatus ? ctx.beforeStatus.get(d.key) : null;
+    const was = ctx.beforeStatus ? !!prev && inScope(prev.status) : item ? !!item.base && inScope(item.base.status) : now;
+    if (was) out.start += before(d.key, d.salesHalves);
+  });
+  changes.filter(c => c.removed && c.base && inScope(c.base.status)).forEach(c => {
+    const line = (ctx.removedLines || []).filter(r => ctx.history.root(r.key) === c.key || r.key === c.key).pop();
+    out.start += before(c.key, line ? line.salesHalves : null);
+  });
+  return out;
 }
 
 /* ---------------- 小さな補助 ---------------- */
@@ -4815,7 +4912,7 @@ function mtgCombinedLite_(s) {
   const prev = s.previous;
   return JSON.parse(JSON.stringify({name: s.name, dummy: s.dummy || 0, first: s.first || false, kpi: s.kpi, gaps: s.gaps || {},
     bridge: {start: s.bridge.start, end: s.bridge.end, startCount: s.bridge.startCount, endCount: s.bridge.endCount,
-      amountStart: s.bridge.amountStart, amountEnd: s.bridge.amountEnd}, plan: s.plan || null, planAmount: s.planAmount || null, planSales: s.planSales || null,
+      amountStart: s.bridge.amountStart, amountEnd: s.bridge.amountEnd}, salesBridge: s.salesBridge || null, plan: s.plan || null, planAmount: s.planAmount || null, planSales: s.planSales || null,
     planSalesByMonth: s.planSalesByMonth || null,
     changedNow: s.changes ? mtgCompactChangedNow_(s) : null,   // 変化のある案件のうち今ある案件（統合版（報告用）の状況のページ）
     previous: prev ? {date: prev.date, cutoff: prev.cutoff, baseline: !!prev.baseline, chosen: !!prev.chosen} : null}));

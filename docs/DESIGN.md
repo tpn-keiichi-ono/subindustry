@@ -882,6 +882,11 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
 状況・計画進捗・計画に対する積み上げは今年度の売上のページだけで、想定売上のページは `compact.amountPages: true` のときだけ、それぞれ売上のページのあとに入れる
 （`mtgCompactAmountOn_`。`salesPage: false` なら前と同じく想定売上だけ）。サブインダストリーの並びは集計の元の進捗率（A＋B）で決め、ほかのページも同じ並び。
 変化のあった案件の金額の列も今年度の売上（下）。
+売上のページの右の列は、売上合計（3年度分（今年度から）の売上。見出しの下は「（FY26〜28）」）と前回比（今年度の売上の増減。「（FY26）」）。
+`summary.salesBridge` = `mtgSalesBridge_`（{year, years, start, end, total}。失注を除く。`mtgBridge_` と同じく、前回の時点で失注・まだ無かった案件は 0、削除・失注になった案件は今 0）。
+前回の時点の値は、時点コピー（コピーに今年度の売上の列があるとき）の行の値 → 無ければ前回より前でいちばん新しい変更時点スナップショット（`values.salesHalves` = `mtgSalesHalvesOf_`）
+→ 無ければ前回より後で最初の、売上の列の変更の「変更前」（`mtgHistory_` の `sales`。売上の列は `ignoreHeaders` で変化には出さないが、変更前の値だけ覚える）、変更が無ければ今の値。
+削除した行は `mtgParseRemoved_` の `salesHalves`。想定売上のページ（`amountPages`）の右の列は、前と同じ全期間の想定売上合計と、その前回比。
 
 統合版の「別バージョン」として、数字の要点と変化のあった案件だけの資料を、別の関数 `createBusinessMtgReportingSummary()` で作ります（統合版の関数・ページは変えない）。
 

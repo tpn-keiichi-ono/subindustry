@@ -145,7 +145,8 @@ function mtgCompactPlanOf_(s) {
  * 並び・右の数字は同じ。目盛りは A＋B＋C も入るように）
  */
 function mtgCompactOverviewSlide_(summaries, options) {
-  // options.sales：今年度の売上（FY前半期＋後半期の列。summary.planSales）で集計したページ（棒・計画・進捗率・確定・見込。右の4列（全期間）は同じ）
+  // options.sales：今年度の売上（FY前半期＋後半期の列。summary.planSales）で集計したページ（棒・計画・進捗率・確定・見込）。
+  // 右の列の売上合計は3年度分（今年度から）の売上、前回比は今年度の売上の増減（summary.salesBridge）。案件数・変化のある案件は同じ
   const bySales = !!(options && options.sales);
   const S = MTG_SLIDE;
   const o = MTG_OPTIONS;
@@ -181,14 +182,22 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const last = mtgMonthOf_(merged.start + 11);
   const period = String(first.y).slice(2) + '/' + first.m + '〜' + String(last.y).slice(2) + '/' + last.m;
   // 合計（作れたシートの分だけ。作れないシートがあれば ※）
+  // 売上のページ（bySales）の右の2列：3年度分（今年度から）の売上の合計と、今年度の売上の前回比（summary.salesBridge）。
+  // 想定売上のページは、全期間の想定売上合計と、その前回比（summary.bridge）
+  const yearKey = merged.year || mtgFiscalYearKey_(summaries.length && summaries[0].now ? new Date(summaries[0].now) : new Date());
+  const span = 'FY' + yearKey + '〜' + ('0' + ((Number(yearKey) + 2) % 100)).slice(-2);
+  const lackOf = s => (bySales ? (s.planSales && s.planSales.gap) || !s.salesBridge : (s.gaps || {}).amount);
+  const endOf = s => (bySales ? s.salesBridge.total : s.bridge.amountEnd || 0);
+  const deltaOf = s => (bySales ? s.salesBridge.end - s.salesBridge.start : (s.bridge.amountEnd || 0) - (s.bridge.amountStart || 0));
+  items.forEach(z => { z.lackAmount = !!lackOf(z.s); });
   const total = {active: 0, amount: 0, delta: 0, changed: 0, lack: {}};
-  items.forEach(({s, lack}) => {
+  items.forEach(({s, lack, lackAmount}) => {
     const b = s.bridge;
     total.active += b.endCount;
-    if (lack.amount) total.lack.amount = true;
-    else total.amount += b.amountEnd || 0;
-    if (lack.amount || lack.changes) total.lack.delta = true;
-    else total.delta += (b.amountEnd || 0) - (b.amountStart || 0);
+    if (lackAmount) total.lack.amount = true;
+    else total.amount += endOf(s);
+    if (lackAmount || lack.changes) total.lack.delta = true;
+    else total.delta += deltaOf(s);
     if (lack.changes) total.lack.changed = true;
     else total.changed += mtgCompactChangedNow_(s);
   });
@@ -197,7 +206,8 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const fy = 'FY' + (merged.year || mtgFiscalYearKey_(summaries.length && summaries[0].now ? new Date(summaries[0].now) : new Date()));
   const totalRate = ok.length ? rate(merged) : null;
   const lead = '進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '（計画に届いているのは ' + ok.length + 'のうち ' + reached + '）。' +
-    '案件 ' + total.active + '件・想定売上合計 ' + mtgAmount_(total.amount) + '百万円（全期間・失注除く）。\n' +
+    '案件 ' + total.active + '件・' + (bySales ? span + '売上合計 ' + mtgAmount_(total.amount) + '百万円（失注除く）。\n'
+      : '想定売上合計 ' + mtgAmount_(total.amount) + '百万円（全期間・失注除く）。\n') +
     // 並びの説明：このページの集計で並べたなら「進捗率（A＋B）の高い順」、ほかの集計（最初のページ）で並べたなら「並びは最初のページと同じ」
     (ownOrder ? '進捗率（A＋B）の高い順。' : '並びは最初のページと同じ。') +
     (bySales ? '進捗率・確定・見込は ' + fy + ' の売上（前半期＋後半期。受注月によらない）。進捗率 ＝ A＋B ÷ 計画。'
@@ -222,7 +232,9 @@ function mtgCompactOverviewSlide_(summaries, options) {
     {cols: [{key: 'plan', label: '計画', w: 36, period: '（今年度）'}, {key: 'rate', label: '進捗率（A＋B）', w: 52, period: '（今年度）'},
       {key: 'ab', label: '確定（A＋B）/件', w: 66, period: '（今年度）'}, {key: 'c', label: '見込（C）/件', w: 60, period: '（今年度）'}]},
     // 想定売上合計・前回比・案件数・変化のある案件は、受注月で絞らない（今年度の列と違う）ので、見出しの下に「（全期間）」
-    {cols: [{key: 'amount', label: '想定売上合計', w: 48, period: '（全期間）'}, {key: 'delta', label: deltaLabel, w: 58, period: '（全期間）'},
+    // 売上のページは、売上合計（3年度分。見出しの下に「（FY26〜28）」）・前回比（今年度の売上。「（FY26）」）
+    {cols: [bySales ? {key: 'amount', label: '売上合計', w: 48, period: '（' + span + '）'} : {key: 'amount', label: '想定売上合計', w: 48, period: '（全期間）'},
+      {key: 'delta', label: deltaLabel, w: 58, period: bySales ? '（FY' + yearKey + '）' : '（全期間）'},
       {key: 'active', label: '案件数', w: 36, period: '（全期間）'}, {key: 'changed', label: '変化のある案件', w: 56, period: '（全期間）'}]}
   ];
   // 列はまとまりに分けて見出しを付けない（2026/11/09。計画進捗と案件の状況を分ける必要はないため）。groups は列の並びのまとまり
@@ -349,12 +361,12 @@ function mtgCompactOverviewSlide_(summaries, options) {
     const mark = key => (total.lack[key] ? '※' : '');
     const values = item.total ? {
       plan: ok.length ? mtgAmount_(p.plan) : G, ab: amountCount(['A', 'B']), c: amountCount(['C']),
-      amount: items.every(z => z.lack.amount) ? G : mtgAmount_(total.amount) + mark('amount'),
-      delta: items.every(z => z.lack.amount || z.lack.changes) ? G : mtgSigned_(total.delta) + mark('delta'),
+      amount: items.every(z => z.lackAmount) ? G : mtgAmount_(total.amount) + mark('amount'),
+      delta: items.every(z => z.lackAmount || z.lack.changes) ? G : mtgSigned_(total.delta) + mark('delta'),
       active: total.active + '件', changed: items.every(z => z.lack.changes) ? G : total.changed + '件' + mark('changed')
     } : {
       plan: p.gap ? G : mtgAmount_(p.plan), ab: amountCount(['A', 'B']), c: amountCount(['C']),
-      amount: lack.amount ? G : mtgAmount_(b.amountEnd || 0), delta: lack.amount || lack.changes ? G : mtgSigned_((b.amountEnd || 0) - (b.amountStart || 0)),
+      amount: item.lackAmount ? G : mtgAmount_(endOf(s)), delta: item.lackAmount || lack.changes ? G : mtgSigned_(deltaOf(s)),
       active: b.endCount + '件', changed: lack.changes ? G : mtgCompactChangedNow_(s) + '件'
     };
     cols.forEach(col => {
