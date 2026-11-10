@@ -228,6 +228,8 @@ function mtgCompactOverviewSlide_(summaries, options) {
   // 列：名前・横棒｜計画・進捗率（A＋B）・確定（A＋B）/件・（売上のページは前回比）・見込（C）/件｜想定売上合計（売上のページは売上合計）・（想定売上のページは前回比）・案件数・変化のある案件
   const nameW = 96;
   const thisYear = bySales ? '（FY' + yearKey + '）' : '（今年度）';
+  // 案件数・変化のある案件は受注月・売上で絞らない（失注を除くすべての案件）。売上のページは FY の書き方に合わせて「（全FY）」
+  const allYears = bySales ? '（全FY）' : '（全期間）';
   const groups = [
     // 計画・進捗率・確定・見込は今年度の受注月の案件だけ：見出しの下に「（今年度）」。売上のページは今年度の売上の列なので「（FY26）」
     // 見出しは折り返さず1行（入らなければ字を小さくする）。その下の行に対象の期間
@@ -240,7 +242,7 @@ function mtgCompactOverviewSlide_(summaries, options) {
     // 売上のページは、売上合計（3年度分。見出しの下に「（FY26〜28）」）。前回比は左のまとまり（確定（A＋B）の右）
     {cols: [bySales ? {key: 'amount', label: '売上合計', w: 48, period: '（' + span + '）'} : {key: 'amount', label: '想定売上合計', w: 48, period: '（全期間）'}]
       .concat(bySales ? [] : [{key: 'delta', label: deltaLabel, w: 58, period: '（全期間）'}]).concat([
-      {key: 'active', label: '案件数', w: 36, period: '（全期間）'}, {key: 'changed', label: '変化のある案件', w: 56, period: '（全期間）'}])}
+      {key: 'active', label: '案件数', w: 36, period: allYears}, {key: 'changed', label: '変化のある案件', w: 56, period: allYears}])}
   ];
   // 列はまとまりに分けて見出しを付けない（2026/11/09。計画進捗と案件の状況を分ける必要はないため）。groups は列の並びのまとまり
   const colsW = groups.reduce((t, gr) => t + gr.cols.reduce((u, col) => u + col.w, 0), 0);

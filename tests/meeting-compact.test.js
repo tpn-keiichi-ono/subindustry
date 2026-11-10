@@ -550,7 +550,7 @@ test('状況・計画進捗（FY売上）：今年度の売上の列（前半期
   assert.match(heads[3], /^前回比（\d+\/\d+）$/);
   // 今年度の列は「（FY26）」（想定売上のページは「（今年度）」）
   assert.deepStrictEqual(periods, ['（' + fy + '）', '（' + fy + '）', '（' + fy + '）', '（' + fy + '）', '（' + fy + '）',
-    '（' + fy + '〜' + (Number(fiscalYear()) + 2) + '）', '（全期間）', '（全期間）']);
+    '（' + fy + '〜' + (Number(fiscalYear()) + 2) + '）', '（全FY）', '（全FY）']);
   assert.match(leadOf(slide), new RegExp('案件 6件・' + fy + '〜' + (Number(fiscalYear()) + 2) + '売上合計 120百万円（失注除く）'));
   gas.get('MTG_OPTIONS').compact.amountPages = true;
   const both = plain(g.mtgCompactSlides_([s1, s2], '2026/11/13', true));
@@ -564,6 +564,7 @@ test('状況・計画進捗（FY売上）：今年度の売上の列（前半期
   assert.deepStrictEqual(amountPage.elements.filter(e => e.role === 'compact-head').map(e => e.text).slice(2, 6),
     ['確定（A＋B）/件', '見込（C）/件', '想定売上合計', heads[3]]);
   assert.strictEqual(amountPage.elements.find(e => e.role === 'compact-head-period').text, '（今年度）');
+  assert.deepStrictEqual(amountPage.elements.filter(e => e.role === 'compact-head-period').map(e => e.text).slice(4), ['（全期間）', '（全期間）', '（全期間）', '（全期間）']);
   assert.ok(slide.elements.some(e => e.text === fy + ' の売上（前半期＋後半期）の確定（A＋B）と計画（百万円）'));
   assert.match(leadOf(slide), new RegExp('進捗率・確定・見込は ' + fy + ' の売上（前半期＋後半期。受注月によらない）'));
   assert.strictEqual(slide.elements.find(e => e.role === 'lead').text.split('\n').length, 2, 'リード文は2行');
