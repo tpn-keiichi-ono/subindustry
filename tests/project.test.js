@@ -34,7 +34,7 @@ test('「🟩RXビジネスMTG用」のメニューは「履歴サイドバー�
     {label: '権限を承認する（初回のみ）', fn: 'authorizeHistoryFeatures'}
   ]);
   // メニューから外した関数も、エディタから実行できるよう残っている
-  ['openHistorySidebar', 'openCredentialDialog', 'openChangeHistoryDialog', 'openOpportunityCanvas',
+  ['openHistorySidebar', 'openCredentialDialog', 'openChangeHistoryDialog',
     'setupCredentialLauncher', 'setupChangeHistoryLauncher', 'removeHistorySidebarAutoOpen',
     'addSampleHistory', 'removeSampleHistory'].forEach(fn => {
     assert.strictEqual(typeof gas.global[fn], 'function', fn + ' がありません');
@@ -111,7 +111,7 @@ test('本物のシート名の設定：DIFF_RULES・前の名前（formerNames�
   // 機能ごとのシート名は、追跡するシートやほかの機能のシートと重ならない
   const others = [diff.logSheet, diff.rowSnapshotSheet, gas.get('CRED_OPTIONS').logSheet,
     svc.requestSheet, svc.legacyListSheet, svc.taskChoiceSheet, gas.get('TASK_OPTIONS').sheet, gas.get('MTG_OPTIONS').statusTable.sheet,
-    gas.get('MTG_OPTIONS').index.sheet];
+    gas.get('MTG_OPTIONS').index.sheet, gas.get('MTG_OPTIONS').homework.sheet];
   assert.strictEqual(new Set(others).size, others.length, '機能ごとのシート名が重なっている');
   others.forEach(name => {
     assert.ok(!names.includes(name) && !former.includes(name), '「' + name + '」が追跡するシートと同じ名前');
@@ -119,27 +119,55 @@ test('本物のシート名の設定：DIFF_RULES・前の名前（formerNames�
   });
 });
 
-test('本物のシートの見出し（2026/10/16 のスーパー・GMS の2行目）に、会議サマリが読む列がそろっている。差分追跡の範囲に入っている', () => {
+test('本物のシートの見出し（2026/10/29 のスーパー・GMS の2行目。P〜U列に FY別の売上、受注月は「受注月(yy/mm)」、売上開始月は無い。A〜AF の32列）に、会議サマリ・リクエストの取り込みが読む列がそろっている', () => {
   const gas = createGas({realSheetNames: true});
   const mtg = gas.get('MTG_OPTIONS');
   const g = gas.global;
   const headers = ['最終更新日時\n（自動入力）', 'No.', 'サブインダストリー', '得意先', '先方部門', '先方担当役職', '先方担当氏名',
-    'クライアントとのリレーション\nクライアント内のガバナンス', '案件名', '案件のスコープ', 'スコープに対する競合他社', 'プロジェクト開始-終了', '案件ステータス',
-    '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '売上開始月', '提案開始日', '活動状況', '活動における課題', '次回アクション',
+    '案件名', 'RXシナリオ構成', 'サービスパッケージ合算（百万円）', '案件ステータス',
+    '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月\n(yy/mm)', '提案開始月\n(yy/mm)',
+    'FY26前半期売上（百万）', 'FY26後半期売上（百万）', 'FY27前半期売上（百万）', 'FY27後半期売上（百万）', 'FY28前半期売上（百万）', 'FY28後半期売上（百万）',
+    '活動状況', '活動における課題', '次回アクション',
     '商談記録（ＵＲＬ）', 'アカウント責任者部署', 'アカウント責任者', 'BX部署', 'BX担当', '想定される価値創出のケース／期待される導入効果',
     '提案を勝ち取るための戦略・差異化要素', 'サービスのリクエスト'];
   const at = label => headers.findIndex(h => g.credNormalize_(h) === g.credNormalize_(label));
-  Object.keys(mtg.columns).filter(key => key !== 'delivery').forEach(key => assert.ok(at(mtg.columns[key]) >= 0, '見出し：' + mtg.columns[key]));
-  assert.strictEqual(at(mtg.columns.delivery), -1, 'デリバリー担当の列は無い（入力内容のチェック「デリバリー担当なし」は出さない）');
-  mtg.required.forEach(label => assert.ok(at(label) >= 0, '必須項目：' + label));
+  // 売上開始月は 2026/10/29 にシートから無くなった（計画に対する積み上げ・売上開始月の確認は「データなし」）
+  // 報告フラグ（報告案件版。MeetingReport.gs）は、これから足す列（AF の右。追跡範囲の外）なので、この見出しには無い
+  Object.keys(mtg.columns).filter(key => key !== 'delivery' && key !== 'startMonth' && key !== 'reportFlag').forEach(key =>
+    assert.ok(g.mtgColumnIndex_(headers, key) >= 0, '見出し：' + mtg.columns[key]));
+  assert.strictEqual(g.mtgColumnIndex_(headers, 'startMonth'), -1);
+  assert.strictEqual(g.mtgColumnIndex_(headers, 'orderMonth'), 13, '受注月は「受注月(yy/mm)」の N列（columnAliases）');
+  // P〜U列（FY別の売上）は資料に含めない
+  assert.deepStrictEqual(headers.map((h, i) => (g.mtgIgnoredHeader_(h) ? i : -1)).filter(i => i >= 0), [15, 16, 17, 18, 19, 20], 'P〜U列だけ');
+  assert.ok(at('デリバリー担当') < 0 && mtg.columns.delivery === '', 'デリバリー担当の列は無いので使わない設定（入力内容のチェック「デリバリー担当なし」は出さない）');
+  mtg.required.forEach(label => assert.ok(g.mtgHeaderIndex_(headers, label) >= 0, '必須項目：' + label));
   assert.strictEqual(at(mtg.columns.owner), headers.indexOf('アカウント責任者'), '「アカウント責任者部署」と取り違えない');
   const stamp = g.diffNormalizeStampHeader_(gas.get('DIFF_OPTIONS').stampHeader);
   assert.deepStrictEqual(headers.map((h, i) => (g.diffNormalizeStampHeader_(h) === stamp ? i : -1)).filter(i => i >= 0), [0], '最終更新日時はA列の1つだけ');
   // 差分追跡の範囲（D3:AF）に、会議サマリが前回の値を見る列（得意先〜サービスのリクエスト）が入っている
   const rule = gas.get('DIFF_RULES')['スーパー・GMS'];
   assert.deepStrictEqual(JSON.parse(JSON.stringify([rule.headerRow, rule.ranges])), [2, ['D3:AF']]);
-  ['customer', 'project', 'status', 'amount', 'weighted', 'orderMonth', 'activity'].forEach(key => assert.ok(at(mtg.columns[key]) + 1 >= 4, key));
-  assert.ok(headers.length <= 32, 'AF 列まで');
+  ['customer', 'project', 'status', 'amount', 'weighted', 'orderMonth', 'activity', 'scenario'].forEach(key => assert.ok(g.mtgColumnIndex_(headers, key) + 1 >= 4, key));
+  assert.strictEqual(g.mtgColumnIndex_(headers, 'scenario'), 8, 'RXシナリオ構成は I列（案件名の右）');
+  // RXシナリオのポートフォリオ（本物は使う）：シナリオ金額は J列、今年度（FY26）の売上は P・Q列（FY27 からは R・S列）
+  assert.strictEqual(mtg.portfolio.enabled, true);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(mtg.portfolio.pages)), ['progress'], '② ヒートマップ・③ ポートフォリオ図は一旦出さない（2026/11/04）');
+  assert.strictEqual(mtg.exportPptx, false, 'PowerPoint（.pptx）は作らない（2026/11/05。作るときはスクリプトのプロパティ MTG_EXPORT_PPTX を true に）');
+  assert.strictEqual(mtg.pptxProp, 'MTG_EXPORT_PPTX');
+  assert.strictEqual(mtg.run.readMode, 'api', '資料の中身は Sheets API でまとめて読む（大勢が編集していても待たされにくい）');
+  const manifest = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'appsscript.json'), 'utf8'));
+  assert.ok(manifest.dependencies.enabledAdvancedServices.some(x => x.serviceId === 'sheets' && x.userSymbol === 'Sheets'), 'Sheets API（拡張サービス）を使う');
+  assert.strictEqual(g.mtgColumnIndex_(headers, 'scenarioAmount'), 9, 'シナリオ金額（サービスパッケージ合算）は J列');
+  const pattern = new RegExp(mtg.portfolio.salesHeader);
+  const sales = year => headers.map((h, i) => ((pattern.exec(g.credNormalize_(h)) || [])[1] === year ? i : -1)).filter(i => i >= 0);
+  assert.deepStrictEqual([sales('26'), sales('27'), sales('28')], [[15, 16], [17, 18], [19, 20]]);
+  // コンビニ・地方銀行・生協は「RXシナリオ構成（サービス）」（columnAliases で読む）
+  assert.strictEqual(g.mtgColumnIndex_(headers.map(h => (h === 'RXシナリオ構成' ? 'RXシナリオ構成（サービス）' : h)), 'scenario'), 8);
+  assert.ok(headers.length <= 32, 'AF 列まで（追跡範囲 D3:AF。シートが狭くても、追跡範囲はシートの中まで読む。diffRuleRange_）');
+  // サービスリクエストの取り込み（ServiceManagement.gs）が読む列も、見出しがちょうど1つずつある（列を足しても見出しで探すのでずれない）
+  const svc = gas.get('SVC_OPTIONS');
+  svc.sourceHeaders.concat(svc.sourceOptionalHeaders).forEach(label => assert.strictEqual(g.taskHeaderCount_(headers, label), 1, 'リクエストの取り込み：' + label));
+  assert.strictEqual(headers.indexOf('サービスのリクエスト') + 1, 32, 'サービスのリクエストは AF列（追跡範囲 D3:AF の中）');
 });
 
 test('本物の設定：11のサブインダストリーのシート（2026/10/16 にスーパー・GMS と同じ見出しにそろえた）を、同じ見出しの行・追跡範囲で追跡し、リクエストも読む', () => {
@@ -157,14 +185,15 @@ test('本物の設定：クレデンシャル・オファリング履歴の管�
   assert.strictEqual(gas.global.credEnabled_(), false);
 });
 
-test('本物の設定：11シートとも、会議サマリの格納先（meetingFolder）がフォルダの URL か ID になっている', () => {
+test('本物の設定：事前資料の格納先は全サブインダストリー共通の1つ（MTG_OPTIONS.meetingFolder。シートごとの meetingFolder は無い）', () => {
   const gas = createGas({realSheetNames: true});
   const rules = gas.get('DIFF_RULES');
-  Object.keys(rules).forEach(name => assert.ok(gas.global.mtgFolderIdOf_(rules[name].meetingFolder), name + ' の meetingFolder'));
+  assert.ok(gas.global.mtgFolderIdOf_(gas.get('MTG_OPTIONS').meetingFolder), 'MTG_OPTIONS.meetingFolder');
+  Object.keys(rules).forEach(name => assert.strictEqual(rules[name].meetingFolder, undefined, name + ' に meetingFolder が残っている'));
   // 統合版（全サブインダストリー）も作り、会議のフォルダに格納する。名前はシート名・インデックスの見出しと重ならない
   const combined = gas.get('MTG_OPTIONS').combined;
   assert.strictEqual(combined.enabled, true);
-  assert.ok(gas.global.mtgFolderIdOf_(combined.meetingFolder), '統合版の meetingFolder');
+  assert.strictEqual(combined.meetingFolder, undefined, '統合版も同じ格納先');
   const index = gas.get('MTG_OPTIONS').index;
   assert.ok(!rules[combined.name] && [index.dateHeader, index.kindHeader].indexOf(combined.name) < 0);
 });
@@ -195,4 +224,16 @@ test('本物の設定：カレンダーの予定の名前で、RX Business Meeti
   assert.strictEqual(g.mschKeyOfTitle_('RX Business MTG（パイプライン会議）'), 'business');
   assert.strictEqual(g.mschKeyOfTitle_('RX Business Meeting'), 'business');
   assert.strictEqual(g.mschKeyOfTitle_('部会'), '');
+});
+
+test('オポチュニティキャンバスは廃止（2026/10/26）：サーバーの関数・モーダル・サイドバーのボタンが無い', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const root = path.join(__dirname, '..');
+  ['OpportunityCanvas.gs', 'OpportunityCanvasDialog.html'].forEach(f => assert.ok(!fs.existsSync(path.join(root, f)), f + ' が残っています'));
+  const gas = createGas();
+  ['openOpportunityCanvas', 'openOpportunityCanvasFromSidebar', 'getOpportunityCanvasData'].forEach(fn =>
+    assert.strictEqual(typeof gas.global[fn], 'undefined', fn + ' が残っています'));
+  const sidebar = fs.readFileSync(path.join(root, 'HistorySidebarView.html'), 'utf8');
+  assert.ok(!/キャンバス|Canvas/.test(sidebar), 'サイドバーにキャンバスが残っています');
 });

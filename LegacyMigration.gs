@@ -7,8 +7,9 @@
  *   （企画担当・提案シナリオ・マーケなどの配分・サービス配分チェック・備考は転記しない）。
  * - 新のシートの数式の列（3行目に数式がある No.・期待値）は書かない・消さない。
  * - 新のシートの今の行は上書きする（3行目から下を消してから書く）。
- * - プルダウンの選択肢に無い値（得意先マスタに無い得意先・定義に無いステータス）は書けないので空欄にし、どのセルかを一覧で知らせる
- *   （得意先マスタなどに足してから、もう一度実行すると入る。何度実行してもよい）。
+ * - プルダウンの選択肢に無い値（得意先マスタに無い得意先・定義に無いステータス）も、プルダウンが「警告を表示」（無効な値も入れられる）なら
+ *   そのまま書き、どのセルかを一覧で知らせる（MIG_OPTIONS.writeOutOfList。2026/10/26 から）。「入力を拒否」のプルダウンは書くと止まるので空欄にする
+ *   （得意先マスタなどに足すか、プルダウンを「警告を表示」にしてから、もう一度実行すると入る。何度実行してもよい）。
  * - 書いたあと、差分追跡の比較基準を取り直し（setupDiffTracking。転記を変更として記録しない）、会議サマリの基準を記録する
  *   （転記した案件を次の資料で「新規」に数えない）。
  */
@@ -17,7 +18,9 @@ const MIG_OPTIONS = {
   sheetPrefix: '案件_',        // 旧のシートの名前（案件_スーパー・GMS）
   headerRows: [1, 2],          // 旧の見出しの行（2行に分かれている・結合している。下の行を優先）
   dataStartRow: 4,             // 旧のデータの始まり（3行目は「手動入力」「プルダウンより選択」の行）
-  // 旧の見出し → 新の見出し（見出しは改行・空白・全角半角の違いを無視して比べる）
+  // 旧の見出し → 新の見出し（見出しは改行・空白・全角半角の違いを無視して比べる）。新の見出しが配列なら、シートにある最初のもの
+  // （2026/10/29 に「受注月」は「受注月(yy/mm)」、「提案開始日」は「提案開始月(yy/mm)」になり、「売上開始月」は無くなった（無い列には書かない）。
+  // 「受注予定月」に変えても書けるように、その見出しも探す（2026/11/05））
   columns: [
     ['得意先', '得意先'],
     ['案件名', '案件名'],
@@ -25,14 +28,16 @@ const MIG_OPTIONS = {
     ['先方担当役職', '先方担当役職'],
     ['先方担当氏名', '先方担当氏名'],
     ['営業担当', 'アカウント責任者'],
-    ['提案開始日', '提案開始日'],
+    ['提案開始日', ['提案開始月(yy/mm)', '提案開始日']],
     ['ステータス', '案件ステータス'],
     ['活動状況', '活動状況'],
     ['次回アクション', '次回アクション'],
     ['想定売上規模（百万）', '想定売上規模（百万）'],
-    ['受注月', '受注月'],
+    ['受注月', ['受注月(yy/mm)', '受注月', '受注予定月', '受注予定月(yy/mm)']],
     ['売上開始月', '売上開始月']
   ],
+  // プルダウンの選択肢に無い値も書く（プルダウンが「警告を表示」のとき。「入力を拒否」なら空欄）。false なら選択肢に無い値はいつも空欄
+  writeOutOfList: true,
   subIndustryHeader: 'サブインダストリー',   // 新のこの列には、転記した行にシートの名前を入れる（プルダウンの選択肢がシートの名前だけのため）
   maxListed: 30                // 終わりの画面に出す、空欄にしたセルの数（残りはログ）
 };
@@ -59,8 +64,9 @@ function migrateLegacyDeals() {
   // 先にすべて読んで確かめる（まだ何も書かない）
   const plans = Object.keys(DIFF_RULES).map(name => migPlan_(ss, source, name));
   const ready = plans.filter(p => p.rows);
-  const lines = plans.map(p => '・' + p.name + '：' + (p.error || p.rows.length + '件' +
-    (p.blanked.length ? '（選択肢に無い値 ' + p.blanked.length + 'セルは空欄にします）' : '')));
+  const notes = p => [p.outOfList.length ? '選択肢に無い値 ' + p.outOfList.length + 'セルもそのまま書きます' : '',
+    p.blanked.length ? '「入力を拒否」のプルダウンの選択肢に無い値 ' + p.blanked.length + 'セルは空欄にします' : ''].filter(Boolean);
+  const lines = plans.map(p => '・' + p.name + '：' + (p.error || p.rows.length + '件' + (notes(p).length ? '（' + notes(p).join('。') + '）' : '')));
   if (!ready.length) {
     ui.alert(title, '転記できるシートがありません。\n\n' + lines.join('\n'), ui.ButtonSet.OK);
     return;
@@ -82,20 +88,27 @@ function migrateLegacyDeals() {
   const names = ready.map(p => p.name);
   const copy = mtgRecordBaseline_(ss, names, new Date());
 
-  const blanked = [].concat.apply([], ready.map(p => p.blanked.map(b => p.name + '!' + b.a1 + '（' + b.header + '）：' + b.value)));
+  const cells = key => [].concat.apply([], ready.map(p => p[key].map(b => p.name + '!' + b.a1 + '（' + b.header + '）：' + b.value)));
+  const listed = list => list.slice(0, MIG_OPTIONS.maxListed).join('\n') +
+    (list.length > MIG_OPTIONS.maxListed ? '\n…ほか ' + (list.length - MIG_OPTIONS.maxListed) + 'セル（実行ログに全部あります）' : '');
+  const outOfList = cells('outOfList');
+  const blanked = cells('blanked');
+  outOfList.forEach(line => console.log('選択肢に無いがそのまま書いたセル ' + line));
   blanked.forEach(line => console.log('空欄にしたセル ' + line));
   const message = '転記しました。\n\n' + lines.join('\n') + '\n\n' +
     '差分追跡の比較基準と、会議サマリの基準（「' + copy.title + '」）を記録しました。' +
-    (blanked.length ? '\n\n選択肢に無いため空欄にしたセル（' + blanked.length + 'セル）：\n' + blanked.slice(0, MIG_OPTIONS.maxListed).join('\n') +
-      (blanked.length > MIG_OPTIONS.maxListed ? '\n…ほか ' + (blanked.length - MIG_OPTIONS.maxListed) + 'セル（実行ログに全部あります）' : '') +
-      '\n得意先マスタ・ステータスの定義に足してから、もう一度実行すると入ります（何度実行しても大丈夫です）。' : '');
+    (outOfList.length ? '\n\nプルダウンの選択肢に無いが、そのまま書いたセル（' + outOfList.length + 'セル。シートでは警告の印が付きます）：\n' + listed(outOfList) +
+      '\n必要なら、得意先マスタ・ステータスの定義に足すか、シートで選択肢の値に直してください。' : '') +
+    (blanked.length ? '\n\n「入力を拒否」のプルダウンの選択肢に無いため空欄にしたセル（' + blanked.length + 'セル）：\n' + listed(blanked) +
+      '\n得意先マスタ・ステータスの定義に足すか、その列のプルダウンを「警告を表示」にしてから、もう一度実行すると入ります（何度実行しても大丈夫です）。' : '');
   console.log(message);
   ui.alert(title, message, ui.ButtonSet.OK);
 }
 
 /**
  * 1つのシートの転記の計画（読むだけ）。
- * {name, error} か {name, sheet, rule, width, formulaCols: 書かない列（1から）, rows: 書く値（新の1列目から width 列）, blanked: [{a1, header, value}]}
+ * {name, error} か {name, sheet, rule, width, formulaCols: 書かない列（1から）, rows: 書く値（新の1列目から width 列）,
+ *  outOfList: 選択肢に無いがそのまま書くセル [{a1, header, value}], blanked: 「入力を拒否」のプルダウンの選択肢に無いので空欄にするセル}
  */
 function migPlan_(ss, source, name) {
   const o = MIG_OPTIONS;
@@ -107,12 +120,14 @@ function migPlan_(ss, source, name) {
 
   // 新：見出しの列と、数式の列（データの1行目に数式があれば、その列は書かない・消さない）
   const firstRow = rule.headerRow + 1;
-  const width = Math.max(Math.max.apply(null, rule.ranges.map(a1 => sheet.getRange(a1).getLastColumn())), sheet.getLastColumn());
+  // 書く・消す列：追跡範囲（シートの中まで）と、値のある最後の列の広いほう
+  const width = Math.max(1, sheet.getLastColumn(), ...rule.ranges.map(a1 => diffRuleRange_(sheet, a1)).filter(Boolean).map(range => range.getLastColumn()));
   const headers = sheet.getRange(rule.headerRow, 1, 1, width).getDisplayValues()[0].map(credNormalize_);
   const formulas = sheet.getRange(firstRow, 1, 1, width).getFormulas()[0];
   const formulaCols = [];
   formulas.forEach((f, i) => { if (String(f).trim()) formulaCols.push(i + 1); });
   const colOf = label => headers.indexOf(credNormalize_(label)) + 1;
+  const colOfAny = labels => [].concat(labels).map(colOf).find(Boolean) || 0;
 
   // 旧：見出し（2行。下の行を優先）
   const oldWidth = Math.max(old.getLastColumn(), 1);
@@ -124,7 +139,10 @@ function migPlan_(ss, source, name) {
     }
     return 0;
   };
-  const pairs = o.columns.map(([from, to]) => ({from: oldCol(from), to: colOf(to), header: to}))
+  const pairs = o.columns.map(([from, to]) => {
+    const col = colOfAny(to);
+    return {from: oldCol(from), to: col, header: col ? diffCleanHeaderText_(headers[col - 1]) || [].concat(to)[0] : [].concat(to)[0]};
+  })
     .filter(p => p.from && p.to && formulaCols.indexOf(p.to) < 0);
   const customerFrom = oldCol('得意先');
   const projectFrom = oldCol('案件名');
@@ -140,10 +158,16 @@ function migPlan_(ss, source, name) {
     return {name, error: '行が足りません（' + deals.length + '件に対して ' + capacity + '行）。エディタで addDealRows() を実行して行を足してから、もう一度実行してください'};
   }
 
-  // プルダウンの選択肢（選択肢に無い値は書けないので空欄にする）
+  // プルダウンの選択肢と、無効な値を拒否するか（「入力を拒否」なら選択肢に無い値は書けないので空欄。「警告を表示」なら writeOutOfList のときそのまま書く）
   const options = {};
-  pairs.forEach(p => { options[p.to] = mtgListOptions_(sheet.getRange(firstRow, p.to).getDataValidation()); });
+  const strict = {};
+  pairs.forEach(p => {
+    const validation = sheet.getRange(firstRow, p.to).getDataValidation();
+    options[p.to] = mtgListOptions_(validation);
+    strict[p.to] = !!validation && !validation.getAllowInvalid();
+  });
   const subCol = colOf(o.subIndustryHeader);
+  const outOfList = [];
   const blanked = [];
   const rows = deals.map((line, n) => {
     const out = new Array(width).fill('');
@@ -153,14 +177,18 @@ function migPlan_(ss, source, name) {
       if (v == null || v === '') return;
       const list = options[p.to];
       if (list && list.map(credNormalize_).indexOf(credNormalize_(String(v))) < 0) {
-        blanked.push({a1: diffA1_(firstRow + n, p.to), header: p.header, value: String(v)});
-        return;
+        const cell = {a1: diffA1_(firstRow + n, p.to), header: p.header, value: String(v)};
+        if (strict[p.to] || !o.writeOutOfList) {
+          blanked.push(cell);
+          return;
+        }
+        outOfList.push(cell);
       }
       out[p.to - 1] = typeof v === 'string' ? credText_(v) : v;   // 文字は数式にならないように
     });
     return out;
   });
-  return {name, sheet, rule, width, firstRow, formulaCols, rows, blanked};
+  return {name, sheet, rule, width, firstRow, formulaCols, rows, outOfList, blanked};
 }
 
 /** 計画どおりに書く（ドキュメントロックの中で呼ぶ）。数式の列を除いて、データの行（firstRow から最後の行まで）を消してから書く。 */

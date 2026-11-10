@@ -35,8 +35,15 @@ const rangeOf = cell => {
 const shown = data => plain(data.items.map(item => item.values.slice(0, 4).join(' / ')));
 
 /** リクエスト シートの見出し（setupRequestSheet() で作ったときの並び） */
-const REQUEST_HEADERS = ['ID', 'サブインダストリー', '得意先', '案件名', 'アカウント責任者部署', 'アカウント責任者', 'BX部署', 'BX担当',
+const REQUEST_HEADERS = ['追加日', 'ID', 'サブインダストリー', '得意先', '案件名', 'アカウント責任者部署', 'アカウント責任者', 'BX部署', 'BX担当',
   'リクエスト', '判断', 'サービス部門からのフィードバック', 'サービス案', '主管本部', '担当者'];
+/** 追加日・ID と、取り込み元から書く列（A〜J） */
+const WRITTEN = REQUEST_HEADERS.slice(0, 10);
+/** 今日の日付（追加日に入る値） */
+const todayText = () => {
+  const d = new Date();
+  return d.getFullYear() + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0');
+};
 /** 取り込み元から書く列のうち、リクエストを見分ける4つ */
 const ABCD = ['サブインダストリー', '得意先', '案件名', 'リクエスト'];
 const SALES = ['アカウント責任者部署', 'アカウント責任者', 'BX部署', 'BX担当'];
@@ -66,7 +73,7 @@ test('setupRequestSheet：リクエスト シートを作る。行は足さず�
   const {gas, g} = setup();
   g.setupRequestSheet();
   const request = gas.ss.getSheetByName('リクエスト');
-  assert.deepStrictEqual(headersOf(request), REQUEST_HEADERS, 'ID は左端、リクエストした営業の4列は案件名とリクエストの間、主管本部は担当者の左');
+  assert.deepStrictEqual(headersOf(request), REQUEST_HEADERS, '追加日は左端・ID はその右、リクエストした営業の4列は案件名とリクエストの間、主管本部は担当者の左');
   assert.strictEqual(request.getLastRow(), 1, '行は自動では足さない');
   assert.strictEqual(gas.alerts.length, 0, '使わなくなった列が無ければ確認しない');
 
@@ -171,7 +178,10 @@ test('メニュー「🟪RXサービスMTG用」→「リクエストを追加�
   g.setupRequestSheet();
   gas.writes.length = 0;
   g.svcAddMenu_();
-  assert.deepStrictEqual(plain(gas.menus), [{title: '🟪RXサービスMTG用', items: [{label: 'リクエストを追加', fn: 'openRequestPicker'}]}]);
+  assert.deepStrictEqual(plain(gas.menus), [{title: '🟪RXサービスMTG用', items: [
+    {label: 'リクエストを追加', fn: 'openRequestPicker'},
+    {label: 'サブインダストリーのシートから取り込む', fn: 'importServiceRequests'}
+  ]}]);
 
   // リクエスト シート以外では開かず、開けるシートを知らせる
   gas.select(source, 'D3');
@@ -244,7 +254,7 @@ test('addServiceRequest：選んだリクエストを最後の行の下に追加
   assert.strictEqual(result.message, 'SR-0001 として2行目に追加しました。');
   assert.strictEqual(result.id, 'SR-0001');
   assert.deepStrictEqual(valuesOf(request, 2, REQUEST_HEADERS),
-    ['SR-0001', '食品スーパー', 'A社', 'アプリ刷新', '', '', '', '', '会員の購買分析をしたい', '', '', '', '', ''], '判断などは入れない');
+    [todayText(), 'SR-0001', '食品スーパー', 'A社', 'アプリ刷新', '', '', '', '', '会員の購買分析をしたい', '', '', '', '', ''], '追加日を入れ、判断などは入れない');
   assert.deepStrictEqual(shown(result.data), ['食品スーパー / A社 / チラシのデジタル化 / チラシの効果を測りたい',
     'ドラッグストア / C社 / EC立ち上げ / =在庫を店舗と共有したい'], '追加したものはパネルから消える');
   assert.strictEqual(result.data.registered, 1);
@@ -269,7 +279,7 @@ test('addServiceRequest：選んだリクエストを最後の行の下に追加
   assert.strictEqual(request.getLastRow(), 3);
 });
 
-test('addServiceRequest：判断だけを書いた行には書き足さない。行が足りなければ足して、判断のプルダウンも付ける', () => {
+test('addServiceRequest：判断だけを書いた行には書き足さない（リクエストの無い行は下にまとめる）。行が足りなければ足して、判断のプルダウンも付ける', () => {
   const {gas, g} = setup();
   const sheet = gas.addSheet('リクエスト', [
     ['サブインダストリー', '得意先', '案件名', 'リクエスト', '判断', 'サービス部門からのフィードバック', 'サービス案', '担当者'],
@@ -278,13 +288,15 @@ test('addServiceRequest：判断だけを書いた行には書き足さない。
   ], {rows: 3, columns: 8});
   g.setupRequestSheet();
   const result = add(g, 'チラシのデジタル化', 'チラシの効果を測りたい');
-  assert.strictEqual(result.row, 4, '3行目（判断だけの行）の下に足す');
+  assert.strictEqual(result.row, 3, '3行目（判断だけの行）の下に足してから、同じサブインダストリーの行の最後に動かす');
+  assert.strictEqual(result.message, 'SR-0002 として3行目に追加しました。');
   assert.deepStrictEqual([3, 4].map(row => valuesOf(sheet, row, ABCD.concat(['判断']))), [
-    ['', '', '', '', '棄却'],
-    ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい', '']
-  ]);
+    ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい', ''],
+    ['', '', '', '', '棄却']
+  ], '判断だけの行は下にまとめる（行は消さない）');
   assert.strictEqual(sheet.getMaxRows(), 4);
-  assert.deepStrictEqual(listOf(cellOf(sheet, '判断', 4)), ['未判断', 'サービス化検討', '棄却'], '足した行にも判断のプルダウン');
+  assert.deepStrictEqual(listOf(cellOf(sheet, '判断', 3)), ['未判断', 'サービス化検討', '棄却'], '足した行にも判断のプルダウン');
+  assert.deepStrictEqual(listOf(cellOf(sheet, '判断', 4)), ['未判断', 'サービス化検討', '棄却']);
 });
 
 test('サブインダストリー・得意先・案件名が空のリクエストも、パネルに出して登録できる', () => {
@@ -642,6 +654,541 @@ test('removeUntouchedRequests：主管本部だけが入っている行も「手
   assert.strictEqual(request.getLastRow(), 2, '手を付けていない3行目だけを削除する');
 });
 
+/* ---------------- まとめて取り込む（メニュー「サブインダストリーのシートから取り込む」） ---------------- */
+
+/** メニュー「サブインダストリーのシートから取り込む」を押す（確かめの画面には gas.confirmAnswer で答える）。{ok, alerts: そのとき出た画面} */
+function importAll(gas) {
+  const from = gas.alerts.length;
+  const ok = gas.global.importServiceRequests();
+  return {ok, alerts: gas.alerts.slice(from)};
+}
+
+test('importServiceRequests：まだ無いリクエストをすべて、取り込み元の順に最後の行の下へ書く（追加日・ID と取り込み元の列。同じリクエストは1件だけ）', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  gas.writes.length = 0;
+  gas.scopeChecks.length = 0;
+  const {ok, alerts} = importAll(gas);
+  assert.strictEqual(ok, true);
+  assert.deepStrictEqual(plain(gas.scopeChecks), ['FULL'], '承認が足りない人には、メニューで先に承認の画面を出す');
+
+  assert.strictEqual(alerts.length, 2, '書く前に確かめ、書いたあとに知らせる');
+  assert.strictEqual(alerts[0].title, '🟪RXサービスMTG用');
+  assert.strictEqual(alerts[0].buttons, 'YES_NO');
+  assert.match(alerts[0].message, /^「リクエスト」に、まだ無いリクエスト 3件を取り込みます/);
+  assert.match(alerts[0].message, /\n内訳：「新FMT」3件\n/);
+  assert.match(alerts[0].message, /同じリクエスト（得意先・案件名・リクエストが同じもの。全角・半角と空白の違いは無視）は1件だけ取り込み/);
+  assert.match(alerts[0].message, /一度取り込んだリクエストは、行を削除しても次からは取り込みません（選択パネルからは追加できます）。/);
+
+  const today = todayText();
+  assert.deepStrictEqual(gas.dump(request, 'A1:J4'), [
+    WRITTEN,
+    [today, 'SR-0001', '食品スーパー', 'A社', 'アプリ刷新', '', '', '', '', '会員の購買分析をしたい'],
+    [today, 'SR-0002', '食品スーパー', 'A社', 'チラシのデジタル化', '', '', '', '', 'チラシの効果を測りたい'],
+    [today, 'SR-0003', 'ドラッグストア', 'C社', 'EC立ち上げ', '', '', '', '', '=在庫を店舗と共有したい']
+  ], 'A〜J に、追加日・ID・サブインダストリー・得意先・案件名・営業の4列・リクエストを書く');
+  assert.strictEqual(Object.prototype.toString.call(cellOf(request, '追加日', 2).getValue()), '[object Date]', '追加日は日付として入る');
+  assert.strictEqual(request.getLastRow(), 4, 'リクエストの無い行・全角だけが違う同じリクエスト（Ｃ社）は書かない');
+  assert.deepStrictEqual(valuesOf(request, 2, ['判断', 'サービス部門からのフィードバック', 'サービス案', '主管本部', '担当者']),
+    ['', '', '', '', ''], '判断などは入れない');
+  assert.strictEqual(cellOf(request, 'リクエスト', 4).getFormula(), '', '「=…」は数式にしない');
+  assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
+  assert.strictEqual(gas.selection.sheet, request, '取り込んだ最初の行を選ぶ');
+  assert.strictEqual(gas.selection.range.getA1Notation(), 'B2', '取り込んだ最初の行の ID');
+
+  assert.deepStrictEqual(alerts[1].message.split('\n'), [
+    '3件を取り込みました（ID：SR-0001〜SR-0003）。2〜4行目に入れています。',
+    '内訳：「新FMT」3件',
+    'ほかの行・シートと同じリクエストの 1行は、重ならないよう取り込んでいません。'
+  ]);
+  assert.strictEqual(g.getRequestPickerData().remaining, 0, 'パネルは「すべて登録済み」になる');
+});
+
+test('importServiceRequests：何度押しても重ならない。新しく足したリクエストだけを、続きの ID で取り込む', () => {
+  const {gas, g, source} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  importAll(gas);
+
+  gas.writes.length = 0;
+  let result = importAll(gas);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.alerts.length, 1, '新しく書くものが無ければ確かめない');
+  assert.strictEqual(result.alerts[0].message.split('\n')[0],
+    '新しく取り込むリクエストはありません（取り込み元のリクエスト 3件は、すべて登録済みか、前に取り込んで行を削除したものです）。');
+  assert.strictEqual(request.getLastRow(), 4);
+  assert.deepStrictEqual(gas.writes, [], '変わっていなければ書かない');
+
+  // 取り込み元に行を足す・半角と空白だけを変える
+  gas.asUser(() => {
+    source.getRange('C8:F8').setValues([['ホームセンター', 'D社', '会員アプリ', 'ポイントを統合したい']]);
+    source.getRange('F3').setValue('会員の 購買分析をしたい');   // 空白だけの違いは同じリクエスト
+  });
+  result = importAll(gas);
+  assert.match(result.alerts[0].message, /まだ無いリクエスト 1件を取り込みます/);
+  assert.strictEqual(result.alerts[1].message.split('\n')[0], '1件を取り込みました（ID：SR-0004）。5行目に入れています。');
+  assert.deepStrictEqual(gas.dump(request, 'B5:J5')[0],
+    ['SR-0004', 'ホームセンター', 'D社', '会員アプリ', '', '', '', '', 'ポイントを統合したい']);
+  assert.match(result.alerts[1].message, /登録済みのリクエスト 3件は取り込んでいません。/);
+  assert.strictEqual(request.getLastRow(), 5);
+});
+
+test('importServiceRequests：パネルで登録したもの・ほかのシートと同じものは書かない。サブインダストリーごとの最後の行に入れ、判断だけの行は下にまとめる。行が足りなければ足して判断のプルダウンも付ける', () => {
+  const {gas, g} = setup();
+  gas.get('DIFF_RULES')['新FMT2'].requests = true;
+  gas.addSheet('新FMT2', [['新FMT2'], ['No', 'メモ', 'サブインダストリー', '得意先', '案件名', 'サービスのリクエスト'],
+    ['1', '', 'ホームセンター', 'D社', '会員アプリ', 'ポイントを統合したい'],
+    ['2', '', '食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい']   // 新FMT と同じリクエスト
+  ], {rows: 20, columns: 6});
+  const sheet = gas.addSheet('リクエスト', [
+    ['サブインダストリー', '得意先', '案件名', 'リクエスト', '判断', 'サービス部門からのフィードバック', 'サービス案', '担当者'],
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい', 'サービス化検討', '', '会員分析基盤', '佐藤'],
+    ['', '', '', '', '棄却', '', '', '']
+  ], {rows: 3, columns: 8});
+  g.setupRequestSheet();
+  assert.strictEqual(sheet.getMaxRows(), 3);
+
+  const {alerts} = importAll(gas);
+  assert.match(alerts[0].message, /まだ無いリクエスト 3件を取り込みます/);
+  assert.match(alerts[0].message, /\n内訳：「新FMT」2件、「新FMT2」1件\n/);
+  assert.deepStrictEqual(gas.dump(sheet, 'B2:J6'), [
+    ['SR-0001', '食品スーパー', 'A社', 'アプリ刷新', '', '', '', '', '会員の購買分析をしたい'],
+    ['SR-0002', '食品スーパー', 'A社', 'チラシのデジタル化', '', '', '', '', 'チラシの効果を測りたい'],
+    ['SR-0003', 'ドラッグストア', 'C社', 'EC立ち上げ', '', '', '', '', '=在庫を店舗と共有したい'],
+    ['SR-0004', 'ホームセンター', 'D社', '会員アプリ', '', '', '', '', 'ポイントを統合したい'],
+    ['', '', '', '', '', '', '', '', '']
+  ], '新FMT のリクエスト → 新FMT2 のリクエスト → 判断だけの行（リクエストの無い行）の順');
+  assert.deepStrictEqual(valuesOf(sheet, 2, ['判断', 'サービス案', '担当者']), ['サービス化検討', '会員分析基盤', '佐藤'], '登録済みの行の入力はそのまま');
+  assert.strictEqual(cellOf(sheet, '判断', 6).getDisplayValue(), '棄却', '判断だけの行は消さずに下へ');
+  assert.strictEqual(sheet.getMaxRows(), 6, '足りない行を足す');
+  [3, 4, 5].forEach(row => assert.deepStrictEqual(listOf(cellOf(sheet, '判断', row)), ['未判断', 'サービス化検討', '棄却'], '足した行にも判断のプルダウン'));
+  assert.strictEqual(gas.selection.range.getA1Notation(), 'B3', '取り込んだいちばん上の行を選ぶ');
+  assert.deepStrictEqual(alerts[1].message.split('\n'), [
+    '3件を取り込みました（ID：SR-0002〜SR-0004）。それぞれのサブインダストリーの行の最後に入れています。',
+    '内訳：「新FMT」2件、「新FMT2」1件',
+    '登録済みのリクエスト 1件は取り込んでいません。',
+    'ほかの行・シートと同じリクエストの 2行は、重ならないよう取り込んでいません。'
+  ]);
+});
+
+test('importServiceRequests：リクエストした営業の4列も取り込み元から書く（A〜I がすべて入る）', () => {
+  const {gas, g} = setupWithSales();
+  g.setupRequestSheet();
+  importAll(gas);
+  assert.deepStrictEqual(gas.dump(gas.ss.getSheetByName('リクエスト'), 'B2:J3'), [
+    ['SR-0001', '食品スーパー', 'A社', 'アプリ刷新', '流通第一本部', '佐藤', 'BX推進部', '鈴木', '会員の購買分析をしたい'],
+    ['SR-0002', '食品スーパー', 'B社', '店舗什器', '流通第二本部', '田中', '', '', '什器の在庫を見たい']
+  ]);
+});
+
+test('importServiceRequests：確かめている間にほかの人がパネルから追加したものは書かない（ロックの中で読み直す）', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  const original = g.svcImportConfirmText_;
+  g.svcImportConfirmText_ = pending => {
+    add(g, 'アプリ刷新', '会員の購買分析をしたい');   // 確かめの画面を出している間に、ほかの人が追加した
+    return original(pending);
+  };
+  const {alerts} = importAll(gas);
+  assert.match(alerts[0].message, /まだ無いリクエスト 3件を取り込みます/);
+  assert.strictEqual(alerts[1].message.split('\n')[0], '2件を取り込みました（ID：SR-0002〜SR-0003）。3〜4行目に入れています。');
+  const request = gas.ss.getSheetByName('リクエスト');
+  assert.strictEqual(request.getLastRow(), 4);
+  assert.deepStrictEqual([2, 3, 4].map(row => cellOf(request, '案件名', row).getDisplayValue()), ['アプリ刷新', 'チラシのデジタル化', 'EC立ち上げ']);
+});
+
+test('importServiceRequests：「いいえ」なら書かない。ほかの処理が実行中なら書かずに知らせる', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  gas.writes.length = 0;
+  gas.confirmAnswer = 'NO';
+  let result = importAll(gas);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.alerts.length, 1);
+  assert.strictEqual(request.getLastRow(), 1);
+  assert.deepStrictEqual(gas.writes, []);
+
+  gas.confirmAnswer = 'YES';
+  gas.lockBusy = 'script';
+  result = importAll(gas);
+  gas.lockBusy = false;
+  assert.strictEqual(result.ok, false);
+  assert.match(result.alerts[1].message, /^取り込めませんでした：他の処理.*が実行中です/);
+  assert.strictEqual(request.getLastRow(), 1);
+  assert.deepStrictEqual(gas.writes, []);
+
+  gas.lockBusy = 'document';   // 差分追跡などがドキュメントロックを持っていても待たされない（サービス管理は別のロック）
+  result = importAll(gas);
+  gas.lockBusy = false;
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(request.getLastRow(), 4);
+});
+
+test('importServiceRequests：リクエスト シートが無い・取り込み元にリクエストが無いときは、書かずに知らせる', () => {
+  let {gas} = setup();
+  let result = importAll(gas);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.alerts[0].message, '「リクエスト」シートがありません。管理者に setupRequestSheet() の実行を頼んでください。');
+  assert.strictEqual(gas.ss.getSheetByName('リクエスト'), null, 'シートは作らない');
+
+  ({gas} = setup([['食品スーパー', 'A社', 'アプリ刷新', '']]));
+  gas.global.setupRequestSheet();
+  result = importAll(gas);
+  assert.strictEqual(result.ok, false);
+  assert.match(result.alerts[0].message, /「新FMT」にリクエストが見つかりません/);
+  assert.strictEqual(gas.ss.getSheetByName('リクエスト').getLastRow(), 1);
+});
+
+test('importServiceRequests：取り込み元でリクエストが書き換えられたら新しいリクエストとして取り込み、前の行は残して行番号を知らせる', () => {
+  const {gas, g, source} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  importAll(gas);
+  gas.asUser(() => source.getRange('F4').setValue('チラシの効果を店舗ごとに測りたい'));
+  const {alerts} = importAll(gas);
+  assert.strictEqual(cellOf(request, 'リクエスト', 3).getDisplayValue(), 'チラシの効果を測りたい', '前の行は消さない');
+  assert.deepStrictEqual(gas.dump(request, 'B5:J5')[0],
+    ['SR-0004', '食品スーパー', 'A社', 'チラシのデジタル化', '', '', '', '', 'チラシの効果を店舗ごとに測りたい']);
+  assert.ok(alerts[1].message.split('\n').includes(
+    '取り込み元に見つからない行：3行目（取り込み元で書き換えか削除された可能性があります。不要なら行を削除してください）。'));
+});
+
+test('importServiceRequests：書き込み・読み取りの回数は、取り込む行の数によらない（列ごとにまとめて書く）', () => {
+  const countsFor = count => {
+    const rows = [];
+    for (let i = 0; i < count; i++) rows.push(['食品スーパー', '得意先' + i, '案件' + i, 'リクエスト' + i]);
+    const {gas, g} = setup(rows);
+    g.setupRequestSheet();
+    gas.writes.length = 0;
+    gas.reads.length = 0;
+    importAll(gas);
+    assert.strictEqual(gas.ss.getSheetByName('リクエスト').getLastRow(), count + 1);
+    return {writes: gas.writes.length, reads: gas.reads.length};
+  };
+  const small = countsFor(5);
+  const large = countsFor(25);
+  assert.deepStrictEqual(large, small, '回数が行の数で増えている');
+  assert.ok(small.writes <= 12, '書き込みが多すぎます（' + small.writes + '回）');
+});
+
+/* ---------------- 一度取り込んだリクエストの覚えと、自動の取り込み（トリガー） ---------------- */
+
+test('importServiceRequests：一度取り込んだリクエストは、行を削除しても次からは取り込まない（選択パネルには出る）', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  importAll(gas);
+  const imported = gas.ss.getSheetByName('__REQUEST_IMPORTED');
+  assert.ok(imported, '覚えのシートを作る');
+  assert.strictEqual(imported.isSheetHidden(), true, '非表示');
+  assert.strictEqual(imported.getLastRow(), 3, '取り込んだ3件を覚える');
+  assert.strictEqual(imported.getMaxColumns(), 1, '使わない列を持たない');
+  assert.strictEqual(gas.ss.getActiveSheet().getName() === '__REQUEST_IMPORTED', false, '開いていたシートに戻す');
+
+  gas.asUser(() => request.deleteRow(3));   // チラシのデジタル化 の行を削除
+  const {alerts} = importAll(gas);
+  assert.strictEqual(alerts.length, 1, '取り込むものが無いので確かめない');
+  assert.match(alerts[0].message, /^新しく取り込むリクエストはありません/);
+  assert.strictEqual(request.getLastRow(), 3, '削除した行は戻らない');
+  assert.ok(shown(g.getRequestPickerData()).includes('食品スーパー / A社 / チラシのデジタル化 / チラシの効果を測りたい'), 'パネルからは追加できる');
+
+  // 取り込み元に新しいリクエストが増えたら、それだけを取り込み、削除したものの数を知らせる
+  gas.asUser(() => gas.ss.getSheetByName('新FMT').getRange('C8:F8').setValues([['ホームセンター', 'D社', '会員アプリ', 'ポイントを統合したい']]));
+  const second = importAll(gas);
+  assert.match(second.alerts[0].message, /まだ無いリクエスト 1件を取り込みます/);
+  assert.ok(second.alerts[1].message.split('\n').includes('前に取り込んで行を削除したリクエスト 1件は取り込んでいません。'));
+  assert.strictEqual(imported.getLastRow(), 4);
+});
+
+test('installServiceImportTrigger：5分ごとのトリガーを1つだけ作る。シートに無いリクエストは、今取り込むか（はい）、取り込まずに覚えるか（いいえ）を聞く', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  add(g, 'アプリ刷新', '会員の購買分析をしたい');
+  const request = gas.ss.getSheetByName('リクエスト');
+
+  // キャンセル：何もしない
+  gas.confirmAnswer = 'CANCEL';
+  assert.strictEqual(g.installServiceImportTrigger(), false);
+  assert.strictEqual(gas.triggers.length, 0);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /に無いリクエストが 2件あります（内訳：「新FMT」2件）/);
+  assert.strictEqual(gas.alerts[gas.alerts.length - 1].buttons, 'YES_NO_CANCEL');
+
+  // いいえ：取り込まずに覚える
+  gas.confirmAnswer = 'NO';
+  assert.strictEqual(g.installServiceImportTrigger(), true);
+  assert.strictEqual(request.getLastRow(), 2, '取り込まない');
+  assert.strictEqual(gas.ss.getSheetByName('__REQUEST_IMPORTED').getLastRow(), 3, 'シートにある1件と、取り込まなかった2件を覚える');
+  assert.deepStrictEqual(gas.triggers.map(t => [t.getHandlerFunction(), t.getEventType(), t.options.everyMinutes]),
+    [['serviceImportTick', 'CLOCK', 5]]);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /2件は取り込まずに覚えました.*\n5分ごとの自動の取り込みを始めました。/);
+
+  // もう一度実行してもトリガーは1つ（覚えていないものが無ければ聞かない）
+  const asked = gas.alerts.length;
+  g.installServiceImportTrigger();
+  assert.strictEqual(gas.triggers.length, 1);
+  assert.strictEqual(gas.alerts.length, asked + 1, '結果だけを知らせる');
+
+  // 自動の取り込みは、覚えたリクエストを取り込まない
+  g.serviceImportTick();
+  assert.strictEqual(request.getLastRow(), 2);
+
+  assert.strictEqual(g.removeServiceImportTrigger(), 1);
+  assert.strictEqual(gas.triggers.length, 0);
+});
+
+test('installServiceImportTrigger：「はい」なら、シートに無いリクエストを今取り込んでから始める', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  gas.confirmAnswer = 'YES';
+  assert.strictEqual(g.installServiceImportTrigger(), true);
+  assert.strictEqual(gas.ss.getSheetByName('リクエスト').getLastRow(), 4);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^3件を取り込みました。\n5分ごとの自動の取り込みを始めました。/);
+  assert.strictEqual(gas.triggers.length, 1);
+});
+
+test('serviceImportTick：取り込み元に増えたリクエストを、画面を出さずに取り込む。覚えのシートが無い・ほかの処理が実行中なら、その回は何もしない', () => {
+  const {gas, g, source} = setup();
+  g.setupRequestSheet();
+  const request = gas.ss.getSheetByName('リクエスト');
+  gas.writes.length = 0;
+  assert.strictEqual(g.serviceImportTick(), null, '覚えのシートが無い（installServiceImportTrigger() の前）');
+  assert.strictEqual(request.getLastRow(), 1);
+  assert.deepStrictEqual(gas.writes, []);
+
+  gas.confirmAnswer = 'NO';
+  g.installServiceImportTrigger();   // 今ある3件は取り込まずに覚える
+  gas.alerts.length = 0;
+  gas.asUser(() => source.getRange('C8:F8').setValues([['ホームセンター', 'D社', '会員アプリ', 'ポイントを統合したい']]));
+
+  gas.lockBusy = 'script';
+  assert.strictEqual(g.serviceImportTick(), null, 'ほかの処理が実行中なら止めずに飛ばす');
+  gas.lockBusy = false;
+  assert.strictEqual(request.getLastRow(), 1);
+
+  assert.deepStrictEqual(plain(g.serviceImportTick()), {added: 1});
+  assert.deepStrictEqual(valuesOf(request, 2, ['追加日', 'ID', '得意先', 'リクエスト']), [todayText(), 'SR-0001', 'D社', 'ポイントを統合したい']);
+  assert.deepStrictEqual(plain(g.serviceImportTick()), {added: 0}, '次の回は何も足さない');
+  assert.strictEqual(gas.alerts.length, 0, '画面は出さない');
+  assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
+});
+
+/* ---------------- 行の並び（サブインダストリーの順） ---------------- */
+
+/** 新FMT と新FMT2 の2つのサブインダストリーのシートから読む（新FMT2：ホームセンター D社 のリクエスト1件） */
+function setupTwoSheets() {
+  const ctx = setup();
+  ctx.gas.get('DIFF_RULES')['新FMT2'].requests = true;
+  ctx.gas.addSheet('新FMT2', [['新FMT2'], ['No', 'メモ', 'サブインダストリー', '得意先', '案件名', 'サービスのリクエスト'],
+    ['1', '', 'ホームセンター', 'D社', '会員アプリ', 'ポイントを統合したい']
+  ], {rows: 20, columns: 6});
+  ctx.g.setupRequestSheet();
+  ctx.request = ctx.gas.ss.getSheetByName('リクエスト');
+  return ctx;
+}
+/** row 行目から下の、得意先・案件名・ID */
+const rowsOf = (sheet, from, to) => Array.from({length: to - from + 1}, (_, i) => valuesOf(sheet, from + i, ['ID', '得意先', '案件名']).join(' '));
+
+test('addServiceRequest：追加した行は、同じサブインダストリーの行の最後に入れる（ほかのサブインダストリーの行は下へずれる）', () => {
+  const {gas, g, request} = setupTwoSheets();
+  const columns = request.getMaxColumns();
+  add(g, '会員アプリ', 'ポイントを統合したい');   // 新FMT2
+  const result = add(g, 'チラシのデジタル化', 'チラシの効果を測りたい');   // 新FMT
+  assert.strictEqual(result.row, 2);
+  assert.strictEqual(result.message, 'SR-0002 として2行目に追加しました。');
+  assert.deepStrictEqual(rowsOf(request, 2, 3), ['SR-0002 A社 チラシのデジタル化', 'SR-0001 D社 会員アプリ']);
+  assert.strictEqual(add(g, 'アプリ刷新', '会員の購買分析をしたい').row, 3, '新FMT の行の最後（新FMT2 の行の上）');
+  assert.deepStrictEqual(rowsOf(request, 2, 4), ['SR-0002 A社 チラシのデジタル化', 'SR-0003 A社 アプリ刷新', 'SR-0001 D社 会員アプリ']);
+  assert.strictEqual(request.getMaxColumns(), columns, '並べ替えに使った一時の列は残さない');
+  assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
+});
+
+test('importServiceRequests：手で最後の行の下に足した行も、取り込んだ行と一緒にそのサブインダストリーの行の最後に動かす（ID と追加日を入れる）', () => {
+  const {gas, g, request} = setupTwoSheets();
+  add(g, '会員アプリ', 'ポイントを統合したい');   // 2行目：新FMT2
+  gas.asUser(() => {   // 3行目：手で書いた 新FMT のリクエスト（ID・追加日は空）
+    cellOf(request, 'サブインダストリー', 3).setValue('食品スーパー');
+    cellOf(request, '得意先', 3).setValue('A社');
+    cellOf(request, '案件名', 3).setValue('アプリ刷新');
+    cellOf(request, 'リクエスト', 3).setValue('会員の購買分析をしたい');
+    cellOf(request, '判断', 3).setValue('サービス化検討');
+  });
+  const {alerts} = importAll(gas);
+  assert.match(alerts[0].message, /まだ無いリクエスト 2件を取り込みます/, '手で書いた行のリクエストは登録済みとして数える');
+  assert.deepStrictEqual(rowsOf(request, 2, 5), [
+    'SR-0002 A社 アプリ刷新', 'SR-0003 A社 チラシのデジタル化', 'SR-0004 C社 EC立ち上げ', 'SR-0001 D社 会員アプリ'
+  ], '新FMT の行（手で書いた行 → 取り込んだ行）→ 新FMT2 の行');
+  assert.strictEqual(cellOf(request, '判断', 2).getDisplayValue(), 'サービス化検討', '手で書いた行の入力は一緒に動く');
+  assert.deepStrictEqual([2, 3, 4, 5].map(row => cellOf(request, '追加日', row).getDisplayValue()), new Array(4).fill(todayText()));
+  assert.match(alerts[1].message, /それぞれのサブインダストリーの行の最後に入れています。/);
+  assert.match(alerts[1].message, /ID の無い 1行に ID を振りました。/);
+});
+
+test('並べ替えられないとき（フィルタ・結合したセルなど）は、足した行を最後の行の下に残して知らせる（追加・取り込みは止めない）', () => {
+  const {gas, g, request} = setupTwoSheets();
+  add(g, '会員アプリ', 'ポイントを統合したい');
+  const columns = request.getMaxColumns();
+  const proto = Object.getPrototypeOf(request.getRange(1, 1));
+  const sort = proto.sort;
+  proto.sort = function () { throw new Error('フィルタで非表示の行があります'); };
+  try {
+    const result = add(g, 'チラシのデジタル化', 'チラシの効果を測りたい');
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.row, 3, '最後の行の下のまま');
+    assert.match(result.warning, /並べ替えられなかったため、足した行は最後の行の下にあります.*フィルタで非表示の行があります/);
+    const {alerts} = importAll(gas);
+    assert.match(alerts[1].message, /並べ替えられなかったため/);
+    assert.deepStrictEqual(rowsOf(request, 2, 5), ['SR-0001 D社 会員アプリ', 'SR-0002 A社 チラシのデジタル化', 'SR-0003 A社 アプリ刷新', 'SR-0004 C社 EC立ち上げ']);
+    assert.strictEqual(request.getMaxColumns(), columns, '並べ替えられなくても、一時の列は消す');
+  } finally {
+    proto.sort = sort;
+  }
+});
+
+/* ---------------- ID の採番（スクリプトのプロパティ）と振り直し ---------------- */
+
+test('ID：これまでに振った番号はスクリプトのプロパティに置く。前の版のドキュメントのプロパティの番号は引き継いで消す', () => {
+  const {gas, g} = setup();
+  g.setupRequestSheet();
+  g.PropertiesService.getDocumentProperties().setProperty('SVC_LAST_REQUEST_ID', '7');
+  assert.strictEqual(add(g, 'アプリ刷新', '会員の購買分析をしたい').id, 'SR-0008', '前の版の番号の続き');
+  assert.strictEqual(g.PropertiesService.getScriptProperties().getProperty('SVC_LAST_REQUEST_ID'), '8');
+  assert.strictEqual(g.PropertiesService.getDocumentProperties().getProperty('SVC_LAST_REQUEST_ID'), null);
+  assert.strictEqual(add(g, 'チラシのデジタル化', 'チラシの効果を測りたい').id, 'SR-0009');
+});
+
+test('renumberRequestIds：サブインダストリーの順に並べてから SR-0001 と振り直し、タスク管理のサービス案も新しい ID に書き換える', () => {
+  const {gas, g, request} = setupTwoSheets();
+  add(g, '会員アプリ', 'ポイントを統合したい');          // SR-0001（新FMT2）
+  add(g, 'チラシのデジタル化', 'チラシの効果を測りたい');  // SR-0002
+  add(g, 'アプリ刷新', '会員の購買分析をしたい');         // SR-0003
+  add(g, 'EC立ち上げ', '=在庫を店舗と共有したい');        // SR-0004 → 削除する
+  const ec = g.getRequestListData().registered.find(r => r.id === 'SR-0004');
+  assert.strictEqual(g.deleteServiceRequest(ec.row, ec.key, ec.id).ok, true);
+  gas.asUser(() => {
+    cellOf(request, 'サービス案', 3).setValue('会員分析基盤');   // SR-0003 アプリ刷新
+    // 5行目：手で書いた 新FMT のリクエスト（取り込み元に無い文）／6行目：リクエストの無い行に残った ID
+    cellOf(request, 'サブインダストリー', 5).setValue('食品スーパー');
+    cellOf(request, '得意先', 5).setValue('B社');
+    cellOf(request, '案件名', 5).setValue('店舗什器');
+    cellOf(request, 'リクエスト', 5).setValue('手で書いたリクエスト');
+    cellOf(request, 'ID', 6).setValue('SR-0050');
+    cellOf(request, '判断', 6).setValue('棄却');
+  });
+  assert.deepStrictEqual(rowsOf(request, 2, 4), ['SR-0002 A社 チラシのデジタル化', 'SR-0003 A社 アプリ刷新', 'SR-0001 D社 会員アプリ']);
+  const task = gas.addSheet('タスク管理', [
+    ['サービス案', 'タスク', '本部', '担当者', '状況', 'メモ'],
+    ['SR-0002 チラシの効果を測りたい', '見積もり', '', '', '', ''],
+    ['SR-0001 ポイントを統合したい', '要件を聞く', '', '', '', ''],
+    ['SR-0004 =在庫を店舗と共有したい', '調べる', '', '', '', ''],   // 削除したリクエスト
+    ['会員分析基盤', '前の版の値', '', '', '', '']                    // 前の版（サービス案の名前）
+  ], {rows: 10, columns: 6});
+
+  gas.alerts.length = 0;
+  gas.confirmAnswer = 'YES';
+  assert.strictEqual(g.renumberRequestIds(), true);
+  assert.strictEqual(gas.alerts[0].buttons, 'YES_NO');
+  assert.match(gas.alerts[0].message, /リクエスト 4件を、サブインダストリーの順（「新FMT」「新FMT2」の順）に並べ替えてから、上から SR-0001〜SR-0004 と振り直します。/);
+  assert.deepStrictEqual(rowsOf(request, 2, 6), [
+    'SR-0001 A社 チラシのデジタル化', 'SR-0002 A社 アプリ刷新', 'SR-0003 B社 店舗什器', 'SR-0004 D社 会員アプリ', '  '
+  ], '新FMT（手で書いた行も、サブインダストリーの値で新FMT に入れる）→ 新FMT2 → リクエストの無い行。リクエストの無い行の ID は消す');
+  assert.strictEqual(cellOf(request, '判断', 6).getDisplayValue(), '棄却', 'リクエストの無い行は消さない');
+  assert.strictEqual(cellOf(request, 'サービス案', 3).getDisplayValue(), '会員分析基盤', '行の入力は一緒に動く');
+  assert.deepStrictEqual(gas.dump(task, 'A2:A5').map(r => r[0]), [
+    'SR-0001 チラシの効果を測りたい',
+    'SR-0004 ポイントを統合したい',
+    '（削除済み）SR-0004 =在庫を店舗と共有したい',
+    'SR-0002 会員の購買分析をしたい'
+  ], '同じリクエストの新しい ID に。削除したリクエストを指していた値は印を付けて残す（番号で別のリクエストに付け直さない）');
+  assert.strictEqual(rangeOf(task.getRange('A2')), '__TASK_CHOICES!A1:A4', 'プルダウンを付け直す');
+  assert.strictEqual(g.PropertiesService.getScriptProperties().getProperty('SVC_LAST_REQUEST_ID'), '4');
+  const lines = gas.alerts[1].message.split('\n');
+  assert.deepStrictEqual(lines.slice(0, 2), [
+    'リクエスト 4件の ID を SR-0001〜SR-0004 に振り直しました（先に、行をサブインダストリーの順に並べ替えました）。次に追加したリクエストは SR-0005 からです。',
+    '「タスク管理」の「サービス案」を 2件、新しい ID に書き換えました。'
+  ]);
+  assert.ok(lines.some(line => /今は無いリクエストを指していた 1件は、先頭に「（削除済み）」を付けて残しました/.test(line)));
+  assert.ok(lines.includes('リクエストの無い 1行に残っていた ID を消しました。'));
+  assert.ok(gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
+
+  const next = add(g, 'EC立ち上げ', '=在庫を店舗と共有したい');
+  assert.strictEqual(next.id, 'SR-0005', '振り直した番号の続き');
+  assert.strictEqual(next.row, 5, '新FMT の行の最後');
+});
+
+test('renumberRequestIds：「いいえ」なら変えない。RX Service Meeting の本番の記録があれば振り直さない', () => {
+  const {gas, g, request} = setupTwoSheets();
+  add(g, '会員アプリ', 'ポイントを統合したい');
+  add(g, 'チラシのデジタル化', 'チラシの効果を測りたい');
+  const before = rowsOf(request, 2, 3);
+  gas.writes.length = 0;
+  gas.confirmAnswer = 'NO';
+  assert.strictEqual(g.renumberRequestIds(), false);
+  assert.deepStrictEqual(rowsOf(request, 2, 3), before);
+  assert.deepStrictEqual(gas.writes, []);
+
+  gas.confirmAnswer = 'YES';
+  g.PropertiesService.getDocumentProperties().setProperty('SMTG_MEETINGS', JSON.stringify([{date: '2026/10/10', at: 0, lastId: 2}]));
+  gas.alerts.length = 0;
+  assert.strictEqual(g.renumberRequestIds(), false);
+  assert.strictEqual(gas.alerts.length, 1, '確かめる前に止める');
+  assert.match(gas.alerts[0].message, /^RX Service Meeting の本番の記録（会議日：2026\/10\/10）があるため、ID を振り直しません。/);
+  assert.deepStrictEqual(rowsOf(request, 2, 3), before);
+  assert.deepStrictEqual(gas.writes, []);
+});
+
+test('fillAddedAtFromHistory：追加日が空の行に、変更履歴_差分 から取り込み元にリクエストが書かれた日を入れる（入っている行・決められない行は変えない）', () => {
+  const {gas, g} = setup([
+    ['食品スーパー', 'A社', 'アプリ刷新', '会員の購買分析をしたい'],
+    ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい'],   // 記録が無い
+    ['食品スーパー', 'B社', '店舗什器', '特になし'],                          // 同じ文が2行
+    ['食品スーパー', 'C社', 'EC立ち上げ', '特になし'],
+    ['食品スーパー', 'D社', '会員アプリ', 'ポイントを統合したい']             // 追加日が入っている
+  ]);
+  g.setupRequestSheet();
+  importAll(gas);
+  const request = gas.ss.getSheetByName('リクエスト');
+  gas.asUser(() => {
+    [2, 3, 4, 5].forEach(row => cellOf(request, '追加日', row).setValue(''));
+    cellOf(request, '追加日', 6).setValue('2026/09/01');
+  });
+  const header = ['記録日時', 'イベントID', '編集者メールアドレス', 'シート', 'セル', '列名', '種類', '変更前', '変更後'];
+  gas.addSheet(gas.get('DIFF_OPTIONS').logSheet, [header,
+    ['2026/09/20 10:00', 'EVT-1', 'a@example.com', '新FMT', 'F3', 'サービスのリクエスト', '編集', '（空欄）', '会員分析'],
+    ['2026/10/01 09:00', 'EVT-2', 'a@example.com', '新FMT', 'F3', 'サービスのリクエスト', '編集', '会員分析', '会員の購買分析をしたい'],
+    ['2026/10/03 18:30', 'REC-3', '不明（取りこぼし回収）', '新FMT', 'F3', 'サービスのリクエスト', '編集', '会員分析', '会員の 購買分析をしたい'],
+    ['2026/10/04 09:00', 'EVT-4', 'a@example.com', '新FMT', 'D4', '得意先', '編集', '', 'チラシの効果を測りたい'],         // ほかの列
+    ['2026/10/04 09:00', 'EVT-5', 'a@example.com', 'ほかのシート', 'F4', 'サービスのリクエスト', '編集', '', 'チラシの効果を測りたい'],   // 読むシートでない
+    ['2026/10/02 09:00', 'EVT-6', 'a@example.com', '新FMT', 'F5', 'サービスのリクエスト', '編集', '（空欄）', '特になし'],
+    ['2026/10/06 09:00', 'EVT-7', 'a@example.com', '新FMT', 'F7', 'サービスのリクエスト', '編集', '（空欄）', 'ポイントを統合したい']
+  ], {rows: 20, columns: 9});
+
+  gas.alerts.length = 0;
+  gas.writes.length = 0;
+  assert.strictEqual(g.fillAddedAtFromHistory(), true);
+  assert.strictEqual(gas.alerts[0].buttons, 'YES_NO');
+  assert.match(gas.alerts[0].message, /^追加日が空の 4行のうち 1行に、取り込み元にリクエストが書かれた日/);
+  assert.deepStrictEqual([2, 3, 4, 5, 6].map(row => cellOf(request, '追加日', row).getDisplayValue()),
+    ['2026/10/03', '', '', '', '2026/09/01'], '今の文が書かれたいちばん新しい記録の日（空白だけの違いは同じ文）。入っている行は変えない');
+  assert.strictEqual(Object.prototype.toString.call(cellOf(request, '追加日', 2).getValue()), '[object Date]', '日付として入る');
+  assert.deepStrictEqual(gas.alerts[1].message.split('\n'), [
+    '1行の追加日に、取り込み元にリクエストが書かれた日を入れました。',
+    '記録が見つからず空のままの行：3行目（差分追跡を始める前に書かれたリクエストなど）。',
+    '同じシートに同じ文のリクエストが複数あり、どの行の記録か決められなかった行：4・5行目。',
+    '必要なら、これらの行の追加日は手で入れてください。'
+  ]);
+  assert.ok(gas.writes.length > 0 && gas.writes.every(w => w.locked), '書き込みはロックの中で行う');
+
+  // 2回目は、入れられるものが無いことを知らせて書かない
+  gas.alerts.length = 0;
+  gas.writes.length = 0;
+  assert.strictEqual(g.fillAddedAtFromHistory(), false);
+  assert.strictEqual(gas.alerts.length, 1);
+  assert.match(gas.alerts[0].message, /^追加日が空の 3行に入れられる日付が、「変更履歴_差分」に見つかりませんでした。/);
+  assert.deepStrictEqual(gas.writes, []);
+});
+
 /* ---------------- ID ---------------- */
 
 test('ID：追加するたびに SR-0001 から順に振り、削除した番号は使い回さない', () => {
@@ -692,7 +1239,7 @@ test('ID：行のコピーなどで重複した ID・読めない ID は、パ�
   assert.deepStrictEqual(gas.writes.filter(w => w.sheet === 'リクエスト'), [], '直っていれば書かない');
 });
 
-test('ID：setupRequestSheet() で、ID の列を左端に足して、前からある行に上から順に振る', () => {
+test('ID：setupRequestSheet() で、追加日と ID の列を左端に足して、前からある行に上から順に振る（追加日は ID を振った日）', () => {
   const {gas, g} = setup();
   const sheet = gas.addSheet('リクエスト', [
     ['サブインダストリー', '得意先', '案件名', 'リクエスト', '判断', 'サービス部門からのフィードバック', 'サービス案', '担当者'],
@@ -701,8 +1248,10 @@ test('ID：setupRequestSheet() で、ID の列を左端に足して、前から�
     ['食品スーパー', 'A社', 'チラシのデジタル化', 'チラシの効果を測りたい', '', '', '', '']
   ], {rows: 10, columns: 8});
   g.setupRequestSheet();
-  assert.strictEqual(headersOf(sheet)[0], 'ID');
+  assert.deepStrictEqual(headersOf(sheet).slice(0, 3), ['追加日', 'ID', 'サブインダストリー']);
   assert.deepStrictEqual([2, 3, 4].map(row => cellOf(sheet, 'ID', row).getDisplayValue()), ['SR-0001', '', 'SR-0002']);
+  assert.deepStrictEqual([2, 3, 4].map(row => cellOf(sheet, '追加日', row).getDisplayValue()), [todayText(), '', todayText()],
+    'ID を振った行だけ、追加日に今日の日付を入れる');
   assert.match(gas.toasts[gas.toasts.length - 1].message, /ID の無い 2行に ID を振りました。/);
   assert.strictEqual(add(g, 'EC立ち上げ', '=在庫を店舗と共有したい').id, 'SR-0003');
 });
@@ -725,7 +1274,7 @@ test('ID：削除は ID で行を決める（同じリクエストの行が複�
 
 /* ---------------- 前の版のシート・列 ---------------- */
 
-test('前の版のシート：見出し（サービス・取り込み日）を書き換え、登録してあった行と値はそのまま使う。前の版の保護は外す', () => {
+test('前の版のシート：見出し（サービス → サービス案・取り込み日 → 追加日）を書き換え、登録してあった行と値はそのまま使う。前の版の保護は外す', () => {
   const {gas, g} = setup();
   const old = gas.addSheet('リクエスト', [
     ['サブインダストリー', '得意先', '案件名', 'リクエスト', 'サービス', '判断', 'メモ', '取り込み日'],
@@ -735,12 +1284,12 @@ test('前の版のシート：見出し（サービス・取り込み日）を�
   gas.addSheet('タスク管理', [['サービス案', 'タスク', '担当者', '期限', '状況', 'メモ']], {rows: 10, columns: 6});
 
   g.setupRequestSheet();
-  assert.match(gas.alerts[0].message, /「メモ」「取り込み日」の列は使わなくなりました/);
-  assert.deepStrictEqual(gas.dump(old, 'A1:N2'), [
+  assert.match(gas.alerts[0].message, /「リクエスト」シートの「メモ」の列は使わなくなりました/);
+  assert.deepStrictEqual(gas.dump(old, 'A1:O2'), [
     ['ID', 'サブインダストリー', '得意先', '案件名', 'アカウント責任者部署', 'アカウント責任者', 'BX部署', 'BX担当', 'リクエスト',
-      'サービス案', '主管本部', '担当者', '判断', 'サービス部門からのフィードバック'],
-    ['SR-0001', '食品スーパー', 'A社', 'アプリ刷新', '', '', '', '', '会員の購買分析をしたい', '会員分析基盤', '', '', 'サービス化検討', '']
-  ], 'メモ・取り込み日を削除し、ID は左端に、営業の4列は案件名の、主管本部・担当者はサービス案の、フィードバックは判断のすぐ右に差し込む');
+      'サービス案', '主管本部', '担当者', '判断', 'サービス部門からのフィードバック', '追加日'],
+    ['SR-0001', '食品スーパー', 'A社', 'アプリ刷新', '', '', '', '', '会員の購買分析をしたい', '会員分析基盤', '', '', 'サービス化検討', '', '2026/10/01']
+  ], 'メモを削除し、取り込み日は追加日に書き換えて値を残す。ID は左端に、営業の4列は案件名の、主管本部・担当者はサービス案の、フィードバックは判断のすぐ右に差し込む');
   assert.strictEqual(old.getProtections().length, 0);
   assert.deepStrictEqual(shown(g.getRequestPickerData()), ['食品スーパー / A社 / チラシのデジタル化 / チラシの効果を測りたい',
     'ドラッグストア / C社 / EC立ち上げ / =在庫を店舗と共有したい'], '登録してあったリクエストはパネルに出さない');
@@ -748,7 +1297,7 @@ test('前の版のシート：見出し（サービス・取り込み日）を�
   assert.strictEqual(gas.dump(gas.ss.getSheetByName('__TASK_CHOICES'), 'A1')[0][0], 'SR-0001 会員の購買分析をしたい');
 });
 
-/** 今のシートの並び（判断の右にサービス案。メモ・追加日がある） */
+/** 前の版のシートの並び（判断の右にサービス案。メモ・追加日がある） */
 function addCurrentRequestSheet(gas) {
   return gas.addSheet('リクエスト', [
     ['サブインダストリー', '得意先', '案件名', 'リクエスト', '判断', 'サービス案', 'メモ', '追加日'],
@@ -756,7 +1305,7 @@ function addCurrentRequestSheet(gas) {
   ], {rows: 20, columns: 8});
 }
 
-test('setupRequestSheet：確認してからメモ・追加日を削除し、案件名の右に営業の4列、判断の右にフィードバック、サービス案の右に主管本部・担当者を足す（ほかの値は残す）', () => {
+test('setupRequestSheet：確認してからメモを削除し（追加日は残す）、案件名の右に営業の4列、判断の右にフィードバック、サービス案の右に主管本部・担当者を足す（ほかの値は残す）', () => {
   const {gas, g} = setup();
   const sheet = addCurrentRequestSheet(gas);
   sheet.getRange('E2:E20').setDataValidation(gas.global.SpreadsheetApp.newDataValidation()
@@ -766,16 +1315,16 @@ test('setupRequestSheet：確認してからメモ・追加日を削除し、案
   g.setupRequestSheet();
 
   assert.strictEqual(gas.alerts.length, 1);
-  assert.match(gas.alerts[0].message, /「メモ」「追加日」の列は使わなくなりました。\n.*削除する列に入っている値は消えます/);
-  assert.deepStrictEqual(headersOf(sheet), REQUEST_HEADERS, '新しく作ったときと同じ並びになる');
-  assert.deepStrictEqual(gas.dump(sheet, 'A2:N2')[0],
-    ['SR-0001', '食品スーパー', 'A社', 'アプリ刷新', '', '', '', '', '会員の購買分析をしたい', 'サービス化検討', '', '会員分析基盤', '', '']);
+  assert.match(gas.alerts[0].message, /「メモ」の列は使わなくなりました。\n.*削除する列に入っている値は消えます/);
+  assert.deepStrictEqual(headersOf(sheet), REQUEST_HEADERS.slice(1).concat(['追加日']), '前からある追加日の列は、その位置のまま残す');
+  assert.deepStrictEqual(valuesOf(sheet, 2, REQUEST_HEADERS),
+    ['2026/10/01', 'SR-0001', '食品スーパー', 'A社', 'アプリ刷新', '', '', '', '', '会員の購買分析をしたい', 'サービス化検討', '', '会員分析基盤', '', '']);
   ['サービス部門からのフィードバック', '主管本部'].concat(SALES).forEach(label =>
     assert.strictEqual(cellOf(sheet, label, 2).getDataValidation(), null, label + '：差し込んだ列は左の列のプルダウンを引き継がない'));
   assert.deepStrictEqual(listOf(cellOf(sheet, '判断', 2)), ['未判断', 'サービス化検討', '棄却']);
   assert.strictEqual(rangeOf(gas.ss.getSheetByName('タスク管理').getRange('A2')), '__TASK_CHOICES!A1', 'タスク管理は登録したリクエストから選ぶ');
   const toast = gas.toasts[gas.toasts.length - 1].message;
-  assert.match(toast, /「メモ」「追加日」の列を削除しました。/);
+  assert.match(toast, /「メモ」の列を削除しました。/);
   assert.match(toast, /「ID」「アカウント責任者部署」「アカウント責任者」「BX部署」「BX担当」「サービス部門からのフィードバック」「主管本部」「担当者」の列を足しました。/);
   assert.match(toast, /ID の無い 1行に ID を振りました。/);
   assert.match(toast, /タスク管理 に「本部」の列を足しました。/);
@@ -783,19 +1332,19 @@ test('setupRequestSheet：確認してからメモ・追加日を削除し、案
   gas.alerts.length = 0;
   g.setupRequestSheet();
   assert.strictEqual(gas.alerts.length, 0, '2回目は確認しない');
-  assert.strictEqual(sheet.getLastColumn(), 14, '2回目は列を足さない');
+  assert.strictEqual(sheet.getLastColumn(), 15, '2回目は列を足さない');
 });
 
-test('setupRequestSheet：削除しないと答えたら、メモ・追加日は残して足りない列だけを足す', () => {
+test('setupRequestSheet：削除しないと答えたら、メモは残して足りない列だけを足す', () => {
   const {gas, g} = setup();
   const sheet = addCurrentRequestSheet(gas);
   gas.confirmAnswer = 'NO';
   g.setupRequestSheet();
   assert.deepStrictEqual(gas.dump(sheet, 'A1:P2'), [
-    REQUEST_HEADERS.concat(['メモ', '追加日']),
+    REQUEST_HEADERS.slice(1).concat(['メモ', '追加日']),
     ['SR-0001', '食品スーパー', 'A社', 'アプリ刷新', '', '', '', '', '会員の購買分析をしたい', 'サービス化検討', '', '会員分析基盤', '', '', '先方に確認', '2026/10/01']
   ]);
-  assert.match(gas.toasts[gas.toasts.length - 1].message, /「メモ」「追加日」の列は残しました/);
+  assert.match(gas.toasts[gas.toasts.length - 1].message, /「メモ」の列は残しました/);
 });
 
 test('取り込み元にリクエストが1件も無ければ、そう知らせる（すべて登録済みと区別する）', () => {
@@ -897,7 +1446,7 @@ test('diagnoseRequestSources：シートごとに、リクエストの件数と�
   g.diagnoseRequestSources();
   assert.deepStrictEqual(gas.writes, [], '何も書き換えない');
   assert.deepStrictEqual(gas.alerts[0].message.split('\n'), [
-    '「新FMT」：リクエストのある行 4件 → パネルに出る 2件（出ないもの：登録済み 1件、ほかの行・シートと同じリクエスト 1件）。',
+    '「新FMT」：リクエストのある行 4件 → パネルに出る 2件（出ないもの：登録済み 1件、ほかの行・シートと同じリクエスト 1件）。「サービスのリクエスト」は F列。',
     '「新FMT」：「アカウント責任者部署」「アカウント責任者」「BX部署」「BX担当」の見出しがちょうど1つではないため、その列は空のまま登録します。',
     '「新FMT2」：読みません（test.gs の DIFF_RULES に requests: true がありません）。'
   ]);
@@ -921,13 +1470,27 @@ test('diagnoseRequestSources：登録済みで取り込み元に見つからな�
   assert.match(gas.alerts[0].message, /「新FMT2」：/);
 });
 
+test('diagnoseRequestSources：どのシートにもリクエストが無ければ、壊れていないことと書く場所を出す。画面に出せないとき（エディタをスプレッドシートから開いていない）は実行ログだけ', () => {
+  const {gas, g} = setup([['食品スーパー', 'A社', 'アプリ刷新', '']]);
+  g.setupRequestSheet();
+  gas.alerts.length = 0;
+  g.diagnoseRequestSources();
+  assert.match(gas.alerts[0].message, /「新FMT」：リクエストのある行 0件 → パネルに出る 0件。「サービスのリクエスト」は F列。\n/);
+  assert.match(gas.alerts[0].message, /→ どのシートの「サービスのリクエスト」の列にもリクエストが入っていないため、パネルに出るものがありません（壊れてはいません）。/);
+  gas.noUi = true;
+  gas.alerts.length = 0;
+  ['diagnoseRequestSources', 'diagnoseServiceLock', 'diagnoseTaskChoices'].forEach(fn => assert.doesNotThrow(() => g[fn](), fn));
+  assert.strictEqual(gas.alerts.length, 0);
+  assert.ok(gas.logs.some(l => /壊れてはいません/.test(l.line)), '実行ログに書く');
+});
+
 test('diagnoseRequestSources：前の版の候補のシートが残っていれば、setupRequestSheet() を案内する', () => {
   const {gas, g} = setup();
   g.setupRequestSheet();
   gas.addSheet('__REQUEST_LISTS', [['']], {rows: 2, columns: 2});
   g.diagnoseRequestSources();
   const message = gas.alerts[gas.alerts.length - 1].message;
-  assert.match(message, /「新FMT」：リクエストのある行 4件 → パネルに出る 3件（出ないもの：ほかの行・シートと同じリクエスト 1件）。/);
+  assert.match(message, /「新FMT」：リクエストのある行 4件 → パネルに出る 3件（出ないもの：ほかの行・シートと同じリクエスト 1件）。「サービスのリクエスト」は F列。/);
   assert.match(message, /前の版の「__REQUEST_LISTS」シートが残っています。setupRequestSheet\(\) を実行すると外します。/);
 });
 

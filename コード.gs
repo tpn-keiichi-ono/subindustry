@@ -1,3 +1,47 @@
+/** アカウントプランシートの作成の設定 */
+const AP_OPTIONS = {
+  templateFileId: '17Fn7jUW7gdEtX4_Hn5PtOGX4oGLHrqeU-CI6mm49x9k',   // ひな形のスプレッドシート
+  destFolderId: '1B4-lxlvtGwroP_5iHi9erMZT7c7sW76P',                 // 作ったアカウントプランシートの保存先のフォルダ
+  // どちらも、スクリプトのプロパティでも指定できる（あればコードの設定より優先）。ひな形はスプレッドシートの URL か ID、保存先はフォルダの URL か ID
+  templateFileProp: 'AP_TEMPLATE_FILE',
+  destFolderProp: 'AP_DEST_FOLDER'
+};
+
+/** アカウントプランシートのひな形の設定（スクリプトのプロパティ AP_TEMPLATE_FILE → AP_OPTIONS.templateFileId） */
+function apTemplateSetting_() {
+  return mtgOutputSetting_([AP_OPTIONS.templateFileProp], AP_OPTIONS.templateFileId, 'コード.gs の AP_OPTIONS.templateFileId');
+}
+
+/** アカウントプランシートのひな形のファイル。読めない・開けなければ、どの設定かを書いて止める */
+function apTemplateFile_() {
+  const setting = apTemplateSetting_();
+  const id = mtgFileIdOf_(setting.value);
+  if (!id) throw new Error('アカウントプランシートのひな形の設定（' + setting.where + '）の値「' + setting.value + '」を、スプレッドシートの URL か ID として読めません。');
+  try {
+    return DriveApp.getFileById(id);
+  } catch (_) {
+    throw new Error('アカウントプランシートのひな形（ID：' + id + '）を開けません。実行するアカウントが閲覧できるか確かめてください（' + setting.where + '）。');
+  }
+}
+
+/** アカウントプランシートの保存先の設定（スクリプトのプロパティ AP_DEST_FOLDER → AP_OPTIONS.destFolderId） */
+function apDestFolderSetting_() {
+  return mtgOutputSetting_([AP_OPTIONS.destFolderProp], AP_OPTIONS.destFolderId, 'コード.gs の AP_OPTIONS.destFolderId');
+}
+
+/** アカウントプランシートの保存先のフォルダ。開けなければ、どの設定かを書いて止める */
+function apDestFolder_() {
+  const setting = apDestFolderSetting_();
+  const id = mtgOutputFolderId_(setting, 'アカウントプランシートの保存先');
+  if (!id) throw new Error('アカウントプランシートの保存先が設定されていません（' + setting.where + '）。');
+  try {
+    return DriveApp.getFolderById(id);
+  } catch (_) {
+    throw new Error('アカウントプランシートの保存先のフォルダ（ID：' + id + '）を開けません。実行するアカウントが、そのフォルダに書き込めるか確かめてください（' +
+      setting.where + '）。');
+  }
+}
+
 /**
  * メニューを追加（CredentialHistory.gs の onOpen() から呼ばれる）
  * onOpen() はプロジェクトに1つだけにするため、ここには置かない。
@@ -45,10 +89,7 @@ function executeCopyProcess(targetSheetName) {
   const MAX_RUNTIME_MS = 300000; // 5分で停止
   const LOCK_WAIT_MS = 30000;    // ほかの書き込み（差分追跡・クレデンシャル履歴）を待つ時間
 
-  // --- 設定項目 ---
-  const TEMPLATE_FILE_ID = '17Fn7jUW7gdEtX4_Hn5PtOGX4oGLHrqeU-CI6mm49x9k';
-  const DEST_FOLDER_ID = '1B4-lxlvtGwroP_5iHi9erMZT7c7sW76P';
-  // ----------------
+  // 設定はファイルの先頭の AP_OPTIONS（ひな形・保存先はスクリプトのプロパティ AP_TEMPLATE_FILE・AP_DEST_FOLDER でも指定できる）
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(targetSheetName);
@@ -58,8 +99,8 @@ function executeCopyProcess(targetSheetName) {
   const range = sheet.getRange(2, 5, lastRow - 1, 9);
   const values = range.getValues();
   
-  const templateFile = DriveApp.getFileById(TEMPLATE_FILE_ID);
-  const destFolder = DriveApp.getFolderById(DEST_FOLDER_ID);
+  const templateFile = apTemplateFile_();
+  const destFolder = apDestFolder_();
 
   let count = 0;
   let isTimeout = false;

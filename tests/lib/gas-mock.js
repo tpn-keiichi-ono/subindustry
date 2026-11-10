@@ -9,6 +9,7 @@
  * 再現している主な動き
  * - setValue / setValues の文字列は、手入力と同じく変換する：
  *   先頭が ' なら文字列のまま（' は値に含めない）、= なら数式、数字・TRUE/FALSE・日付（2026/10/01）は数値・真偽値・日時。
+ *   書式が文字（@）のセルは変換しない（本物と同じ）。
  * - setRichTextValues は変換しない（文字列のまま入る）。
  * - getRange はシートの大きさを超えるとエラーになる（行・列の追加を忘れたときに気づけるように）。
  * - スクリプトの書き込みは gas.writes に「ロックを持っていたか」と一緒に残る（利用者の入力 gas.edit() は残さない）。
@@ -64,9 +65,9 @@ function formatDate(date, timeZone, format) {
     timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit'
   }).formatToParts(date).forEach(p => { parts[p.type] = p.value; });
-  const map = {yyyy: parts.year, MM: parts.month, M: String(Number(parts.month)), dd: parts.day, d: String(Number(parts.day)),
-    HH: parts.hour, mm: parts.minute, ss: parts.second};
-  return String(format).replace(/yyyy|MM|M|dd|d|HH|mm|ss/g, t => map[t]);
+  const map = {yyyy: parts.year, yy: parts.year.slice(-2), MM: parts.month, M: String(Number(parts.month)), dd: parts.day, d: String(Number(parts.day)),
+    HH: parts.hour, H: String(Number(parts.hour)), mm: parts.minute, ss: parts.second};
+  return String(format).replace(/yyyy|yy|MM|M|dd|d|HH|H|mm|ss/g, t => map[t]);
 }
 
 /* ---------------- RichTextValue / TextStyle ---------------- */
@@ -118,7 +119,7 @@ function newRichTextValue() {
 
 /* ---------------- 入力規則（プルダウン・日付） ---------------- */
 
-const DataValidationCriteria = {VALUE_IN_LIST: 'VALUE_IN_LIST', VALUE_IN_RANGE: 'VALUE_IN_RANGE', DATE_IS_VALID_DATE: 'DATE_IS_VALID_DATE'};
+const DataValidationCriteria = {VALUE_IN_LIST: 'VALUE_IN_LIST', VALUE_IN_RANGE: 'VALUE_IN_RANGE', DATE_IS_VALID_DATE: 'DATE_IS_VALID_DATE', CHECKBOX: 'CHECKBOX'};
 
 function newDataValidation() {
   const rule = {type: null, values: [], showDropdown: true, allowInvalid: true, helpText: ''};
@@ -137,6 +138,7 @@ function newDataValidation() {
       return builder;
     },
     requireDate() { rule.type = DataValidationCriteria.DATE_IS_VALID_DATE; rule.values = []; return builder; },
+    requireCheckbox() { rule.type = DataValidationCriteria.CHECKBOX; rule.values = []; return builder; },
     setAllowInvalid(allow) { rule.allowInvalid = !!allow; return builder; },
     setHelpText(text) { rule.helpText = String(text); return builder; },
     build() {
@@ -160,11 +162,12 @@ function newDataValidation() {
 /* ---------------- Range ---------------- */
 
 class Range {
-  constructor(sheet, row, col, numRows, numCols) {
+  // a1：文字の範囲（「D3:AF」）で作ったとき。シートより広くても止めない（本物と同じ）
+  constructor(sheet, row, col, numRows, numCols, a1) {
     if (!(numRows >= 1)) throw new Error('The number of rows in the range must be at least 1.');
     if (!(numCols >= 1)) throw new Error('The number of columns in the range must be at least 1.');
-    if (row < 1 || row + numRows - 1 > sheet.maxRows) throw new Error('Those rows are out of bounds.');
-    if (col < 1 || col + numCols - 1 > sheet.maxCols) throw new Error('Those columns are out of bounds.');
+    if (!a1 && (row < 1 || row + numRows - 1 > sheet.maxRows)) throw new Error('Those rows are out of bounds.');
+    if (!a1 && (col < 1 || col + numCols - 1 > sheet.maxCols)) throw new Error('Those columns are out of bounds.');
     this.sheet = sheet;
     this.row = row;
     this.col = col;
@@ -173,6 +176,8 @@ class Range {
   }
 
   getSheet() { return this.sheet; }
+  /** 範囲を選ぶ（シートも開く。getActiveSheet / getActiveRange に反映） */
+  activate() { this.sheet.gas.selection = {sheet: this.sheet, range: this}; return this; }
   getRow() { return this.row; }
   getColumn() { return this.col; }
   getLastRow() { return this.row + this.numRows - 1; }
@@ -325,6 +330,7 @@ class Range {
 
   setNumberFormat(format) { this.each(cell => { cell.nf = format; }); return this; }
   getNumberFormats() { return this.map(cell => (cell && cell.nf) || 'General'); }
+  getNumberFormat() { return this.getNumberFormats()[0][0]; }
   setNumberFormats(matrix) {
     this.checkShape(matrix);
     this.each((cell, r, c) => { cell.nf = matrix[r][c] === 'General' ? undefined : matrix[r][c]; });
@@ -343,6 +349,7 @@ class Range {
   setFontColor(v) { this.each(cell => { cell.fmt = Object.assign(cell.fmt || {}, {fc: v}); }); return this; }
   setBackground() { return this; }
   setVerticalAlignment(v) { this.each(cell => { cell.fmt = Object.assign(cell.fmt || {}, {va: v}); }); return this; }
+  setHorizontalAlignment(v) { this.each(cell => { cell.fmt = Object.assign(cell.fmt || {}, {ha: v}); }); return this; }
   setWrap() { return this; }
 
   /** 書式（まとめて付ける形）。セルの fmt に残す（テストと見た目の確認用） */
@@ -507,7 +514,9 @@ class Sheet {
   getRange(a, b, c, d) {
     if (typeof a === 'string') {
       const p = parseA1(a, this.maxRows, this.maxCols);
-      return new Range(this, p.row, p.col, p.numRows, p.numCols);
+      // 「D3:AF」のような文字の範囲は、シートより広くても止めない（本物も、27列のシートで追跡範囲 D3:AF の比較基準を作れた。2026/10/26）。
+      // 行・列の番号で指す範囲は、シートの外を含むと止める（下の Range。本物は「範囲の座標がシートのサイズ外です」）
+      return new Range(this, p.row, p.col, p.numRows, p.numCols, true);
     }
     return new Range(this, a, b, c === undefined ? 1 : c, d === undefined ? 1 : d);
   }
@@ -747,6 +756,8 @@ function createGas(options) {
     if (value == null || value === '') { cell.v = ''; return; }
     if (typeof value !== 'string') { cell.v = value; return; }
     if (value[0] === "'") { cell.v = value.slice(1); return; }
+    // 書式が文字（@）のセルは、本物と同じく変換しない（「=」で始まっても数式にならない・日付の形も文字のまま）
+    if (cell.nf === '@') { cell.v = value; return; }
     if (value[0] === '=') { cell.v = ''; cell.f = value; return; }
     if (/^-?\d+(\.\d+)?$/.test(value)) { cell.v = Number(value); return; }
     if (/^(true|false)$/i.test(value)) { cell.v = /^true$/i.test(value); return; }
@@ -830,7 +841,8 @@ function createGas(options) {
     BorderStyle: {SOLID: 'SOLID', SOLID_MEDIUM: 'SOLID_MEDIUM', SOLID_THICK: 'SOLID_THICK', DOTTED: 'DOTTED', DASHED: 'DASHED'},
     /** 新しいスプレッドシート（gas.created に残す。最初のシートは「シート1」） */
     create(name) {
-      const created = new Spreadsheet(gas, {id: 'created-' + (++createdSeq), name: String(name), timeZone: ss.timeZone});
+      // ID は本物と同じく 20文字以上（URL・ID から読む処理 mtgFileIdOf_ が読めるように）
+      const created = new Spreadsheet(gas, {id: 'created-' + String(++createdSeq).padStart(16, '0'), name: String(name), timeZone: ss.timeZone});
       created.insertSheet('シート1');
       gas.created.push(created);
       return created;
@@ -1181,15 +1193,33 @@ function createGas(options) {
         deck.requests.push(...resource.requests);
         // 白紙のスライドには、レイアウトのプレースホルダ（gas.layoutPlaceholders の種類）が付く。消したものは除く
         resource.requests.forEach(q => {
-          if (q.createSlide) deck.slides.push({objectId: q.createSlide.objectId,
-            pageElements: (gas.layoutPlaceholders || []).map((type, n) => ({objectId: q.createSlide.objectId + '_ph' + n, shape: {placeholder: {type}}}))});
+          if (q.createSlide) {
+            // 入れる位置（insertionIndex）はスライドの数まで（Slides API と同じく、越えたら失敗する）。省けば最後
+            const at = q.createSlide.insertionIndex;
+            if (at != null && at > deck.slides.length) {
+              throw new Error('Invalid requests.createSlide: The insertion index (' + at + ') should not be greater than the total number of slides (' + deck.slides.length + ').');
+            }
+            deck.slides.splice(at == null ? deck.slides.length : at, 0, {objectId: q.createSlide.objectId,
+              pageElements: (gas.layoutPlaceholders || []).map((type, n) => ({objectId: q.createSlide.objectId + '_ph' + n, shape: {placeholder: {type}}}))});
+          }
           // ページの複製：元のページのすぐ次に入る（中の部品の ID は「新しいページの ID_e番号」）
           if (q.duplicateObject) {
             const at = deck.slides.findIndex(sl => sl.objectId === q.duplicateObject.objectId);
             if (at < 0) throw new Error('The object (' + q.duplicateObject.objectId + ') could not be found.');
             const copy = q.duplicateObject.objectIds[q.duplicateObject.objectId];
+            // 中の部品の ID：objectIds に指定があればそれ、無ければ「新しいページの ID_e番号」
+            const ids = q.duplicateObject.objectIds;
             deck.slides.splice(at + 1, 0, Object.assign({}, deck.slides[at], {objectId: copy,
-              pageElements: (deck.slides[at].pageElements || []).map((el, n) => Object.assign({}, el, {objectId: copy + '_e' + n}))}));
+              pageElements: (deck.slides[at].pageElements || []).map((el, n) => Object.assign({}, el, {objectId: ids[el.objectId] || copy + '_e' + n}))}));
+          }
+          // スライドの位置を変える
+          if (q.updateSlidesPosition) {
+            const moving = q.updateSlidesPosition.slideObjectIds;
+            const picked = deck.slides.filter(sl => moving.indexOf(sl.objectId) >= 0);
+            if (picked.length !== moving.length) throw new Error('The object (' + moving.join(',') + ') could not be found.');
+            const rest = deck.slides.filter(sl => moving.indexOf(sl.objectId) < 0);
+            rest.splice(q.updateSlidesPosition.insertionIndex, 0, ...picked);
+            deck.slides = rest;
           }
           if (q.deleteObject) {
             const gone = q.deleteObject.objectId;
@@ -1262,7 +1292,7 @@ function createGas(options) {
 
   // 拡張サービス（Slides）は、有効にしていないプロジェクトを試すときは options.noSlides で外す
   const MimeType = {GOOGLE_SLIDES: 'application/vnd.google-apps.presentation', GOOGLE_SHEETS: 'application/vnd.google-apps.spreadsheet',
-    PDF: 'application/pdf'};
+    PDF: 'application/pdf', MICROSOFT_POWERPOINT: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'};
   const globals = {
     SpreadsheetApp, HtmlService, PropertiesService, LockService, Utilities, Session,
     ScriptApp, CacheService, DriveApp, MimeType, UrlFetchApp, Browser, CalendarApp, console: logger
@@ -1274,6 +1304,120 @@ function createGas(options) {
   const context = vm.createContext(globals);
   gas.Date = vm.runInContext('Date', context);
   gas.global = context;
+
+  /**
+   * Sheets API（拡張サービス）のモック（使うテストだけで gas.enableSheetsApi() を呼ぶ。ふだんは無い＝前の版と同じく SpreadsheetApp で読む）。
+   * Spreadsheets.get（シートの一覧・ranges の includeGridData）・Values.batchGet（UNFORMATTED_VALUE / FORMATTED_VALUE・SERIAL_NUMBER）・
+   * Values.batchUpdate（RAW）。モックのシートのセル（値・数式・表示・入力規則）から作る。呼んだ記録は gas.sheetsApiCalls。
+   * cell.spill が true のセルは、配列の数式が広げた値（入力した値が無い）として返す
+   */
+  gas.enableSheetsApi = () => {
+    gas.sheetsApiCalls = [];
+    const bookOf = id => (id === gas.ss.getId() ? gas.ss : gas.created.find(b => b.getId() === id));
+    const parse = a1 => {
+      const m = /^'((?:[^']|'')+)'(?:!(.+))?$/.exec(a1);
+      return {name: m[1].replace(/''/g, "'"), a1: m[2] || ''};
+    };
+    const isDate = v => v && typeof v.getTime === 'function';
+    const serial = (date, tz) => {
+      const t = formatDate(date, tz, 'yyyy/MM/dd HH:mm:ss').split(/[\/ :]/).map(Number);
+      return (Date.UTC(t[0], t[1] - 1, t[2], t[3], t[4], t[5]) + ((date.getTime() % 1000) + 1000) % 1000) / 86400000 + 25569;
+    };
+    const rangeOf = (sheet, a1) => (a1 ? sheet.getRange(a1)
+      : sheet.getLastRow() ? sheet.getRange(1, 1, sheet.getLastRow(), Math.max(sheet.getLastColumn(), 1)) : null);
+    const each = (sheet, range, fn) => {
+      const rows = [];
+      if (!range) return rows;
+      for (let i = 0; i < range.getNumRows(); i++) {
+        const line = [];
+        for (let j = 0; j < range.getNumColumns(); j++) line.push(fn(sheet.cell(range.getRow() + i, range.getColumn() + j, false)));
+        rows.push(line);
+      }
+      return rows;
+    };
+    const gridCell = (cell, tz) => {
+      if (!cell) return {};
+      const out = {};
+      const v = cell.v;
+      const shown = gas.display(cell);
+      if (shown !== '') out.formattedValue = shown;
+      if (isDate(v)) {
+        out.effectiveValue = {numberValue: serial(v, tz)};
+        out.effectiveFormat = {numberFormat: {type: 'DATE_TIME'}};
+      } else if (typeof v === 'number') out.effectiveValue = {numberValue: v};
+      else if (typeof v === 'boolean') out.effectiveValue = {boolValue: v};
+      else if (v !== '' && v != null) out.effectiveValue = {stringValue: String(v)};
+      if (cell.f) out.userEnteredValue = {formulaValue: cell.f};
+      else if (out.effectiveValue && !cell.spill) out.userEnteredValue = Object.assign({}, out.effectiveValue);
+      if (cell.rich && cell.rich.getLinkUrl()) out.hyperlink = cell.rich.getLinkUrl();   // セル全体のリンク（Sheets API の hyperlink）
+      const rule = cell.validation;
+      if (rule) {
+        const type = rule.getCriteriaType();
+        const values = rule.getCriteriaValues();
+        if (type === DataValidationCriteria.VALUE_IN_LIST) out.dataValidation = {condition: {type: 'ONE_OF_LIST', values: values[0].map(x => ({userEnteredValue: String(x)}))}};
+        if (type === DataValidationCriteria.VALUE_IN_RANGE) {
+          out.dataValidation = {condition: {type: 'ONE_OF_RANGE', values: [{userEnteredValue: "='" + values[0].getSheet().getName() + "'!" + values[0].getA1Notation()}]}};
+        }
+      }
+      return out;
+    };
+    context.Sheets = {Spreadsheets: {
+      get(id, args) {
+        gas.sheetsApiCalls.push({method: 'get', id, args});
+        const book = bookOf(id);
+        const tz = book.timeZone || gas.ss.timeZone;
+        const out = {properties: {title: book.getName(), timeZone: tz}};
+        if (!(args && args.includeGridData)) {
+          out.sheets = book.getSheets().map((sheet, index) => ({properties: {sheetId: sheet.getSheetId(), title: sheet.getName(), index,
+            gridProperties: {rowCount: sheet.getMaxRows(), columnCount: sheet.getMaxColumns()}}}));
+          return out;
+        }
+        out.sheets = (args.ranges || []).map(a1 => {
+          const p = parse(a1);
+          const sheet = book.getSheetByName(p.name);
+          const range = rangeOf(sheet, p.a1);
+          return {properties: {title: p.name}, data: [{startRow: range ? range.getRow() - 1 : 0, startColumn: range ? range.getColumn() - 1 : 0,
+            rowData: each(sheet, range, cell => gridCell(cell, tz)).map(values => ({values}))}]};
+        });
+        return out;
+      },
+      Values: {
+        batchGet(id, args) {
+          gas.sheetsApiCalls.push({method: 'batchGet', id, args});
+          const book = bookOf(id);
+          const tz = book.timeZone || gas.ss.timeZone;
+          return {valueRanges: (args.ranges || []).map(a1 => {
+            const p = parse(a1);
+            const sheet = book.getSheetByName(p.name);
+            const rows = each(sheet, rangeOf(sheet, p.a1), cell => {
+              if (!cell || cell.v === '' || cell.v == null) return '';
+              if (args.valueRenderOption === 'FORMATTED_VALUE') return gas.display(cell);
+              return isDate(cell.v) ? serial(cell.v, tz) : cell.v;
+            });
+            const values = args.majorDimension === 'COLUMNS' ? (rows[0] || []).map((_, c) => rows.map(line => line[c])) : rows;
+            return {range: a1, values};
+          })};
+        },
+        batchUpdate(body, id) {
+          gas.sheetsApiCalls.push({method: 'batchUpdate', id, body});
+          const book = bookOf(id);
+          (body.data || []).forEach(item => {
+            const p = parse(item.range);
+            const range = book.getSheetByName(p.name).getRange(p.a1);
+            const rows = item.majorDimension === 'COLUMNS' ? item.values[0].map((_, r) => item.values.map(col => col[r])) : item.values;
+            rows.forEach((line, r) => line.forEach((value, c) => {
+              const cell = range.getSheet().cell(range.getRow() + r, range.getColumn() + c, true);
+              cell.f = '';
+              cell.spill = false;
+              cell.v = value;
+            }));
+          });
+          return {};
+        }
+      }
+    }};
+    return gas;
+  };
 
   const files = options.files ||
     fs.readdirSync(ROOT).filter(name => name.endsWith('.gs')).sort();
@@ -1294,8 +1438,31 @@ function createGas(options) {
       // クレデンシャル・オファリング履歴は、本物では一旦止めている（enabled: false）。機能のテストのため、テストでは使う状態にする
       // （止めた状態は gas.get('CRED_OPTIONS').enabled = false で確かめる）
       if (typeof CRED_OPTIONS !== 'undefined') CRED_OPTIONS.enabled = true;
-      // 会議サマリの統合版は、統合版のテストだけで使う（ほかのテストの資料の数・ファイルを変えないように）。格納先も本物のフォルダにしない
-      if (typeof MTG_OPTIONS !== 'undefined') Object.assign(MTG_OPTIONS.combined, {enabled: false, meetingFolder: ''});
+      // 会議サマリの統合版は、統合版のテストだけで使う（ほかのテストの資料の数・ファイルを変えないように）。
+      // 事前資料の格納先（全サブインダストリー共通）も本物のフォルダにしない（格納のテストで meetingFolder を設定する）
+      if (typeof MTG_OPTIONS !== 'undefined') {
+        MTG_OPTIONS.combined.enabled = false;
+        MTG_OPTIONS.meetingFolder = '';
+        // PowerPoint の書き出しは、そのテストだけで使う（ほかのテストのファイルの数・UrlFetchApp の記録を変えないように）
+        MTG_OPTIONS.exportPptx = false;
+        // RXシナリオのポートフォリオ（本編の3枚）も、そのテストだけで使う（ほかのテストの資料のページの並び・番号を変えないように。
+        // 本物の設定は gas.get('MTG_OPTIONS').portfolio.enabled = true で確かめる）
+        MTG_OPTIONS.portfolio.enabled = false;
+        // ② ③ は本物では一旦出さない（pages: ['progress']）が、作る処理は残すので、テストでは3枚とも作って確かめる
+        MTG_OPTIONS.portfolio.pages = ['progress', 'heatmap', 'map'];
+        // 資料の中身を Sheets API で読む（readMode: 'api'）のは、そのテストだけで使う（モックの Sheets API は gas.enableSheetsApi() で用意する。
+        // 本物の設定は tests/project.test.js で確かめる）
+        MTG_OPTIONS.run.readMode = 'sheet';
+      }
+      // デリバリー担当の列は、本物（新FMT）には無いので使わない設定（空）。チェック「デリバリー担当なし」のテストのため、テストでは使う状態にする
+      // （使わない状態は gas.get('MTG_OPTIONS').columns.delivery = '' で確かめる）
+      if (typeof MTG_OPTIONS !== 'undefined') MTG_OPTIONS.columns.delivery = 'デリバリー担当';
+      // 売上開始月の列も、本物（2026/10/29 から）には無いので使わない設定（空）で、積み上げは受注月。仕組み（売上開始月の積み上げ・「売上開始月不整合」）の
+      // テストのため、テストでは前の版の設定にする（本物の設定は gas.get('MTG_OPTIONS') の columns.startMonth = ''・plan.monthColumn = 'orderMonth' で確かめる）
+      if (typeof MTG_OPTIONS !== 'undefined') {
+        MTG_OPTIONS.columns.startMonth = '売上開始月';
+        MTG_OPTIONS.plan.monthColumn = 'startMonth';
+      }
     } + ')(' + JSON.stringify(TEST_DIFF_RULES) + ')', context);
   }
 

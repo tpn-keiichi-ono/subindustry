@@ -72,7 +72,7 @@
     .check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink); margin-top: 8px; cursor: pointer; }
     .check input { accent-color: var(--teal); }
     .text { margin: 0; font-size: 13px; line-height: 1.7; color: var(--body); white-space: pre-wrap; word-break: break-word; }
-    .text a { color: var(--teal-text); }
+    .text a, .notice a { color: var(--teal-text); }
 
     /* ---------- ボタン ---------- */
     .m-foot { padding: 14px 24px 18px 32px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 8px; }
@@ -99,7 +99,7 @@
     }
   </style>
 </head>
-<!-- data-kind：'business' 会議サマリ・'combined' 統合版・'service' RX Service Meeting。data-final：本番なら true（MeetingSchedule.gs の mschOpenRunDialog_ が入れる） -->
+<!-- data-kind：'business' 会議サマリ・'report' 報告案件版・'combined' 統合版・'compact' 統合版（報告用）・'service' RX Service Meeting。data-final：本番なら true（MeetingSchedule.gs の mschOpenRunDialog_ が入れる） -->
 <body data-kind="<?= kind ?>" data-final="<?= final ?>">
   <div class="loading" id="loading" role="status" aria-live="polite">
     <div class="spinner"></div>
@@ -117,6 +117,8 @@
 
     <!-- 1. 会議日程と作る資料を選ぶ -->
     <main class="m-body" id="pick">
+      <!-- 直前の「作成する」の結果（画面が読み込み直された・開き直したとき。getMeetingRunData の run） -->
+      <div class="notice" id="lastRun" hidden></div>
       <div class="notice warn" id="job" hidden>
         <span id="jobText"></span>
         <label class="check"><input type="checkbox" id="cancelJob">やめて新しく作る</label>
@@ -142,6 +144,11 @@
       <section class="field" id="sheetsField">
         <div class="label">作る資料<span><button type="button" class="link-btn" id="all">すべて選ぶ</button>　<button type="button" class="link-btn" id="none">すべて外す</button></span></div>
         <div class="sheets" id="sheets"></div>
+      </section>
+      <section class="field" id="overwriteField">
+        <div class="label">前に作った同じ資料</div>
+        <label class="check"><input type="checkbox" id="overwrite" checked>上書きする（資料のリンクを変えない）</label>
+        <span class="hint">外すと新しいファイルに作り直します（前のファイルはゴミ箱へ。リンクが変わります）。</span>
       </section>
       <div class="notice error" id="error" hidden></div>
     </main>
@@ -176,7 +183,8 @@
 
     /* ---------- くるくる（JavaScript で動かす。OS の「動きを減らす」設定でも止まらない） ---------- */
     let ticker = null;
-    function busy(text, note) {
+    // slow：その秒数を過ぎても終わらなければ「もう一度読み込む」を出す（読み込みが返ってこないときに、閉じずにやり直せるように）
+    function busy(text, note, slow) {
       $('loading').classList.remove('error');
       $('loading').hidden = false;
       $('loadingText').textContent = text;
@@ -189,7 +197,10 @@
         angle = (angle + 30) % 360;
         spinner.style.transform = 'rotate(' + angle + 'deg)';
         const seconds = Math.floor((Date.now() - began) / 1000);
-        $('loadingTime').textContent = seconds >= 2 ? seconds + '秒経過' + (note ? '　' + note : '') : '';
+        const late = slow && seconds >= slow;
+        $('loadingTime').textContent = seconds >= 2 ? seconds + '秒経過' + (late ? '　時間がかかっています。下のボタンでもう一度読み込むか、閉じて開き直してください'
+          : note ? '　' + note : '') : '';
+        if (late) $('reload').hidden = false;
       }, 70);
     }
     function idle() {
@@ -249,7 +260,7 @@
         : '時点コピー（資料作成時・日次・基準に保存したシートの値）と今を比べます。会議日・日時を選んだときは、変更の記録から変化を出します。';
       onMeetingChange();
       // 作る資料（統合版は選ばない）
-      $('sheetsField').hidden = KIND === 'combined';
+      $('sheetsField').hidden = KIND === 'combined' || KIND === 'compact';
       const box = $('sheets');
       box.textContent = '';
       d.sheets.forEach(s => {
@@ -336,7 +347,7 @@
     }
 
     function updateNext() {
-      const ok = !!meetingValue() && (KIND === 'combined' || pickedSheets().length > 0) && (!data || !data.job || $('cancelJob').checked) &&
+      const ok = !!meetingValue() && (KIND === 'combined' || KIND === 'compact' || pickedSheets().length > 0) && (!data || !data.job || $('cancelJob').checked) &&
         ($('point').value !== TIME || !!pointValue());
       $('next').disabled = !ok;
     }
@@ -348,11 +359,51 @@
 
     /* ---------- サーバー ---------- */
     function load() {
-      busy('読み込んでいます…');
+      busy('読み込んでいます…', '', 40);
       google.script.run
-        .withSuccessHandler(d => { idle(); render(d); show('pick'); })
+        .withSuccessHandler(d => {
+          idle();
+          render(d);
+          show('pick');
+          showLastRun(d.run);
+          if (d.run && d.run.status === 'running') waitRun(d.run.started);
+        })
         .withFailureHandler(failLoading)
         .getMeetingRunData(KIND, FINAL);
+    }
+
+    // 直前の「作成する」の結果を、選ぶ画面の上に出す（画面が読み込み直されると初めの画面に戻るため。作り終えてから30分のあいだ）
+    function showLastRun(r) {
+      const box = $('lastRun');
+      box.hidden = !r || r.status === 'running';
+      if (box.hidden) return;
+      box.classList.toggle('error', r.status === 'error');
+      renderLinks(box, r.started + ' に作り始めた' + (r.final ? '本番の' : '試作の') + '資料' + (r.status === 'error' ? 'は、作れませんでした：\n' : '（' + r.finished + ' に作成）：\n') + r.message);
+    }
+
+    // 作っている途中（画面が読み込み直された・通信が切れた）：作るのはサーバーで続いているので、結果が出るまで問い合わせる
+    function waitRun(started) {
+      busy('資料を作っています（' + started + ' から）。画面を閉じないでください…', '（作るのは続いています。終わるとここに結果が出ます）');
+      const poll = () => {
+        google.script.run
+          .withSuccessHandler(state => {
+            if (state && state.status === 'running') {
+              setTimeout(poll, (data && data.pollSeconds || 10) * 1000);
+              return;
+            }
+            idle();
+            if (state && state.status === 'done') {
+              renderLinks($('doneText'), state.message);
+              show('done');
+              return;
+            }
+            show('pick');
+            showError('error', state ? state.message : '作った結果が分かりませんでした。出力先のフォルダで確かめてください。');
+          })
+          .withFailureHandler(() => setTimeout(poll, (data && data.pollSeconds || 10) * 1000))
+          .getMeetingRunState(KIND);
+      };
+      setTimeout(poll, (data && data.pollSeconds || 10) * 1000);
     }
 
     function importCalendar() {
@@ -378,7 +429,9 @@
             showError('error', r.error);
             return;
           }
-          $('confirmText').textContent = r.text + (FINAL ? '\n\n作成してよろしいですか？' : '');
+          $('confirmText').textContent = r.text + '\n\n' + ($('overwrite').checked
+            ? '前に作った同じ資料（同じ会議日・同じ名前の PDF）があれば上書きします（リンクはそのまま）。'
+            : '前に作った同じ資料があっても上書きせず、新しいファイルに作ります（リンクが変わります）。') + (FINAL ? '\n\n作成してよろしいですか？' : '');
           showError('confirmError', '');
           show('confirm');
         })
@@ -394,8 +447,21 @@
           renderLinks($('doneText'), r.message);
           show('done');
         })
-        .withFailureHandler(e => { idle(); showError('confirmError', e); })
-        .runMeetingMaterials(KIND, FINAL, meetingValue(), pickedSheets(), $('cancelJob').checked, pointValue());
+        .withFailureHandler(e => {
+          // 通信が切れただけなら、作るのはサーバーで続いている。作っている途中なら結果を待つ
+          google.script.run
+            .withSuccessHandler(state => {
+              if (state && state.status === 'running') {
+                waitRun(state.started || '');
+                return;
+              }
+              idle();
+              showError('confirmError', e);
+            })
+            .withFailureHandler(() => { idle(); showError('confirmError', e); })
+            .getMeetingRunState(KIND);
+        })
+        .runMeetingMaterials(KIND, FINAL, meetingValue(), pickedSheets(), $('cancelJob').checked, pointValue(), $('overwrite').checked);
     }
 
     // 知らせの文の URL をリンクにする（文字は textContent で入れる）

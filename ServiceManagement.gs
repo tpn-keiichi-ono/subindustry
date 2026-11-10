@@ -10,12 +10,20 @@
  *   （承認が足りない人には、メニューで承認の画面を出し、パネルでは「承認する」ボタンを出す）。
  *   パネルは開いたとき・追加したときに取り込み元の最新を読み、まだ登録していないリクエストだけを出す
  *   （サブインダストリー → 得意先 → 案件名で絞り込み、文字で探せる）。選ぶと、サービスリクエストの最後の行の下に A〜D を書く。
+ * - メニュー「サブインダストリーのシートから取り込む」（importServiceRequests）は、まだ登録していないリクエストをすべて書く
+ *   （追加日・ID と取り込み元から書く列。今の並びで A〜J）。同じリクエストは1件だけにし、登録済みのものは書かないので、
+ *   何度押しても重ならない。書く前に件数を見せて確かめる。一度取り込んだリクエストは非表示のシート（SVC_OPTIONS.importedSheet）に覚え、
+ *   行を削除しても次からは取り込まない（選択パネルからは追加できる）。
+ * - 自動の取り込み：installServiceImportTrigger() が5分ごとの時間主導トリガー（serviceImportTick）を作り、同じ取り込みを画面なしで行う。
+ * - 行はサブインダストリーの順（取り込み元のシートの順）に並べる。追加・取り込みのときに、足した行（と、手で最後の行の下に足した行）を
+ *   そのサブインダストリーの行の最後に動かす（svcArrangeRows_）。
+ * - ID を1番から振り直すときは、エディタで renumberRequestIds() を実行する（タスク管理のサービス案も新しい ID に書き換える）。
  * - パネルの件数のバッジ（未登録・登録済み）を押すと、一覧をモーダル（RequestListDialog）で確かめられる。
  *   モーダルからも未登録のリクエストを追加でき、登録済みのリクエストの行を削除できる（削除は確かめてから）。
  * - 前の版は、セルの連動プルダウン（候補を非表示の __REQUEST_LISTS の数式で作る）と onEdit で登録していたが、
  *   行の並べ替えでプルダウンがずれる・onEdit が30秒で止まる・差分追跡とロックを取り合う・取り込み元の変更を取りこぼす、
  *   などで安定しなかったのでやめた。setupRequestSheet() が、前の版の A〜D のプルダウンと __REQUEST_LISTS を外す。
- * - 登録したリクエストには ID（SR-0001 の形）を振る。追加したとき・パネルを開いたとき・setupRequestSheet() のときに、
+ * - 登録したリクエストには ID（SR-0001 の形）を振る（これまでに振った番号はスクリプトのプロパティ）。追加したとき・パネルを開いたとき・setupRequestSheet() のときに、
  *   ID の無い行と、ほかの行と同じ ID の行（行のコピーなど）に新しい番号を振る（上の行の ID は残す。削除した番号も使い回さない）。
  * - サービスは最初から決まっているものではなく、リクエストをもとに考える。「サービス案」に入力した名前がサービス案になる
  *   （同じ名前を付けたリクエストが1つのサービス案にまとまる）。判断はプルダウン、ほかの列は自由に入力する
@@ -39,11 +47,18 @@ const SVC_OPTIONS = {
   // 登録したリクエストの ID（SR-0001 の形。追加したときに自動で振る。重複させず、削除した番号も使い回さない）
   idPrefix: 'SR-',
   idDigits: 4,
-  idCounterKey: 'SVC_LAST_REQUEST_ID',   // これまでに振った最大の番号（ドキュメントのプロパティ）
+  // これまでに振った最大の番号（スクリプトのプロパティ。エディタの「プロジェクトの設定」で見られる）。
+  // 前の版はドキュメントのプロパティの同じ名前に置いていた（あれば引き継いで消す）
+  idCounterKey: 'SVC_LAST_REQUEST_ID',
+  // renumberRequestIds() で、削除したリクエストを指していたタスク管理のサービス案の先頭に付ける印
+  // （ID の番号で別のリクエストに結び付け直されないように。セルの右上が赤くなるので、選び直してもらう）
+  orphanTaskPrefix: '（削除済み）',
   // source：取り込み元の列（sourceHeaders・sourceOptionalHeaders を続けた何番目か）。取り込み元から書き、パネルを開いたときに合わせる
   // aliases は前の版の見出し
   requestColumns: [
     // insertBefore：前からあるシートに足すときは、その見出しの列のすぐ左に差し込む
+    // 追加日：スクリプトが行を足した日（パネル・まとめて取り込む。手で足した行は ID を振った日）。取り込み日は前の版の見出し
+    {key: 'addedAt', label: '追加日', width: 100, insertBefore: 'ID', aliases: ['取り込み日']},
     {key: 'id', label: 'ID', width: 90, insertBefore: 'サブインダストリー'},
     {key: 'subIndustry', label: 'サブインダストリー', width: 160, required: true, source: 0},
     {key: 'customer', label: '得意先', width: 200, required: true, source: 1},
@@ -64,8 +79,9 @@ const SVC_OPTIONS = {
   ],
   // 人が入力する列（どれかが入っていれば「手を付けた行」。判断は別に見る）
   inputKeys: ['feedback', 'service', 'department', 'owner'],
-  // 使わなくなった列（setupRequestSheet() で、確認してから削除する。取り込み日は追加日の前の版の見出し）
-  removedColumns: ['メモ', '追加日', '取り込み日'],
+  // 使わなくなった列（setupRequestSheet() で、確認してから削除する）
+  removedColumns: ['メモ'],
+  addedAtFormat: 'yyyy/mm/dd',   // 追加日の表示形式
   menuTitle: '🟪RXサービスMTG用',   // メニューの名前（画面の案内・管理者向けの確認画面のタイトルにもこの名前を出す）
   pickerTemplate: 'RequestPickerView',
   pickerTitle: 'リクエストを追加',
@@ -82,6 +98,13 @@ const SVC_OPTIONS = {
   // タスク管理の「サービス案」のプルダウンの候補（ID とリクエストをつないだ「SR-0001 会員の購買分析をしたい」の形）を書く非表示のシート。
   // スクリプトが書き直すので、手で書き換えない（書き換えても、パネルを開いたときなどに戻す）
   taskChoiceSheet: '__TASK_CHOICES',
+  // 一度取り込んだ（サービスリクエストにあった）リクエストの覚え（非表示のシート。A 列にキーの要約を1件1行）。
+  // まとめて取り込む・自動の取り込みは、ここにあるリクエストを取り込まない（行を削除したリクエストが戻らないように。パネルからは追加できる）
+  importedSheet: '__REQUEST_IMPORTED',
+  // 自動の取り込み（installServiceImportTrigger() で作る時間主導トリガー）
+  autoImportHandler: 'serviceImportTick',
+  autoImportMinutes: 5,           // 間隔（分。1・5・10・15・30 のどれか）
+  autoImportLockWaitMs: 10000,    // ロックを待つ時間（取れなければ、その回は飛ばして次の回に取り込む）
   taskChoiceLength: 40,   // 候補に出すリクエストの文字数（長いリクエストは「…」で切る）
   // タスク管理のサービス案のプルダウンを確かめた記録（ドキュメントのプロパティ）。候補・列・行数が変わらなければ、
   // パネルを開いても taskLinkCheckMinutes 分に1回しか確かめない（毎回すべての行を確かめると、パネルの読み込みが遅くなる）
@@ -118,6 +141,7 @@ function svcAddMenu_() {
   SpreadsheetApp.getUi()
     .createMenu(SVC_OPTIONS.menuTitle)
     .addItem('リクエストを追加', 'openRequestPicker')
+    .addItem('サブインダストリーのシートから取り込む', 'importServiceRequests')   // まだ登録していないリクエストをすべて書く
     .addToUi();
 }
 
@@ -240,8 +264,12 @@ function svcAddRequest_(key) {
       id = svcFormatId_(svcTakeIds_(1, svcMaxIdInSheet_(sheet, cols.id))[0]);
       sheet.getRange(row, cols.id).setValue(credText_(id));
     }
-    const warning = svcRefreshTaskChoices_(ss);   // タスク管理のサービス案で、すぐ選べるように
-    return {ok: true, row, id, sheet, records, warning, message: (id ? id + ' として' : '') + row + '行目に追加しました。'};
+    svcWriteAddedAt_(sheet, cols, row, 1);
+    // そのサブインダストリーの行の最後に動かす（手で下に足した行も一緒に。並べ替えられなくても追加は済ませる）
+    const arranged = svcArrangeRowsSafely_(sheet, records);
+    const at = arranged.rowOf(row);
+    const warning = [arranged.warning, svcRefreshTaskChoices_(ss)].filter(Boolean).join('\n');   // タスク管理のサービス案で、すぐ選べるように
+    return {ok: true, row: at, id, sheet, records, warning, message: (id ? id + ' として' : '') + at + '行目に追加しました。'};
   }, SVC_OPTIONS.pickerLockWaitMs, 'リクエストの追加');
 }
 
@@ -301,6 +329,306 @@ function svcPickerData_(sheet, records) {
     requestSheet: SVC_OPTIONS.requestSheet,
     loadedAt: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm')
   };
+}
+
+/* ---------------- サブインダストリーのシートからまとめて取り込む（メニュー） ---------------- */
+
+/**
+ * メニュー「サブインダストリーのシートから取り込む」：
+ * 読むシート（svcSourceSheets_。サブインダストリーのシート）のリクエストのうち、まだサービスリクエストに無いものをすべて、
+ * 最後の行（svcRegistered_）の下に取り込み元の順に書き、それぞれのサブインダストリーの行の最後に動かす（svcArrangeRows_）。
+ * 書く列は 追加日・ID と取り込み元から書く列（サブインダストリー・得意先・案件名・営業の4列・リクエスト。
+ * setupRequestSheet() で作った並びでは A〜J）。判断などは入れない。
+ * - 同じリクエスト（得意先・案件名・リクエストが同じもの。全角・半角と空白の違いは無視）は、シートをまたいでも1件だけにする。
+ *   登録済みのリクエストは書かないので、何度実行しても重ならない。
+ * - 書く前に件数を見せて確かめる（答えるまでほかの処理を待たせないよう、確認はロックを取る前）。書くときはロックの中で読み直す
+ *   （確かめている間に、ほかの人がパネルから追加した・取り込み元が変わったときも重ならない）。
+ * - 登録済みの行は、パネルを開いたときと同じく取り込み元に合わせ（svcSync_）、ID の無い行・重なった ID も直す（svcEnsureIds_）。
+ * 取り込めたら（新しいものが無くても）true。やめた・取り込めなかったときは false。
+ */
+function importServiceRequests() {
+  ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const title = SVC_OPTIONS.menuTitle;
+  let preview;
+  try {
+    const sheet = svcRequestSheetOrThrow_(ss);
+    const records = svcSourceRecords_(ss);
+    const registered = svcRegistered_(sheet);
+    const remembered = svcImportedKeys_(ss);
+    const unregistered = records.filter(rec => !registered.keys.has(rec.key));
+    preview = {records, pending: unregistered.filter(rec => !remembered.has(svcImportedKey_(rec.key)))};
+  } catch (e) {
+    ui.alert(title, svcErrorText_(e), ui.ButtonSet.OK);
+    return false;
+  }
+  if (!preview.records.length) {
+    ui.alert(title, svcCountMessage_({total: 0}), ui.ButtonSet.OK);
+    return false;
+  }
+  // 新しく書くものが無ければ聞かない（登録済みの行を取り込み元に合わせるだけ）
+  if (preview.pending.length && ui.alert(title, svcImportConfirmText_(preview.pending), ui.ButtonSet.YES_NO) !== ui.Button.YES) {
+    return false;
+  }
+
+  let result;
+  try {
+    result = taskWithLock_(() => svcImportRequests_(ss), SVC_OPTIONS.lockWaitMs, 'リクエストの取り込み');
+  } catch (e) {
+    console.error(e);
+    ui.alert(title, '取り込めませんでした：' + svcErrorText_(e), ui.ButtonSet.OK);
+    return false;
+  }
+  // 取り込んだ最初の行を選んでおく（ほかのシートを開いていたときも、取り込んだ行が見えるように）
+  if (result.added.length && result.focusCol) {
+    try { result.sheet.getRange(result.focusRow, result.focusCol).activate(); } catch (_) {}
+  }
+  ui.alert(title, svcImportResultLines_(result).join('\n'), ui.ButtonSet.OK);
+  return true;
+}
+
+/**
+ * まとめて取り込む中身（ロック取得中に呼ぶこと）。取り込み元とサービスリクエストを読み直して、まだ無いリクエストを書く。
+ * 書き込みは列ごとに1回（行の数によらない）。行が足りなければ足し、足した行にも判断のプルダウンを付ける。
+ * firstRow〜lastRow は並べ替える前の行（arranged：並べ替えたか。focusRow：並べ替えたあとの、取り込んだいちばん上の行）。
+ * {sheet, records, added: 書いたリクエスト, firstRow, lastRow, firstId, lastId, focusRow, arranged, focusCol, duplicates: 取り込み元でほかと同じだった行の数,
+ *  skipped: 登録済みで書かなかった数, missing: 取り込み元に見つからない登録済みの行, synced, ids, warning}
+ */
+function svcImportRequests_(ss) {
+  const sheet = svcRequestSheetOrThrow_(ss);
+  const stats = {};
+  const records = svcSourceRecords_(ss, stats);
+  const remembered = svcImportedKeys_(ss);
+  const legacy = !PropertiesService.getDocumentProperties().getProperty(SVC_OPTIONS.legacyDoneKey);
+  svcRemoveLegacyLists_(ss, sheet);   // 前の版の A〜D のプルダウンが残っていると、スクリプトの書き込みも止まるため（済んでいれば何もしない）
+  const synced = svcSync_(ss, sheet, records, {notes: legacy});
+  const ids = svcEnsureIds_(sheet);   // 先に ID の重複を直してから、次の番号を決める
+  const registered = svcRegistered_(sheet);
+  const unregistered = records.filter(rec => !registered.keys.has(rec.key));
+  const added = unregistered.filter(rec => !remembered.has(svcImportedKey_(rec.key)));
+  const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, SVC_OPTIONS.headerRow);
+  const firstRow = registered.lastRow + 1;
+  const lastRow = registered.lastRow + added.length;
+  let firstId = '';
+  let lastId = '';
+  if (added.length) {
+    const maxRows = sheet.getMaxRows();
+    if (lastRow > maxRows) {
+      sheet.insertRowsAfter(maxRows, lastRow - maxRows);
+      taskApplyColumnRules_(sheet, SVC_OPTIONS.requestColumns.filter(c => c.options), cols, maxRows + 1, lastRow - maxRows);
+    }
+    svcSourceKeys_().forEach((k, i) => {
+      if (!cols[k]) return;   // 列がまだ無い（setupRequestSheet() の前）なら書かない
+      // 先頭に ' を付けて書く（「=…」のリクエストも数式にならない）
+      sheet.getRange(firstRow, cols[k], added.length, 1).setValues(added.map(rec => [credText_(rec.values[i])]));
+    });
+    if (cols.id) {
+      const numbers = svcTakeIds_(added.length, svcMaxIdInSheet_(sheet, cols.id));
+      const labels = numbers.map(svcFormatId_);
+      sheet.getRange(firstRow, cols.id, added.length, 1).setValues(labels.map(id => [credText_(id)]));
+      firstId = labels[0];
+      lastId = labels[labels.length - 1];
+    }
+    svcWriteAddedAt_(sheet, cols, firstRow, added.length);
+  }
+  // 足した行を、それぞれのサブインダストリーの行の最後に動かす（手で下に足した行も一緒に）
+  const arranged = added.length ? svcArrangeRowsSafely_(sheet, records) : {moved: 0, rowOf: row => row, warning: ''};
+  const warning = [arranged.warning, svcRefreshTaskChoices_(ss)].filter(Boolean).join('\n');   // タスク管理のサービス案で、すぐ選べるように
+  // 今シートにあるリクエストと取り込んだリクエストを覚える（あとで行を削除しても、次からは取り込まない）
+  svcRememberImported_(ss, Array.from(registered.keys).concat(added.map(rec => rec.key)));
+  const keys = new Set(records.map(rec => rec.key));
+  const rows = added.map((_, i) => arranged.rowOf(firstRow + i));
+  return {
+    sheet, records, added, firstRow, lastRow, firstId, lastId,
+    focusRow: rows.length ? Math.min.apply(null, rows) : 0,
+    arranged: arranged.moved > 0,
+    focusCol: cols.id || cols.request || 0,
+    duplicates: stats.duplicates || 0,
+    skipped: records.length - unregistered.length,
+    removed: unregistered.length - added.length,   // 前に取り込んで、今はシートに無い（行を削除した）ので取り込まなかった数
+    missing: registered.rows.filter(r => !keys.has(r.key)).map(r => r.row),
+    synced, ids, warning
+  };
+}
+
+/** シートごとの件数（「「スーパー・GMS」3件、「コンビニ」2件」。取り込み元の順）。 */
+function svcImportBreakdown_(records) {
+  const counts = new Map();
+  records.forEach(rec => counts.set(rec.sheet, (counts.get(rec.sheet) || 0) + 1));
+  return Array.from(counts.keys()).map(name => '「' + name + '」' + counts.get(name) + '件').join('、');
+}
+
+/** 取り込む前に確かめる文。pending：まだ登録していないリクエスト（svcSourceRecords_ の形）。 */
+function svcImportConfirmText_(pending) {
+  return [
+    '「' + SVC_OPTIONS.requestSheet + '」に、まだ無いリクエスト ' + pending.length + '件を取り込みます' +
+      '（追加日・ID・サブインダストリー・得意先・案件名・リクエストした営業の4列・リクエストを書き、それぞれのサブインダストリーの行の最後に入れます）。',
+    '内訳：' + svcImportBreakdown_(pending),
+    '同じリクエスト（得意先・案件名・リクエストが同じもの。全角・半角と空白の違いは無視）は1件だけ取り込み、登録済みのものは取り込みません。',
+    '一度取り込んだリクエストは、行を削除しても次からは取り込みません（選択パネルからは追加できます）。',
+    '',
+    '取り込みますか？'
+  ].join('\n');
+}
+
+/** 取り込んだ結果の知らせ（行ごと）。result は svcImportRequests_() の戻り値。 */
+function svcImportResultLines_(result) {
+  const lines = [];
+  const count = result.added.length;
+  if (count) {
+    const ids = !result.firstId ? '' : '（ID：' + (count === 1 ? result.firstId : result.firstId + '〜' + result.lastId) + '）';
+    lines.push(count + '件を取り込みました' + ids + '。' + (result.arranged
+      ? 'それぞれのサブインダストリーの行の最後に入れています。'
+      : (count === 1 ? result.firstRow + '行目' : result.firstRow + '〜' + result.lastRow + '行目') + 'に入れています。'));
+    lines.push('内訳：' + svcImportBreakdown_(result.added));
+    if (result.skipped) lines.push('登録済みのリクエスト ' + result.skipped + '件は取り込んでいません。');
+    if (result.removed) lines.push('前に取り込んで行を削除したリクエスト ' + result.removed + '件は取り込んでいません。');
+  } else {
+    lines.push('新しく取り込むリクエストはありません（取り込み元のリクエスト ' + result.records.length + '件は、すべて登録済みか、前に取り込んで行を削除したものです）。');
+  }
+  if (result.duplicates) lines.push('ほかの行・シートと同じリクエストの ' + result.duplicates + '行は、重ならないよう取り込んでいません。');
+  if (result.ids.assigned) lines.push('ID の無い ' + result.ids.assigned + '行に ID を振りました。');
+  if (result.ids.renumbered.length) lines.push(svcRenumberedMessage_(result.ids.renumbered));
+  if (result.synced.updated) lines.push('登録済みの行を取り込み元に合わせました（' + result.synced.updated + 'セル）。');
+  if (result.missing.length) {
+    const limit = 30;
+    lines.push('取り込み元に見つからない行：' + result.missing.slice(0, limit).join('・') + '行目' +
+      (result.missing.length > limit ? ' ほか ' + (result.missing.length - limit) + '行' : '') +
+      '（取り込み元で書き換えか削除された可能性があります。不要なら行を削除してください）。');
+  }
+  if (result.warning) lines.push(result.warning);
+  return lines;
+}
+
+/* ---------------- 一度取り込んだリクエストの覚え ---------------- */
+
+/** 覚えに書くキー（リクエストのキー svcRequestKey_ の要約。数字・時刻に読まれないよう、書くときは文字として書く）。 */
+function svcImportedKey_(key) {
+  return svcTextHash_(String(key));
+}
+
+/** 覚えたリクエストのキー（svcImportedKey_）の Set。覚えのシートが無ければ空。 */
+function svcImportedKeys_(ss) {
+  const sheet = ss.getSheetByName(SVC_OPTIONS.importedSheet);
+  if (!sheet || sheet.getLastRow() < 1) return new Set();
+  return new Set(sheet.getRange(1, 1, sheet.getLastRow(), 1).getDisplayValues().map(line => String(line[0]).trim()).filter(Boolean));
+}
+
+/** 覚えのシート（無ければ非表示で作る。作ったときは開いていたシートに戻す）。 */
+function svcImportedSheet_(ss) {
+  let sheet = ss.getSheetByName(SVC_OPTIONS.importedSheet);
+  if (sheet) return sheet;
+  const active = ss.getActiveSheet();
+  sheet = ss.insertSheet(SVC_OPTIONS.importedSheet, ss.getSheets().length);
+  if (sheet.getMaxColumns() > 1) sheet.deleteColumns(2, sheet.getMaxColumns() - 1);   // 使わない列を持たない（空のセルも上限に数えられる）
+  sheet.hideSheet();
+  if (active) active.activate();   // insertSheet は作ったシートを開くので、開いていたシートに戻す
+  return sheet;
+}
+
+/** リクエストのキー（svcRequestKey_）を覚える（まだ覚えていないものだけを下に足す。ロック取得中に呼ぶこと）。足した数。 */
+function svcRememberImported_(ss, keys) {
+  const sheet = svcImportedSheet_(ss);
+  const known = svcImportedKeys_(ss);
+  const fresh = Array.from(new Set(keys.map(svcImportedKey_))).filter(k => !known.has(k));
+  if (!fresh.length) return 0;
+  const first = sheet.getLastRow() + 1;
+  const need = first + fresh.length - 1 - sheet.getMaxRows();
+  if (need > 0) sheet.insertRowsAfter(sheet.getMaxRows(), need);
+  sheet.getRange(first, 1, fresh.length, 1).setValues(fresh.map(k => [credText_(k)]));
+  return fresh.length;
+}
+
+/* ---------------- 自動の取り込み（時間主導トリガー） ---------------- */
+
+/**
+ * 自動の取り込みを始める（管理者がエディタから1回実行する。トリガーの所有者は実行した人）。
+ * SVC_OPTIONS.autoImportMinutes 分ごとに serviceImportTick を動かすトリガーを1つだけ作る（前からあるものは消して作り直す）。
+ * 始める前に、取り込み元にあってサービスリクエストに無いリクエスト（行を削除したものを含む）を、今取り込むか、取り込まずに覚えるかを聞く
+ * （覚えたリクエストは、そのあとも取り込まない。覚えが無いまま始めると、削除した行が次の回に戻るため）。
+ */
+function installServiceImportTrigger() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const title = SVC_OPTIONS.menuTitle;
+  const sheet = svcRequestSheetOrThrow_(ss);
+  const records = svcSourceRecords_(ss);
+  const registered = svcRegistered_(sheet);
+  const remembered = svcImportedKeys_(ss);
+  const pending = records.filter(rec => !registered.keys.has(rec.key) && !remembered.has(svcImportedKey_(rec.key)));
+  let mode = 'none';
+  if (pending.length) {
+    const answer = ui.alert(title, [
+      SVC_OPTIONS.autoImportMinutes + '分ごとに、サブインダストリーのシートから自動で取り込みます。',
+      '今、取り込み元にあって「' + SVC_OPTIONS.requestSheet + '」に無いリクエストが ' + pending.length + '件あります（内訳：' + svcImportBreakdown_(pending) + '）。',
+      '行を削除したリクエストも、この中に入っています。',
+      '',
+      'はい：今すべて取り込んでから始めます。',
+      'いいえ：取り込まずに始めます（これらは、このあとも自動では取り込みません。選択パネルからは追加できます）。',
+      'キャンセル：始めません。'
+    ].join('\n'), ui.ButtonSet.YES_NO_CANCEL);
+    if (answer === ui.Button.YES) mode = 'import';
+    else if (answer === ui.Button.NO) mode = 'remember';
+    else return false;
+  }
+
+  const lines = taskWithLock_(() => {
+    const out = [];
+    if (mode === 'import') {
+      const result = svcImportRequests_(ss);
+      out.push(result.added.length + '件を取り込みました。');
+    } else {
+      const now = svcRegistered_(sheet);
+      const keys = Array.from(now.keys).concat(mode === 'remember' ? pending.map(rec => rec.key) : []);
+      svcRememberImported_(ss, keys);
+      svcImportedSheet_(ss);   // 覚えるものが無くてもシートを作る（自動の取り込みは、覚えのシートがあるときだけ動く）
+      if (mode === 'remember') out.push(pending.length + '件は取り込まずに覚えました（このあとも自動では取り込みません）。');
+    }
+    ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === SVC_OPTIONS.autoImportHandler)
+      .forEach(t => ScriptApp.deleteTrigger(t));
+    ScriptApp.newTrigger(SVC_OPTIONS.autoImportHandler).timeBased().everyMinutes(SVC_OPTIONS.autoImportMinutes).create();
+    return out;
+  }, SVC_OPTIONS.lockWaitMs, 'installServiceImportTrigger()');
+  lines.push(SVC_OPTIONS.autoImportMinutes + '分ごとの自動の取り込みを始めました。止めるときは removeServiceImportTrigger() を実行してください。');
+  ui.alert(title, lines.join('\n'), ui.ButtonSet.OK);
+  return true;
+}
+
+/** 自動の取り込みを止める（トリガーを消す。管理者がエディタから実行する）。消したトリガーの数。 */
+function removeServiceImportTrigger() {
+  const triggers = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === SVC_OPTIONS.autoImportHandler);
+  triggers.forEach(t => ScriptApp.deleteTrigger(t));
+  const message = triggers.length ? '自動の取り込みを止めました。' : '自動の取り込みは動いていません。';
+  const ui = diffUiOrNull_();
+  if (ui) ui.alert(SVC_OPTIONS.menuTitle, message, ui.ButtonSet.OK);
+  else console.log(message);
+  return triggers.length;
+}
+
+/**
+ * 自動の取り込み（時間主導トリガーから呼ぶ）。メニューの「サブインダストリーのシートから取り込む」と同じく、まだ無いリクエストを書く（画面は出さない）。
+ * 覚えのシートが無ければ動かない（installServiceImportTrigger() で作る。無いまま取り込むと、削除した行が戻るため）。
+ * ほかの処理がロックを持っていれば、その回は飛ばす（次の回に取り込む）。結果は実行ログに書く。
+ */
+function serviceImportTick() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss.getSheetByName(SVC_OPTIONS.importedSheet)) {
+    console.warn('「' + SVC_OPTIONS.importedSheet + '」シートが無いため、自動の取り込みをしませんでした。installServiceImportTrigger() を実行してください。');
+    return null;
+  }
+  let result;
+  try {
+    result = taskWithLock_(() => svcImportRequests_(ss), SVC_OPTIONS.autoImportLockWaitMs, '自動の取り込み');
+  } catch (e) {
+    if (/他の処理.*実行中/.test(svcErrorText_(e))) {
+      console.log('ほかの処理が実行中のため、この回の自動の取り込みは飛ばしました。');
+      return null;
+    }
+    throw e;
+  }
+  if (result.added.length) console.log(svcImportResultLines_(result).join('\n'));
+  return {added: result.added.length};
 }
 
 /* ---------------- 一覧のモーダル（パネルの件数のバッジから開く） ---------------- */
@@ -385,17 +713,34 @@ function svcMaxIdInSheet_(sheet, idCol) {
 /**
  * 新しい ID の番号を count 個とって、これまでに振った最大の番号として覚える（ロック取得中に呼ぶこと）。
  * シートにある最大の番号と、覚えている番号の大きいほうの次から（手で書いた ID とも、削除した行の ID とも重ならない）。
+ * 覚える場所はスクリプトのプロパティ（idCounterKey）。前の版がドキュメントのプロパティに残した番号があれば、大きいほうを引き継いで消す。
  */
 function svcTakeIds_(count, maxInSheet) {
-  const props = PropertiesService.getDocumentProperties();
-  const last = Math.max(Number(props.getProperty(SVC_OPTIONS.idCounterKey)) || 0, maxInSheet || 0);
-  props.setProperty(SVC_OPTIONS.idCounterKey, String(last + count));
+  const last = Math.max(svcLastIssuedId_(), maxInSheet || 0);
+  svcSetLastIssuedId_(last + count);
   return Array.from({length: count}, (_, i) => last + 1 + i);
+}
+
+/** これまでに振った最大の番号（スクリプトのプロパティと、前の版のドキュメントのプロパティの大きいほう。無ければ 0）。 */
+function svcLastIssuedId_() {
+  const key = SVC_OPTIONS.idCounterKey;
+  const script = Number(PropertiesService.getScriptProperties().getProperty(key)) || 0;
+  const legacy = Number(PropertiesService.getDocumentProperties().getProperty(key)) || 0;
+  return Math.max(script, legacy);
+}
+
+/** これまでに振った最大の番号をスクリプトのプロパティに書く（前の版のドキュメントのプロパティは消す）。 */
+function svcSetLastIssuedId_(number) {
+  const key = SVC_OPTIONS.idCounterKey;
+  PropertiesService.getScriptProperties().setProperty(key, String(number));
+  const doc = PropertiesService.getDocumentProperties();
+  if (doc.getProperty(key) != null) doc.deleteProperty(key);
 }
 
 /**
  * リクエストのある行のうち、ID の無い行と、上の行と同じ ID の行（行のコピーなど）に新しい ID を振る（ロック取得中に呼ぶこと）。
  * 上の行の ID は残す。読めない ID（SR-0001 の形でないもの）も振り直す。ID の列が無ければ何もしない。
+ * ID を振った行の追加日が空なら、今日の日付を入れる（手で足した行は、ここで初めて追加日が入る）。
  * {assigned: ID の無かった行の数, renumbered: [{row, from, to}]（振り直した行）}
  */
 function svcEnsureIds_(sheet) {
@@ -428,7 +773,40 @@ function svcEnsureIds_(sheet) {
   const last = targets[targets.length - 1];
   sheet.getRange(headerRow + 1 + first, cols.id, last - first + 1, 1)
     .setValues(next.slice(first, last + 1).map(v => [credText_(v)]));
+  svcFillAddedAt_(sheet, targets.map(i => headerRow + 1 + i));
   return result;
+}
+
+/* ---------------- 追加日 ---------------- */
+
+/** 今日の日付（スクリプトのタイムゾーン。シートには日付として入る形の文字） */
+function svcTodayText_() {
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy/MM/dd');
+}
+
+/** row から count 行の追加日に今日の日付を書く（追加日の列が無ければ何もしない）。cols は taskColumnMap_ の戻り値。 */
+function svcWriteAddedAt_(sheet, cols, row, count) {
+  if (!cols.addedAt || count < 1) return;
+  const today = svcTodayText_();
+  sheet.getRange(row, cols.addedAt, count, 1).setValues(new Array(count).fill([today])).setNumberFormat(SVC_OPTIONS.addedAtFormat);
+}
+
+/** rows（行番号）のうち、追加日が空の行に今日の日付を書く（追加日の列が無ければ何もしない）。 */
+function svcFillAddedAt_(sheet, rows) {
+  if (!rows.length) return;
+  const col = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns.filter(c => c.key === 'addedAt'), SVC_OPTIONS.headerRow).addedAt;
+  if (!col) return;
+  const first = Math.min.apply(null, rows);
+  const last = Math.max.apply(null, rows);
+  const current = sheet.getRange(first, col, last - first + 1, 1).getDisplayValues().map(line => String(line[0]).trim());
+  const targets = rows.filter(row => !current[row - first]).sort((a, b) => a - b);
+  // 続いている行はまとめて書く（空でないセルは書き換えない）
+  for (let i = 0; i < targets.length;) {
+    let j = i;
+    while (j + 1 < targets.length && targets[j + 1] === targets[j] + 1) j++;
+    svcWriteAddedAt_(sheet, {addedAt: col}, targets[i], j - i + 1);
+    i = j + 1;
+  }
 }
 
 /** 振り直した ID の知らせ（多いときは先頭の5件だけ）。 */
@@ -467,6 +845,86 @@ function svcRegistered_(sheet) {
     rows.push({row: headerRow + 1 + i, key, values: all});
   });
   return {keys, lastRow, rows};
+}
+
+/* ---------------- 行の並び（サブインダストリーの順） ---------------- */
+
+/**
+ * 行のサブインダストリーの順番を返す関数（row は svcRegistered_ の rows の1つ）。読むシートの順（svcSourceSheets_。DIFF_RULES の順）で 0, 1, …。
+ * 取り込み元にあるリクエストは、読んだシートの順番。無いもの（手で書いた・取り込み元で書き換えた）は、「サブインダストリー」の値が
+ * シートの名前（前の名前も）か、そのシートのリクエストのサブインダストリーと同じならそのシートの順番。どれでもなければ最後（シートの数）。
+ */
+function svcGroupRanker_(records) {
+  const names = svcSourceSheets_();
+  const sheetRank = new Map(names.map((name, i) => [name, i]));
+  const byKey = new Map(records.map(rec => [rec.key, sheetRank.get(rec.sheet)]));
+  const byName = new Map();
+  const add = (value, rank) => {
+    const key = credNormalize_(value);
+    if (key && !byName.has(key)) byName.set(key, rank);
+  };
+  names.forEach((name, i) => [name].concat(DIFF_RULES[name].formerNames || []).forEach(v => add(v, i)));
+  records.forEach(rec => add(rec.values[0], sheetRank.get(rec.sheet)));
+  return row => {
+    if (byKey.has(row.key)) return byKey.get(row.key);
+    const key = credNormalize_(row.values.subIndustry);
+    return byName.has(key) ? byName.get(key) : names.length;
+  };
+}
+
+/**
+ * サービスリクエストの行を、サブインダストリーの順（svcGroupRanker_）に並べる（ロック取得中に呼ぶこと）。
+ * 同じサブインダストリーの中は今の並びのまま動かさないので、最後の行の下に足した行（スクリプトが足した行も、手で足した行も）は、
+ * そのサブインダストリーの行の最後に入る。リクエストの無い行（判断だけの行・空の行）は、いちばん下にまとめる。
+ * 並べるのは見出しの下から、リクエストの列（svcRegistered_ の lastRow）までの行で、行ごと（ほかの列・書式・メモも）動かす。
+ * 並びが変わらなければ何も書かない。並べ替えは、右端に一時の列を足して順番を書き、その列で並べ替えてから列を消す（Range.sort）。
+ * {moved: 行の位置が変わった数, rowOf: 並べる前の行番号 → 並べたあとの行番号}
+ */
+function svcArrangeRows_(sheet, records) {
+  const headerRow = SVC_OPTIONS.headerRow;
+  const registered = svcRegistered_(sheet);
+  const first = headerRow + 1;
+  const count = registered.lastRow - headerRow;
+  const same = {moved: 0, rowOf: row => row};
+  if (count < 2) return same;
+
+  const rank = svcGroupRanker_(records);
+  const last = svcSourceSheets_().length + 1;   // リクエストの無い行
+  const byRow = new Map(registered.rows.map(r => [r.row, r]));
+  const order = Array.from({length: count}, (_, i) => {
+    const r = byRow.get(first + i);
+    return {i, group: r ? rank(r) : last};
+  }).sort((a, b) => a.group - b.group || a.i - b.i);
+  const position = new Array(count);
+  order.forEach((item, at) => { position[item.i] = at; });
+  const moved = position.filter((at, i) => at !== i).length;
+  if (!moved) return same;
+
+  const helper = sheet.getMaxColumns() + 1;
+  sheet.insertColumnAfter(helper - 1);
+  try {
+    const keys = sheet.getRange(first, helper, count, 1);
+    keys.clearDataValidations();   // 左の列の入力規則を引き継いでいると、順番の数を書けないことがあるため
+    keys.setValues(position.map(at => [at + 1]));
+    sheet.getRange(first, 1, count, helper).sort({column: helper, ascending: true});
+  } finally {
+    sheet.deleteColumn(helper);
+  }
+  return {moved, rowOf: row => (row >= first && row < first + count ? first + position[row - first] : row)};
+}
+
+/**
+ * svcArrangeRows_ を呼び、並べ替えられなかったとき（フィルタ・結合したセル・保護など）は止めずに、知らせる文を warning に入れる
+ * （足した行は最後の行の下に残る。次に足したときにまた並べる）。{moved, rowOf, warning}
+ */
+function svcArrangeRowsSafely_(sheet, records) {
+  try {
+    return Object.assign({warning: ''}, svcArrangeRows_(sheet, records));
+  } catch (e) {
+    console.warn(e);
+    return {moved: 0, rowOf: row => row, warning: '「' + SVC_OPTIONS.requestSheet + '」の行をサブインダストリーの順に並べ替えられなかったため、' +
+      '足した行は最後の行の下にあります（フィルタ・結合したセルがあると並べ替えられません）：' + svcErrorText_(e)};
+  }
 }
 
 /* ---------------- 管理者がエディタから実行する ---------------- */
@@ -565,6 +1023,265 @@ function removeUntouchedRequests() {
     return Object.assign({removed: rows.length}, svcCountRequests_(sheet, svcSourceRecords_(ss)));
   }, SVC_OPTIONS.lockWaitMs, 'removeUntouchedRequests()');
   ss.toast(result.removed + '行を削除しました。' + svcCountMessage_(result), SVC_OPTIONS.menuTitle, 10);
+}
+
+/**
+ * ID を1番から振り直す（管理者がエディタから実行する）。行をサブインダストリーの順に並べてから（svcArrangeRows_）、
+ * リクエストのある行に上から SR-0001・SR-0002 … と振り、これまでに振った最大の番号（スクリプトのプロパティ）をその数にする。
+ * - タスク管理の「サービス案」（「SR-0001 …」の形）は、同じリクエストの新しい ID に書き換える。削除したリクエストを指していた値は、
+ *   先頭に SVC_OPTIONS.orphanTaskPrefix を付けて残す（ID の番号で別のリクエストに結び付け直されないように）。
+ * - リクエストの無い行に残っている ID は消す（次に振る番号が、その番号から続かないように）。
+ * - RX Service Meeting の本番の記録（ServiceMeeting.gs の smtgMeetings_）があれば、振り直さない
+ *   （記録はリクエストの判断を ID の番号で残しているので、次の会議の「前回以降の動き」が正しく出なくなる）。
+ * 振り直す前に件数を見せて確かめる（確認はロックを取る前）。
+ */
+function renumberRequestIds() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const title = SVC_OPTIONS.menuTitle;
+  const sheet = svcRequestSheetOrThrow_(ss);
+  const meetings = svcServiceMeetingRecords_();
+  if (meetings.length) {
+    ui.alert(title, svcMeetingRecordsMessage_(meetings), ui.ButtonSet.OK);
+    return false;
+  }
+  const count = svcRegistered_(sheet).rows.length;
+  if (!count) {
+    ui.alert(title, '「' + SVC_OPTIONS.requestSheet + '」にリクエストがありません。振り直す ID はありません。', ui.ButtonSet.OK);
+    return false;
+  }
+  const answer = ui.alert(title, [
+    '「' + SVC_OPTIONS.requestSheet + '」のリクエスト ' + count + '件を、サブインダストリーの順（' + svcSourceLabel_() + 'の順）に並べ替えてから、' +
+      '上から ' + svcFormatId_(1) + '〜' + svcFormatId_(count) + ' と振り直します。',
+    '「' + TASK_OPTIONS.sheet + '」の「サービス案」も、新しい ID に書き換えます。',
+    '前の ID で書いた資料・メモは、別のリクエストを指すようになります。',
+    '',
+    '振り直しますか？'
+  ].join('\n'), ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return false;
+
+  const result = taskWithLock_(() => svcRenumber_(ss), SVC_OPTIONS.lockWaitMs, 'renumberRequestIds()');
+  ui.alert(title, result.lines.join('\n'), ui.ButtonSet.OK);
+  return result.ok;
+}
+
+/** RX Service Meeting の本番の記録（会議日の一覧）。ServiceMeeting.gs が無ければ空。 */
+function svcServiceMeetingRecords_() {
+  return typeof smtgMeetings_ === 'function' ? smtgMeetings_() : [];
+}
+
+/** 本番の記録があって振り直さないときの知らせ。 */
+function svcMeetingRecordsMessage_(meetings) {
+  const dates = meetings.map(m => m.date);
+  return 'RX Service Meeting の本番の記録（会議日：' + dates.slice(-3).join('・') + (dates.length > 3 ? ' ほか' : '') + '）があるため、ID を振り直しません。' +
+    '記録はリクエストの判断を ID の番号で残しているので、振り直すと、次の会議の「前回以降の動き」（新規リクエスト・判断の変更）が正しく出なくなります。';
+}
+
+/** renumberRequestIds() の中身（ロック取得中に呼ぶこと）。{ok, lines: 知らせる文} */
+function svcRenumber_(ss) {
+  const meetings = svcServiceMeetingRecords_();   // 確かめている間に本番を作ったときのため、ロックの中でも確かめる
+  if (meetings.length) return {ok: false, lines: [svcMeetingRecordsMessage_(meetings)]};
+  const sheet = svcRequestSheetOrThrow_(ss);
+  const records = svcSourceRecords_(ss);
+  svcRemoveLegacyLists_(ss, sheet);
+  svcEnsureIds_(sheet);   // 重なった ID を先に直す（前の ID と新しい ID を1対1にするため）
+  const arranged = svcArrangeRows_(sheet, records);
+
+  const headerRow = SVC_OPTIONS.headerRow;
+  const cols = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns, headerRow);
+  const registered = svcRegistered_(sheet);
+  const count = registered.lastRow - headerRow;
+  if (!cols.id || count < 1) return {ok: false, lines: ['「' + SVC_OPTIONS.requestSheet + '」に ID の列がありません。setupRequestSheet() を実行してください。']};
+  const byRow = new Map(registered.rows.map(r => [r.row, r]));
+  const current = sheet.getRange(headerRow + 1, cols.id, count, 1).getDisplayValues().map(line => String(line[0]).trim());
+  const next = [];
+  const map = new Map();   // 前の番号 → タスク管理の候補の文（新しい ID とリクエスト）
+  let number = 0;
+  let cleared = 0;
+  current.forEach((id, i) => {
+    const r = byRow.get(headerRow + 1 + i);
+    if (!r) {
+      if (id) cleared++;
+      next.push('');
+      return;
+    }
+    const label = svcFormatId_(++number);
+    const before = svcIdNumber_(id);
+    if (before) map.set(before, svcTaskChoiceLabel_(label, r.values.request));
+    next.push(label);
+  });
+  sheet.getRange(headerRow + 1, cols.id, count, 1).setValues(next.map(v => [v ? credText_(v) : '']));
+  svcSetLastIssuedId_(number);
+
+  const tasks = svcRemapTaskIds_(ss, map);
+  const warning = svcRefreshTaskChoices_(ss, true);
+  const lines = ['リクエスト ' + number + '件の ID を ' + svcFormatId_(1) + '〜' + svcFormatId_(number) + ' に振り直しました' +
+    (arranged.moved ? '（先に、行をサブインダストリーの順に並べ替えました）' : '') + '。次に追加したリクエストは ' + svcFormatId_(number + 1) + ' からです。'];
+  if (tasks.changed) lines.push('「' + TASK_OPTIONS.sheet + '」の「サービス案」を ' + tasks.changed + '件、新しい ID に書き換えました。');
+  if (tasks.orphaned) {
+    lines.push('「' + TASK_OPTIONS.sheet + '」の「サービス案」のうち、今は無いリクエストを指していた ' + tasks.orphaned + '件は、先頭に「' +
+      SVC_OPTIONS.orphanTaskPrefix + '」を付けて残しました（セルの右上が赤くなります。必要ならプルダウンから選び直してください）。');
+  }
+  if (cleared) lines.push('リクエストの無い ' + cleared + '行に残っていた ID を消しました。');
+  if (warning) lines.push(warning);
+  return {ok: true, lines};
+}
+
+/**
+ * タスク管理の「サービス案」の値を、前の ID の番号から新しい候補の文に書き換える（ロック取得中に呼ぶこと）。map：前の番号 → 新しい候補の文。
+ * ID の無い値（前の版のサービス案の名前）はそのまま（このあとの svcLinkTaskServiceColumn_ がサービス案の名前で結び付ける）。
+ * map に無い番号（削除したリクエスト）の値は、先頭に SVC_OPTIONS.orphanTaskPrefix を付ける（番号で別のリクエストに結び付け直されないように）。
+ * 候補に無い値を拒否する入力規則があると書けないので、先に列の入力規則を外す（svcLinkTaskServiceColumn_ で付け直す）。{changed, orphaned}
+ */
+function svcRemapTaskIds_(ss, map) {
+  const result = {changed: 0, orphaned: 0};
+  const task = ss.getSheetByName(TASK_OPTIONS.sheet);
+  if (!task) return result;
+  const first = TASK_OPTIONS.headerRow + 1;
+  const count = task.getLastRow() - TASK_OPTIONS.headerRow;
+  const col = taskColumnMap_(task, TASK_OPTIONS.columns.filter(c => c.type === 'service'), TASK_OPTIONS.headerRow).service;
+  if (!col || count < 1) return result;
+  const values = task.getRange(first, col, count, 1).getDisplayValues().map(line => String(line[0]).trim());
+  const changes = [];
+  values.forEach((value, i) => {
+    const number = value ? svcLabelIdNumber_(value) : 0;
+    if (!number) return;
+    if (map.has(number)) {
+      if (map.get(number) === value) return;
+      changes.push({row: first + i, value: map.get(number)});
+      result.changed++;
+    } else {
+      changes.push({row: first + i, value: SVC_OPTIONS.orphanTaskPrefix + value});
+      result.orphaned++;
+    }
+  });
+  if (!changes.length) return result;
+  task.getRange(first, col, task.getMaxRows() - TASK_OPTIONS.headerRow, 1).clearDataValidations();
+  // 続いている行はまとめて書く
+  for (let i = 0; i < changes.length;) {
+    let j = i;
+    while (j + 1 < changes.length && changes[j + 1].row === changes[j].row + 1) j++;
+    task.getRange(changes[i].row, col, j - i + 1, 1).setValues(changes.slice(i, j + 1).map(c => [credText_(c.value)]));
+    i = j + 1;
+  }
+  return result;
+}
+
+/**
+ * 追加日が空の行に、取り込み元にリクエストが書かれた日（リクエスト記入日）を入れる（管理者がエディタから実行する。何度実行してもよい）。
+ * サービスリクエストのシートは差分追跡の対象外で、行を足した日の記録が無いため、取り込み元（差分追跡の対象）の 変更履歴_差分 から、
+ * その行のシートの「サービスのリクエスト」に今の文が書かれた記録を探し、いちばん新しい記録の日を入れる（svcHistoryAddedAt_）。
+ * 追加日が入っている行は変えない。記録が見つからない行（差分追跡を始める前に書かれた）と、同じシートの複数の行に同じ文のリクエストがあって
+ * どの行の記録か決められない行は空のまま残し、行番号を知らせる。書く前に件数を見せて確かめる（確認はロックを取る前）。
+ */
+function fillAddedAtFromHistory() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const title = SVC_OPTIONS.menuTitle;
+  const sheet = svcRequestSheetOrThrow_(ss);
+  const plan = svcHistoryAddedAt_(ss, sheet);
+  if (!plan.blank) {
+    ui.alert(title, '追加日が空の行はありません。', ui.ButtonSet.OK);
+    return false;
+  }
+  if (!plan.found.length) {
+    ui.alert(title, svcHistoryAddedAtLines_(plan, false).join('\n'), ui.ButtonSet.OK);
+    return false;
+  }
+  const answer = ui.alert(title, '追加日が空の ' + plan.blank + '行のうち ' + plan.found.length + '行に、取り込み元にリクエストが書かれた日' +
+    '（「' + DIFF_OPTIONS.logSheet + '」の記録。リクエスト記入日）を入れます。追加日が入っている行は変えません。\n\n入れますか？', ui.ButtonSet.YES_NO);
+  if (answer !== ui.Button.YES) return false;
+
+  const result = taskWithLock_(() => {
+    const now = svcHistoryAddedAt_(ss, sheet);   // 確かめている間に行が動いた・追加日が入ったときのため、ロックの中で読み直す
+    const col = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns.filter(c => c.key === 'addedAt'), SVC_OPTIONS.headerRow).addedAt;
+    const found = now.found.slice().sort((a, b) => a.row - b.row);
+    // 続いている行はまとめて書く
+    for (let i = 0; i < found.length;) {
+      let j = i;
+      while (j + 1 < found.length && found[j + 1].row === found[j].row + 1) j++;
+      sheet.getRange(found[i].row, col, j - i + 1, 1).setValues(found.slice(i, j + 1).map(f => [f.date]))
+        .setNumberFormat(SVC_OPTIONS.addedAtFormat);
+      i = j + 1;
+    }
+    return now;
+  }, SVC_OPTIONS.lockWaitMs, 'fillAddedAtFromHistory()');
+  ui.alert(title, svcHistoryAddedAtLines_(result, true).join('\n'), ui.ButtonSet.OK);
+  return true;
+}
+
+/**
+ * 追加日が空の行と、変更履歴_差分 から決まる日付（読むだけ）。
+ * {blank: 追加日が空でリクエストのある行の数, found: [{row, date: 'yyyy/MM/dd'}], missing: 記録が無い行, ambiguous: 決められない行}
+ * 行のシートは、取り込み元にあるリクエストなら読んだシート、無ければ svcGroupRanker_ と同じくサブインダストリーの値で決める。
+ */
+function svcHistoryAddedAt_(ss, sheet) {
+  const out = {blank: 0, found: [], missing: [], ambiguous: [], noColumn: false};
+  const col = taskColumnMap_(sheet, SVC_OPTIONS.requestColumns.filter(c => c.key === 'addedAt'), SVC_OPTIONS.headerRow).addedAt;
+  if (!col) {
+    out.noColumn = true;
+    return out;
+  }
+  const registered = svcRegistered_(sheet);
+  const rows = registered.rows.filter(r => !r.values.addedAt);
+  out.blank = rows.length;
+  if (!rows.length) return out;
+
+  const records = svcSourceRecords_(ss);
+  const names = svcSourceSheets_();
+  const rank = svcGroupRanker_(records);
+  const textKey = (name, text) => name + '\u0001' + credNormalize_(text);
+  // 同じシートで同じ文のリクエストの数（得意先・案件名が違えば別のリクエストなので、文だけではどの行の記録か決められない）
+  const sameText = new Map();
+  records.forEach(rec => {
+    const key = textKey(rec.sheet, rec.values[3]);
+    sameText.set(key, (sameText.get(key) || 0) + 1);
+  });
+
+  // 変更履歴_差分（A:I = 記録日時, イベントID, 編集者, シート, セル, 列名, 種類, 変更前, 変更後）の「サービスのリクエスト」の列の記録
+  const latest = new Map();   // シートと文 → いちばん新しい記録の日
+  const log = ss.getSheetByName(DIFF_OPTIONS.logSheet);
+  if (log && log.getLastRow() >= 2) {
+    const resolve = diffSheetNameResolver_();
+    const header = credNormalize_(SVC_OPTIONS.sourceHeaders[3]);
+    const empty = typeof CHG_OPTIONS !== 'undefined' ? CHG_OPTIONS.emptyMark : '（空欄）';
+    log.getRange(2, 1, log.getLastRow() - 1, 9).getDisplayValues().forEach(r => {
+      const name = resolve(String(r[3]).trim());
+      if (names.indexOf(name) < 0 || credNormalize_(r[5]) !== header) return;
+      const after = String(r[8]).trim();
+      const date = /^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/.exec(String(r[0]).trim());
+      if (!after || after === empty || !date) return;
+      const day = date[1] + '/' + date[2].padStart(2, '0') + '/' + date[3].padStart(2, '0');
+      const key = textKey(name, after);
+      if (!latest.has(key) || latest.get(key) < day) latest.set(key, day);
+    });
+  }
+
+  rows.forEach(r => {
+    const name = names[rank(r)];
+    const key = name ? textKey(name, r.values.request) : '';
+    if (key && (sameText.get(key) || 0) > 1) out.ambiguous.push(r.row);
+    else if (key && latest.has(key)) out.found.push({row: r.row, date: latest.get(key)});
+    else out.missing.push(r.row);
+  });
+  return out;
+}
+
+/** fillAddedAtFromHistory() の知らせ（行ごと）。written：書いたあとか。 */
+function svcHistoryAddedAtLines_(plan, written) {
+  if (plan.noColumn) return ['「' + SVC_OPTIONS.requestSheet + '」に追加日の列がありません。setupRequestSheet() を実行してください。'];
+  const list = rows => rows.slice(0, 30).join('・') + '行目' + (rows.length > 30 ? ' ほか ' + (rows.length - 30) + '行' : '');
+  const lines = [written
+    ? plan.found.length + '行の追加日に、取り込み元にリクエストが書かれた日を入れました。'
+    : '追加日が空の ' + plan.blank + '行に入れられる日付が、「' + DIFF_OPTIONS.logSheet + '」に見つかりませんでした。'];
+  if (plan.missing.length) {
+    lines.push('記録が見つからず空のままの行：' + list(plan.missing) + '（差分追跡を始める前に書かれたリクエストなど）。');
+  }
+  if (plan.ambiguous.length) {
+    lines.push('同じシートに同じ文のリクエストが複数あり、どの行の記録か決められなかった行：' + list(plan.ambiguous) + '。');
+  }
+  if (plan.missing.length || plan.ambiguous.length) lines.push('必要なら、これらの行の追加日は手で入れてください。');
+  return lines;
 }
 
 /** 手を付けていない行（リクエストがあり、判断が未判断か空で、フィードバック・サービス案・主管本部・担当者が空）の行番号（上から）。 */
@@ -848,9 +1565,9 @@ function svcRelinkTaskValues_(task, col, choices) {
  * 追加・削除のあとに、タスク管理のサービス案の候補を合わせる（ロック取得中に呼ぶこと）。
  * うまくいかなくても追加・削除は済んでいるので止めず、知らせる文を返す（できたときは空。パネル・モーダルに出す）。
  */
-function svcRefreshTaskChoices_(ss) {
+function svcRefreshTaskChoices_(ss, force) {
   try {
-    svcLinkTaskServiceColumn_(ss);
+    svcLinkTaskServiceColumn_(ss, force);
     return '';
   } catch (e) {
     console.warn(e);
@@ -899,10 +1616,7 @@ function svcTextHash_(text) {
  * 直すときは setupTaskSheet() を実行する（候補を書き直してプルダウンを付け直す。うまくいかなければエラーの文が出る）。
  */
 function diagnoseTaskChoices() {
-  const lines = svcTaskChoiceLines_(SpreadsheetApp.getActiveSpreadsheet());
-  console.log(lines.join('\n'));
-  const ui = SpreadsheetApp.getUi();
-  ui.alert(SVC_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
+  svcShowLines_(svcTaskChoiceLines_(SpreadsheetApp.getActiveSpreadsheet()));
 }
 
 /** diagnoseTaskChoices() の中身。画面に出す文（行ごと）を返す。 */
@@ -1019,10 +1733,7 @@ function svcDescribeTaskRule_(rule, choiceSheet, request) {
  * サービス管理が使うロックの種類（貼り替えが済んでいるか）、今ロックを持っている処理、差分追跡などのドキュメントロックが使われているかを画面に出す。
  */
 function diagnoseServiceLock() {
-  const lines = svcLockLines_();
-  console.log(lines.join('\n'));
-  const ui = SpreadsheetApp.getUi();
-  ui.alert(SVC_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
+  svcShowLines_(svcLockLines_());
 }
 
 /** diagnoseServiceLock() の中身。画面に出す文（行ごと）を返す。 */
@@ -1053,10 +1764,17 @@ function svcLockLines_() {
  */
 function diagnoseRequestSources() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const lines = svcDiagnoseLines_(ss);
+  svcShowLines_(svcDiagnoseLines_(ss));
+}
+
+/**
+ * 確認の関数（diagnose*）の結果を実行ログに書き、スプレッドシートの画面に出せれば画面にも出す
+ * （エディタをスプレッドシートから開いていないときは getUi() が使えないので、実行ログだけ）。
+ */
+function svcShowLines_(lines) {
   console.log(lines.join('\n'));
-  const ui = SpreadsheetApp.getUi();
-  ui.alert(SVC_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
+  const ui = diffUiOrNull_();
+  if (ui) ui.alert(SVC_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
 }
 
 /** diagnoseRequestSources() の中身。画面に出す文（行ごと）を返す。 */
@@ -1076,6 +1794,7 @@ function svcDiagnoseLines_(ss) {
 
   const seen = new Set();
   let complete = !!request;   // 読むシートをすべて読めたか（読めないシートがあると、見つからない行を数えられない）
+  let total = 0;              // 読むシートの、リクエストのある行の数（合計）
   Object.keys(DIFF_RULES).forEach(name => {
     const rule = DIFF_RULES[name];
     if (!rule.requests) {
@@ -1115,13 +1834,18 @@ function svcDiagnoseLines_(ss) {
     const reasons = [];
     if (selected) reasons.push('登録済み ' + selected + '件');
     if (duplicate) reasons.push('ほかの行・シートと同じリクエスト ' + duplicate + '件');
+    total += withRequest.length;
     lines.push('「' + name + '」：リクエストのある行 ' + withRequest.length + '件 → パネルに出る ' + candidates + '件' +
-      (reasons.length ? '（出ないもの：' + reasons.join('、') + '）' : '') + '。');
+      (reasons.length ? '（出ないもの：' + reasons.join('、') + '）' : '') + '。「' + SVC_OPTIONS.sourceHeaders[3] + '」は ' + diffColumnLetter_(cols[3]) + '列。');
     const optional = (SVC_OPTIONS.sourceOptionalHeaders || []).filter(h => taskHeaderCount_(headers, h) !== 1);
     if (optional.length) {
       lines.push('「' + name + '」：「' + optional.join('」「') + '」の見出しがちょうど1つではないため、その列は空のまま登録します。');
     }
   });
+  if (complete && !total) {
+    lines.push('→ どのシートの「' + SVC_OPTIONS.sourceHeaders[3] + '」の列にもリクエストが入っていないため、パネルに出るものがありません' +
+      '（壊れてはいません）。案件の行の「' + SVC_OPTIONS.sourceHeaders[3] + '」にリクエストを書くと、パネルに出ます。');
+  }
   // 登録済みで、取り込み元に見つからない行（取り込み元で書き換えか削除された）
   if (complete && registered.rows) {
     const rows = registered.rows.filter(r => !seen.has(r.key)).map(r => r.row);
@@ -1153,10 +1877,12 @@ function svcSourceHeaderRow_(name) {
  * 取り込み元（読むシート。svcSourceSheets_）でリクエストが入っている行を、シート・行の順に返す（同じキーは1つ）。
  * [{sheet, values: [サブインダストリー, 得意先, 案件名, リクエスト, アカウント責任者部署, アカウント責任者, BX部署, BX担当], key}]。
  * 必須の見出し（sourceHeaders）が足りないときは止める。
+ * stats（省略可）を渡すと、stats.duplicates に、ほかの行・シートと同じリクエストで読み飛ばした行の数を入れる。
  */
-function svcSourceRecords_(ss) {
+function svcSourceRecords_(ss, stats) {
   const records = [];
   const seen = new Set();
+  if (stats) stats.duplicates = 0;
   const names = svcSourceSheets_();
   if (!names.length) {
     throw new Error('リクエストを読むシートがありません。test.gs の DIFF_RULES で、読むシートに requests: true を付けてください。');
@@ -1179,7 +1905,10 @@ function svcSourceRecords_(ss) {
       const values = cols.map(col => (col ? String(line[col - left] == null ? '' : line[col - left]).trim() : ''));
       if (!values[3]) return;
       const key = svcRequestKey_(values[1], values[2], values[3]);
-      if (seen.has(key)) return;
+      if (seen.has(key)) {
+        if (stats) stats.duplicates++;
+        return;
+      }
       seen.add(key);
       records.push({sheet: name, values, key});
     });

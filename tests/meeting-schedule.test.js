@@ -134,3 +134,141 @@ test('前回の資料の記録が無ければ、会議日程の一覧の前の�
   // 一覧の最初の会議なら、前回は無い（直近14日間）
   assert.match(g.checkMeetingRun('business', false, y + '/10/09', ['新FMT']).text, /・新FMT：直近14日間（前回の会議が無い）/);
 });
+
+test('資料を作る画面の読み込みは、手順ごとの時間を実行ログに残す。diagnoseMeetingRunDialog() は同じ読み込みの時間と時点コピーの数を出す（読むだけ）', () => {
+  const {gas, g} = setup();
+  const logs = [];
+  const original = g.console.log;
+  g.console.log = (...args) => { logs.push(args.join(' ')); };
+  try {
+    const data = g.getMeetingRunData('business', false);
+    assert.ok(data.sheets.length >= 1);
+    const line = logs.find(text => /^資料を作る画面の読み込み：/.test(text));
+    assert.match(line, /会議日程（INDEX_会議資料） [\d.]+秒・シートと前回の資料 [\d.]+秒・比べる時点（時点コピー \d+件） [\d.]+秒（合計 [\d.]+秒）$/);
+    logs.length = 0;
+    const writes = gas.writes.length;
+    g.diagnoseMeetingRunDialog();
+    const text = logs.join('\n');
+    assert.match(text, /資料を作る画面の読み込みの確かめ/);
+    assert.match(text, /読み込み：会議日程/);
+    assert.match(text, /会議日程：\d+件・シート：\d+・比べる時点：\d+件/);
+    assert.match(text, /時点コピーの保存先：/);
+    assert.strictEqual(gas.writes.length, writes, 'シートには書き込まない');
+  } finally {
+    g.console.log = original;
+  }
+});
+
+test('会議日程は「INDEX_会議資料」の控え（ドキュメントのプロパティ）から読む。スクリプトが書いたら控えも直し、手で直したら refreshMeetingIndexCache() で読み直す', () => {
+  const {gas, g} = setup();
+  const y = g.mtgParseDate_('1/1', new Date()).slice(0, 4);
+  const sheet = gas.addSheet('INDEX_会議資料', [['日付', '会議名', '全サブインダストリー', '新FMT'], [y + '/10/23', 'RX Business Meeting', '', ''],
+    [y + '/10/09', 'RX Business Meeting', '', '資料']]);
+  const dates = () => plain(g.mtgIndexMeetings_('RX Business Meeting')).map(m => [m.date, m.filled]);
+  assert.deepStrictEqual(dates(), [[y + '/10/09', true], [y + '/10/23', false]], '控えが無ければシートから読んで控えを作る');
+  const key = gas.get('MTG_OPTIONS').index.cacheKey;
+  const props = g.PropertiesService.getDocumentProperties();
+  assert.ok(JSON.parse(props.getProperty(key)).rows.length === 2);
+  // 控えがあればシートのセルは読まない（手で足した行は、読み直すまで出ない）
+  gas.asUser(() => sheet.appendRow([y + '/11/06', 'RX Business Meeting', '', '']));
+  assert.deepStrictEqual(dates().map(d => d[0]), [y + '/10/09', y + '/10/23']);
+  g.refreshMeetingIndexCache();
+  assert.deepStrictEqual(dates().map(d => d[0]), [y + '/10/09', y + '/10/23', y + '/11/06'], 'refreshMeetingIndexCache() で読み直す');
+  // 終わりは待たない通知（toast）で知らせる。ui.alert は OK を押すまで実行が終わらない（エディタからの実行が「実行中」のままになる）
+  assert.strictEqual(gas.alerts.length, 0, 'refreshMeetingIndexCache() は確かめの画面を出さない');
+  assert.ok(gas.toasts.some(t => /3行）を読み直しました（.*秒/.test(t.message)), '読んだ行の数とかかった時間を通知する');
+  // スクリプトが書いたら控えも直す（カレンダーから足した行・資料を書いたセル）。シートは読み直さない
+  assert.ok(!g.mtgIndexEnsureRows_([{date: y + '/11/20', kind: 'RX Business Meeting'}]).error);
+  const stored = {file: {getUrl: () => 'https://drive.google.com/file/d/PDF00001/view', getName: () => '20261023_新FMT_RX Business Meeting用資料.pdf',
+    getId: () => 'PDF00001'}};
+  g.mtgWriteIndex_('新FMT', y + '/10/23', stored);
+  assert.deepStrictEqual(dates(), [[y + '/10/09', true], [y + '/10/23', true], [y + '/11/06', false], [y + '/11/20', false]]);
+  // 読み直しても同じ（控えとシートが合っている）
+  g.refreshMeetingIndexCache();
+  assert.deepStrictEqual(dates(), [[y + '/10/09', true], [y + '/10/23', true], [y + '/11/06', false], [y + '/11/20', false]]);
+});
+
+test('「作成する」の途中・結果を控え、画面が読み込み直されても待って結果を出す（同じ人は作っている途中にもう一度作らない。止まったもの・古い結果は出さない）', () => {
+  const {gas, g} = setup();
+  const y = g.mtgParseDate_('1/1', new Date()).slice(0, 4);
+  gas.addSheet('INDEX_会議資料', [['日付', '会議名', '全サブインダストリー', '新FMT'], [y + '/10/23', 'RX Business Meeting', '', '']]);
+  const key = gas.get('MSCH_OPTIONS').runStateKey;
+  const props = g.PropertiesService.getUserProperties();
+  assert.strictEqual(g.getMeetingRunData('business', false).run, null, '作っていなければ何も出さない');
+
+  // 作り終えたら結果を控え、画面を開き直すと出す（ほかの種類の画面には出さない）
+  const result = g.runMeetingMaterials('business', false, y + '/10/23', ['新FMT'], false, '');
+  const run = plain(g.getMeetingRunData('business', false).run);
+  assert.deepStrictEqual([run.status, run.final, run.meeting, run.message], ['done', false, y + '/10/23', result.message]);
+  assert.match(run.started, /^\d{1,2}:\d{2}$/);
+  assert.strictEqual(g.getMeetingRunState('service'), null);
+
+  // 作っている途中（ほかの画面で押した・画面が読み込み直された）：もう一度押しても作らない。画面は途中の知らせを受け取って待つ
+  const now = Date.now();
+  props.setProperty(key, JSON.stringify({status: 'running', kind: 'business', final: false, meeting: y + '/10/23', at: now - 60000}));
+  assert.strictEqual(g.getMeetingRunData('business', false).run.status, 'running');
+  assert.throws(() => g.runMeetingMaterials('business', false, y + '/10/23', ['新FMT'], false, ''), /から資料を作っている途中です。終わるまでお待ちください/);
+  assert.strictEqual(JSON.parse(props.getProperty(key)).at, now - 60000, '途中の控えはそのまま');
+
+  // 途中のまま7分を過ぎたら、止まったとみなす（また作れる）。済んだ手順と時間も出す
+  props.setProperty(key, JSON.stringify({status: 'running', kind: 'business', final: false, meeting: y + '/10/23', at: now - 8 * 60000}));
+  const timer = g.mschTimer_('資料の中身を作る（新FMT）', true);
+  timer.lap('変更の記録（3件）');
+  timer.lap('「新FMT」のシートを読んでまとめる');
+  const stopped = g.getMeetingRunState('business');
+  assert.strictEqual(stopped.status, 'error');
+  assert.match(stopped.message, /途中で止まったようです/);
+  assert.match(stopped.message, /止まる前に済んだ手順と時間：\n・資料の中身を作る（新FMT）：変更の記録（3件） [\d.]+秒・「新FMT」のシートを読んでまとめる [\d.]+秒/);
+  assert.ok(!g.runMeetingMaterials('business', false, y + '/10/23', ['新FMT'], false, '').error);
+
+  // 作れなかったときも控え、エラーはそのまま画面に返す
+  const real = g.mtgRunStart_;
+  g.mtgRunStart_ = () => { throw new Error('テストの失敗'); };
+  try {
+    assert.throws(() => g.runMeetingMaterials('business', false, y + '/10/23', ['新FMT'], false, ''), /テストの失敗/);
+  } finally {
+    g.mtgRunStart_ = real;
+  }
+  const failed = g.getMeetingRunState('business');
+  assert.strictEqual(failed.status, 'error');
+  assert.match(failed.message, /^テストの失敗/);
+
+  // 終えてから30分を過ぎた結果は出さない
+  props.setProperty(key, JSON.stringify({status: 'done', kind: 'business', final: false, meeting: y + '/10/23', at: now - 40 * 60000, finishedAt: now - 31 * 60000, message: '済み'}));
+  assert.strictEqual(g.getMeetingRunState('business'), null);
+});
+
+test('diagnoseMeetingRead：コピーを作らずに読む時間を、Sheets API と SpreadsheetApp で比べて出す（読むだけ。Sheets API が無ければ ✗ と理由）', () => {
+  const {gas, g} = setup();
+  gas.addSheet('変更履歴_差分', [['記録日時', 'イベントID', '編集者メールアドレス', 'シート', 'セル', '列名', '種類', '変更前', '変更後']]);
+  const writes = gas.writes.length;
+  g.diagnoseMeetingRead();
+  const message = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(message, /① Sheets API：✗ Sheets API（拡張サービス）が使えません/);
+  assert.match(message, /② SpreadsheetApp：「新FMT」\d+行 [\d.]+秒・「変更履歴_差分」1行 [\d.]+秒（合計 [\d.]+秒）/);
+  assert.match(message, /③ 値だけ（CSV）：/);
+  assert.strictEqual(gas.writes.length, writes, '読むだけ');
+});
+
+test('diagnoseSpreadsheetLoad：計算を重くしている数式（ほかのファイルを読む・編集のたびに計算し直す・範囲の広い計算・列全体の参照・記録のシートを参照）をシートごとに数える（読むだけ）', () => {
+  const {gas, g} = setup();
+  const sheet = gas.addSheet('集計', [['a', 'b', 'c']], {rows: 10, columns: 5});
+  gas.asUser(() => {
+    sheet.getRange('A2').setFormula('=IMPORTRANGE("abc","x!A1")');
+    sheet.getRange('A3').setFormula('=IMPORTRANGE("abc","x!A2")');
+    sheet.getRange('B2').setFormula('=TODAY()');
+    sheet.getRange('C2').setFormula('=COUNTIF(D:D,"x")');
+    sheet.getRange('C3').setFormula("=COUNTA('変更履歴_差分'!A2:A100)");
+  });
+  const writes = gas.writes.length;
+  g.diagnoseSpreadsheetLoad();
+  const message = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(message, /調べたファイル：このスプレッドシート（時点コピーが無いため/);
+  assert.match(message, /・集計：数式 5（形は 4種類）/);
+  assert.match(message, /〔ほかのファイルを読む（コピーでは 0・エラーになる）〕\n・IMPORTRANGE：2件（集計 2）　例 集計!A2/);
+  assert.match(message, /〔編集のたびに計算し直す〕\n・TODAY：1件（集計 1）　例 集計!B2/);
+  assert.match(message, /・COUNTIF：1件（集計 1）　例 集計!C2/);
+  assert.match(message, /・列全体の参照（A:A など）：1件（集計 1）　例 集計!C2/);
+  assert.match(message, /・記録のシートを参照：1件（集計 1）　例 集計!C3/);
+  assert.strictEqual(gas.writes.length, writes, '読むだけ');
+});

@@ -5,12 +5,15 @@ const {createGas, plain} = require('./lib/gas-mock');
 
 /*
  * 旧フォーマットからの転記（LegacyMigration.gs）
- * 新：本物と同じ見出し（2行目。A〜AC）。B（No.）と O（期待値）は3行目に数式。
+ * 新：本物と同じ見出し（2026/10/29 の2行目。A〜AF の32列。受注月は「受注月(yy/mm)」、提案開始日は「提案開始月(yy/mm)」、売上開始月は無い）。
+ *   B（No.）と M（期待値）は3行目に数式。
  * 旧：「案件_{シート名}」の1〜2行目が見出し、3行目が入力の種類、4行目からデータ。
  */
 const NEW_HEADERS = ['最終更新日時\n（自動入力）', 'No.', 'サブインダストリー', '得意先', '先方部門', '先方担当役職', '先方担当氏名',
-  'クライアントとのリレーション\nクライアント内のガバナンス', '案件名', '案件のスコープ', 'スコープに対する競合他社', 'プロジェクト開始-終了', '案件ステータス',
-  '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月', '売上開始月', '提案開始日', '活動状況', '活動における課題', '次回アクション',
+  '案件名', 'RXシナリオ構成', 'サービスパッケージ合算（百万円）', '案件ステータス',
+  '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）', '受注月\n(yy/mm)', '提案開始月\n(yy/mm)',
+  'FY26前半期売上（百万）', 'FY26後半期売上（百万）', 'FY27前半期売上（百万）', 'FY27後半期売上（百万）', 'FY28前半期売上（百万）', 'FY28後半期売上（百万）',
+  '活動状況', '活動における課題', '次回アクション',
   '商談記録（ＵＲＬ）', 'アカウント責任者部署', 'アカウント責任者', 'BX部署', 'BX担当', '想定される価値創出のケース／期待される導入効果',
   '提案を勝ち取るための戦略・差異化要素', 'サービスのリクエスト'];
 const WIDTH = 32;   // AF まで
@@ -30,16 +33,19 @@ function setup(oldRows, options) {
   gas.addSheet('定義_ステータス', [['ステータス'], ['C-提案中(50%)'], ['B-クロージング中(70%)'], ['A-受注済み(100%)']], {rows: 10, columns: 1});
   ['新FMT', '新FMT2'].forEach(name => {
     const sheet = gas.addSheet(name, [pad(['', '', '機会詳細']), pad(NEW_HEADERS),
-      pad(['', '', name, 'B社', '前の部門', '', '', '', '前の案件', '', '', '', 'C-提案中(50%)', '10'])], {rows: o.rows || 12, columns: WIDTH});
+      pad(['', '', name, 'B社', '前の部門', '', '', '前の案件', '', '', 'C-提案中(50%)', '10'])], {rows: o.rows || 12, columns: WIDTH});
     gas.asUser(() => {
       sheet.getRange(3, col('No.')).setFormula('=ROW(B3:B12)-2');
-      sheet.getRange(3, col('期待値調整済\n想定売上規模（百万）')).setFormula('=IF(M3:M12="",,N3:N12*0.5)');
+      sheet.getRange(3, col('期待値調整済\n想定売上規模（百万）')).setFormula('=IF(K3:K12="",,L3:L12*0.5)');
     });
     const V = g.SpreadsheetApp.newDataValidation;
     const last = o.rows || 12;
     sheet.getRange('C3:C' + last).setDataValidation(V().requireValueInList([name], true).build());
-    sheet.getRange('D3:D' + last).setDataValidation(V().requireValueInRange(gas.ss.getSheetByName('得意先マスタ').getRange('B2:B10'), true).build());
-    sheet.getRange('M3:M' + last).setDataValidation(V().requireValueInRange(gas.ss.getSheetByName('定義_ステータス').getRange('A2:A10'), true).build());
+    // 得意先は「警告を表示」（本物と同じく、選択肢に無い値も入れられる）、ステータスは「入力を拒否」
+    sheet.getRange('D3:D' + last).setDataValidation(V().requireValueInRange(gas.ss.getSheetByName('得意先マスタ').getRange('B2:B10'), true)
+      .setAllowInvalid(true).build());
+    sheet.getRange('K3:K' + last).setDataValidation(V().requireValueInRange(gas.ss.getSheetByName('定義_ステータス').getRange('A2:A10'), true)
+      .setAllowInvalid(false).build());
   });
   g.setupDiffTracking();
 
@@ -80,31 +86,34 @@ test('migrateLegacyDeals：旧の「案件_{シート名}」の案件を、見�
   gas.promptAnswers = [URL];
   g.migrateLegacyDeals();
 
-  assert.match(gas.alerts[0].message, /「旧フォーマット」から、次のとおり転記します。[\s\S]*・新FMT：2件（選択肢に無い値 2セルは空欄にします）\n・新FMT2：旧のスプレッドシートに「案件_新FMT2」シートがありません（転記しません）/);
+  assert.match(gas.alerts[0].message, /「旧フォーマット」から、次のとおり転記します。[\s\S]*・新FMT：2件（選択肢に無い値 1セルもそのまま書きます。「入力を拒否」のプルダウンの選択肢に無い値 1セルは空欄にします）\n・新FMT2：旧のスプレッドシートに「案件_新FMT2」シートがありません（転記しません）/);
   const sheet = gas.ss.getSheetByName('新FMT');
   const at = (row, header) => sheet.getRange(row, col(header)).getValue();
   assert.deepStrictEqual(['サブインダストリー', '得意先', '先方部門', '先方担当役職', '先方担当氏名', '案件名', '案件ステータス', '想定売上規模（百万）',
     '活動状況', '次回アクション', 'アカウント責任者'].map(h => at(3, h)),
   ['新FMT', 'A社', '営業企画部', '部長', '山田', '販促DX', 'C-提案中(50%)', 10, '=初回訪問', '見積提示', '後藤']);
   assert.strictEqual(sheet.getRange(3, col('活動状況')).getFormula(), '', '「=」で始まる文字も数式にしない');
-  assert.ok(['提案開始日', '受注月', '売上開始月'].every(h => Object.prototype.toString.call(at(3, h)) === '[object Date]'), '日付は日付のまま');
-  assert.deepStrictEqual(['BX担当', '案件のスコープ', '活動における課題', 'サービスのリクエスト'].map(h => at(3, h)), ['', '', '', ''],
-    '企画担当・提案シナリオ・備考は転記しない');
-  assert.deepStrictEqual([sheet.getRange('B3').getFormula(), sheet.getRange('O3').getFormula()], ['=ROW(B3:B12)-2', '=IF(M3:M12="",,N3:N12*0.5)'],
+  assert.ok(['提案開始月\n(yy/mm)', '受注月\n(yy/mm)'].every(h => Object.prototype.toString.call(at(3, h)) === '[object Date]'),
+    '日付は日付のまま（受注月 → 受注月(yy/mm)、提案開始日 → 提案開始月(yy/mm)。売上開始月の列は無いので書かない）');
+  assert.deepStrictEqual(['BX担当', 'RXシナリオ構成', 'サービスパッケージ合算（百万円）', 'FY26前半期売上（百万）', '活動における課題', 'サービスのリクエスト'].map(h => at(3, h)),
+    ['', '', '', '', '', ''],
+    '企画担当・提案シナリオ・備考は転記しない（提案シナリオは RXシナリオ構成の選択肢と違うので入れない）');
+  assert.deepStrictEqual([sheet.getRange('B3').getFormula(), sheet.getRange('M3').getFormula()], ['=ROW(B3:B12)-2', '=IF(K3:K12="",,L3:L12*0.5)'],
     '数式の列（No.・期待値）は書かない・消さない');
-  assert.deepStrictEqual(['得意先', '案件名', '案件ステータス', '想定売上規模（百万）'].map(h => at(4, h)), ['', '新規開拓', '', 3],
-    '選択肢に無い値は空欄。ほかの列は書く');
+  assert.deepStrictEqual(['得意先', '案件名', '案件ステータス', '想定売上規模（百万）'].map(h => at(4, h)), ['Z社', '新規開拓', '', 3],
+    '得意先マスタに無い得意先も書く（「警告を表示」のプルダウン）。「入力を拒否」のステータスは空欄。ほかの列は書く');
   assert.deepStrictEqual(['得意先', '案件名', '先方部門'].map(h => at(5, h)), ['', '', ''], '前の行は上書き（消す）');
   assert.ok(gas.writes.filter(w => w.ss === gas.ss.getId() && w.sheet === '新FMT').every(w => w.locked), '書き込みはロックの中（時点コピーは別のファイル）');
 
   const done = gas.alerts[gas.alerts.length - 1].message;
-  assert.match(done, /選択肢に無いため空欄にしたセル（2セル）：\n新FMT!D4（得意先）：Z社\n新FMT!M4（案件ステータス）：失注\n得意先マスタ・ステータスの定義に足してから、もう一度実行すると入ります/);
+  assert.match(done, /プルダウンの選択肢に無いが、そのまま書いたセル（1セル。シートでは警告の印が付きます）：\n新FMT!D4（得意先）：Z社\n/);
+  assert.match(done, /「入力を拒否」のプルダウンの選択肢に無いため空欄にしたセル（1セル）：\n新FMT!K4（案件ステータス）：失注\n得意先マスタ・ステータスの定義に足すか、その列のプルダウンを「警告を表示」にしてから/);
   // 転記は変更として記録しない（比較基準を取り直す）。会議サマリの基準を記録する
   const state = JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'));
   Object.values(state).forEach(s => assert.strictEqual(s.paused, false));
   const log = gas.ss.getSheetByName('変更履歴_差分');
   assert.ok(!log || log.getLastRow() <= 1, '変更履歴に転記の記録を残さない');
-  g.recordDiffEdit(gas.edit(sheet, 'S3', '2回目の訪問'));
+  g.recordDiffEdit(gas.edit(sheet, 'V3', '2回目の訪問'));   // 活動状況
   assert.strictEqual(gas.ss.getSheetByName('変更履歴_差分').getLastRow(), 2, 'そのあとの編集は記録する');
   const base = JSON.parse(g.PropertiesService.getDocumentProperties().getProperty('MTG_MEETINGS_新FMT'));
   assert.ok(base.some(m => m.baseline && m.copy));
@@ -135,4 +144,14 @@ test('migrateLegacyDeals：URL でないとき・開けないときは止める'
   gas.promptAnswers = ['https://docs.google.com/spreadsheets/d/1NotSharedSpreadsheet000000000000000/edit'];
   assert.throws(() => g.migrateLegacyDeals(), /旧フォーマットのスプレッドシートを開けません/);
   assert.ok(plain(gas.writes).every(w => w.sheet !== '新FMT'));
+});
+
+test('migrateLegacyDeals：writeOutOfList を false にすると、「警告を表示」のプルダウンでも選択肢に無い値は空欄にする（前の版の動き）', () => {
+  const {gas, g} = setup([oldRow({'得意先': 'Z社', '案件名': '新規開拓', 'ステータス': 'C-提案中(50%)'})]);
+  gas.get('MIG_OPTIONS').writeOutOfList = false;
+  gas.promptAnswers = [URL];
+  g.migrateLegacyDeals();
+  const sheet = gas.ss.getSheetByName('新FMT');
+  assert.deepStrictEqual([sheet.getRange(3, col('得意先')).getValue(), sheet.getRange(3, col('案件名')).getValue()], ['', '新規開拓']);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /空欄にしたセル（1セル）：\n新FMT!D3（得意先）：Z社/);
 });

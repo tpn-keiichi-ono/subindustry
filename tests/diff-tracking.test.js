@@ -382,6 +382,34 @@ test('列の追加：止めずに、その場で比較基準を取り直して�
   assert.strictEqual(gas.records(LOG).length, 1);
 });
 
+test('追跡シートが追跡範囲（D3:AF）より狭い（本物は列を消して A〜AA の27列）：比較基準を作り・記録し、さらに列を消しても取り直して続ける', () => {
+  const gas = createGas();
+  const g = gas.global;
+  const WIDE = 27;
+  const line = values => values.concat(new Array(WIDE - values.length).fill(''));
+  ['新FMT', '新FMT2'].forEach(name => gas.addSheet(name, [
+    line(['', '入力主体']),
+    line(['最終更新日時\n（自動入力）', 'No.', 'サブインダストリー', '得意先', '先方部門', '先方担当役職', '先方担当氏名', '案件名', 'RXシナリオ構成']),
+    line(['', '1', name, 'A社', '営業部', '部長', '山田', '販促DX', '']),
+    line(['', '2', name, 'B社', '', '', '', 'EC', ''])
+  ], {rows: 10, columns: WIDE}));
+  const sheet = gas.ss.getSheetByName('新FMT');
+  g.setupDiffTracking();
+  Object.values(STATE(gas)).forEach(s => assert.strictEqual(s.paused, false));
+  g.recordDiffEdit(gas.edit(sheet, 'E3', '営業企画部'));
+  assert.deepStrictEqual(gas.records(LOG).map(r => [r['セル'], r['列名']]), [['E3', '先方部門']]);
+
+  // 列を消す（先方担当役職）：止めずに比較基準を取り直し、そのあとの編集も記録する
+  gas.asUser(() => sheet.deleteColumn(6));
+  g.pauseDiffOnStructureChange(gas.change('REMOVE_COLUMN'));
+  assert.strictEqual(STATE(gas)[sheet.getSheetId()].paused, false);
+  assert.strictEqual(STATE(gas)[sheet.getSheetId()].gridColumns, WIDE - 1);
+  g.recordDiffEdit(gas.edit(sheet, 'G3', '販促DX（第2期）'));   // 案件名は G 列に
+  assert.deepStrictEqual(gas.records(LOG).map(r => [r['セル'], r['列名']]).slice(-1), [['G3', '案件名']]);
+  assert.deepStrictEqual(g.diffRuleRange_(sheet, 'D3:AF').getA1Notation(), 'D3:Z10', 'シートの中まで');
+  assert.strictEqual(g.diffRuleRange_(sheet, 'AB3:AF'), null, 'シートの外から始まる範囲は無し');
+});
+
 /* ---------------- 止まったときの知らせと立て直し ---------------- */
 
 const STATE = gas => JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'));
@@ -520,4 +548,20 @@ test('サービス管理がロック（スクリプトロック）を使って�
   gas.lockBusy = false;
   const log = gas.ss.getSheetByName('変更履歴_差分');
   assert.strictEqual(log.getLastRow(), 2, '記録が1行増える');
+});
+
+test('DIFF_RULES の印：比較基準の形に関わる設定（見出しの行・追跡範囲）だけを比べる。格納先・リクエストなどを変えても（前の版の印でも）止めない', () => {
+  const {gas, g, sheet} = setupProject({launchers: false});
+  const old = JSON.stringify({headerRow: 2, ranges: ['D3:AF'], requests: true, meetingFolder: 'https://drive.google.com/drive/folders/OldFolder', formerNames: ['新FMT']});
+  assert.strictEqual(g.diffSameSignature_(old, {headerRow: 2, ranges: ['D3:AF'], requests: true, formerNames: ['新FMT']}), true, '前の版の印（meetingFolder 入り）');
+  assert.strictEqual(g.diffSameSignature_(old, {headerRow: 2, ranges: ['D3:AE']}), false, '追跡範囲が変われば別');
+  assert.strictEqual(g.diffSameSignature_(old, {headerRow: 3, ranges: ['D3:AF']}), false, '見出しの行が変われば別');
+  // 保存した印に meetingFolder があっても、編集を記録し続ける
+  const state = JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'));
+  const id = sheet.getSheetId();
+  state[id].signature = JSON.stringify(Object.assign({}, gas.get('DIFF_RULES')['新FMT'], {meetingFolder: 'OldFolder'}));
+  gas.props.document.set('CHAR_DIFF_STATE_V1', JSON.stringify(state));
+  g.recordDiffEdit(gas.edit(sheet, 'F3', '受注'));
+  assert.strictEqual(gas.records(LOG).length, 1);
+  assert.strictEqual(JSON.parse(gas.props.document.get('CHAR_DIFF_STATE_V1'))[id].paused, false);
 });

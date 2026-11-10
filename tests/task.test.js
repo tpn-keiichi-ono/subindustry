@@ -168,7 +168,7 @@ test('候補の文字：改行・続いた空白は1つの空白に、長いリ�
   g.setupTaskSheet();
   const request = gas.ss.getSheetByName('リクエスト');
   const long = 'あ'.repeat(45);
-  gas.asUser(() => request.getRange('A2:I4').setValues([
+  gas.asUser(() => request.getRange('B2:J4').setValues([
     ['SR-0003', '食品スーパー', 'A社', 'アプリ刷新', '', '', '', '', '会員の\n購買分析を  したい'],
     ['SR-0001', 'ドラッグストア', 'C社', 'EC立ち上げ', '', '', '', '', long],
     ['SR-0003', 'ドラッグストア', 'D社', '店舗', '', '', '', '', 'コピーした行']
@@ -183,7 +183,7 @@ test('入力済みのタスクは、今の候補に合わせる：同じ ID の�
   g.setupRequestSheet();
   addAll(g);
   const request = gas.ss.getSheetByName('リクエスト');
-  gas.asUser(() => request.getRange('L2:L3').setValues([['会員分析基盤'], ['共通基盤']]));
+  gas.asUser(() => request.getRange('M2:M3').setValues([['会員分析基盤'], ['共通基盤']]));
   gas.addSheet('タスク管理', [
     ['サービス案', 'タスク', '本部', '担当者', '状況', 'メモ'],
     ['会員分析基盤', '要件を聞く', '', '', '', ''],          // サービス案の名前（リクエストが1件だけ）→ SR-0001
@@ -208,7 +208,7 @@ test('入力済みのタスクは、今の候補に合わせる：同じ ID の�
 
   // 同じサービス案のリクエストが2件あれば、どちらか決められないので残す
   gas.asUser(() => {
-    request.getRange('L3').setValue('会員分析基盤');
+    request.getRange('M3').setValue('会員分析基盤');
     sheet.getRange('A2').setValue('会員分析基盤');
   });
   g.setupTaskSheet();

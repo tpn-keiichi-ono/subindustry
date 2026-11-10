@@ -129,9 +129,11 @@ function taskEnsureHeader_(sheet, columns, headerRow) {
   }
 
   // insertAfter の見出しがある列はそのすぐ右に、insertBefore の見出しがある列はそのすぐ左に差し込む
-  // （右の列はずれる。差し込んだ列は隣の列の入力規則を引き継がないようにする）
+  // （右の列はずれる。差し込んだ列は隣の列の入力規則を引き継がないようにする）。
+  // 目印の見出しも差し込む列のとき（追加日は ID の左、ID はサブインダストリーの左）は、目印を差し込んだあとにもう一度見る
   const inserted = [];
-  if (last > 0) {
+  for (let before = -1; last > 0 && targets.length && targets.length !== before;) {
+    before = targets.length;
     targets = targets.filter(c => {
       const after = c.insertAfter ? taskFindColumn_(headers, c.insertAfter, where, false) : 0;
       const before = !after && c.insertBefore ? taskFindColumn_(headers, c.insertBefore, where, false) : 0;
@@ -146,8 +148,8 @@ function taskEnsureHeader_(sheet, columns, headerRow) {
       inserted.push(c.label);
       return false;
     });
-    start = last + 1;
   }
+  if (last > 0) start = last + 1;
   if (!targets.length) return inserted;
 
   const needed = start + targets.length - 1;

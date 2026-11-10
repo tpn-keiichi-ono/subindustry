@@ -15,10 +15,10 @@ const createGas = options => withRunDialog(createMockGas(options));
  */
 const WIDTH = 35;
 const COL = {customer: 4, project: 5, status: 6, amount: 7, weighted: 8, orderMonth: 9, activity: 10, issue: 11, owner: 12,
-  startMonth: 13, delivery: 14, stamp: 33, credButton: 34, changeButton: 35};
+  startMonth: 13, delivery: 14, nextAction: 15, stamp: 33, credButton: 34, changeButton: 35};
 const HEADERS = {customer: '得意先', project: '案件名', status: '案件ステータス', amount: '想定売上規模（百万）',
   weighted: '期待値調整済\n想定売上規模（百万）', orderMonth: '受注月', activity: '活動状況', issue: '活動における課題',
-  owner: 'アカウント責任者', startMonth: '売上開始月', delivery: 'デリバリー担当', stamp: '最終更新日時',
+  owner: 'アカウント責任者', startMonth: '売上開始月', delivery: 'デリバリー担当', nextAction: '次回アクション', stamp: '最終更新日時',
   credButton: 'クレデンシャル\nオファリング登録', changeButton: '変更履歴'};
 const STATUSES = ['初回訪問', '提案中', '受注見込み', '受注', '失注', '保留'];
 
@@ -121,8 +121,9 @@ const label = item => [item.customer, item.project].filter(Boolean).join('／');
 
 test('ステータスの分類（進行中・受注・失注・保留。statusKinds で個別に）・受注月・金額・会議日の読み方', () => {
   const {gas, g} = setup({edits: false});
-  assert.deepStrictEqual(['受注', '受注済み', '受注見込み', '受注前', '失注', '見送り', '保留', 'ペンディング中', '提案中', ''].map(g.mtgStatusKind_),
-    ['won', 'won', 'active', 'active', 'lost', 'lost', 'hold', 'hold', 'active', 'active']);
+  // 失注は「失注」を含むものだけ（2026/11/05 から。見送り・辞退などは失注にしない：資料の数字をシートで「失注を除いて」数えたのと同じにする）
+  assert.deepStrictEqual(['受注', '受注済み', '受注見込み', '受注前', '失注', 'D-失注', '見送り', '辞退', '保留', 'ペンディング中', '提案中', ''].map(g.mtgStatusKind_),
+    ['won', 'won', 'active', 'active', 'lost', 'lost', 'active', 'active', 'hold', 'hold', 'active', 'active']);
   gas.get('MTG_OPTIONS').statusKinds = {'検討中（休止）': 'hold', '提案中': 'lost'};
   assert.deepStrictEqual(['検討中（休止）', '提案中'].map(g.mtgStatusKind_), ['hold', 'lost'], 'statusKinds が先');
   gas.get('MTG_OPTIONS').statusKinds = {};
@@ -164,32 +165,43 @@ test('削除した行の「見出し: 値」は、シートの見出しで区切
   const headers = Object.values(HEADERS);
   const text = '得意先: F社\n案件名: ブランド刷新\n期待値調整済\n想定売上規模（百万）: 3\n想定売上規模（百万）: 10\n活動状況: 1行目\n2行目\nアカウント責任者: 高橋';
   assert.deepStrictEqual(plain(g.mtgParseRemoved_(text, headers)), {customer: 'F社', project: 'ブランド刷新', status: '', amount: 10,
-    weighted: 3, orderMonth: null, orderMonthText: '', owner: '高橋'});
+    weighted: 3, orderMonth: null, orderMonthText: '', owner: '高橋', clientDept: '', clientTitle: '', scenarios: [], salesHalves: null});
+  // 年度別の売上の列（統合版（報告用）の売上の前回比。削除した案件の前回の値）：「26前」→ 値。空は入れない
+  const sales = plain(g.mtgParseRemoved_('得意先: F社\nFY26前半期売上（百万）: 12\nFY26後半期売上（百万）: \nFY27前半期売上（百万）: 5',
+    headers.concat(['FY26前半期売上（百万）', 'FY26後半期売上（百万）', 'FY27前半期売上（百万）'])));
+  assert.deepStrictEqual(sales.salesHalves, {'26前': 12, '27前': 5});
+  // 先方部門・役職・RXシナリオ構成も読む（前回から変化のある案件の列。削除した行にも出す）
+  const more = headers.concat(['先方部門', '先方担当役職', 'RXシナリオ構成']);
+  const removed = plain(g.mtgParseRemoved_('得意先: F社\n先方部門: 営業本部\n先方担当役職: 部長\nRXシナリオ構成: 01-04.顧客情報活用パッケージ, 01-05.バックオフィス業務PF', more));
+  assert.deepStrictEqual([removed.clientDept, removed.clientTitle, removed.scenarios], ['営業本部', '部長', ['01-04.顧客情報活用パッケージ', '01-05.バックオフィス業務PF']]);
 });
 
 /* ---------------- 中身 ---------------- */
 
-test('前回からの変化：案件ごとに1つの区分（失注・延期・前進・新規・削除・活動の更新・更新のみ）。区分の順（受注・失注・保留・後退・削除 → 新規・前進・復帰 → 活動更新 → 受注月・期待値などの変更）', () => {
+test('前回からの変化：案件ごとに1つの区分（失注・延期・前進・新規・削除・活動の更新・更新のみ。数える用で、資料にラベルは出さない）。並びは今のステータスのまとまり → 想定売上の大きい順（その他更新は後ろ）', () => {
   const {gas, g, sheet} = setup();
   g.recordDiffEdit(gas.edit(sheet, 'I7', month(3).text));                          // E社：受注月を延ばす
   g.recordDiffEdit(gas.edit(sheet, 'D8:F8', [['G社', 'POS連携', '初回訪問']]));      // G社：空の行に新しい案件
   g.recordDiffEdit(gas.edit(sheet, 'K4', '請求の時期を確認中'));                    // B社：活動における課題だけ（更新のみ）
   const s = plain(summarize(g, '新FMT'));
+  // テストのシートのステータス（初回訪問・提案中…）には確度（A-…）が無いので、どれも最後のまとまり（失注・保留・削除・その他）。その中は想定売上の大きい順
   assert.deepStrictEqual(s.changes.map(c => [label(c), c.category]), [
+    ['E社／販促DX', 'slipped'],
+    ['A社／アプリ刷新', 'forward'],
     ['C社／店舗什器', 'lost'],
     ['F社／ブランド刷新', 'removed'],
     ['G社／POS連携', 'new'],
-    ['A社／アプリ刷新', 'forward'],
     ['D社／物流改善', 'activity'],
-    ['E社／販促DX', 'slipped'],
     ['B社／EC立ち上げ', 'updated']
   ]);
-  assert.ok(s.changes[3].flags.indexOf('activity') >= 0, 'A社は活動状況も変わったが、区分は前進（上の区分が先）');
-  const a = s.changes[3];
+  const byName = name => s.changes.find(c => c.customer === name);
+  const a = byName('A社');
+  assert.ok(a.flags.indexOf('activity') >= 0, 'A社は活動状況も変わったが、区分は前進（上の区分が先）');
   assert.deepStrictEqual([a.statusFrom, a.statusTo, a.activity, a.columns.join('・')], ['初回訪問', '提案中', '10/10 提案書を提出', '案件ステータス・活動状況']);
-  const e = s.changes[5];
+  const e = byName('E社');
   assert.deepStrictEqual([e.monthFrom, e.monthTo, e.weightedFrom, e.weightedTo], [month(1).text, month(3).text, 40, 40]);
-  assert.deepStrictEqual([s.changes[1].removed, s.changes[1].statusFrom, s.changes[1].weightedFrom], [true, '提案中', 3], '削除した行は失注に数えない');
+  const f = byName('F社');
+  assert.deepStrictEqual([f.removed, f.statusFrom, f.weightedFrom], [true, '提案中', 3], '削除した行は失注に数えない');
   const k = s.kpi;
   assert.deepStrictEqual([k.changed, k.activity, k.updated, k.lost, k.forward, k.new, k.removed, k.slips, k.slipped], [6, 1, 1, 1, 1, 1, 1, 1, 1]);
 
@@ -197,6 +209,38 @@ test('前回からの変化：案件ごとに1つの区分（失注・延期・�
   g.recordDiffEdit(gas.edit(sheet, 'J7', '仮の書き込み'));
   g.recordDiffEdit(gas.edit(sheet, 'J7', '提案書を送付'));
   assert.strictEqual(plain(summarize(g, '新FMT')).changes.find(c => c.customer === 'E社').flags.indexOf('activity'), -1);
+});
+
+test('変化のある案件は区分ではなく今のステータスでまとめる：確度 A → 創注 → 失注・保留・削除の順（その中は想定売上の大きい順）。サマリーの動きの表も同じ行', () => {
+  const {g} = setup({edits: false});
+  const order = ['A-受注済み(100%)', 'B-クロージング中(70%)', 'C-提案中(50%)', 'C-稟議対応中(50%)', 'D-ヒアリング中(20%)', '創注-仮検討(10%)', '失注', '保留'];
+  const groups = plain(g.mtgStatusGroups_(order));
+  assert.deepStrictEqual(groups.map(gr => gr.label), ['A 受注済み', 'B クロージング中', 'C 提案中・稟議対応中', 'D ヒアリング中', '創注 仮検討', '失注・保留・削除']);
+  assert.deepStrictEqual(plain(g.mtgStatusGroups_([])).map(gr => gr.label), ['A', 'B', 'C', 'D', '創注', '失注・保留・削除'], 'プルダウンが無ければ確度だけ');
+  const ch = (customer, category, statusFrom, statusTo, amount, extra) => Object.assign({customer, project: '案件', category, statusFrom, statusTo, amount,
+    flags: [], columns: [], at: 0}, extra || {});
+  const changes = [
+    ch('甲社', 'forward', 'C-提案中(50%)', 'B-クロージング中(70%)', 30),
+    ch('乙社', 'new', '', 'D-ヒアリング中(20%)', 10),
+    ch('丙社', 'lost', 'C-提案中(50%)', '失注', 50),
+    ch('丁社', 'removed', 'C-稟議対応中(50%)', '', 20, {removed: true}),
+    ch('戊社', 'slipped', 'C-提案中(50%)', 'C-提案中(50%)', 40, {monthFrom: '2026/11', monthTo: '2026/12'}),
+    ch('己社', 'won', 'B-クロージング中(70%)', 'A-受注済み(100%)', 60),
+    ch('庚社', 'activity', 'D-ヒアリング中(20%)', 'D-ヒアリング中(20%)', 5),
+    ch('辛社', 'updated', 'C-提案中(50%)', 'C-提案中(50%)', 100)
+  ];
+  assert.deepStrictEqual(changes.map(c => g.mtgStatusGroupOf_(c)), ['B', 'D', 'closed', 'closed', 'C', 'A', 'D', 'C']);
+  const s = {changes, statusGroups: groups, stalled: [], overdue: [], alerts: [], gaps: {}, first: true};
+  const moves = g.mtgBreakdown_(s).moves;
+  const names = line => g.mtgNames_(line.items, line.note);
+  assert.deepStrictEqual(plain(moves.map(line => [line.label, line.items.length, names(line)])), [
+    ['A 受注済み', 1, '己社／案件（前回 B-クロージング中）'],
+    ['B クロージング中', 1, '甲社／案件（前回 C-提案中）'],
+    ['C 提案中・稟議対応中', 1, '戊社／案件（受注月 2026/11 ▶ 2026/12）'],
+    ['D ヒアリング中', 2, '乙社／案件（新規）、庚社／案件（活動更新）'],
+    ['創注 仮検討', 0, '該当なし'],
+    ['失注・保留・削除', 2, '丙社／案件（失注・前回 C-提案中）、丁社／案件（削除・前回 C-稟議対応中）']
+  ], 'その他更新（辛社）は数えない。失注・保留・削除の行は今のステータス（削除）も書く');
 });
 
 test('前回からの変化：得意先・案件名を書き換えた案件・あとから案件名を入れた案件は、前の名前の記録をつなげる', () => {
@@ -207,30 +251,35 @@ test('前回からの変化：得意先・案件名を書き換えた案件・�
   g.recordDiffEdit(gas.edit(sheet, 'E9', '店舗分析'));               // あとから案件名
   const s = plain(summarize(g, '新FMT'));
   assert.deepStrictEqual(s.changes.map(c => [label(c), c.category, c.columns.join('・')]), [
-    ['H社／店舗分析', 'new', '得意先・案件名'],
-    ['A社／アプリ刷新（第2期）', 'forward', '案件ステータス・案件名']
+    ['A社／アプリ刷新（第2期）', 'forward', '案件ステータス・案件名'],
+    ['H社／店舗分析', 'new', '得意先・案件名']
   ]);
   assert.strictEqual(s.unmatched, 0);
 });
 
-test('期待値の増減：前回の時点で進行中だった期待値 + 内訳（増額・減額・受注・保留・復帰）= 今の期待値', () => {
+test('期待値の増減：前回の時点で失注でなかった期待値 + 内訳（新規・増額・復帰・減額・失注・削除）= 今の期待値（失注除く。受注・保留になっても外れない）', () => {
   const {gas, g, sheet} = setup({edits: false});
   [['F3', '提案中'], ['H3', '15'],          // A社：前進。期待値 10 → 15（増額）
     ['F5', '初回訪問'], ['H5', '2'],         // C社：後退。期待値 5 → 2（減額）
-    ['F7', '受注'],                         // E社：受注（期待値 40 が進行中から外れる）
-    ['F4', '提案中'],                       // B社：受注 → 提案中（復帰。期待値 50 が入る）
-    ['F8', '保留']                          // F社：保留（期待値 3 が外れる）
+    ['F7', '受注'],                         // E社：受注（失注ではないので外れない。期待値 40 のまま）
+    ['F4', '提案中'],                       // B社：受注 → 提案中（どちらも対象。期待値 50 のまま）
+    ['F8', '保留']                          // F社：保留（外れない。期待値 3 のまま）
   ].forEach(([a1, value]) => g.recordDiffEdit(gas.edit(sheet, a1, value)));
   const s = plain(summarize(g, '新FMT'));
   assert.deepStrictEqual(s.changes.map(c => [label(c), c.category]), [
-    ['E社／販促DX', 'won'], ['F社／ブランド刷新', 'hold'], ['C社／店舗什器', 'backward'], ['A社／アプリ刷新', 'forward'], ['B社／EC立ち上げ', 'revived']
-  ]);
+    ['E社／販促DX', 'won'], ['B社／EC立ち上げ', 'revived'], ['A社／アプリ刷新', 'forward'], ['C社／店舗什器', 'backward'], ['F社／ブランド刷新', 'hold']
+  ], '想定売上の大きい順（テストのシートのステータスには確度が無いので、どれも同じまとまり）');
   const b = s.bridge;
-  assert.deepStrictEqual([b.start, b.end, b.startCount, b.endCount], [58, 67, 5, 4], '前回：A10・C5・D空・E40・F3／今：A15・B50・C2・D空');
-  assert.deepStrictEqual(b.steps.filter(st => st.count).map(st => [st.label, st.value, st.count]),
-    [['期待値増', 5, 1], ['復帰', 50, 1], ['期待値減', -3, 1], ['受注', -40, 1], ['保留', -3, 1]]);
+  assert.deepStrictEqual([b.start, b.end, b.startCount, b.endCount], [108, 110, 6, 6], '前回：A10・B50・C5・D空・E40・F3／今：A15・B50・C2・D空・E40・F3（失注が無いので全行）');
+  assert.deepStrictEqual(b.steps.filter(st => st.count).map(st => [st.label, st.value, st.count]), [['期待値増', 5, 1], ['期待値減', -3, 1]]);
   assert.strictEqual(b.start + b.steps.reduce((sum, st) => sum + st.value, 0), b.end);
   assert.deepStrictEqual([s.kpi.won, s.kpi.wonAmount, s.kpi.backward, s.kpi.hold, s.kpi.revived, s.kpi.active, s.kpi.weighted], [1, 80, 1, 1, 1, 4, 67]);
+  assert.deepStrictEqual([s.kpi.counted, s.kpi.countedWeighted, s.kpi.countedAmount], [6, 110, 30 + 50 + 20 + 80 + 10], '失注を除く件数・期待値・想定売上（シートの合計と同じ）');
+  // 失注にすると外れる（前回の期待値の分だけ減る）
+  g.recordDiffEdit(gas.edit(sheet, 'F5', '失注'));
+  const lost = plain(summarize(g, '新FMT')).bridge;
+  assert.deepStrictEqual([lost.end, lost.endCount], [108, 5]);
+  assert.deepStrictEqual(lost.steps.filter(st => st.count).map(st => [st.label, st.value, st.count]), [['期待値増', 5, 1], ['失注', -5, 1]]);
 });
 
 test('停滞：ステータスが最後に変わってからの日数（変わった記録が無ければ「N日以上」）。期待値の大きい案件と、当てはまる状況（停滞・受注月超過・延期）', () => {
@@ -247,13 +296,16 @@ test('停滞：ステータスが最後に変わってからの日数（変わ�
   ], '想定売上の大きい順（D社は想定売上が空）');
 
   // 期待値の大きい進行中の案件（5件まで）。判断（決めること・支援の要否など）は持たず、当てはまる状況だけ
-  assert.deepStrictEqual(s.focus.map(d => [label(d), d.weighted, g.mtgFlags_(d).join('・')]), [
-    ['E社／販促DX', 40, '停滞'],
-    ['A社／アプリ刷新', 10, '停滞・受注月超過'],
-    ['C社／店舗什器', 5, '停滞'],
-    ['F社／ブランド刷新', 3, ''],
-    ['D社／物流改善', null, '停滞']
+  // 当てはまる状況は、判定の中身ごと文で（単語のラベルだけにしない）
+  const stall = d => 'ステータスが ' + d.days + '日' + (d.atLeast ? '以上' : '') + ' 変わっていない（45日以上で停滞）';
+  assert.deepStrictEqual(plain(s.focus.map(d => [label(d), d.weighted, g.mtgFlagTexts_(d)])), [
+    ['E社／販促DX', 40, [stall(s.focus[0])]],
+    ['A社／アプリ刷新', 10, [stall(s.focus[1]), '受注月 ' + month(-1).y + '/' + month(-1).m + ' を過ぎても受注になっていない']],
+    ['C社／店舗什器', 5, [stall(s.focus[2])]],
+    ['F社／ブランド刷新', 3, []],
+    ['D社／物流改善', null, [stall(s.focus[4])]]
   ]);
+  assert.match(plain(g.mtgFlagTexts_(Object.assign({}, s.focus[3], {slips: 2})))[0], /^受注月を後ろにずらした記録 2回（過去180日）$/);
   assert.deepStrictEqual([s.focus[3].days, s.focus[3].atLeast], [0, false], '今日ステータスが変わった');
   assert.ok(s.focus.every(d => !('decide' in d) && !('star' in d) && !('support' in d)));
   assert.deepStrictEqual(s.overdue.map(label), ['A社／アプリ刷新']);
@@ -392,7 +444,7 @@ test('入力内容のチェック「資料なし」：商談記録（ＵＲＬ�
     r.cells[3].text.split('\n')[r.cells[2].text.split('\n').indexOf('商談記録未登録')] === empty), '内容は案件ごとの一覧に書く（項目は資料に出す名前。項目と内容の行をそろえる）');
 });
 
-test('受注月（四半期）別の期待値（受注月超過 → 今の四半期〜4Q → 来期以降 → 未入力）・ステータス別（プルダウンの順。進行中 → 保留 → 受注 → 失注）', () => {
+test('受注月（四半期）別の期待値（失注除く。受注月超過・前年度以前 → 今年度の1Q〜4Q → 来期以降 → 未入力。合わせると期待値合計）・ステータス別（プルダウンの順。進行中 → 保留 → 受注 → 失注）', () => {
   const {g} = setup();
   const s = plain(summarize(g, '新FMT'));
   assert.deepStrictEqual(s.stages.map(p => [p.status, p.kind, p.count, p.amount, p.weighted]), [
@@ -406,17 +458,19 @@ test('受注月（四半期）別の期待値（受注月超過 → 今の四半
     const start = (now.m >= 4 ? now.y : now.y - 1) * 12 + 4;
     return m.y * 12 + m.m >= start && m.y * 12 + m.m < start + 12;
   };
-  const planned = inYear(month(1)) ? 40 : 0;   // A社（先月・10）は受注月超過。E社（来月・40）は今期か来期以降
-  const lead = leadOf(plain(g.mtgSlides_(summarize(g, '新FMT')))[2]);
-  assert.ok(lead.indexOf('受注月が今期の期待値は ' + planned + '百万円') >= 0, '受注月別のグラフ（今の四半期〜4Q）の合計：' + lead);
-  assert.ok(lead.indexOf('受注月超過は 10百万円') >= 0, '受注月を過ぎた進行中の期待値は四半期に入れない');
+  // 失注を除く4件：A社（進行中・先月・10）は受注月超過。B社（受注・2か月前・50）は受注月の四半期（今年度より前なら前年度以前）。
+  // E社（進行中・来月・40）は今年度か来期以降。D社（受注月が空）は未入力
+  const planned = (inYear(month(-2)) ? 50 : 0) + (inYear(month(1)) ? 40 : 0);
+  const lead = leadOf(plain(g.mtgSlides_(summarize(g, '新FMT')))[3]);
+  assert.ok(lead.indexOf('受注月が今年度の期待値は ' + planned + '百万円') >= 0, '受注月別のグラフ（1Q〜4Q）の合計：' + lead);
+  assert.ok(lead.indexOf('受注月超過は 10百万円') >= 0, '受注月を過ぎた（受注していない）案件の期待値は四半期に入れない');
   assert.strictEqual(s.fiscal, undefined, '今期の受注・着地見込み（サマリーの帯）は作らない');
-  assert.strictEqual(s.quarters.reduce((sum, q) => sum + q.count, 0), 3, '進行中の3件をどこかに入れる');
-  assert.deepStrictEqual(s.quarters[0], {label: '受注月超過', value: 10, count: 1}, '受注月超過は先頭');
+  assert.strictEqual(s.quarters.reduce((sum, q) => sum + q.count, 0), 4, '失注を除く4件をどこかに入れる');
+  assert.strictEqual(s.quarters.reduce((sum, q) => sum + q.value, 0), s.bridge.end, '合わせると期待値合計（失注除く）');
+  assert.deepStrictEqual(s.quarters.find(q => q.label === '受注月超過'), {label: '受注月超過', value: 10, count: 1});
   assert.deepStrictEqual(s.quarters[s.quarters.length - 1], {label: '受注月未入力', value: 0, count: 1}, '受注月未入力は最後');
-  const all = ['1Q（4〜6月）', '2Q（7〜9月）', '3Q（10〜12月）', '4Q（1〜3月）'];
-  const current = Math.floor(((month(0).m + 8) % 12) / 3);   // 4月 → 0（1Q）
-  assert.deepStrictEqual(s.quarters.filter(q => /Q/.test(q.label)).map(q => q.label), all.slice(current), '過ぎた四半期は出さない（今の四半期から）');
+  assert.deepStrictEqual(s.quarters.filter(q => /Q/.test(q.label)).map(q => q.label), ['1Q（4〜6月）', '2Q（7〜9月）', '3Q（10〜12月）', '4Q（1〜3月）'],
+    '今年度の四半期はいつも4つ（受注した案件は過ぎた四半期にも入る）');
   assert.strictEqual(s.quarters.some(q => q.label === '来期以降'), !inYear(month(1)), '来期以降は当てはまる案件があるときだけ');
 });
 
@@ -430,7 +484,7 @@ const roleOf = (slide, role) => slide.elements.filter(el => el.role === role);
 /** リード文（1つ目の文と補足をつなげ、改行を除く） */
 const leadOf = slide => roleOf(slide, 'lead').map(el => el.text).join('').replace(/\n/g, '');
 
-test('スライド：表紙、本編4枚（サマリー → パイプラインの変化 → 前回から変化のある案件 → 期待値上位案件の状況・課題）、扉、Appendix ①〜③。見出しはどのシートでも同じ、状態はリード文に書く', () => {
+test('スライド：表紙、本編5枚（サマリー → 計画に対する積み上げ → パイプラインの変化 → 前回から変化のある案件 → 期待値上位案件の状況・課題）、扉、Appendix ①〜③。見出しはどのシートでも同じ、状態はリード文に書く', () => {
   const {gas, g} = setup();
   const S = gas.get('MTG_SLIDE');
   const T = gas.get('MTG_TITLES');
@@ -438,8 +492,10 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
   const s = summarize(g, '新FMT', {trackedSince: Date.now() - 100 * 86400000});
   const slides = plain(g.mtgSlides_(s));
   const titles = slides.map(sl => sl.title);
-  assert.deepStrictEqual(titles, [T.cover, T.summary, T.pipeline, T.progress, T.focus, T.appendix, T.changes, T.stalled, T.owners, T.alerts]);
-  assert.deepStrictEqual(titles, ['表紙', 'サマリー', 'パイプラインの変化', '前回から変化のある案件', '期待値上位案件の状況・課題', 'Appendix',
+  assert.deepStrictEqual(titles, [T.cover, T.summary, T.plan, T.pipeline, T.progress, T.focus, T.focus + '（直近2か月の動き）', T.appendix, T.changes, T.stalled,
+    T.owners, T.alerts]);
+  assert.deepStrictEqual(titles, ['表紙', 'サマリー', '計画に対する積み上げ', 'パイプラインの変化', '前回から変化のある案件', '期待値上位案件の状況・課題',
+    '期待値上位案件の状況・課題（直近2か月の動き）', 'Appendix',
     'Appendix ①　前回から変化のある案件（一覧）', 'Appendix ②　停滞案件（一覧）', 'Appendix ③　入力内容の確認事項（責任者別）',
     'Appendix ③　入力内容の確認事項（一覧）'], 'ステータスの分類・用語の定義の Appendix は作らない');
   assert.ok(!('status' in T) && !('glossary' in T));
@@ -458,27 +514,28 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
   assert.strictEqual(plain(g.mtgSlides_(Object.assign({}, s, {meeting: '2026/11/06'})))[0].template.date, '2026年11月6日（金）');
 
   // 扉（ひな形の1枚目を複製）：見出しを「Appendix」に（ほかの決まった文字は空）、その下に Appendix の見出し・始まりのページ（「（続き）」のページは出さない）
-  const divider = slides[5];
+  const divider = slides[7];
   assert.ok(divider.divider && !divider.cover);
   assert.ok(!['title', 'footer', 'page'].some(role => roleOf(divider, role).length), '扉には見出し・出典の行・ページ番号を置かない');
   assert.deepStrictEqual(divider.template, {title: 'Appendix', subtitle: '', date: '', name: ''});
   const toc = roleOf(divider, 'toc').map(el => el.text);
   const contents = toc.filter((_, i) => i % 3 === 0).map((label, i) => [label, toc[i * 3 + 1], toc[i * 3 + 2]]);
-  assert.deepStrictEqual(contents, [['Appendix ①', '前回から変化のある案件', '7'], ['Appendix ②', '停滞案件', '8'], ['Appendix ③', '入力内容の確認事項', '9']],
+  assert.deepStrictEqual(contents, [['Appendix ①', '前回から変化のある案件', '9'], ['Appendix ②', '停滞案件', '10'], ['Appendix ③', '入力内容の確認事項', '11']],
     'Appendix ごとに1行（③の責任者別・一覧も1行。見出しの（一覧）などは付けない）');
 
   // 左上のラベルは置かない。どのサブインダストリー・会議日の資料かは、表紙といちばん下の出典の行（区切り線の下）に書く
   slides.forEach((slide, i) => {
     assert.ok(!slide.elements.some(el => el.type === 'box' && el.x === 0 && el.y === 0 && el.text), (i + 1) + '枚目：左上のラベル');
-    if (i === 0 || i === 5) return;
-    assert.deepStrictEqual(roleOf(slide, 'footer').map(el => [el.text, el.y, el.color]), [['新FMT（10/23 会議資料）　金額の単位：百万円', S.footY, c.faint]],
+    if (i === 0 || i === 7) return;
+    assert.deepStrictEqual(roleOf(slide, 'footer').map(el => [el.text, el.y, el.color]), [['新FMT（10/23 会議資料）　金額の単位：百万円' +
+      (i === 1 ? '　※ 件数・金額はステータス「失注」の行を除くシートの合計' : ''), S.footY, c.faint]],
       (i + 1) + '枚目の出典の行（金額の単位も）');
     assert.ok(slide.elements.some(el => el.type === 'box' && el.y === S.ruleY && el.h < 1 && el.fill === c.rule), (i + 1) + '枚目の区切り線');
     assert.deepStrictEqual(roleOf(slide, 'title').map(el => [el.y, el.bold, el.color]), [[S.titleY, true, c.ink]], (i + 1) + '枚目の見出し（黒の太字）');
   });
-  assert.strictEqual(roleOf(plain(g.mtgSlides_(Object.assign({}, s, {final: false})))[1], 'footer')[0].text, '【試作】新FMT（10/23 会議資料）　金額の単位：百万円');
+  assert.strictEqual(roleOf(plain(g.mtgSlides_(Object.assign({}, s, {final: false})))[2], 'footer')[0].text, '【試作】新FMT（10/23 会議資料）　金額の単位：百万円');
   const other = plain(g.mtgSlides_(summarize(g, '新FMT2', {trackedSince: Date.now() - 100 * 86400000}))).map(sl => sl.title);
-  assert.deepStrictEqual(other.slice(0, 5), titles.slice(0, 5), '本編の見出しは、中身が違うシートでも同じ');
+  assert.deepStrictEqual(other.slice(0, 6), titles.slice(0, 6), '本編の見出しは、中身が違うシートでも同じ');
 
   // 事前資料には事実だけを書く（論点・決めてほしいこと・支援の要否などの判断は、会議でリーダーが話す）
   const all = slides.map(textOf).join('\n');
@@ -487,15 +544,16 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
 
   // リード文（タイトルの下）に状態を書く。1つ目の文と補足（改行のあと）は行を分ける。大きさ・色はどのページも同じ
   const lead = leadOf;
-  assert.strictEqual(lead(slides[1]), '進行中案件 3件（直近14日間で ▲2件）、期待値合計 50百万円（直近14日間で ▲8）。' +
-    'ステータス未入力 1件は進行中に含め、想定売上未入力 1件・期待値未入力 1件は金額の合計に含めていない。');
-  assert.deepStrictEqual(roleOf(slides[1], 'lead').map(el => el.text.split('\n').length), [1, 1],
-    '空欄の扱い（D社：ステータス・想定売上・期待値が空）は補足の行に書く（推定で補わない）');
-  assert.deepStrictEqual(roleOf(slides[2], 'lead').map(el => [el.color, el.size]), [[c.ink, S.leadSize], [c.ink, S.leadSize]]);
+  // 案件数・期待値合計は失注を除く（A社・B社（受注）・D社・E社。C社（失注）は除く。前回は C社・F社（削除）も含めて6件）
+  assert.strictEqual(lead(slides[1]), '案件 4件（失注除く）（直近14日間で ▲2件）、期待値合計 100百万円（直近14日間で ▲8）。' +
+    'ステータス未入力 1件は進行中に含め、想定売上が空・数値でない 1件・期待値が空・数値でない 1件は金額の合計に含めていない。');
+  assert.deepStrictEqual(roleOf(slides[1], 'lead').map(el => el.text.split('\n').length), [2],
+    '空欄の扱い（D社：ステータス・想定売上・期待値が空）は補足の行に書く（推定で補わない）。1つのテキストボックスに2行');
+  assert.deepStrictEqual(roleOf(slides[3], 'lead').map(el => [el.color, el.size]), [[c.ink, S.leadSize]]);
   slides.forEach((slide, i) => roleOf(slide, 'lead').forEach(el => assert.deepStrictEqual([el.size, el.color], [S.leadSize, c.ink], (i + 1) + '枚目：リード文の大きさ・色')));
-  assert.match(lead(slides[2]), /^進行中の期待値は 58 → 50百万円（▲8）。増加 ±0・減少 ▲8、内訳の最大は失注（1件・▲5）。受注月が今期の期待値は /);
-  assert.strictEqual(lead(slides[3]), '直近14日間に変化のある案件は 4件。', '区分ごとの件数（サマリーにある）・0件のものは書かない');
-  assert.strictEqual(lead(slides[4]), '進行中案件のうち期待値上位 3件（進行中案件の期待値合計の 100%）。', '該当事項の数は書かない（表のラベルで分かる）');
+  assert.match(lead(slides[3]), /^期待値（失注除く）は 108 → 100百万円（▲8）。増加 ±0・減少 ▲8、内訳の最大は失注（1件・▲5）。受注月が今年度の期待値は /);
+  assert.strictEqual(lead(slides[4]), '直近14日間に変化のある案件は 4件。', '区分ごとの件数（サマリーにある）・0件のものは書かない');
+  assert.strictEqual(lead(slides[5]), '進行中案件のうち期待値上位 3件（進行中案件の期待値合計の 100%）。', '該当事項の数は書かない（表のラベルで分かる）');
   slides.forEach((slide, i) => roleOf(slide, 'lead').forEach(el => {
     assert.ok(!/…$/.test(el.text), (i + 1) + '枚目：リード文が切れている ' + el.text);
     assert.ok(el.y + el.h <= S.top + 0.01, (i + 1) + '枚目：リード文が中身にかかる');
@@ -503,7 +561,7 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
 
   slides.forEach((slide, i) => {
     const page = roleOf(slide, 'page')[0];
-    assert.ok(i === 0 || i === 5 ? !page : page && page.text === String(i + 1) && page.x > 600 && page.y > 370, (i + 1) + '枚目のページ番号（表紙・扉には出さない）');
+    assert.ok(i === 0 || i === 7 ? !page : page && page.text === String(i + 1) && page.x > 600 && page.y > 370, (i + 1) + '枚目のページ番号（表紙・扉には出さない）');
     slide.elements.forEach(el => {
       const w = el.type === 'table' ? el.columns.reduce((a, b) => a + b, 0) : el.w;
       const h = el.type === 'table' ? el.rows.reduce((a, r) => a + r.h, 0) : el.h;
@@ -513,7 +571,7 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
         assert.ok(el.columns.every(cw => cw >= 32), (i + 1) + '枚目：Slides API は 32pt より狭い列をエラーにする ' + el.columns.join(','));
         el.rows.forEach(r => r.cells.forEach((cell, col) => {
           const lines = String(cell.text).split('\n');
-          assert.strictEqual(g.mtgWrap_(cell.text, el.columns[col], cell.size, 99).length, lines.length, '折り返し済み：' + cell.text);
+          assert.strictEqual(g.mtgWrap_(cell.text, g.mtgCellWidth_(el.columns[col]), cell.size, 99).length, lines.length, '折り返し済み：' + cell.text);
           assert.ok(g.mtgTextHeight_(lines, cell.size, cell.spans) <= r.h + 0.01, '行の高さ：' + cell.text);
         }));
       }
@@ -531,28 +589,34 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
   // 1枚目：「動き」と「現在の状態」の2つの表（どのシートでも同じ区分。該当が無ければ0件）。数字の箱・今期の帯は置かない
   const first = textOf(slides[1]);
   assert.ok(!/今期|着地/.test(first), 'サマリーに今期の受注・着地見込みは置かない');
-  // 上の数字は進行中案件全体の合計（下の表の区分とは重ならない）。前回比つき
-  assert.deepStrictEqual(roleOf(slides[1], 'tile').map(el => el.text), ['進行中案件', '想定売上合計（進行中・百万円）', '期待値合計（進行中・百万円）', '入力内容の確認事項']);
+  // 上の数字は失注を除くシートの合計・件数（2026/11/05 から。下の表の区分とは重ならない）。前回比つき
+  assert.deepStrictEqual(roleOf(slides[1], 'tile').map(el => el.text), ['案件数（失注除く）', '想定売上合計（失注除く・百万円）', '期待値合計（失注除く・百万円）', '入力内容の確認事項']);
   const sum = plain(summarize(g, '新FMT'));
-  assert.strictEqual(sum.bridge.amountEnd, sum.kpi.amount, '想定売上合計は進行中案件の想定売上の合計');
+  // 想定売上：シートの列の合計（180）から失注の行（C社 20）だけを除く ＝ 160。期待値：列の合計（105）から失注の行（C社 5）を除く ＝ 100
+  // 前回比（時点コピーが無いとき）：変更の記録から出した前回の値。前回は C社（提案中）・F社（削除した行）も含めて 190・108 → 今 160・100
+  assert.deepStrictEqual([sum.bridge.amountStart, sum.bridge.amountEnd, sum.bridge.start, sum.bridge.end, sum.kpi.missingAmount], [190, 160, 108, 100, 1]);
+  assert.deepStrictEqual([sum.kpi.counted, sum.kpi.countedAmount, sum.kpi.countedWeighted], [4, 160, 100], 'シートで失注を除いて数えた・足したのと同じ');
+  assert.match(textOf(slides[1]), /※ 件数・金額はステータス「失注」の行を除くシートの合計/, '出典の行の後ろに注記');
   assert.deepStrictEqual(roleOf(slides[1], 'tile-value').map(el => el.text), [
-    '3件　直近14日間で ▲2件',
-    g.mtgAmount_(sum.bridge.amountEnd) + '　直近14日間で ' + g.mtgSigned_(sum.bridge.amountEnd - sum.bridge.amountStart),
-    '50　直近14日間で ▲8',
+    '4件　直近14日間で ▲2件',
+    '160　直近14日間で ▲30',
+    '100　直近14日間で ▲8',
     '3項目　3案件・責任者 3名'
   ], '確認事項は項目の数（1案件に複数あれば別に数える）と、案件・責任者の数');
   assert.ok(roleOf(slides[1], 'tile-value').every(el => el.spans[0].size === 15 && el.spans[0].color === c.greenDark), '数字は大きく、前回比は小さく');
   assert.deepStrictEqual(roleOf(slides[1], 'heading').map(el => el.text), ['直近14日間の動き（変化のある案件 4件）', '現在の状態（進行中案件）']);
   const [movesTable, statesTable] = slides[1].elements.filter(el => el.type === 'table');
   const textsOf = t => t.rows.map(r => r.cells.map(cell => cell.text.replace(/\n/g, '')));
+  // 動きの行は今回のステータスのまとまり（確度 A → 創注・失注・保留・削除）。テストのシートのステータスには確度が無いので、どれも最後の行（「・その他」を足す）
   assert.deepStrictEqual(textsOf(movesTable), [
-    ['区分', '件数', '想定売上', '主な案件（想定売上順）'],
-    ['受注', '0件', '—', '該当なし'],
-    ['失注・保留・後退・削除', '2件', '30', 'C社／店舗什器（失注）、F社／ブランド刷新（削除）'],
-    ['新規・前進・復帰', '1件', '30', 'A社／アプリ刷新（初回訪問 ▶ 提案中）'],
-    ['活動更新', '1件', '0', 'D社／物流改善（10/12 打ち合わせ）'],
-    ['受注月・期待値などの変更', '0件', '—', '該当なし']
-  ], '行の順は P4 の区分の順と同じ。活動更新は独立した行にし、最新の活動状況を書く');
+    ['今回のステータス', '件数', '想定売上', '主な案件（想定売上順。（）は変わったこと）'],
+    ['A', '0件', '—', '該当なし'],
+    ['B', '0件', '—', '該当なし'],
+    ['C', '0件', '—', '該当なし'],
+    ['D', '0件', '—', '該当なし'],
+    ['創注', '0件', '—', '該当なし'],
+    ['失注・保留・削除・その他', '4件', '60', 'A社／アプリ刷新（提案中・前回 初回訪問）、C社／店舗什器（失注・前回 提案中）　他 2件']
+  ], '区分は使わない。行は資料の型として、案件が無くても出す');
   assert.strictEqual(movesTable.rows.slice(1).reduce((sum, r) => sum + Number(r.cells[1].text.replace('件', '')), 0), 4,
     '動きの行の件数を合わせると、見出しの「変化のある案件」の件数になる（案件ごとに1回だけ数える）');
   assert.deepStrictEqual(textsOf(statesTable), [
@@ -564,61 +628,55 @@ test('スライド：表紙、本編4枚（サマリー → パイプライン�
   assert.deepStrictEqual([statesTable.rows[2].cells[3].fill, statesTable.rows[2].cells[3].color], [c.gap, c.muted], 'データなしは灰色のセル');
   const stall = statesTable.rows[1].cells[0];
   assert.deepStrictEqual(JSON.parse(JSON.stringify([stall.text, stall.size, stall.color, stall.spans])),
-    ['停滞（同一ステータス45日以上）', 7.5, c.muted, [{start: 0, end: 2, size: S.bodySize, bold: true, color: c.ink}]],
-    '定義は区分の名前のあとに小さな字で（同じ行に入るので、行を高くしない）');
+    ['停滞（同一ステータス45日以上）', 7.5, c.muted, [{start: 0, end: 2, size: movesTable.rows[1].cells[0].size, bold: true, color: c.ink}]],
+    '定義は名前のあとに小さな字で（同じ行に入るので、行を高くしない。名前は表の文字の大きさ）');
+  assert.ok(movesTable.rows[1].cells[0].size >= 7.5, 'リード文が2行でも、表の文字は 7.5pt 以上');
   assert.strictEqual(statesTable.rows[1].h, statesTable.rows[0].h, '停滞の行も、ほかの行と同じ高さ');
   const counts = movesTable.rows.slice(1).concat(statesTable.rows).map(r => r.cells[1]).filter(cell => cell.text !== '—');   // —：数えられない行
-  assert.ok(counts.every(cell => cell.size >= S.bodySize && cell.size === counts[0].size && cell.bold && cell.color === c.greenDark), '件数は緑の太字（どの行も同じ大きさ）');
+  assert.ok(counts.every(cell => cell.size >= movesTable.rows[1].cells[0].size && cell.size === counts[0].size && cell.bold && cell.color === c.greenDark),
+    '件数は緑の太字（どの行も同じ大きさ。表の文字より小さくしない）');
   assert.deepStrictEqual(statesTable.columns, movesTable.columns, '2つの表の列はそろえる');
   // 表は緑の見出し・1列目は薄い緑（得意先は太字）・ほかは白
-  const moves = slides[3].elements.find(el => el.type === 'table');
+  const moves = slides[4].elements.find(el => el.type === 'table');
   assert.ok(moves.rows[0].cells.every(cell => cell.fill === c.green && cell.color === c.white && cell.bold));
   assert.deepStrictEqual([moves.rows[1].cells[0].fill, moves.rows[1].cells[0].spans, moves.rows[1].cells[2].fill],
     [c.greenSoft, [{start: 0, end: 2, bold: true}], c.white]);
-  // 3枚目：区分はセルに重ねたラベル（前向きは濃い緑・後ろ向きは濃いグレー・そのほかは薄いグレー。枠なし）。活動状況だけ変わった案件（活動の更新）も、最後に活動状況と一緒に出す
-  assert.match(moves.rows[1].cells.map(cell => cell.text).join(' | '), /^C社\n店舗什器 \|  \| 提案中 ▶ 失注 \| 5 \|/);
-  const pills = roleOf(slides[3], 'pill');
-  assert.deepStrictEqual(pills.map(el => [el.text, el.fill, el.color, el.line || null, el.shape]), [
-    ['失注', c.dark, c.white, null, 'ROUND_RECTANGLE'],
-    ['削除', c.dark, c.white, null, 'ROUND_RECTANGLE'],
-    ['前進', c.greenDeep, c.white, null, 'ROUND_RECTANGLE'],
-    ['活動更新', c.graySoft, c.sub, null, 'ROUND_RECTANGLE']
-  ], 'サマリーの動きの表と同じ順');
-  assert.strictEqual(new Set(pills.map(el => el.w)).size, 1, '区分のラベルの幅は同じ');
-  assert.ok(pills.every(el => el.h === S.pill.h && el.size === S.pill.size));
-  pills.forEach((el, i) => {
-    const x0 = moves.x + moves.columns[0];
-    const y0 = moves.y + moves.rows.slice(0, i + 1).reduce((a, r) => a + r.h, 0);
-    assert.ok(el.x >= x0 + 4 && el.x + el.w <= x0 + moves.columns[1] - 4 && el.y >= y0 + 4 && el.y + el.h <= y0 + moves.rows[i + 1].h - 4,
-      'ラベルがセルに余白をあけて入る：' + el.text);
-    assert.deepStrictEqual(plain(g.mtgWrap_(el.text, el.w, el.size, 2)), [el.text], 'ラベルの文字が1行に入る：' + el.text);
-  });
-  assert.deepStrictEqual([moves.rows[4].cells[0].text.split('\n')[0], moves.rows[4].cells[5].text], ['D社', '10/12 打ち合わせ']);
+  // 3枚目：区分の列・ラベルは無い。今のステータスのまとまりの順、その中は想定売上の大きい順（テストのシートのステータスには確度が無いので、想定売上の順）
+  // 列：得意先／案件名・シナリオ（テストのシートには列が無いのでデータなし）・ステータス・期待値・受注月・活動状況・先方部門・先方役職（責任者の列は無い）
+  assert.deepStrictEqual(moves.rows[0].cells.map(cell => cell.text.split('\n')[0]), ['得意先／案件名', 'シナリオ', 'ステータス', '期待値', '受注月', '活動状況（最新）',
+    '先方部門', '先方役職']);
+  assert.match(moves.rows[1].cells.map(cell => cell.text).join(' | '), /^A社\nアプリ刷新 \| データ\nなし \| 初回訪問 ▶ 提案中 \| 10 \|/);
+  assert.deepStrictEqual(moves.rows.slice(1).map(r => r.cells[0].text.split('\n')[0]), ['A社', 'C社', 'F社', 'D社'], 'サマリーの動きの表と同じ順');
+  assert.strictEqual(roleOf(slides[4], 'pill').length, 0);
+  assert.ok(!moves.rows[0].cells.some(cell => cell.text === '区分'));
+  assert.deepStrictEqual([moves.rows[4].cells[0].text.split('\n')[0], moves.rows[4].cells[5].text], ['D社', '10/12 打ち合わせ'], '活動状況だけ変わった案件も、活動状況と一緒に出す');
   // 4枚目：期待値の大きい順。当てはまる状況は事実だけ
-  const focus = slides[4].elements.find(el => el.type === 'table');
+  const focus = slides[5].elements.find(el => el.type === 'table');
   assert.deepStrictEqual(focus.rows[0].cells.map(cell => cell.text.replace(/\n/g, '')),
     ['得意先／案件名', '期待値／想定売上', 'ステータス（滞留日数）', '受注月', '活動状況', '活動における課題', '該当事項']);
-  assert.deepStrictEqual(roleOf(slides[4], 'pill').map(el => [el.text, el.fill, el.line || null]),
-    [['停滞', c.greenSoft, null], ['受注月超過', c.graySoft, null], ['停滞', c.greenSoft, null]], '当てはまる状況のラベル（E社・A社・D社の順。停滞は薄い緑、ほかは薄いグレー）');
-  assert.strictEqual(new Set(roleOf(slides[4], 'pill').map(el => el.w)).size, 1, '当てはまる状況のラベルの幅は同じ');
+  assert.strictEqual(roleOf(slides[5], 'pill').length, 0, '当てはまる状況はラベルではなく文');
+  assert.match(focus.rows[2].cells[6].text.replace(/\n/g, ''), /^受注月 \d{4}\/\d+ を過ぎても受注になっていない$/,
+    'A社（今日ステータスが変わったので停滞ではない）：受注月超過を、判定の中身ごと');
+  assert.match(focus.rows[1].cells[6].text.replace(/\n/g, ''), /^ステータスが \d+日以上 変わっていない（45日以上で停滞）$/, 'E社：停滞');
   assert.match(focus.rows[2].cells.map(cell => cell.text).join(' | '), /^A社\nアプリ刷新 \| 10\n30 \| 提案中\n0日 \| \d{4}\/\d+ \|/);
   assert.deepStrictEqual([focus.rows[2].cells[1].spans, focus.rows[2].cells[2].spans],
     [[{start: 0, end: 2, bold: true, color: c.greenDark, size: 11}], [{start: 4, end: 6, color: c.muted}]], '期待値は大きく緑、日数はグレー');
   // Appendix：件数だけ（区分の決め方・並びの説明は書かない）
-  assert.strictEqual(lead(slides[6]), '直近14日間に変化のある案件は 4件。');
-  const appendixRows = slides[6].elements.find(el => el.type === 'table').rows.slice(1);
+  assert.strictEqual(lead(slides[8]), '直近14日間に変化のある案件は 4件。');
+  const appendixRows = slides[8].elements.find(el => el.type === 'table').rows.slice(1);
   assert.strictEqual(appendixRows.length, 4, 'Appendix ① の行の数は、サマリー・P4 の「変化のある案件」の件数と同じ（その他の項目のみの更新は入れない）');
-  assert.deepStrictEqual(appendixRows.map(r => r.cells[0].text.split('\n')[0]), ['C社', 'F社', 'A社', 'D社'], 'P4 と同じ順');
-  assert.strictEqual(lead(slides[7]), '進行中案件のうち、同一ステータスに 45日以上滞留している案件は 2件（想定売上合計 80百万円。想定売上未入力の 1件を除く）。' +
+  assert.deepStrictEqual(appendixRows.map(r => r.cells[0].text.split('\n')[0]), ['A社', 'C社', 'F社', 'D社'], 'P4 と同じ順');
+  assert.strictEqual(lead(slides[9]), '進行中案件のうち、同一ステータスに 45日以上滞留している案件は 2件（想定売上合計 80百万円。想定売上未入力の 1件を除く）。' +
     'うち直近14日間の更新なし 1件。', '合計に含めていない空欄の件数を書く');
-  assert.deepStrictEqual(roleOf(slides[7], 'lead').map(el => el.text.split('\n').length).slice(1), [1], '1つ目の文と、更新なしの件数は行を分ける');
-  assert.ok(roleOf(slides[7], 'lead')[1].text.indexOf('うち直近14日間の更新なし') === 0);
-  assert.strictEqual(lead(slides[9]), '入力内容の確認事項は 3項目（3案件）。');
+  assert.strictEqual(roleOf(slides[9], 'lead').length, 1, 'リード文は1つのテキストボックス');
+  assert.strictEqual(roleOf(slides[9], 'lead')[0].text.split('\n').pop(), 'うち直近14日間の更新なし 1件。', '1つ目の文と、更新なしの件数は行を分ける');
+  assert.ok(roleOf(slides[9], 'lead')[0].text.split('\n')[1].indexOf('うち直近14日間の更新なし') === 0);
+  assert.strictEqual(lead(slides[11]), '入力内容の確認事項は 3項目（3案件）。');
   assert.ok(all.indexOf('Appendix ④') < 0 && all.indexOf('Appendix ⑤') < 0, '無い Appendix を案内しない');
   // Appendix ③：責任者別は表だけ（種類の説明は置かない。内容は一覧に書く）。見出しの無いシートでは資料なしを見ない
-  assert.strictEqual(lead(slides[8]), '入力内容の確認事項は 3項目（3案件・責任者 3名）。チェックできなかった項目は 2種類（灰色の列）。',
+  assert.strictEqual(lead(slides[10]), '入力内容の確認事項は 3項目（3案件・責任者 3名）。チェックできなかった項目は 2種類（灰色の列）。',
     'クレデンシャルの記録のシートと商談記録の列が無いので、予定日超過・商談記録未登録はチェックできない');
-  assert.deepStrictEqual(slides[8].elements.filter(el => !el.role && el.type === 'table').length, 1);
+  assert.deepStrictEqual(slides[10].elements.filter(el => !el.role && el.type === 'table').length, 1);
   assert.ok(all.indexOf('チェックの種類') < 0 && all.indexOf('資料なし') < 0);
 });
 
@@ -628,13 +686,13 @@ test('空欄は推定で補わず「未入力」と書く（「—」や 0 に�
   const slides = plain(g.mtgSlides_(s));
   const rowOf = (slide, customer) => slide.elements.filter(el => el.type === 'table').map(t => t.rows.find(r => r.cells[0].text.split('\n')[0] === customer))
     .find(Boolean).cells.map(cell => cell.text);
-  assert.deepStrictEqual(rowOf(slides[3], 'D社'), ['D社\n物流改善', '', '未入力', '未入力', '未入力', '10/12 打ち合わせ', '未入力'],
-    'P3：ステータス・期待値・受注月・責任者');
-  assert.deepStrictEqual(rowOf(slides[4], 'D社').slice(1, 6), ['未入力\n未入力', '未入力\n100日以上', '未入力', '10/12 打ち合わせ', '未入力'],
+  assert.deepStrictEqual(rowOf(slides[4], 'D社'), ['D社\n物流改善', 'データ\nなし', '未入力', '未入力', '未入力', '10/12 打ち合わせ', 'データなし', 'データなし'],
+    'P3：ステータス・期待値・受注月（シナリオ・先方部門・役職はテストのシートに列が無いので「データなし」）');
+  assert.deepStrictEqual(rowOf(slides[5], 'D社').slice(1, 6), ['未入力\n未入力', '未入力\n100日以上', '未入力', '10/12 打ち合わせ', '未入力'],
     '期待値上位：期待値・想定売上・ステータス・受注月・課題');
-  const focusCell = slides[4].elements.find(el => el.type === 'table').rows.find(r => /^D社/.test(r.cells[0].text)).cells[1];
+  const focusCell = slides[5].elements.find(el => el.type === 'table').rows.find(r => /^D社/.test(r.cells[0].text)).cells[1];
   assert.ok(!focusCell.spans.some(sp => sp.size === 11 && sp.start === 0), '空の期待値は、数のような大きな緑の字にしない');
-  assert.deepStrictEqual(rowOf(slides[7], 'D社').slice(1, 4).concat(rowOf(slides[7], 'D社').slice(7)).map(t => t.replace(/\n/g, ' ')),
+  assert.deepStrictEqual(rowOf(slides[9], 'D社').slice(1, 4).concat(rowOf(slides[9], 'D社').slice(7)).map(t => t.replace(/\n/g, ' ')),
     ['未入力', '未入力', '未入力', '未入力', '未入力', '10/12 打ち合わせ'], 'Appendix ②：想定売上・期待値・ステータス・責任者・課題');
 
   slides.forEach((slide, i) => slide.elements.filter(el => el.type === 'table').forEach(t => t.rows.forEach(r => r.cells.forEach(cell =>
@@ -658,7 +716,7 @@ test('空欄は推定で補わず「未入力」と書く（「—」や 0 に�
 
   // 空欄が多くリード文の補足が長くても、サマリーの表はページに入る（数字の箱・余白を詰める）
   const crowded = plain(g.mtgSlides_(Object.assign({}, s, {kpi: Object.assign({}, s.kpi, {missingStatus: 12, missingAmount: 15, missingWeighted: 18})})))[1];
-  assert.match(leadOf(crowded), /ステータス未入力 12件は進行中に含め、想定売上未入力 15件・期待値未入力 18件は金額の合計に含めていない。$/);
+  assert.match(leadOf(crowded), /ステータス未入力 12件は進行中に含め、想定売上が空・数値でない 15件・期待値が空・数値でない 18件は金額の合計に含めていない。$/);
   crowded.elements.filter(el => el.type === 'table').forEach(t =>
     assert.ok(t.y + t.rows.reduce((a, r) => a + r.h, 0) <= gas.get('MTG_SLIDE').bottom + 0.01, 'サマリーの表がページの下にはみ出す'));
   assert.ok(crowded.elements.filter(el => el.role === 'tile-value').every(el => el.h >= 32 - 14), '数字の箱は下限より小さくしない');
@@ -668,7 +726,7 @@ test('空欄は推定で補わず「未入力」と書く（「—」や 0 に�
   const states = fresh[1].elements.filter(el => el.type === 'table')[1];
   assert.match(states.rows[1].cells[3].text, /^データなし：記録の開始（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない（\d{1,2}\/\d{1,2} から数える）$/);
   assert.deepStrictEqual(states.rows[1].cells.slice(1, 3).map(cell => cell.text), ['—', '—'], '数えられないので 0件と書かない');
-  assert.ok(fresh[4].elements.find(el => el.type === 'table').rows.slice(1).some(r => r.cells[6].text === '該当なし'), '該当事項が無い案件');
+  assert.ok(fresh[5].elements.find(el => el.type === 'table').rows.slice(1).some(r => r.cells[6].text === '該当なし'), '該当事項が無い案件');
 });
 
 test('長い文（活動状況・課題）：入らなければ文字を小さくし（7pt まで）、それでも入らなければ grow のセルは行を伸ばして全文（「…」で切らない）', () => {
@@ -686,8 +744,12 @@ test('長い文（活動状況・課題）：入らなければ文字を小さ�
   assert.strictEqual(grown.size, S.minFitSize);
   assert.ok(grown.lines.length > 3 && grown.lines.join('').indexOf('…') < 0, '行を伸ばして全文（' + grown.lines.length + '行）');
   assert.strictEqual(grown.lines.join('').replace(/\s/g, ''), long, '文を落とさない');
-  const clipped = plain(g.mtgFitLines_({text: long, lines: 3, fit: true}, 160));
-  assert.ok(clipped.lines.length === 3 && /…$/.test(clipped.lines[2]), 'grow でなければ最後を「…」');
+  // grow を付けなくても、全文を出す（2026/11/05 から。「…」で切るのは clip のセルだけ）
+  const plainCell = plain(g.mtgFitLines_({text: long, lines: 3, fit: true}, 160));
+  assert.ok(plainCell.lines.length > 3 && plainCell.lines.join('').indexOf('…') < 0, 'grow でなくても全文');
+  assert.ok(plain(g.mtgFitLines_({text: long, lines: 2}, 160)).lines.join('').indexOf('…') < 0, 'fit でなくても全文');
+  const clipped = plain(g.mtgFitLines_({text: long, lines: 3, fit: true, clip: true}, 160));
+  assert.ok(clipped.lines.length === 3 && /…$/.test(clipped.lines[2]), 'clip なら最後を「…」');
   const row = plain(g.mtgRow_([160], [{text: long, lines: 3, fit: true, grow: true}]));
   assert.strictEqual(row.cells[0].size, S.minFitSize, '表のセルの文字の大きさも小さくする');
   assert.ok(row.h > g.mtgTextHeight_(3, S.bodySize), '行が伸びる');
@@ -699,7 +761,7 @@ test('期待値上位案件：活動状況が長くて行が伸び、ページ�
   const long = '【提案進行中】★\n' + Array.from({length: 6}, (_, i) => '・' + (i + 1) + '回目の打ち合わせで要件を確認し、見積と体制案を提示。先方の稟議の進み具合を確認する').join('\n');
   const focus = Array.from({length: 5}, (_, i) => Object.assign({}, s.focus[0], {customer: '得意先' + i, activity: long}));
   const slides = plain(g.mtgSlides_(Object.assign({}, s, {focus})));
-  const pages = slides.filter(sl => /^期待値上位案件の状況・課題/.test(sl.title));
+  const pages = slides.filter(sl => /^期待値上位案件の状況・課題(（続き）)?$/.test(sl.title));
   assert.ok(pages.length >= 2, pages.length + 'ページ');
   assert.strictEqual(pages[1].title, '期待値上位案件の状況・課題（続き）');
   const tables = pages.map(p => p.elements.find(el => el.type === 'table'));
@@ -729,26 +791,26 @@ test('スライド：Appendix は入りきらなければ続きのページに�
 
   const empty = Object.assign({}, s, {changes: [], stalled: [], overdue: [], alerts: []});
   const slides = plain(g.mtgSlides_(empty));
-  assert.deepStrictEqual(slides.map(sl => sl.title), ['表紙', 'サマリー', 'パイプラインの変化', '前回から変化のある案件', '期待値上位案件の状況・課題',
-    'Appendix', 'Appendix ①　前回から変化のある案件（一覧）', 'Appendix ②　停滞案件（一覧）', 'Appendix ③　入力内容の確認事項（責任者別）',
+  assert.deepStrictEqual(slides.map(sl => sl.title), ['表紙', 'サマリー', '計画に対する積み上げ', 'パイプラインの変化', '前回から変化のある案件', '期待値上位案件の状況・課題',
+    '期待値上位案件の状況・課題（直近2か月の動き）', 'Appendix', 'Appendix ①　前回から変化のある案件（一覧）', 'Appendix ②　停滞案件（一覧）', 'Appendix ③　入力内容の確認事項（責任者別）',
     'Appendix ③　入力内容の確認事項（一覧）'], '中身が無くても資料の型（Appendix ①〜③）は同じ');
   // 中身の無い Appendix：表の見出しの行を置き、その下に「該当なし」、作れないときは「データなし」と理由（記録の開始から45日たっていないので、停滞はまだ数えられない）
   const bodyOf = slide => [slide.elements.filter(el => el.type === 'table').map(t => t.rows.length), roleOf(slide, 'empty').concat(roleOf(slide, 'gap'))
     .map(el => [el.role, el.text.split('\n')[0]])];
-  assert.deepStrictEqual(bodyOf(slides[6]), [[1], [['empty', '該当なし']]]);
-  assert.deepStrictEqual(bodyOf(slides[7]), [[1], [['gap', 'データなし']]]);
-  assert.match(roleOf(slides[7], 'gap')[0].text, /\n記録の開始（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない（\d{1,2}\/\d{1,2} から数える）$/);
-  assert.match(leadOf(slides[7]), /^停滞案件は、記録の開始（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない（\d{1,2}\/\d{1,2} から数える）。$/);
-  assert.deepStrictEqual(bodyOf(slides[9]), [[1], [['empty', '該当なし']]]);
-  const gapBox = roleOf(slides[7], 'gap')[0];
+  assert.deepStrictEqual(bodyOf(slides[8]), [[1], [['empty', '該当なし']]]);
+  assert.deepStrictEqual(bodyOf(slides[9]), [[1], [['gap', 'データなし']]]);
+  assert.match(roleOf(slides[9], 'gap')[0].text, /\n記録の開始（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない（\d{1,2}\/\d{1,2} から数える）$/);
+  assert.match(leadOf(slides[9]), /^停滞案件は、記録の開始（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない（\d{1,2}\/\d{1,2} から数える）。$/);
+  assert.deepStrictEqual(bodyOf(slides[11]), [[1], [['empty', '該当なし']]]);
+  const gapBox = roleOf(slides[9], 'gap')[0];
   assert.deepStrictEqual([gapBox.fill, gapBox.line, gapBox.dash], [gas.get('MTG_OPTIONS').colors.gap, gas.get('MTG_OPTIONS').colors.gapLine, true], 'データなしは灰色の地に点線の枠');
-  assert.deepStrictEqual(slides[8].elements.find(el => el.type === 'table').rows.map(r => r.cells[0].text), ['責任者', '合計'], '確認事項が無ければ合計の行だけ');
-  assert.strictEqual(leadOf(slides[8]).indexOf('入力内容の確認事項は 0項目。'), 0);
+  assert.deepStrictEqual(slides[10].elements.find(el => el.type === 'table').rows.map(r => r.cells[0].text), ['責任者', '合計'], '確認事項が無ければ合計の行だけ');
+  assert.strictEqual(leadOf(slides[10]).indexOf('入力内容の確認事項は 0項目。'), 0);
   // 扉の一覧：中身の無い Appendix には「（該当なし）」、作れないものには「（データなし）」
-  const toc = roleOf(slides[5], 'toc').map(el => el.text);
+  const toc = roleOf(slides[7], 'toc').map(el => el.text);
   assert.deepStrictEqual(toc.filter((_, i) => i % 3 === 1), ['前回から変化のある案件（該当なし）', '停滞案件（データなし）', '入力内容の確認事項（該当なし）']);
   const onlyAlerts = plain(g.mtgSlides_(Object.assign({}, empty, {alerts: s.alerts})));
-  assert.deepStrictEqual(roleOf(onlyAlerts[5], 'toc').filter((_, i) => i % 3 === 1).map(el => el.text),
+  assert.deepStrictEqual(roleOf(onlyAlerts[7], 'toc').filter((_, i) => i % 3 === 1).map(el => el.text),
     ['前回から変化のある案件（該当なし）', '停滞案件（データなし）', '入力内容の確認事項'], '中身のある Appendix には付けない');
   const breakdown = slides[1].elements.find(el => el.type === 'table').rows.slice(1).map(r => r.cells.map(cell => cell.text));
   assert.ok(breakdown.every(r => r[1] === '0件' && r[3] === '該当なし'), '区分は同じまま、0件・該当なしで出す');
@@ -763,18 +825,19 @@ test('作れないところ（列・記録が無い）は、資料の型を変�
   const S = gas.get('MTG_SLIDE');
   const c = gas.get('MTG_OPTIONS').colors;
   const s = summarize(g, '新FMT');
-  assert.deepStrictEqual(Object.keys(plain(s.gaps)), ['changes', 'amount', 'weighted', 'orderMonth', 'activity', 'issue', 'owner', 'record', 'stalled']);
+  assert.deepStrictEqual(Object.keys(plain(s.gaps)), ['changes', 'amount', 'weighted', 'orderMonth', 'activity', 'issue', 'owner', 'nextAction', 'record',
+    'clientDept', 'clientTitle', 'stalled']);
   assert.strictEqual(s.gaps.changes, '「変更履歴_差分」シートに変更の記録が無い');
   assert.strictEqual(s.gaps.amount, 'シートに「想定売上規模（百万）」の列が無い');
   assert.strictEqual(s.gaps.stalled, '変更の記録も「最終更新日時」の列も無く、ステータスが同じ日数が分からない');
   assert.strictEqual(s.kpi.missingAmount, 0, '列が無いのは空欄（未入力）ではない');
   assert.deepStrictEqual(Object.keys(plain(s.alertGaps)), plain(gas.get('MTG_ALERT_TYPES').filter(t => t !== '未入力')), '必須項目未入力のほかは、どれもチェックできない');
   const slides = plain(g.mtgSlides_(s));
-  assert.strictEqual(slides.length, 10, '資料の型（表紙・本編4枚・扉・Appendix ①〜③）は同じ');
+  assert.strictEqual(slides.length, 12, '資料の型（表紙・本編6枚・扉・Appendix ①〜③）は同じ');
 
   // サマリー：前回比は「データなし」（±0 と書かない）、金額の箱は灰色、動きの行はどれも「データなし」（理由は見出し）、状態の行は理由つき
   const summary = slides[1];
-  assert.match(leadOf(summary), /^進行中案件 2件、期待値合計はデータなし（シートに「期待値調整済想定売上規模（百万）」の列が無い）。直近14日間の増減はデータなし（「変更履歴_差分」シートに変更の記録が無い）。$/);
+  assert.match(leadOf(summary), /^案件 2件（失注除く）、期待値合計はデータなし（シートに「期待値調整済想定売上規模（百万）」の列が無い）。直近14日間の増減はデータなし（「変更履歴_差分」シートに変更の記録が無い）。$/);
   assert.ok(!/±0/.test(textOf(summary)), '分からない増減を ±0 と書かない');
   assert.deepStrictEqual(roleOf(summary, 'tile-value').map(el => el.text), ['2件　直近14日間で データなし', 'データなし', 'データなし', '0項目']);
   assert.strictEqual(roleOf(summary, 'gap').length, 2, '想定売上・期待値の箱は灰色の点線');
@@ -785,30 +848,35 @@ test('作れないところ（列・記録が無い）は、資料の型を変�
   assert.deepStrictEqual(states.rows.map(r => r.cells[3].text), ['データなし：シートに「受注月」の列が無い',
     'データなし：変更の記録も「最終更新日時」の列も無く、ステータスが同じ日数が分からない', 'データなし：シートに「商談記録（ＵＲＬ）」の列が無い']);
 
+  // 計画に対する積み上げ：見出しは残し、その下に「データなし」と理由（期待値の列が無い）
+  assert.deepStrictEqual(roleOf(slides[2], 'gap').map(el => el.text.split('\n')),
+    [['データなし', 'シートに「期待値調整済想定売上規模（百万）」・「売上開始月」の列が無い']]);
+  assert.strictEqual(leadOf(slides[2]), '計画に対する積み上げはデータなし（シートに「期待値調整済想定売上規模（百万）」・「売上開始月」の列が無い）。');
+
   // パイプラインの変化：図・グラフの見出しは残し、その下に「データなし」と理由
-  const pipeline = slides[2];
+  const pipeline = slides[3];
   assert.deepStrictEqual(roleOf(pipeline, 'gap').map(el => el.text.split('\n')), [
     ['データなし', 'シートに「期待値調整済想定売上規模（百万）」の列が無い'],
     ['データなし', 'シートに「期待値調整済想定売上規模（百万）」の列が無い'],
     ['データなし', 'シートに「期待値調整済想定売上規模（百万）」の列が無い']]);
   assert.ok(!pipeline.elements.some(el => /^bar/.test(el.role || '')), '棒は描かない');
-  assert.strictEqual(leadOf(pipeline), '進行中の期待値はデータなし（シートに「期待値調整済想定売上規模（百万）」の列が無い）。');
+  assert.strictEqual(leadOf(pipeline), '期待値（失注除く）はデータなし（シートに「期待値調整済想定売上規模（百万）」の列が無い）。');
 
   // 前回から変化のある案件：表の見出しの行と「データなし」と理由
-  assert.deepStrictEqual(slides[3].elements.filter(el => el.type === 'table').map(t => t.rows.length), [1]);
-  assert.deepStrictEqual(roleOf(slides[3], 'gap').map(el => el.text), ['データなし\n「変更履歴_差分」シートに変更の記録が無い']);
-  assert.strictEqual(leadOf(slides[3]), '直近14日間に変化のある案件はデータなし（「変更履歴_差分」シートに変更の記録が無い）。');
+  assert.deepStrictEqual(slides[4].elements.filter(el => el.type === 'table').map(t => t.rows.length), [1]);
+  assert.deepStrictEqual(roleOf(slides[4], 'gap').map(el => el.text), ['データなし\n「変更履歴_差分」シートに変更の記録が無い']);
+  assert.strictEqual(leadOf(slides[4]), '直近14日間に変化のある案件はデータなし（「変更履歴_差分」シートに変更の記録が無い）。');
 
   // 期待値上位：列の無い項目のセルは灰色の「データなし」（未入力と書かない）。並びは想定売上も無いので、シートの順
-  const focus = slides[4].elements.find(el => el.type === 'table');
+  const focus = slides[5].elements.find(el => el.type === 'table');
   assert.deepStrictEqual(focus.rows[1].cells.map(cell => [cell.text, cell.fill === c.gap]), [
     ['A社\nアプリ刷新', false], ['データなし', true], ['提案中\n記録なし', false], ['データなし', true], ['データなし', true], ['データなし', true], ['該当なし', false]]);
-  assert.match(leadOf(slides[4]), /^期待値はデータなし（シートに「期待値調整済想定売上規模（百万）」の列が無い）のため、進行中案件のうち想定売上上位 2件。$/);
+  assert.match(leadOf(slides[5]), /^期待値はデータなし（シートに「期待値調整済想定売上規模（百万）」の列が無い）のため、進行中案件のうち想定売上上位 2件。$/);
 
   // 扉・Appendix：①・②は「データなし」、③は該当なし（チェックできなかった種類は灰色の列と理由）
-  assert.deepStrictEqual(roleOf(slides[5], 'toc').filter((_, i) => i % 3 === 1).map(el => el.text),
+  assert.deepStrictEqual(roleOf(slides[7], 'toc').filter((_, i) => i % 3 === 1).map(el => el.text),
     ['前回から変化のある案件（データなし）', '停滞案件（データなし）', '入力内容の確認事項（該当なし）']);
-  assert.ok(roleOf(slides[8], 'gap')[0].text.indexOf('灰色の列は、チェックできなかった項目\n予定日超過：「クレデンシャル履歴_記録」シートが無い') > 0);
+  assert.ok(roleOf(slides[10], 'gap')[0].text.indexOf('灰色の列は、チェックできなかった項目\n予定日超過：「クレデンシャル履歴_記録」シートが無い') > 0);
 
   // どの部品もページに入る
   slides.forEach((slide, i) => slide.elements.forEach(el => {
@@ -869,25 +937,24 @@ test('パイプラインの変化：ステータス別・受注月別の期待�
   const S = gas.get('MTG_SLIDE');
   const c = gas.get('MTG_OPTIONS').colors;
   const s = summarize(g, '新FMT');
-  const slide = plain(g.mtgSlides_(s))[2];
+  const slide = plain(g.mtgSlides_(s))[3];
   assert.ok(!slide.elements.some(el => el.type === 'table'), '表ではなくグラフ');
   const titles = slide.elements.filter(el => el.size === 10.5 && el.bold).map(el => el.text);
-  assert.deepStrictEqual(titles, ['期待値の増減（進行中・百万円）', 'ステータス別期待値（進行中・百万円）', '受注月別期待値（進行中・百万円）'], '見出しは滝の図と同じ形');
-  // 滝の図：期待値（前回・今）・増加・減少の色の凡例。受注は白抜き（進行中から外れたが、悪い減少ではない）
-  assert.deepStrictEqual(roleOf(slide, 'legend').filter(el => el.text).map(el => el.text), ['期待値', '増加', '減少', '受注']);
+  assert.deepStrictEqual(titles, ['期待値の増減（失注除く・百万円）', 'ステータス別期待値（失注除く・百万円）', '受注月別期待値（失注除く・百万円）'], '見出しは滝の図と同じ形');
+  // 滝の図：期待値（前回・今）・増加・減少の色の凡例（2026/11/05 から受注は対象から外れないので、受注の凡例・棒は無い）
+  assert.deepStrictEqual(roleOf(slide, 'legend').filter(el => el.text).map(el => el.text), ['期待値', '増加', '減少']);
   assert.deepStrictEqual(roleOf(slide, 'bar-total').map(el => el.fill), [c.greenDark, c.greenDark], '前回・今の期待値の棒');
   assert.deepStrictEqual(roleOf(slide, 'bar-lost').map(el => el.fill), [c.down], '減少（失注）の棒');
   roleOf(slide, 'legend').forEach(el => assert.ok(el.x + el.w <= S.x + S.w + 0.01, '凡例が右にはみ出さない：' + (el.text || '')));
   const wonSetup = setup({edits: false});
-  wonSetup.g.recordDiffEdit(wonSetup.gas.edit(wonSetup.sheet, 'F7', '受注'));   // E社：受注（進行中の期待値 40 が外れる）
-  const wonSlide = plain(wonSetup.g.mtgSlides_(summarize(wonSetup.g, '新FMT')))[2];
-  const won = roleOf(wonSlide, 'bar-won');
-  assert.deepStrictEqual(won.map(el => [el.fill, el.line]), [[c.white, c.greenDark]], '受注の棒は白抜きで緑の枠（減少の色にしない）');
-  assert.match(leadOf(wonSlide), /減少 ▲40（うち受注 ▲40）/, '減少のうち受注の分をリード文に書く');
+  wonSetup.g.recordDiffEdit(wonSetup.gas.edit(wonSetup.sheet, 'F7', '受注'));   // E社：受注（失注ではないので外れない。期待値 40 のまま）
+  const wonSlide = plain(wonSetup.g.mtgSlides_(summarize(wonSetup.g, '新FMT')))[3];
+  assert.deepStrictEqual(roleOf(wonSlide, 'bar-won'), [], '受注の棒は無い');
+  assert.match(leadOf(wonSlide), /^期待値（失注除く）は 108 → 108百万円（±0）。増加 ±0・減少 ±0。/, '受注になっても期待値合計は変わらない');
   const labels = roleOf(slide, 'bar-label').map(el => el.text);
   const values = roleOf(slide, 'bar-value');
   const bars = roleOf(slide, 'bar');
-  const stages = plain(s.stages).filter(st => st.kind === 'active');
+  const stages = plain(s.stages).filter(st => st.kind !== 'lost');
   assert.deepStrictEqual(labels, stages.map(st => st.status).concat(plain(s.quarters).map(q => q.label)), 'ステータスはプルダウンの順、受注月は時間の順');
   assert.deepStrictEqual(values.map(el => el.text), stages.map(st => g.mtgAmount_(st.weighted)).concat(plain(s.quarters).map(q => g.mtgAmount_(q.value))));
   assert.ok(bars.every(el => el.fill === c.greenDark), '棒は期待値の色（滝の図と同じ）');
@@ -916,22 +983,17 @@ test('サマリーの内訳：案件の名前は入る件数まで並べ、残�
   assert.strictEqual(g.mtgNames_([], note, 300, 2), '該当なし');
 });
 
-test('ラベル：当てはまる状況が3つでも、行を高くしてセルに余白をあけて入れる（幅は列の中で同じ）', () => {
+test('該当事項：当てはまる状況が3つでも、判定の中身の文を全文入れる（行を伸ばす。入らなければ続きのページ）', () => {
   const {gas, g} = setup();
   const S = gas.get('MTG_SLIDE');
   const s = summarize(g, '新FMT');
-  const focus = s.focus.map((d, i) => (i === 0 ? Object.assign({}, d, {stalled: true, overdue: true, slips: 2}) : d));
-  const slide = plain(g.mtgSlides_(Object.assign({}, s, {focus})))[4];
+  const focus = s.focus.map((d, i) => (i === 0 ? Object.assign({}, d, {stalled: true, days: 60, atLeast: true, overdue: true, slips: 2}) : d));
+  const slide = plain(g.mtgSlides_(Object.assign({}, s, {focus})))[5];
   const table = slide.elements.find(el => el.type === 'table');
-  const pills = roleOf(slide, 'pill');
-  const row1 = pills.filter(el => el.y < table.y + table.rows[0].h + table.rows[1].h);
-  assert.deepStrictEqual(row1.map(el => el.text), ['停滞', '受注月超過', '延期2回']);
-  assert.ok(table.rows[1].h >= g.mtgPillsHeight_(3), '3つ並べても行に入る');
-  const y0 = table.y + table.rows[0].h;
-  assert.ok(row1[0].y >= y0 + S.pill.margin - 0.01 && row1[2].y + row1[2].h <= y0 + table.rows[1].h - S.pill.margin + 0.01, '上下に余白');
-  assert.ok(row1.every((el, i) => !i || el.y - (row1[i - 1].y + row1[i - 1].h) === S.pill.gap), '間は同じ');
-  assert.strictEqual(new Set(pills.map(el => el.w)).size, 1, '幅は列の中で同じ');
-  assert.strictEqual(new Set(pills.map(el => el.x)).size, 1, '左右の中央にそろえる');
+  const cell = table.rows[1].cells[6];
+  assert.deepStrictEqual(cell.text.replace(/\s/g, ''), plain(g.mtgFlagTexts_(focus[0])).join('').replace(/\s/g, ''), '「…」で切らない');
+  assert.ok(/^ステータスが 60日以上 変わっていない/.test(cell.text.replace(/\n/g, '')));
+  assert.ok(table.rows[1].h >= g.mtgTextHeight_(cell.text.split('\n'), cell.size), '行は中身の高さ');
   assert.ok(table.y + table.rows.reduce((sum, r) => sum + r.h, 0) <= S.bottom, '表が下にはみ出さない');
 });
 
@@ -1117,6 +1179,94 @@ test('表紙・扉の背景の画像を付けられなくても、資料は作�
   assert.ok(gas.decks[0].requests.some(r => r.updatePageProperties), '背景は緑一色');
 });
 
+test('期待値上位案件の直近2か月の動き：変更の記録から、ステータス・受注月・期待値・活動状況・次回アクションの変更を日ごとにまとめて新しい順に出す', () => {
+  const {gas, g, sheet} = setup();
+  // 文の変更は、書き足した・書き換えた部分だけ（同じ頭・おしりを、文の切れ目で除く。語の途中では切らない）。改行は「／」
+  assert.deepStrictEqual(['10/1 訪問。', '', 'abc', 'abcd', '提案中', '9/1 訪問。\n9/8 提案。\n次回は未定', '（ダミー）初回訪問'].map((before, i) =>
+    g.mtgAddedText_(before, ['10/1 訪問。10/8 提案。', '要件確認\n見積提出', '', 'abd', '提案書を提出', '9/1 訪問。\n9/8 提案。\n9/20 見積提出。\n次回は未定',
+      '（ダミー）前回までの活動状況'][i])),
+  ['10/8 提案。', '要件確認／見積提出', '（削除）', '（一部を削除）', '提案書を提出', '9/20 見積提出。', '（ダミー）前回までの活動状況']);
+  // 2か月前の同じ日の 0時（無ければ月末）
+  const jst = t => new Date(t + 9 * 3600000).toISOString().slice(0, 16);
+  assert.deepStrictEqual([new Date('2026-10-19T12:00:00+09:00'), new Date('2026-12-31T09:00:00+09:00'), new Date('2026-04-30T09:00:00+09:00')]
+    .map(d => jst(g.mtgMonthsAgo_(d, 2))), ['2026-08-19T00:00', '2026-10-31T00:00', '2026-02-28T00:00']);
+  // 同じ日の同じ項目はまとめ（最初の前 → 最後の後）、元に戻ったものは出さない。from より前・ほかの項目（課題）は出さない。受注月のシリアル値は日付に
+  const day = (d, h) => new Date('2026-10-' + d + 'T' + String(h).padStart(2, '0') + ':00:00+09:00').getTime();
+  const labels = g.mtgLabels_();
+  const ev = (at, key, before, after, born) => ({at, label: labels[key], before, after, born: !!born});
+  const moves = plain(g.mtgRecentMoves_([
+    ev(day('01', 9), 'customer', '', 'A社', true),
+    ev(day('01', 9), 'status', '', '提案中'),
+    ev(day('05', 9), 'weighted', '10', '20'),
+    ev(day('05', 10), 'weighted', '20', '30'),
+    ev(day('06', 9), 'status', '提案中', '受注見込み'),
+    ev(day('06', 10), 'status', '受注見込み', '提案中'),
+    ev(day('07', 9), 'orderMonth', '', '46357'),
+    ev(day('08', 9), 'issue', '', '決裁者が不明'),
+    ev(day('09', 9), 'nextAction', '', '10/20 再提案'),
+    ev(day('09', 10), 'activity', '10/1 訪問。', '10/1 訪問。10/9 提案。')
+  ], day('01', 0)));
+  assert.deepStrictEqual(moves.map(m => m.text), ['10/9　活動状況：10/9 提案。', '10/9　次回アクション：10/20 再提案', '10/7　受注月：未入力 ▶ 2026/12',
+    '10/5　期待値：10 ▶ 30', '10/1　案件を登録', '10/1　ステータス：未入力 ▶ 提案中']);
+  assert.strictEqual(g.mtgRecentMoves_([ev(day('01', 9), 'status', '', '提案中')], day('02', 0)).length, 0, 'from より前は出さない');
+
+  // 資料：期待値上位（E社・A社・D社）の順に、記録された動き（直近2か月）と次のアクション（次回アクション・受注月）
+  g.recordDiffEdit(gas.edit(sheet, 'O7', '10/25 決裁者と面談'));                 // E社：次回アクション
+  aged(gas, 70, () => g.recordDiffEdit(gas.edit(sheet, 'K7', '予算が未確定')));   // 2か月より前（出さない）
+  const s = summarize(g, '新FMT', {trackedSince: Date.now() - 100 * 86400000});
+  assert.deepStrictEqual(plain(s.focus.map(d => d.customer)), ['E社', 'A社', 'D社']);
+  assert.deepStrictEqual(plain(s.recent.moves).map(list => list.map(m => m.text.replace(/^\d+\/\d+　/, '')).sort()), [
+    ['次回アクション：10/25 決裁者と面談'],
+    ['ステータス：初回訪問 ▶ 提案中', '活動状況：10/10 提案書を提出'],
+    ['活動状況：10/12 打ち合わせ']
+  ]);
+  const T = gas.get('MTG_TITLES');
+  const c = gas.get('MTG_OPTIONS').colors;
+  const slides = plain(g.mtgSlides_(s));
+  const page = slides.find(sl => sl.title === T.focus + '（直近2か月の動き）');
+  assert.ok(page && slides.indexOf(page) === slides.findIndex(sl => sl.title === T.focus) + 1, '状況・課題のすぐあと（同じセクション）');
+  const table = page.elements.find(el => el.type === 'table');
+  assert.deepStrictEqual(table.rows[0].cells.map(cell => cell.text.replace(/\n/g, '').replace(/\d+\/\d+〜/, 'M/d〜')),
+    ['得意先／案件名', '直近2か月の動き（M/d〜。新しい順）', '次回アクション／受注月']);
+  const cells = table.rows.slice(1).map(r => r.cells.map(cell => cell.text.replace(/\n/g, ' ')));
+  assert.deepStrictEqual(cells.map(r => r[0]), ['E社 販促DX', 'A社 アプリ刷新', 'D社 物流改善']);
+  assert.deepStrictEqual(cells.map(r => r[2]), ['10/25 決裁者と面談 受注月：' + month(1).y + '/' + month(1).m + '（来月受注予定）',
+    '未入力 受注月：' + month(-1).y + '/' + month(-1).m + '（受注月超過）', '未入力 受注月：未入力']);
+  assert.ok(table.rows[1].cells[2].spans.some(sp => sp.bold && sp.color === c.greenDark), '受注予定は緑の太字');
+  assert.ok(table.rows[2].cells[2].spans.some(sp => sp.bold && sp.color === c.dark), '受注月超過は濃いグレーの太字');
+  assert.ok(table.rows.slice(1).every(r => r.cells[1].size === 8), '動きは同じ大きさの字');
+  assert.match(leadOf(page), /^期待値上位 3件の、直近2か月（\d+\/\d+〜）に記録された動き/);
+  assert.ok(leadOf(page).indexOf('それより前の動きは出ない') < 0, '記録が2か月より前からあれば、書かない');
+  // 記録の始まりが2か月より後なら、リード文に書く。記録が無ければ「データなし」
+  const late = summarize(g, '新FMT', {trackedSince: Date.now() - 5 * 86400000});
+  assert.match(g.mtgRecentSlide_(late)[0].lead, /\n変更の記録は \d+\/\d+ からのため、それより前の動きは出ない。$/);
+  const none = plain(g.mtgRecentSlide_(Object.assign({}, s, {recent: Object.assign({}, s.recent, {logFrom: null})})));
+  assert.ok(none[0].elements[0].rows.slice(1).every(r => r.cells[1].text === 'データなし（変更の記録が無い）' && r.cells[1].fill === c.gap));
+  assert.match(none[0].lead, /^直近2か月の動きはデータなし（「変更履歴_差分」シートに変更の記録が無い）。/);
+  // 多ければ新しいほうから recentMax 件と「ほか N件」
+  const many = Array.from({length: 11}, (_, i) => ({at: Date.now() - i * 3600000, key: 'activity', text: '10/' + (19 - i) + '　活動状況：' + i}));
+  const capped = plain(g.mtgRecentSlide_(Object.assign({}, s, {recent: Object.assign({}, s.recent, {moves: [many, [], []]})})));
+  const lines = capped[0].elements[0].rows[1].cells[1].text.split('\n');
+  assert.strictEqual(lines.length, 9);
+  assert.match(lines[8], /^ほか 3件（\d+\/\d+〜）$/);
+  // 進行中の案件が無ければ、このページは出さない
+  assert.deepStrictEqual(plain(g.mtgRecentSlide_(Object.assign({}, s, {focus: []}))), []);
+});
+
+test('デリバリー担当の列を使わない設定（MTG_OPTIONS.columns.delivery が空。本物の新FMT）なら、チェック「デリバリー担当なし」を出さず、「データなし」にもしない', () => {
+  const {gas, g} = setup();
+  gas.get('MTG_OPTIONS').columns.delivery = '';
+  const s = summarize(g, '新FMT');
+  assert.ok(!s.alerts.some(a => a.type === 'デリバリー担当なし'), '受注してデリバリー担当が空の E社も出さない');
+  assert.ok(!('デリバリー担当なし' in s.alertGaps));
+  assert.ok(!g.mtgGapList_(s).some(line => /デリバリー/.test(line)), '作り終えた画面の「データなし」にも出さない');
+  assert.deepStrictEqual(plain(g.mtgAlertTypes_()), plain(gas.get('MTG_ALERT_TYPES').filter(t => t !== 'デリバリー担当なし')));
+  const table = g.mtgAppendixOwners_(s)[0].elements.find(el => el.type === 'table');
+  assert.ok(!table.rows[0].cells.some(cell => /デリバリー/.test(cell.text)), '責任者別の表にも列を作らない');
+  // 空の見出しを、シートの空の見出しのセルと取り違えない
+  assert.strictEqual(g.mtgReadDeals_(gas.ss.getSheetByName('新FMT'), {headerRow: 2}).has.delivery, false);
+});
+
 test('クレデンシャル・オファリング履歴を使っていない間（CRED_OPTIONS.enabled: false）は、入力内容のチェックに「予定日超過」を出さない（列も作らない）', () => {
   const {gas, g} = setup({edits: false});
   const cred = gas.get('CRED_OPTIONS');
@@ -1141,12 +1291,12 @@ test('クレデンシャル・オファリング履歴を使っていない間�
 
 /* ---------------- 会議のフォルダへの格納 ---------------- */
 
-/** 新FMT のサブインダストリーのフォルダ（会議のフォルダ folders を中に置く）を用意し、DIFF_RULES の meetingFolder に設定する */
+/** 事前資料の格納先のフォルダ（全サブインダストリー共通。会議のフォルダ folders を中に置く）を用意し、MTG_OPTIONS.meetingFolder に設定する */
 function meetingFolders(gas, folders) {
   const parent = 'SubIndustryFolder0001';
   gas.driveFolders.push({id: parent, name: 'スーパー・GMS', parent: 'root'});
   folders.forEach((name, i) => gas.driveFolders.push({id: 'meeting-folder-' + i, name, parent}));
-  gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'https://drive.google.com/drive/folders/' + parent + '?usp=sharing';
+  gas.get('MTG_OPTIONS').meetingFolder = 'https://drive.google.com/drive/folders/' + parent + '?usp=sharing';
   return parent;
 }
 
@@ -1227,15 +1377,15 @@ test('会議のフォルダが無ければ「yyMMdd_RX Business Meeting_第N回�
 
 test('mtgMeetingFolder_：設定が無い・開けない・2つある・コピーできないときは理由を返す（止めない）。URL・ID のどちらでも設定できる', () => {
   const {gas, g} = setup({edits: false});
-  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /「新FMT」の会議のフォルダが設定されていない（test\.gs の DIFF_RULES の meetingFolder）/);
+  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /事前資料の格納先が設定されていない（MeetingSummary\.gs の MTG_OPTIONS\.meetingFolder）/);
   meetingFolders(gas, ['261023_第5回会議', '261023_第5回会議（予備）']);
   assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /「261023_」で始まる RX Business Meeting のフォルダが 2個ある（「261023_第5回会議」「261023_第5回会議（予備）」。1つにしてください）/);
   gas.driveFolders.pop();
   assert.strictEqual(g.mtgMeetingFolder_('新FMT', '2026/10/23').folder.getId(), 'meeting-folder-0');
-  gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'SubIndustryFolder0001';
+  gas.get('MTG_OPTIONS').meetingFolder = 'SubIndustryFolder0001';
   assert.strictEqual(g.mtgMeetingFolder_('新FMT', '2026/10/23').folder.getId(), 'meeting-folder-0', 'ID だけでもよい');
   gas.missingFolders = ['SubIndustryFolder0001'];
-  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /フォルダ（ID：SubIndustryFolder0001）を開けない/);
+  assert.match(g.mtgMeetingFolder_('新FMT', '2026/10/23').error, /事前資料の格納先のフォルダ（ID：SubIndustryFolder0001）を開けない/);
   gas.missingFolders = [];
   gas.copyErrors = ['meeting-folder-0'];
   const pdf = g.DriveApp.getFolderById('x').createFile({getName: () => '20261023_新FMT_RX Business Meeting用資料.pdf'});
@@ -1316,8 +1466,8 @@ test('インデックス：前の形式（行＝サブインダストリー）�
   assert.match(r.error, /「INDEX_会議資料」シートに書き込めませんでした（1行目に「日付」の見出しがありません）。前の形式（行がサブインダストリー）のシートは、エディタで rebuildBusinessMtgIndex\(\) を実行すると、今の形式で作り直します。/);
   assert.strictEqual(old.getRange(2, 2).getValue(), '前のチップ', '前の形式のシートは書き換えない');
 
-  // 会議のフォルダ：新FMT は 10/16・10/23（10/30 は資料なし）、新FMT2 は設定なし
-  gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'https://drive.google.com/drive/folders/SubIndustryFolder0001';
+  // 会議のフォルダ（全サブインダストリー共通の格納先の中）：新FMT は 10/16・10/23（10/30 は資料なし）、新FMT2 は資料なし
+  gas.get('MTG_OPTIONS').meetingFolder = 'https://drive.google.com/drive/folders/SubIndustryFolder0001';
   gas.driveFolders.push({id: 'm1023', name: year.slice(2) + '1023_第2回会議', parent: 'SubIndustryFolder0001'},
     {id: 'm1016', name: year.slice(2) + '1016_第1回会議', parent: 'SubIndustryFolder0001'},
     {id: 'm1030', name: year.slice(2) + '1030_第3回会議', parent: 'SubIndustryFolder0001'},
@@ -1344,7 +1494,7 @@ test('インデックス：前の形式（行＝サブインダストリー）�
   assert.ok(gas.writes.filter(w => w.sheet === 'INDEX_会議資料').every(w => w.locked), '書き込みはロックの中');
   const done = gas.alerts[gas.alerts.length - 1].message;
   assert.match(done, /「INDEX_会議資料」シートに、資料のファイルを 2件書きました。/);
-  assert.match(done, new RegExp('・新FMT：2件（' + year + '/10/16・' + year + '/10/23）\n・新FMT2：会議のフォルダが設定されていない'));
+  assert.match(done, new RegExp('・新FMT：2件（' + year + '/10/16・' + year + '/10/23）\n・新FMT2：資料なし'));
 
   // 今の形式なら消さずに書き直す（何度実行してもよい）
   gas.asUser(() => sheet.getRange(2, 3).setValue('全体の資料'));
@@ -1466,9 +1616,9 @@ test('前回からの変化を時点コピーと比べる：差分追跡を通�
   assert.deepStrictEqual(plain(s.copy), {title: copy.title, url: opened.url});
   assert.match(g.mtgAppendixChanges_(s)[0].lead, /うち 5件は変更の記録が無い（前回の時点コピーとの比較で検出）。/);
   assert.match(JSON.stringify(g.mtgCoverSlide_(s).elements), /出典：「新FMT」シート・前回の時点コピーおよび変更履歴/);
-  // 期待値の増減もコピーの値から：C社（5）が失注、F社（3）が削除、G社は期待値なし
-  assert.strictEqual(s.bridge.start, 10 + 5 + 40 + 3);
-  assert.strictEqual(s.bridge.end, 10 + 40);
+  // 期待値の増減もコピーの値から：C社（5）が失注、F社（3）が削除、G社は期待値なし。B社（受注 50）は前回も今も含む（失注だけを除く）
+  assert.strictEqual(s.bridge.start, 10 + 50 + 5 + 40 + 3);
+  assert.strictEqual(s.bridge.end, 10 + 50 + 40);
 });
 
 test('時点コピーと比べるとき：得意先・案件名を書き換えた案件は、変更の記録で前の名前とつなげる（新規・削除にしない）。値が戻っていれば変化なし', () => {
@@ -1527,7 +1677,7 @@ test('createBusinessMtgSummaries：シートと会議日を聞き、シートご
   assert.deepStrictEqual(gas.decks.map(d => [d.title, d.pageSize.width.magnitude, d.pageSize.height.magnitude]),
     [[file + '_新FMT_RX Business Meeting用資料', 720, 405], [file + '_新FMT2_RX Business Meeting用資料', 720, 405]], 'サブインダストリー（シート）ごとに1つ（統合版を使わない設定のとき）');
   const requests = gas.decks[0].requests;
-  assert.strictEqual(requests.filter(r => r.createSlide).length, 10, '表紙・本編4枚・扉・Appendix ①・②・③（責任者別・一覧）（停滞が無くても ② を出す）');
+  assert.strictEqual(requests.filter(r => r.createSlide).length, 12, '表紙・本編6枚・扉・Appendix ①・②・③（責任者別・一覧）（停滞が無くても ② を出す）');
   const inserted = deck => deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
   assert.match(inserted(gas.decks[1]), /^新FMT2\nRX Business Meeting　事前資料\n/);
   assert.match(inserted(gas.decks[1]), /\nサマリー\n/);
@@ -1544,10 +1694,10 @@ test('createBusinessMtgSummaries：シートと会議日を聞き、シートご
   ]);
   assert.deepStrictEqual(plain(gas.moved), [{id: 'deck-1', folder: 'folder-1'}, {id: 'deck-2', folder: 'folder-1'}], 'スライドも同じフォルダに残す');
   assert.deepStrictEqual(plain(gas.driveCopies.filter(c => c.from === gas.ss.getId()).map(c => c.folder)), ['folder-2'], '時点コピーは、その中のフォルダ');
-  // ひな形が無いので、表紙（1枚目）と扉（6枚目）の背景を、緑のグラデーションと RX の画像にする（PDF にする前に保存する）
+  // ひな形が無いので、表紙（1枚目）と扉（8枚目）の背景を、緑のグラデーションと RX の画像にする（PDF にする前に保存する）
   assert.deepStrictEqual(gas.slideBackgrounds.map(b => [b.deck, b.page, b.blob.getContentType(), b.blob.getName()]), [
-    ['deck-1', 'mtg_p1', 'image/png', 'meeting-cover.png'], ['deck-1', 'mtg_p6', 'image/png', 'meeting-divider.png'],
-    ['deck-2', 'mtg_p1', 'image/png', 'meeting-cover.png'], ['deck-2', 'mtg_p6', 'image/png', 'meeting-divider.png']], '表紙は緑、扉はグレーの絵柄');
+    ['deck-1', 'mtg_p1', 'image/png', 'meeting-cover.png'], ['deck-1', 'mtg_p8', 'image/png', 'meeting-divider.png'],
+    ['deck-2', 'mtg_p1', 'image/png', 'meeting-cover.png'], ['deck-2', 'mtg_p8', 'image/png', 'meeting-divider.png']], '表紙は緑、扉はグレーの絵柄');
   assert.deepStrictEqual(gas.slideBackgrounds[0].blob.getBytes().slice(0, 4), [-119, 80, 78, 71], 'PNG（バイトは -128〜127 で渡す）');
   assert.deepStrictEqual(gas.decks.map(d => d.savedAndClosed), [1, 1]);
   assert.deepStrictEqual(gas.trashed, []);
@@ -1646,8 +1796,8 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   const deck = gas.decks.find(d => d.template === id);
   const r = plain(deck.requests);
   assert.deepStrictEqual(r.filter(q => q.deleteObject && /_ph\d$/.test(q.deleteObject.objectId)).map(q => q.deleteObject.objectId),
-    ['mtg_p2_ph0', 'mtg_p2_ph1', 'mtg_p3_ph0', 'mtg_p3_ph1', 'mtg_p4_ph0', 'mtg_p4_ph1', 'mtg_p5_ph0', 'mtg_p5_ph1',
-      'mtg_p7_ph0', 'mtg_p7_ph1', 'mtg_p8_ph0', 'mtg_p8_ph1', 'mtg_p9_ph0', 'mtg_p9_ph1', 'mtg_p10_ph0', 'mtg_p10_ph1'],
+    ['mtg_p2_ph0', 'mtg_p2_ph1', 'mtg_p3_ph0', 'mtg_p3_ph1', 'mtg_p4_ph0', 'mtg_p4_ph1', 'mtg_p5_ph0', 'mtg_p5_ph1', 'mtg_p6_ph0', 'mtg_p6_ph1',
+      'mtg_p7_ph0', 'mtg_p7_ph1', 'mtg_p9_ph0', 'mtg_p9_ph1', 'mtg_p10_ph0', 'mtg_p10_ph1', 'mtg_p11_ph0', 'mtg_p11_ph1', 'mtg_p12_ph0', 'mtg_p12_ph1'],
     '足したスライドのレイアウトの枠（ページ番号など）は消す（ページ番号が2つ出ないように）');
   assert.ok(deck.slides.every(sl => !(sl.pageElements || []).some(el => el.shape && el.shape.placeholder)));
   assert.deepStrictEqual(r[0], {deleteObject: {objectId: 'g_combined'}}, '使わないページ（統合版の表紙）は消す');
@@ -1669,12 +1819,13 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   assert.deepStrictEqual(texts('g_divider'), [['入れる', 'title', 0, 'Appendix'], ['消す', 'title', 'FIXED_RANGE', 8, 13],
     ['消す', 'subtitle', 'ALL', undefined, undefined], ['消す', 'date', 'ALL', undefined, undefined], ['消す', 'name', 'ALL', undefined, undefined]]);
   assert.ok(r.some(q => q.createShape && q.createShape.elementProperties.pageObjectId === 'g_divider'), '扉に一覧を足す');
-  assert.ok(!r.some(q => q.createSlide && q.createSlide.objectId === 'mtg_p6'), '扉はひな形のページ（作らない）');
+  assert.ok(!r.some(q => q.createSlide && q.createSlide.objectId === 'mtg_p8'), '扉はひな形のページ（作らない）');
   assert.ok(!r.some(q => q.deleteObject && /^g_(cover|divider)$/.test(q.deleteObject.objectId)), '表紙・扉（ひな形の1・2枚目）は消さない');
-  assert.deepStrictEqual(r.filter(q => q.createSlide).map(q => q.createSlide.insertionIndex), [1, 2, 3, 4, 6, 7, 8, 9]);
+  assert.deepStrictEqual(r.filter(q => q.createSlide).map(q => q.createSlide.insertionIndex), [1, 2, 3, 4, 5, 6, 8, 9, 10, 11]);
   // 最後に、1枚目から順に決まった位置に動かす（ひな形の扉のページは表紙の次にあるため）
   const moves = r.filter(q => q.updateSlidesPosition).map(q => [q.updateSlidesPosition.slideObjectIds[0], q.updateSlidesPosition.insertionIndex]);
-  assert.deepStrictEqual(moves, ['g_cover', 'mtg_p2', 'mtg_p3', 'mtg_p4', 'mtg_p5', 'g_divider', 'mtg_p7', 'mtg_p8', 'mtg_p9', 'mtg_p10'].map((id, i) => [id, i]));
+  assert.deepStrictEqual(moves, ['g_cover', 'mtg_p2', 'mtg_p3', 'mtg_p4', 'mtg_p5', 'mtg_p6', 'mtg_p7', 'g_divider', 'mtg_p9', 'mtg_p10', 'mtg_p11', 'mtg_p12']
+    .map((id, i) => [id, i]));
   // 本編はページの大きさ（960 × 540pt）に合わせて 4/3 倍
   const title = r.find(q => q.createShape && q.createShape.elementProperties.pageObjectId === 'mtg_p2').createShape;
   assert.deepStrictEqual([title.elementProperties.size.width.magnitude, title.elementProperties.transform.translateX], [901.33, 29.33]);
@@ -1696,8 +1847,8 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   assert.deepStrictEqual(JSON.parse(props.getProperty('MTG_TEMPLATE_CONVERTED')), {source: pptx, updated: 2000, id: id2});
   assert.ok(gas.trashed.indexOf(id) >= 0, '前に変換したものはゴミ箱へ');
   const one = gas.decks[gas.decks.length - 1];
-  assert.ok(one.requests.some(q => q.createSlide && q.createSlide.objectId === 'mtg_p6'));
-  assert.deepStrictEqual(plain(gas.slideBackgrounds.map(b => [b.deck, b.page, b.blob.getName()])), [[one.id, 'mtg_p6', 'meeting-divider.png']]);
+  assert.ok(one.requests.some(q => q.createSlide && q.createSlide.objectId === 'mtg_p8'));
+  assert.deepStrictEqual(plain(gas.slideBackgrounds.map(b => [b.deck, b.page, b.blob.getName()])), [[one.id, 'mtg_p8', 'meeting-divider.png']]);
 
   // 空欄で登録を外すと、ひな形なしで作る
   gas.promptAnswers = [''];
@@ -1762,11 +1913,8 @@ test('スプレッドシートの画面に出せないとき（エディタを�
   assert.deepStrictEqual(['新FMT', '新FMT2'].map(name => JSON.parse(props.getProperty('MTG_MEETINGS_' + name)).map(m => !!m.baseline)), [[true], [true]]);
   assert.ok(gas.logs.some(l => /「新FMT」「新FMT2」に、基準（.*）を記録しました。[\s\S]*確かめずにすべての追跡シートに記録しました/.test(l.line)), '実行ログに書く');
   assert.deepStrictEqual([gas.prompts.length, gas.alerts.length], [0, 0]);
-  ['createBusinessMtgSummaries', 'previewBusinessMtgSummaries', 'removeBusinessMtgRecord', 'setBusinessMtgChat', 'notifyBusinessMtgSummaries', 'setMeetingTemplate'].forEach(fn => {
-    if (fn === 'notifyBusinessMtgSummaries') {
-      g.PropertiesService.getScriptProperties().setProperty('MTG_CHAT_WEBHOOK', 'https://chat.googleapis.com/v1/spaces/A/messages?key=k&token=t');
-      g.PropertiesService.getScriptProperties().setProperty('MTG_CHAT_URL', 'https://drive.google.com/file/d/abcdefghijk/view');
-    }
+  ['createBusinessMtgSummaries', 'previewBusinessMtgSummaries', 'removeBusinessMtgRecord', 'setMeetingTemplate',
+    'setBusinessMtgSubChats', 'remindBusinessMtgUpdate', 'notifySubBusinessMtgSummaries', 'createBusinessMtgScenarioSummary'].forEach(fn => {
     assert.throws(() => g[fn](), /スプレッドシートの画面に、入力・確かめの画面を出せません。スプレッドシートを開いたまま、そのスプレッドシートの「拡張機能」→「Apps Script」から開いたエディタで実行してください/, fn);
   });
 });
@@ -1776,33 +1924,38 @@ test('removeBusinessMtgRecord：会議日の記録を取り消す（はいのと
   gas.get('MTG_OPTIONS').keepSlides = true;   // Google スライドも残す設定で確かめる
   const props = g.PropertiesService.getDocumentProperties();
   const lastAlert = () => gas.alerts[gas.alerts.length - 1];
+  // 会議日は今日より後にする（過ぎた日付だと、資料を作る画面で選べないため。テストを実行する日に左右されないように）
+  const md = days => { const d = new Date(Date.now() + 9 * 3600000 + days * 86400000); return (d.getUTCMonth() + 1) + '/' + d.getUTCDate(); };
+  const DAY = md(7);
+  const OTHER = md(14);
   gas.promptAnswers = ['1'];
   g.setBusinessMtgBaseline();
-  gas.promptAnswers = ['1', '10/23'];
+  gas.promptAnswers = ['1', DAY];
   g.createBusinessMtgSummaries();
-  const meeting = g.mtgParseDate_('10/23', new Date());
+  const meeting = g.mtgParseDate_(DAY, new Date());
   const files = gas.driveFiles.length;
 
-  gas.promptAnswers = ['1', '10/30'];
+  gas.promptAnswers = ['1', OTHER];
   g.removeBusinessMtgRecord();
-  assert.match(gas.prompts[gas.prompts.length - 1].message, /取り消す会議日を入力してください（例：10\/23）。\n\n記録してある会議日\n・新FMT：10\/23$/);
-  assert.match(lastAlert().message, /会議日 \d{4}\/10\/30 の記録はありません。/);
+  const ask = gas.prompts[gas.prompts.length - 1].message;
+  assert.ok(ask.startsWith('取り消す会議日を入力してください（例：') && ask.endsWith('記録してある会議日\n・新FMT：' + DAY), ask);
+  assert.ok(lastAlert().message.includes('会議日 ' + g.mtgParseDate_(OTHER, new Date()) + ' の記録はありません。'), lastAlert().message);
 
   gas.confirmAnswer = 'NO';
-  gas.promptAnswers = ['1', '10/23'];
+  gas.promptAnswers = ['1', DAY];
   g.removeBusinessMtgRecord();
-  assert.match(lastAlert().message, /「新FMT」の会議日（\d{4}\/10\/23）の記録を取り消します。/);
+  assert.ok(lastAlert().message.includes('「新FMT」の会議日（' + meeting + '）の記録を取り消します。'), lastAlert().message);
   assert.deepStrictEqual(JSON.parse(props.getProperty('MTG_MEETINGS_新FMT')).map(m => m.date).slice(-1), [meeting], '「いいえ」なら消さない');
 
   gas.confirmAnswer = 'YES';
-  gas.promptAnswers = ['1', '10/23'];
+  gas.promptAnswers = ['1', DAY];
   g.removeBusinessMtgRecord();
-  assert.match(lastAlert().message, /「新FMT」の会議日（\d{4}\/10\/23）の記録を取り消しました。/);
+  assert.ok(lastAlert().message.includes('「新FMT」の会議日（' + meeting + '）の記録を取り消しました。'), lastAlert().message);
   const list = JSON.parse(props.getProperty('MTG_MEETINGS_新FMT'));
   assert.deepStrictEqual(list.map(m => !!m.baseline), [true], '基準の記録は残す');
   assert.strictEqual(gas.driveFiles.length, files);
   assert.deepStrictEqual(gas.trashed, [], '資料のファイルは消さない');
-  gas.promptAnswers = ['1', '10/23'];
+  gas.promptAnswers = ['1', DAY];
   g.createBusinessMtgSummaries();
   assert.match(gas.alerts.filter(a => /本番の資料を作り/.test(a.message)).pop().message, /・新FMT：基準（/, '取り消したあとは、基準からの変化に戻る');
   assert.throws(() => { gas.promptAnswers = ['1', 'あした']; g.removeBusinessMtgRecord(); }, /「あした」を会議日として読めません。/);
@@ -1842,157 +1995,134 @@ const WEBHOOK = 'https://chat.googleapis.com/v1/spaces/AAAAtest123/messages?key=
 const DEMO_URL = 'https://drive.google.com/drive/folders/demo-folder-0001';
 /** 送った文（webhook に送った JSON の text） */
 const sentText = fetch => JSON.parse(fetch.params.payload).text;
+/** 送ったカード（cardsV2 の1枚目） */
+const sentCard = fetch => JSON.parse(fetch.params.payload).cardsV2[0].card;
+/** カードの部品（見出しつきの区切りごと）：[[見出し, 文・ラベル：値・［ボタン］ URL]] */
+const cardLines = card => card.sections.map(sec => [sec.header || ''].concat(sec.widgets.map(w => w.textParagraph ? w.textParagraph.text
+  : w.decoratedText ? w.decoratedText.topLabel + '：' + w.decoratedText.text
+    : w.buttonList.buttons.map(b => '［' + b.text + '］ ' + b.onClick.openLink.url + (b.color ? '（色つき）' : '')).join(' '))));
 
-test('setBusinessMtgChat：webhook の URL と資料の格納先の URL を登録する（トリガーは作らない。前の版の自動通知のトリガーは外す）。確かめのメッセージを送れる。空欄で外す', () => {
+test('サブインダストリーごとのチャット：setBusinessMtgSubChats でシートごとに webhook を登録し（スクリプトのプロパティ。空欄は今のまま・「削除」で外す）、確かめのメッセージを送れる', () => {
   const {gas, g} = setup({edits: false});
   const props = g.PropertiesService.getScriptProperties();
-  g.ScriptApp.newTrigger('mtgNotifyScheduled').timeBased().everyDays(1).create();   // 前の版で作った自動通知のトリガー
-  gas.promptAnswers = [WEBHOOK, DEMO_URL];
-  g.setBusinessMtgChat();
-  assert.match(gas.prompts[0].message, /webhook の URL を貼り付けてください[\s\S]*今の設定：未設定$/);
-  assert.match(gas.prompts[1].message, /^送る資料の格納先の URL を貼り付けてください/);
-  assert.deepStrictEqual([props.getProperty('MTG_CHAT_WEBHOOK'), props.getProperty('MTG_CHAT_URL')], [WEBHOOK, DEMO_URL],
-    'URL はスクリプトのプロパティに残す（コードに書かない）');
-  assert.deepStrictEqual(gas.triggers.filter(t => t.getHandlerFunction() === 'mtgNotifyScheduled').length, 0, '前の版の自動通知のトリガーは外す');
-  assert.strictEqual(gas.fetches.length, 1, '確かめのメッセージ（「はい」のとき）');
-  assert.strictEqual(gas.fetches[0].url, WEBHOOK);
-  assert.deepStrictEqual([gas.fetches[0].params.method, gas.fetches[0].params.contentType], ['post', 'application/json; charset=UTF-8']);
-  assert.strictEqual(sentText(gas.fetches[0]), '【テスト送信】会議サマリの通知の設定を確認するためのメッセージです。\n' +
-    '今後、RX Business Meeting の事前資料のご案内をこちらにお送りいたします。');
-  assert.match(gas.alerts[gas.alerts.length - 1].message,
-    new RegExp('・送り先：スペース AAAAtest123\n・送る URL：' + DEMO_URL + '\n・notifyBusinessMtgSummaries\\(\\) を実行すると、資料のファイルのリンクをすぐに送ります（フォルダなら、その中でいちばん新しい PDF）。\n・前の版の自動通知（2日前）のトリガーを外しました。'));
-
-  // 格納先の URL は空欄なら今のまま。確かめのメッセージは「いいえ」なら送らない
-  gas.confirmAnswer = 'NO';
-  gas.promptAnswers = [WEBHOOK, ''];
-  g.setBusinessMtgChat();
-  assert.match(gas.prompts[2].message, /今の設定：スペース AAAAtest123 に送る$/);
-  assert.match(gas.prompts[3].message, new RegExp('空欄なら今の URL のまま：' + DEMO_URL + '$'));
-  assert.strictEqual(props.getProperty('MTG_CHAT_URL'), DEMO_URL);
-  assert.strictEqual(gas.fetches.length, 1);
-  assert.ok(gas.alerts.concat(gas.prompts).every(a => !/KEY123|TOKEN456/.test(a.message)) &&
-    gas.logs.every(l => !/KEY123|TOKEN456/.test(l.line)), '鍵・トークンは画面・ログに出さない');
-
-  gas.promptAnswers = ['https://example.com/hook'];
-  assert.throws(() => g.setBusinessMtgChat(), /Google チャットの webhook の URL ではありません。/);
-  gas.promptAnswers = [WEBHOOK, 'デモのフォルダ'];
-  assert.throws(() => g.setBusinessMtgChat(), /資料の格納先の URL を読めません。/);
-  assert.strictEqual(props.getProperty('MTG_CHAT_URL'), DEMO_URL, '間違えたときは今の設定のまま');
-
-  gas.promptAnswers = [''];
-  g.setBusinessMtgChat();
-  assert.deepStrictEqual([props.getProperty('MTG_CHAT_WEBHOOK'), props.getProperty('MTG_CHAT_URL')], [null, null]);
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /通知の設定を外しました。/);
+  const hook = id => 'https://chat.googleapis.com/v1/spaces/' + id + '/messages?key=KEY' + id + '&token=TOKEN' + id;
+  props.setProperty('MTG_CHAT_WEBHOOK', hook('OLD'));   // 前の版の全体のスペースへの通知の設定
+  props.setProperty('MTG_CHAT_URL', 'https://drive.google.com/drive/folders/old');
+  g.ScriptApp.newTrigger('mtgNotifyScheduled').timeBased().everyDays(1).create();   // 前の版の自動通知のトリガー
+  gas.promptAnswers = ['', hook('SPACE1'), hook('SPACE2')];   // シート：すべて → 新FMT・新FMT2 の webhook
+  g.setBusinessMtgSubChats();
+  assert.deepStrictEqual([props.getProperty('MTG_CHAT_WEBHOOK'), props.getProperty('MTG_CHAT_URL')], [null, null], '全体のスペースへの通知の設定は消す（使わない）');
+  assert.strictEqual(gas.triggers.filter(t => t.getHandlerFunction() === 'mtgNotifyScheduled').length, 0, '前の版の自動通知のトリガーは外す');
+  assert.strictEqual(typeof g.notifyBusinessMtgSummaries, 'undefined', '全体のスペースへの通知の関数は無い');
+  assert.match(gas.prompts[0].message, /今の設定：\n・新FMT：未登録\n・新FMT2：未登録/);
+  assert.deepStrictEqual([props.getProperty('MTG_SUBCHAT_新FMT'), props.getProperty('MTG_SUBCHAT_新FMT2')], [hook('SPACE1'), hook('SPACE2')]);
+  assert.deepStrictEqual(gas.fetches.map(f => f.url), [hook('SPACE1'), hook('SPACE2')], '確かめのメッセージ（「はい」のとき）');
+  assert.match(sentText(gas.fetches[0]), /^【テスト送信】新FMT の RX Business Meeting/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /・新FMT：スペース SPACE1 に送ります\n・新FMT2：スペース SPACE2 に送ります[\s\S]*確かめのメッセージ：\n・新FMT：送りました\n・新FMT2：送りました/);
+  // 空欄は今のまま、「削除」で外す。webhook でない URL は止める
+  gas.promptAnswers = ['', '', '削除'];
+  g.setBusinessMtgSubChats();
+  assert.deepStrictEqual([props.getProperty('MTG_SUBCHAT_新FMT'), props.getProperty('MTG_SUBCHAT_新FMT2')], [hook('SPACE1'), null]);
+  gas.promptAnswers = ['1', 'https://example.com/hook'];
+  assert.throws(() => g.setBusinessMtgSubChats(), /「新FMT」：Google チャットの webhook の URL ではありません。/);
+  assert.ok(gas.alerts.concat(gas.prompts).every(a => !/KEY|TOKEN/.test(a.message)) && gas.logs.every(l => !/KEY|TOKEN/.test(l.line)), '鍵・トークンは画面・ログに出さない');
 });
 
-test('notifyBusinessMtgSummaries：会議日程を聞き、格納先のフォルダの、いちばん新しい PDF のリンク（ファイル名で表示）と一緒に、確かめのあとすぐに送る。失敗は1回だけやり直し、だめなら止める', () => {
+test('remindBusinessMtgUpdate：管理フォーマットの更新のお願いを、サブインダストリーごとのスペースに送る（会議日・締め切り・今の入力状況・シートのリンク）。未登録のシートには送らない', () => {
   const {gas, g} = setup({edits: false});
-  gas.promptAnswer = '2026/10/23';   // 会議日程（ほかの答えを決めていなければこれ）
-  assert.throws(() => g.notifyBusinessMtgSummaries(), /先に setBusinessMtgChat\(\) で webhook の URL と資料の格納先の URL を登録してください。/);
   const props = g.PropertiesService.getScriptProperties();
-  props.setProperty('MTG_CHAT_WEBHOOK', WEBHOOK);
-  props.setProperty('MTG_CHAT_URL', DEMO_URL);
-  assert.throws(() => g.notifyBusinessMtgSummaries(), /資料の格納先のフォルダ（demo-folder-0001）にファイルがありません。資料を置いてから送ってください。/);
-  assert.strictEqual(gas.prompts.length, 0, '資料が無ければ、会議日程を聞かずに知らせる');
-
-  // 格納先のフォルダ：古い PDF・新しい PDF・もっと新しいスライド（PDF を選ぶ）・ほかのフォルダの PDF
-  const file = (id, folder, name, type, daysAgo) => gas.driveFiles.push({id, folder, name, blob: {getContentType: () => type},
-    updated: Date.now() - daysAgo * 86400000});
-  file('pdf-old', 'demo-folder-0001', '会議サマリ_デモ_旧.pdf', 'application/pdf', 5);
-  file('pdf-new', 'demo-folder-0001', '会議サマリ_デモ.pdf', 'application/pdf', 1);
-  file('slide-1', 'demo-folder-0001', '会議サマリ_デモ（スライド）', 'application/vnd.google-apps.presentation', 0);
-  file('pdf-other-0001', 'other-folder-0001', '別の資料.pdf', 'application/pdf', 0);
-  const lines = (link, schedule) => [
-    '*【RX Business Meeting】事前資料のご案内*',
-    'RX Business Meeting の事前資料を、下記に格納いたしました。',
-    'お手数ですが、会議の前にご一読いただけますと幸いです。',
-    '',
-    '▼ 会議日程',
-    schedule || '2026年10月23日（金）9:00〜10:30',
-    '',
-    '▼ 目的',
-    '案件の進捗・受注見込みを確認し、優先順位と次のアクションを決める',
-    '',
-    '▼ 議題',
-    '・更新シートで進捗報告',
-    '・重点案件の状況・課題',
-    '・質疑・フィードバック',
-    '・サービス連携テーマ',
-    '',
-    '▼ 事前資料',
-    link
-  ].join('\n');
-  const url = 'https://drive.google.com/file/d/pdf-new/view';
-
+  assert.throws(() => g.remindBusinessMtgUpdate(), /先に setBusinessMtgSubChats\(\) で webhook の URL を登録してください。/);
+  const hook = 'https://chat.googleapis.com/v1/spaces/SPACE1/messages?key=K&token=T';
+  props.setProperty('MTG_SUBCHAT_新FMT', hook);
+  gas.promptAnswers = [''];   // 会議日を入れずに、会議日程の一覧にも無ければ止める
+  assert.throws(() => g.remindBusinessMtgUpdate(), /会議日を入力してください（会議日程の一覧に、今日以降の会議がありません）。/);
   gas.confirmAnswer = 'NO';
-  g.notifyBusinessMtgSummaries();
-  assert.strictEqual(gas.alerts[gas.alerts.length - 1].message,
-    'Google チャット（スペース AAAAtest123）に、次のメッセージをすぐに送ります。よろしいですか？\n\n' + lines('会議サマリ_デモ.pdf\n' + url),
-    '確かめの画面には、ファイル名と URL を出す');
+  gas.promptAnswers = ['2026/10/23', ''];
+  g.remindBusinessMtgUpdate();
   assert.strictEqual(gas.fetches.length, 0, '「いいえ」なら送らない');
-  assert.deepStrictEqual(gas.prompts.map(pr => pr.message), [
-    '会議日程を入力してください（例：10/23）。\n時刻を省くと「9:00〜10:30」にします。ほかの時刻のときは「10/23 13:00〜14:30」のように入力してください。'
-  ], '聞くのは会議日程だけ');
-
+  const confirm = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(confirm, /・新FMT：スペース SPACE1\n\n送らないシート：\n・新FMT2：webhook が未登録/);
   gas.confirmAnswer = 'YES';
-  g.notifyBusinessMtgSummaries();
-  assert.deepStrictEqual(gas.fetches.map(f => [f.url, sentText(f)]), [[WEBHOOK, lines('<' + url + '|会議サマリ_デモ.pdf>')]],
-    'フォルダの中のいちばん新しい PDF のリンク（ファイル名で表示）');
-  assert.strictEqual(gas.alerts[gas.alerts.length - 1].message, 'Google チャットに送りました：会議サマリ_デモ.pdf\n' + url);
+  gas.promptAnswers = ['2026/10/23', ''];
+  g.remindBusinessMtgUpdate();
+  assert.deepStrictEqual(gas.fetches.map(f => f.url), [hook]);
+  // カード（cardsV2）：見出し（題・サブインダストリーと会議日程）、文、更新期限（赤の太字）、更新していただきたい項目、今の入力状況、ボタン（管理フォーマット・過去の事前資料）
+  const card = sentCard(gas.fetches[0]);
+  // 題：最初のまとまりに太字の題と灰色のサブインダストリー・会議日程（カードの見出し欄は太字にできないので使わない）
+  assert.strictEqual(card.header, undefined);
+  assert.strictEqual(card.sections[0].widgets[0].textParagraph.text,
+    '<b>【RX Business Meeting】管理フォーマットの更新のお願い</b><br><font color="#5F6368">新FMT　2026年10月23日（金）9:00〜10:30</font>');
+  // 区切りの線は題と本文の間だけ。本文の部品はすべて1つのまとまりに（見出しは太字の文）
+  assert.strictEqual(card.sections.length, 2);
+  const parts = plain(cardLines(card))[1].slice(1);
+  assert.deepStrictEqual(parts.slice(0, 3), [
+    '2026年10月23日（金）9:00〜10:30 の「RX Business Meeting」に向けて、事前資料（新FMT）を作成します。<br>お手数ですが、更新期限までに、管理フォーマットの案件の情報を最新にしてください。',
+    '更新期限：<font color="#D93025"><b>10月21日（水） 17:00</b></font>',
+    '<b>更新していただきたい項目</b><br>・案件ステータス・想定売上・期待値・受注月<br>・活動状況・活動における課題・次回アクション']);
+  // 今の入力状況：進行中は A社・C社・D社・E社・F社。必須項目が空は D社・F社（活動状況）、受注月を過ぎているのは A社、最終更新から30日以上は E社
+  assert.match(parts[3], /^<b>今の入力状況（\d{1,2}\/\d{1,2} \d{2}:\d{2} 時点）<\/b><br>/);
+  const stats = parts[3].split('<br>').slice(1);
+  assert.ok(stats.indexOf('・進行中の案件 5件') >= 0 && stats.some(l => /^・必須項目（案件ステータス・.*・活動状況・アカウント責任者）が未入力の案件 2件$/.test(l)) &&
+    stats.indexOf('・受注月を過ぎている案件 1件') >= 0 && stats.indexOf('・最終更新から 30日以上たっている案件 1件') >= 0, parts[3]);
+  // 0件のものは書かない（新FMT2 は A社・B社だけ：必須項目の未入力・最終更新から30日以上は0件）
+  assert.deepStrictEqual(plain(g.mtgUpdateStats_(gas.ss, '新FMT2', new Date())), ['・進行中の案件 1件', '・受注月を過ぎている案件 1件']);
+  // ボタンのすぐ上に開くものの名前、ボタン：管理フォーマットのシート（色つき）。過去の事前資料は、格納先もインデックスのシートも無いので出さない
+  assert.strictEqual(parts[4], '管理フォーマット：「新FMT」シート');
+  assert.match(parts[5], /^［管理フォーマットを開く］ https:\/\/docs\.google\.com\/spreadsheets\/d\/spreadsheet-id\/edit#gid=\d+（色つき）$/, 'シートを開くボタン');
+  assert.match(confirm, /【RX Business Meeting】管理フォーマットの更新のお願い】\n新FMT　/, '確かめの画面にはカードの中身を文で出す');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^管理フォーマットの更新のお願いを送りました（1\/1スペース）。\n・新FMT：送りました/);
+  // 送れなかったスペースがあっても、ほかは送る（理由を出す）
+  props.setProperty('MTG_SUBCHAT_新FMT2', hook.replace('SPACE1', 'SPACE2'));
+  gas.fetchStatuses = [403];
+  gas.promptAnswers = ['10/23', ''];
+  g.remindBusinessMtgUpdate();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /（1\/2スペース）。\n・新FMT：送れませんでした（Google チャットに送れませんでした（HTTP 403）[\s\S]*・新FMT2：送りました/);
+});
 
-  // 会議日程：時刻を書けばその時刻（全角でもよい）。やめたら送らない。読めなければ止める
-  gas.promptAnswers = ['１０／２３　１３：００～１４：３０'];
-  gas.confirmAnswer = 'NO';
-  g.notifyBusinessMtgSummaries();
-  assert.ok(gas.alerts[gas.alerts.length - 1].message.indexOf('▼ 会議日程\n' + g.mtgParseDate_('10/23', new Date()).slice(0, 4) +
-    '年10月23日（') >= 0 && /）13:00〜14:30\n/.test(gas.alerts[gas.alerts.length - 1].message), gas.alerts[gas.alerts.length - 1].message);
-  gas.confirmAnswer = 'YES';
-  gas.promptButton = 'CANCEL';
-  g.notifyBusinessMtgSummaries();
-  assert.strictEqual(gas.fetches.length, 1, '会議日程を聞かれてやめたら送らない');
-  gas.promptButton = 'OK';
-  gas.promptAnswers = ['あした'];
-  assert.throws(() => g.notifyBusinessMtgSummaries(), /「あした」を会議日程として読めません。/);
-  assert.strictEqual(gas.fetches.length, 1);
-  gas.get('MTG_OPTIONS').chat.meetingTime = '';
-  gas.promptAnswers = ['2026/11/6 15:00〜16:00'];
-  g.notifyBusinessMtgSummaries();
-  assert.match(sentText(gas.fetches[1]), /\n▼ 会議日程\n2026年11月6日（金）15:00〜16:00\n/);
-  gas.fetches.pop();
-  g.notifyBusinessMtgSummaries();
-  assert.match(sentText(gas.fetches[1]), /\n▼ 会議日程\n2026年10月23日（金）\n/, '時刻の設定が空なら日付だけ');
-  gas.fetches.pop();
-  gas.get('MTG_OPTIONS').chat.meetingTime = '9:00〜10:30';
-
-  // ゴミ箱に移した PDF は選ばない。PDF が無ければ、いちばん新しいファイル
-  gas.trashed.push('pdf-new');
-  g.notifyBusinessMtgSummaries();
-  assert.match(sentText(gas.fetches[1]), /<https:\/\/drive\.google\.com\/file\/d\/pdf-old\/view\|会議サマリ_デモ_旧\.pdf>/);
-  gas.trashed.push('pdf-old');
-  g.notifyBusinessMtgSummaries();
-  assert.match(sentText(gas.fetches[2]), /<https:\/\/drive\.google\.com\/file\/d\/slide-1\/view\|会議サマリ_デモ（スライド）>/);
-
-  // ファイルの URL を登録したときは、そのファイル。ドライブ以外の URL はそのまま
-  props.setProperty('MTG_CHAT_URL', 'https://drive.google.com/file/d/pdf-other-0001/view?usp=sharing');
-  g.notifyBusinessMtgSummaries();
-  assert.match(sentText(gas.fetches[3]), /\n<https:\/\/drive\.google\.com\/file\/d\/pdf-other-0001\/view\|別の資料\.pdf>$/);
-  props.setProperty('MTG_CHAT_URL', 'https://example.com/demo.pdf');
-  g.notifyBusinessMtgSummaries();
-  assert.match(sentText(gas.fetches[4]), /\n<https:\/\/example\.com\/demo\.pdf\|https:\/\/example\.com\/demo\.pdf>$/);
-
-  // 文は MTG_OPTIONS.chat.message で変えられる（{meeting}・{date}・{file}・{url} を置き換える）
-  props.setProperty('MTG_CHAT_URL', 'https://drive.google.com/file/d/pdf-other-0001/view');
-  gas.get('MTG_OPTIONS').chat.message = ['{meeting}（{date}）：{file}（{url}）'];
-  gas.fetchStatuses = [503, 200];
-  g.notifyBusinessMtgSummaries();
-  assert.strictEqual(gas.fetches.length, 7, '一時的な失敗（5xx）は1回だけやり直す');
-  assert.strictEqual(sentText(gas.fetches[6]),
-    'RX Business Meeting（2026年10月23日（金）9:00〜10:30）：<https://drive.google.com/file/d/pdf-other-0001/view|別の資料.pdf>（https://drive.google.com/file/d/pdf-other-0001/view）');
-
-  gas.fetchStatuses = [404];
-  gas.fetchText = '{"error": {"message": "Requested entity was not found."}}';
-  assert.throws(() => g.notifyBusinessMtgSummaries(), error => /Google チャットに送れませんでした（HTTP 404）：.*Requested entity/.test(error.message) &&
-    !/KEY123|TOKEN456/.test(error.message));
+test('notifySubBusinessMtgSummaries：その会議日の本番の事前資料（PDF）のリンクを、サブインダストリーごとのスペースに送る。PDF が無いシートには送らない', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getScriptProperties();
+  props.setProperty('MTG_SUBCHAT_新FMT', 'https://chat.googleapis.com/v1/spaces/SPACE1/messages?key=K&token=T');
+  props.setProperty('MTG_SUBCHAT_新FMT2', 'https://chat.googleapis.com/v1/spaces/SPACE2/messages?key=K&token=T');
+  gas.promptAnswers = ['1', '10/23'];
+  g.createBusinessMtgSummaries();   // 新FMT だけ本番の資料を作る
+  const fetched = gas.fetches.length;
+  gas.promptAnswers = ['10/23', ''];
+  g.notifySubBusinessMtgSummaries();
+  const sent = gas.fetches.slice(fetched);
+  assert.deepStrictEqual(sent.map(f => f.url.replace(/\?.*/, '')), ['https://chat.googleapis.com/v1/spaces/SPACE1/messages']);
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  const pdf = meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料.pdf';
+  const card = sentCard(sent[0]);
+  assert.strictEqual(card.sections[0].widgets[0].textParagraph.text,
+    '<b>【RX Business Meeting】事前資料のご案内</b><br><font color="#5F6368">新FMT　' + g.mtgDateLabel_(meeting) + '9:00〜10:30</font>');
+  assert.strictEqual(card.sections.length, 2, '区切りの線は題と本文の間だけ');
+  const parts = plain(cardLines(card))[1].slice(1);
+  assert.deepStrictEqual(parts.slice(0, 4), [
+    g.mtgDateLabel_(meeting) + '9:00〜10:30 の「RX Business Meeting」の事前資料（新FMT）が作成されました。',
+    '<b>レビュアーの方々</b><br>お手数ですが、会議の前にご一読いただきレビュー観点を整理ください。',
+    '<b>発表者の方々</b><br>資料内容をご確認の上、発表内容のご準備をお願いいたします。',
+    '事前資料：' + pdf], 'ファイル名はボタンのすぐ上');
+  // ボタン：事前資料の PDF（色つき）。過去の事前資料は、格納先もインデックスのシートも無いので出さない
+  assert.match(parts[4], /^［事前資料を開く］ https:\/\/drive\.google\.com\/file\/d\/[^ ]+（色つき）$/, parts[4]);
+  // 過去の事前資料：格納先が無ければ会議資料のインデックスのシート、格納先があればそのフォルダ
+  gas.addSheet('INDEX_会議資料', [['日付', '会議名']]);
+  assert.match(g.mtgSubChatPastLink_(gas.ss).url, /^https:\/\/docs\.google\.com\/spreadsheets\/d\/spreadsheet-id\/edit#gid=\d+$/);
+  // 事前資料の格納先があれば、過去の事前資料はそのフォルダ
+  g.PropertiesService.getScriptProperties().setProperty('MTG_MEETING_FOLDER', 'https://drive.google.com/drive/folders/MeetingRoot00001');
+  assert.deepStrictEqual(plain(g.mtgSubChatPastLink_(gas.ss)), {name: '事前資料の格納先', url: 'https://drive.google.com/drive/folders/MeetingRoot00001'});
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /送らなかったシート：\n・新FMT2：会議日 \d{4}\/10\/23 の本番の事前資料（PDF）が無い/);
+  // タイトルを変えて送る（再送）：「【再送】」とだけ入れたら、設定のタイトルの頭に付ける。全文を入れたらそのタイトル。空欄なら設定のタイトル
+  const before = gas.fetches.length;
+  gas.promptAnswers = ['10/23', '1', '【再送】'];
+  g.notifySubBusinessMtgSummaries();
+  const resent = sentCard(gas.fetches[before]);
+  assert.strictEqual(resent.sections[0].widgets[0].textParagraph.text,
+    '<b>【再送】【RX Business Meeting】事前資料のご案内</b><br><font color="#5F6368">新FMT　' + g.mtgDateLabel_(meeting) + '9:00〜10:30</font>');
+  assert.match(gas.alerts[gas.alerts.length - 2].message, /【【再送】【RX Business Meeting】事前資料のご案内】/, '確かめの画面にも');
+  gas.promptAnswers = ['10/23', '1', '【訂正】事前資料（差し替え）のご案内'];
+  g.notifySubBusinessMtgSummaries();
+  assert.match(sentCard(gas.fetches[gas.fetches.length - 1]).sections[0].widgets[0].textParagraph.text, /^<b>【訂正】事前資料（差し替え）のご案内<\/b>/);
 });
 
 test('mtgNotifyScheduled（前の版の自動通知）：トリガーが残っていても何も送らず、そのトリガーを外す', () => {
@@ -2053,42 +2183,52 @@ test('addBusinessMtgDummyHistory：シートの値は変えずに、ダミーの
   g.addBusinessMtgDummyHistory();
   assert.strictEqual(JSON.stringify(sheet.getDataRange().getValues()), values, 'シートのセルの値は変えない');
   assert.match(gas.alerts[0].message, /・新FMT（直近14日間の始まり \d{1,2}\/\d{1,2} \d{2}:\d{2} 以降の変化として）\n　E社：前進、A社：停滞、C社：延期、F社：新規、D社：停滞＋活動更新、削除（架空の案件「ダミー商事」）/);
-  assert.match(gas.alerts[1].message, /・新FMT：変更の記録 12件・スナップショット 9件/);
+  assert.match(gas.alerts[0].message, /\n　期待値上位の E社・A社・C社・D社 に、直近2か月の動き（前回より前の活動状況・次回アクション・ステータス・受注月の変更）\n/,
+    '新規の案件（F社）には付けない');
+  assert.match(gas.alerts[1].message, /・新FMT：変更の記録 25件・スナップショット 22件/);
 
   const dummyRows = name => gas.ss.getSheetByName(name).getDataRange().getDisplayValues().slice(1).filter(r => /^DMY-/.test(r[1]));
   assert.ok(dummyRows('変更履歴_差分').every(r => r[2] === 'ダミーデータ' && r[3] === '新FMT'), '編集者は「ダミーデータ」');
-  assert.strictEqual(dummyRows('変更時点スナップショット').length, 9);
+  assert.strictEqual(dummyRows('変更時点スナップショット').length, 22);
 
   // 会議サマリはダミーを数える（サンプル SMP- は数えない）：前回より後の変化・停滞
   const s = plain(summarize(g, '新FMT'));
-  assert.deepStrictEqual(s.changes.map(c => [label(c), c.category]), [['ダミー商事／（ダミー）削除した案件', 'removed'], ['F社／ブランド刷新', 'new'],
-    ['E社／販促DX', 'forward'], ['D社／物流改善', 'activity'], ['C社／店舗什器', 'slipped']]);
+  assert.deepStrictEqual(s.changes.map(c => [label(c), c.category]), [['E社／販促DX', 'forward'], ['ダミー商事／（ダミー）削除した案件', 'removed'],
+    ['C社／店舗什器', 'slipped'], ['F社／ブランド刷新', 'new'], ['D社／物流改善', 'activity']], '想定売上の大きい順（テストのシートのステータスには確度が無い）');
   assert.deepStrictEqual(s.changes.filter(c => c.category === 'slipped').map(c => [c.monthFrom, c.monthTo]), [[month(1).text, month(2).text]]);
   assert.deepStrictEqual(s.stalled.map(d => [label(d), d.days, d.touched]), [['A社／アプリ刷新', 100, false], ['D社／物流改善', 70, true]],
     'ステータスを最後に変えた日を 100日・70日前に（D社は前回以降に活動を更新した）');
   assert.strictEqual(s.unmatched, 0, 'どの記録にもスナップショットがある（案件と照合できる）');
-  assert.strictEqual(s.dummy, 12);
+  assert.strictEqual(s.dummy, 25);
+  // 期待値上位案件の直近2か月の動き：前回より前の活動状況の書き足し・ステータスの前進・受注月の前倒しが出る（前回からの変化・停滞は上のまま）
+  const moves = s.recent.moves.map(list => list.map(m => m.text.replace(/^\d+\/\d+　/, '')));
+  assert.deepStrictEqual(plain(s.focus.map(d => d.customer)), ['E社', 'A社', 'C社', 'F社', 'D社']);
+  assert.deepStrictEqual(moves[1], ['活動状況：初回訪問', '受注月：' + month(0).y + '/' + month(0).m + ' ▶ ' + month(-1).y + '/' + month(-1).m,
+    '活動状況：（ダミー）提案書を提出', '活動状況：（ダミー）初回訪問。課題をヒアリング'], 'A社（停滞）：最後は今の活動状況。ステータスは変えない');
+  assert.ok(moves[2].indexOf('ステータス：初回訪問 ▶ 提案中') >= 0 && moves[2].indexOf('活動状況：（ダミー）前回までの活動状況') >= 0, 'C社：前進・前回の時点の活動状況');
+  assert.ok(moves[0].some(m => /^ステータス：初回訪問 ▶ 提案中$/.test(m)), 'E社：前回より後の前進');
+  assert.deepStrictEqual(moves[3], ['案件を登録'], 'F社（新規）には前回より前の動きを付けない');
   const slides = plain(g.mtgSlides_(summarize(g, '新FMT')));
-  assert.strictEqual(roleOf(slides[1], 'footer')[0].text, '【ダミーデータを含む】新FMT（10/23 会議資料）　金額の単位：百万円');
+  assert.strictEqual(roleOf(slides[2], 'footer')[0].text, '【ダミーデータを含む】新FMT（10/23 会議資料）　金額の単位：百万円');
   assert.match(slides[0].elements[0].text, /^出典：「新FMT」シートおよび変更履歴（ダミーデータを含む。/);
 
   // 入れ直し：前に足した分を消してから足す（増えない）
   gas.promptAnswers = ['1'];
   g.addBusinessMtgDummyHistory();
-  assert.match(gas.alerts[2].message, /前に足したダミーの記録 12件は消して入れ直します/);
-  assert.strictEqual(dummyRows('変更履歴_差分').length, 12);
+  assert.match(gas.alerts[2].message, /前に足したダミーの記録 25件は消して入れ直します/);
+  assert.strictEqual(dummyRows('変更履歴_差分').length, 25);
 
   // 本番の確かめの画面で知らせる（配る資料に入れないように）
   gas.confirmAnswer = 'NO';
   gas.promptAnswers = ['1', '10/23'];
   g.createBusinessMtgSummaries();
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /※ ダミーの変更の記録（12件）があります。資料に【ダミーデータを含む】と出ます。配る資料なら、先に removeBusinessMtgDummyHistory\(\) で消してください。/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /※ ダミーの変更の記録（25件）があります。資料に【ダミーデータを含む】と出ます。配る資料なら、先に removeBusinessMtgDummyHistory\(\) で消してください。/);
 
   // 消す：ダミーの行だけ（ほかの記録は残す）
   gas.confirmAnswer = 'YES';
   g.recordDiffEdit(gas.edit(sheet, 'J5', '10/14 見積を再提出'));   // 本物の変更
   g.removeBusinessMtgDummyHistory();
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /^ダミーの変更の記録を削除しました：変更の記録 12件・スナップショット 9件。$/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^ダミーの変更の記録を削除しました：変更の記録 25件・スナップショット 22件。$/);
   assert.deepStrictEqual([dummyRows('変更履歴_差分').length, dummyRows('変更時点スナップショット').length], [0, 0]);
   const after = plain(summarize(g, '新FMT'));
   assert.deepStrictEqual([after.dummy, after.changes.map(c => [label(c), c.category])], [0, [['C社／店舗什器', 'activity']]]);
@@ -2127,7 +2267,8 @@ test('addBusinessMtgDummyHistory：記録は差分追跡と同じ形（受注月
   gas.promptAnswers = ['1'];
   g.addBusinessMtgDummyHistory();
   const log = gas.ss.getSheetByName('変更履歴_差分').getDataRange().getDisplayValues().slice(1).filter(r => /^DMY-/.test(r[1]));
-  const slip = log.find(r => r[5] === '受注月');
+  // 延期の記録（C社の5行目。その前に、直近2か月の動きの受注月の前倒しの記録がある）
+  const slip = log.filter(r => r[5] === '受注月' && r[4] === 'I5').pop();
   const c = month(2);
   const p = month(1);
   assert.deepStrictEqual(slip.slice(3, 9), ['新FMT', 'I5', '受注月', '日時 -> 日時 / ダミー',
@@ -2143,7 +2284,8 @@ test('addBusinessMtgDummyHistory：記録は差分追跡と同じ形（受注月
   const snaps = gas.ss.getSheetByName('変更時点スナップショット').getDataRange().getDisplayValues().slice(1)
     .filter(r => /^DMY-/.test(r[1]) && r[4] === '5');
   const months = snaps.map(r => JSON.parse(r[7]).find(([k]) => k === '受注月')[1]);
-  assert.deepStrictEqual(months, [p.y + '/' + p.m, c.y + '/' + c.m], '前回の時点（1か月前）→ 今');
+  assert.deepStrictEqual(months.slice(-2), [p.y + '/' + p.m, c.y + '/' + c.m], '前回の時点（1か月前）→ 今');
+  assert.ok(months.slice(0, -2).every(m => m === p.y + '/' + p.m), '前回より前の動き（直近2か月）のスナップショットは、前回の時点の値');
   const s = plain(summarize(g, '新FMT'));
   assert.deepStrictEqual(s.changes.filter(ch => label(ch) === 'C社／店舗什器').map(ch => [ch.category, ch.monthFrom, ch.monthTo]),
     [['slipped', p.y + '/' + p.m, c.y + '/' + c.m]]);
@@ -2196,10 +2338,10 @@ test('setBusinessMtgBaseline：今を基準として記録し（はいのとき�
   g.createBusinessMtgSummaries();
   assert.match(lastAlert().message, /「新FMT」：.*（変化のある案件 1・/, '基準より前の変化（貼り付けた G社 など）は数えない');
   const inserted = gas.decks[0].requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
-  assert.match(inserted, /\n対象期間：基準時点（\d{2}\/\d{2} \d{2}:\d{2}）以降\n/, '表紙の期間');
+  assert.match(inserted, /\n対象期間：基準時点（\d{1,2}\/\d{1,2} \d{2}:\d{2}）以降\n/, '表紙の期間（月日は M/d。1桁の日もある）');
   assert.match(gas.alerts.filter(a => /本番の資料を作り/.test(a.message)).pop().message, /・新FMT：基準（\d{1,2}\/\d{1,2} \d{2}:\d{2}）以降/,
     '本番の確認：基準からの変化を出すこと');
-  assert.match(inserted, /期待値合計 \d+百万円（基準比 /, '前回比ではなく基準比');
+  assert.match(inserted, /期待値合計 \d+百万円（\d{1,2}\/\d{1,2}比 /, '前回比ではなく、基準を記録した月日との比（10/17比）');
   assert.doesNotMatch(inserted, /前回比|前回以降/, '前回の会議の記録が無いので「前回」とは書かない');
   assert.match(inserted, /\n停滞（同一ステータス45日以上）\n—\n—\nデータなし：基準（\d{1,2}\/\d{1,2}）から 45日未満のため、まだ数えられない（\d{1,2}\/\d{1,2} から数える）\n/,
     '基準から45日たつまでは、停滞を数えられないことを書く（0件を「停滞なし」と読ませない）');
@@ -2233,22 +2375,32 @@ test('統合版のスライド：表紙・目次・全サブインダストリ�
   const S = gas.get('MTG_SLIDE');
   const T = gas.get('MTG_TITLES');
   const summaries = [summarize(g, '新FMT'), summarize(g, '新FMT2')];
-  const one = plain(g.mtgSlides_(summaries[0]));
+  const one = plain(g.mtgSlides_(summaries[0], 0, {appendix: false}));
   const slides = plain(g.mtgCombinedSlides_(summaries, '2026/10/23', true));
-  assert.strictEqual(slides.length, 3 + one.length + plain(g.mtgSlides_(summaries[1])).length);
+  assert.strictEqual(slides.length, 5 + one.length + plain(g.mtgSlides_(summaries[1], 0, {appendix: false})).length);
+  // 統合版は Appendix（扉と ①〜③）を入れない（全件の一覧は各サブインダストリーの資料にある）
+  assert.ok(!slides.some(sl => sl.divider || /^Appendix/.test(sl.title)), 'Appendix は入れない');
+  assert.strictEqual(one.length, plain(g.mtgSlides_(summaries[0])).length - 1 - plain(g.mtgSlides_(summaries[0])).filter(sl => /^Appendix /.test(sl.title)).length,
+    '各資料から扉と Appendix ①〜③ を除いたもの');
+  assert.match(g.mtgMovesSlide_(Object.assign({}, summaries[0], {kpi: Object.assign({}, summaries[0].kpi, {updated: 1})}), false)[0].lead,
+    /全件は各サブインダストリーの資料の Appendix ① を参照。$/, '本編の「全件は Appendix ①」は、各サブインダストリーの資料のものと書く');
+  assert.deepStrictEqual(slides.slice(3, 5).map(sl => sl.title), ['計画に対する積み上げ（全サブインダストリー）', '計画に対する積み上げ（サブインダストリー別）'],
+    '計画に対する積み上げのセクションの2ページ目がサブインダストリー別');
   assert.deepStrictEqual(slides[0].template, {title: '全サブインダストリー', subtitle: 'RX Business Meeting　事前資料', date: '2026年10月23日（金）', name: ''});
   assert.match(slides[0].elements[0].text, /^収録：新FMT・新FMT2（2サブインダストリー）$/);
   assert.deepStrictEqual([slides[0].combined, slides[0].cover], [true, true]);
-  assert.deepStrictEqual(slides.slice(3, 3 + one.length).map(sl => sl.title), one.map(sl => sl.title), '各サブインダストリーの資料はそのまま');
-  const start2 = 4 + one.length;
-  assert.deepStrictEqual([slides[3].template.title, slides[start2 - 1].template.title], ['新FMT', '新FMT2'], '各資料の表紙が区切り');
-  // 目次：全サブインダストリーの状況（3ページ）と各資料の表紙のページ。名前とページ番号は、そのスライドへのリンク（スライドの番号は 0 から）
+  assert.deepStrictEqual(slides.slice(5, 5 + one.length).map(sl => sl.title), one.map(sl => sl.title), '各サブインダストリーの資料はそのまま');
+  const start2 = 6 + one.length;
+  assert.deepStrictEqual([slides[5].template.title, slides[start2 - 1].template.title], ['新FMT', '新FMT2'], '各資料の表紙が区切り');
+  // 目次：全サブインダストリーの状況（3ページ）・計画に対する積み上げ（4ページ。サブインダストリー別の5ページは同じセクションなので出さない）と各資料の表紙のページ。名前とページ番号は、そのスライドへのリンク（スライドの番号は 0 から）
   const contents = slides[1];
   assert.deepStrictEqual([contents.title, leadOf(contents)], ['目次', '名前かページ番号を押すと、そのページに移ります。' +
     '※ ブラウザの Google ドライブのプレビュー画面ではリンクは動きません（ダウンロードして Acrobat などで開いてください）。']);
-  assert.ok(roleOf(contents, 'lead').every(el => el.text.indexOf('\n') < 0) && roleOf(contents, 'lead').length === 2, 'リード文は2行（補足は1行に入る）');
+  assert.ok(roleOf(contents, 'lead').length === 1 && roleOf(contents, 'lead')[0].text.split('\n').length === 2,
+    'リード文は1つのテキストボックスに2行（補足は1行に入る）');
   assert.deepStrictEqual(roleOf(contents, 'toc').map(el => [el.text, el.link]), [
-    ['全サブインダストリーの状況', 2], ['3', 2], ['1.　新FMT', 3], ['4', 3], ['2.　新FMT2', start2 - 1], [String(start2), start2 - 1]]);
+    ['全サブインダストリーの状況', 2], ['3', 2], ['計画に対する積み上げ', 3], ['4', 3], ['1.　新FMT', 5], ['6', 5], ['2.　新FMT2', start2 - 1],
+    [String(start2), start2 - 1]]);
   const eleven = Array.from({length: 11}, (_, i) => ({summary: Object.assign({}, summaries[0], {name: 'サブインダストリー' + (i + 1)}), start: 4 + i * 10}));
   const twelve = plain(g.mtgContentsSlide_(eleven)).elements;
   assert.strictEqual(new Set(twelve.map(el => el.x)).size, 4, '9件以上なら2列（名前とページ番号で4つの位置）');
@@ -2260,18 +2412,14 @@ test('統合版のスライド：表紙・目次・全サブインダストリ�
     else assert.strictEqual(page[0].text, String(i + 1), (i + 1) + '枚目');
   });
   assert.strictEqual(roleOf(slides[2], 'footer')[0].text, '全サブインダストリー（10/23 会議資料）　金額の単位：百万円');
-  assert.strictEqual(roleOf(slides[start2], 'footer')[0].text, '新FMT2（10/23 会議資料）　金額の単位：百万円');
-  // 2つ目の資料の扉の目次は、この資料の中のページ
-  const divider = slides.findIndex((sl, i) => i >= start2 && sl.divider);
-  const toc = roleOf(slides[divider], 'toc').map(el => el.text);
-  assert.deepStrictEqual([toc[0], toc[2]], ['Appendix ①', String(divider + 2)]);
+  assert.strictEqual(roleOf(slides[start2], 'footer')[0].text, '新FMT2（10/23 会議資料）　金額の単位：百万円' + '　※ 件数・金額はステータス「失注」の行を除くシートの合計', 'サマリーには想定売上合計の注記');
 
   // 全サブインダストリーの状況：サブインダストリーごとの数と、その資料の表紙のページ。合計
   const overview = slides[2];
   assert.strictEqual(overview.title, T.overview);
   const table = overview.elements.find(el => el.type === 'table');
   const text = table.rows.map(r => r.cells.map(cell => cell.text.replace(/\n/g, ' ')));
-  assert.deepStrictEqual(table.rows[0].cells.map(cell => cell.text.replace(/\n/g, '')), ['サブインダストリー', '進行中案件', '期待値合計', '直近14日間の増減', '変化のある案件', '停滞', '確認事項', 'ページ'],
+  assert.deepStrictEqual(table.rows[0].cells.map(cell => cell.text.replace(/\n/g, '')), ['サブインダストリー', '案件数（失注除く）', '期待値合計（失注除く）', '直近14日間の増減', '変化のある案件', '停滞', '確認事項', 'ページ'],
     '増減の見出しは、いちばん多い比べ方（どれも初回なので直近14日間）');
   const k = summaries.map(s => plain(s.kpi));
   const b = summaries.map(s => plain(s.bridge));
@@ -2279,12 +2427,12 @@ test('統合版のスライド：表紙・目次・全サブインダストリ�
   // 停滞をまだ数えられないシートは「データなし」（どのシートも数えられなければ合計も）
   assert.ok(summaries.every(s => s.first && s.gaps.stalled));
   assert.deepStrictEqual(text.slice(1), [
-    ['新FMT', k[0].active + '件', g.mtgAmount_(b[0].end), signed(b[0].end - b[0].start), k[0].changed + '件', 'データなし', k[0].alerts + '項目', '4'],
-    ['新FMT2', k[1].active + '件', g.mtgAmount_(b[1].end), signed(b[1].end - b[1].start), k[1].changed + '件', 'データなし', k[1].alerts + '項目', String(start2)],
-    ['合計', (k[0].active + k[1].active) + '件', g.mtgAmount_(b[0].end + b[1].end), signed(b[0].end - b[0].start + b[1].end - b[1].start),
+    ['新FMT', b[0].endCount + '件', g.mtgAmount_(b[0].end), signed(b[0].end - b[0].start), k[0].changed + '件', 'データなし', k[0].alerts + '項目', '6'],
+    ['新FMT2', b[1].endCount + '件', g.mtgAmount_(b[1].end), signed(b[1].end - b[1].start), k[1].changed + '件', 'データなし', k[1].alerts + '項目', String(start2)],
+    ['合計', (b[0].endCount + b[1].endCount) + '件', g.mtgAmount_(b[0].end + b[1].end), signed(b[0].end - b[0].start + b[1].end - b[1].start),
       (k[0].changed + k[1].changed) + '件', 'データなし', (k[0].alerts + k[1].alerts) + '項目', '']
   ]);
-  assert.match(leadOf(overview), /^2サブインダストリーの進行中案件 \d+件、期待値合計 [\d,.]+百万円。$/);
+  assert.match(leadOf(overview), /^2サブインダストリーの案件 \d+件・期待値合計 [\d,.]+百万円（どちらも失注除く）。$/);
   assert.strictEqual(roleOf(overview, 'footer')[0].text, '全サブインダストリー（10/23 会議資料）　金額の単位：百万円', '※ が無ければ補足なし');
   // 比べ方が違うシートは、セルの1行目に何との比か
   const held = Object.assign({}, summaries[1], {first: false, previous: {date: '2026/10/09', cutoff: 1}});
@@ -2317,7 +2465,7 @@ test('統合版：createBusinessMtgSummaries() では作らず、すべてのシ
   const o = gas.get('MTG_OPTIONS');
   const meeting = g.mtgParseDate_('10/23', new Date());
   const parent = meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
-  Object.assign(o.combined, {enabled: true, meetingFolder: parent});
+  o.combined.enabled = true;   // 統合版も、各サブインダストリーと同じ格納先（meetingFolders で設定）
   gas.promptAnswers = ['1', '10/23'];
   g.previewBusinessMtgSummaries();
   assert.doesNotMatch(gas.alerts[gas.alerts.length - 1].message, /統合版/, '試作では案内しない');
@@ -2334,12 +2482,12 @@ test('統合版：createBusinessMtgSummaries() では作らず、すべてのシ
   g.createBusinessMtgCombinedSummary();
   const combined = gas.decks[gas.decks.length - 1];
   assert.strictEqual(combined.title, file + '_全サブインダストリー_RX Business Meeting用資料');
-  assert.strictEqual(combined.requests.filter(r => r.createSlide).length, 3 + 10 + 10, '表紙・目次・状況と、2つの資料（10枚ずつ）');
+  assert.strictEqual(combined.requests.filter(r => r.createSlide).length, 5 + 7 + 7, '表紙・目次・状況・計画に対する積み上げ（全体・サブインダストリー別）と、2つの資料（表紙と本編の7枚ずつ。Appendix は入れない）');
   // 目次のリンク：すべてのスライドを作ったあとに、リンク先のスライドの ID で付ける
   // 目次のリンク：名前もページ番号も、この資料のそのページ
   const links = combined.requests.filter(r => r.updateTextStyle && r.updateTextStyle.fields === 'link,underline,foregroundColor')
     .map(r => [r.updateTextStyle.objectId, r.updateTextStyle.style.link.pageObjectId]);
-  assert.deepStrictEqual(plain(links).map(l => l[1]), ['mtg_p3', 'mtg_p3', 'mtg_p4', 'mtg_p4', 'mtg_p14', 'mtg_p14']);
+  assert.deepStrictEqual(plain(links).map(l => l[1]), ['mtg_p3', 'mtg_p3', 'mtg_p4', 'mtg_p4', 'mtg_p6', 'mtg_p6', 'mtg_p13', 'mtg_p13']);
   assert.ok(plain(links).every(l => /^mtg_p2_\d+$/.test(l[0])), '目次（2枚目）の部品');
   const linkStyle = combined.requests.find(r => r.updateTextStyle && r.updateTextStyle.style.link).updateTextStyle.style;
   assert.deepStrictEqual(plain([linkStyle.underline, linkStyle.foregroundColor]), [false, {opaqueColor: {rgbColor: plain(g.mtgRgb_('#1A1A1A'))}}],
@@ -2347,14 +2495,14 @@ test('統合版：createBusinessMtgSummaries() では作らず、すべてのシ
   const lastCreate = combined.requests.map(r => !!r.createSlide).lastIndexOf(true);
   assert.ok(combined.requests.findIndex(r => r.updateTextStyle && r.updateTextStyle.fields === 'link,underline,foregroundColor') > lastCreate, 'リンク先ができてから');
   assert.ok(combined.batches.length >= 2, '何枚かずつまとめて送る');
-  assert.strictEqual(gas.slideBackgrounds.filter(b => b.deck === combined.id).length, 5, '表紙と、各資料の表紙・扉（ひな形なし）');
+  assert.strictEqual(gas.slideBackgrounds.filter(b => b.deck === combined.id).length, 3, '表紙と、各資料の表紙（ひな形なし。扉は入れない）');
   const pdf = gas.driveFiles.find(f => f.name === file + '_全サブインダストリー_RX Business Meeting用資料.pdf');
   assert.strictEqual(pdf.folder, 'meeting-folder-0', '会議のフォルダに格納');
   const index = gas.ss.getSheetByName('INDEX_会議資料');
   assert.deepStrictEqual(plain(index.getRange(1, 3, 2, 2).getDisplayValues()), [['全サブインダストリー', '新FMT'],
     [file + '_全サブインダストリー_RX Business Meeting用資料.pdf', file + '_新FMT_RX Business Meeting用資料.pdf']]);
   const done = gas.alerts[gas.alerts.length - 1].message;
-  assert.match(done, new RegExp('「全サブインダストリー」（統合版）：' + file + '_全サブインダストリー_RX Business Meeting用資料\\.pdf（23ページ）\\n　https://drive\\.google\\.com/file/d/' +
+  assert.match(done, new RegExp('「全サブインダストリー」（統合版）：' + file + '_全サブインダストリー_RX Business Meeting用資料\\.pdf（19ページ）\\n　https://drive\\.google\\.com/file/d/' +
     pdf.id + '/view\\n　会議のフォルダ「\\d{6}_第5回会議」に格納しました'));
 
   // rebuildBusinessMtgIndex は統合版も書き直す
@@ -2369,7 +2517,7 @@ test('createBusinessMtgCombinedSummary：すべてのシートに会議日の本
   const o = gas.get('MTG_OPTIONS');
   const meeting = g.mtgParseDate_('10/23', new Date());
   const parent = meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
-  Object.assign(o.combined, {enabled: true, meetingFolder: parent});
+  o.combined.enabled = true;   // 統合版も、各サブインダストリーと同じ格納先（meetingFolders で設定）
   const props = g.PropertiesService.getDocumentProperties();
 
   gas.promptAnswers = ['1', '10/23'];
@@ -2400,7 +2548,7 @@ test('createBusinessMtgCombinedSummary：すべてのシートに会議日の本
   assert.ok(gas.driveFiles.some(f => /_全サブインダストリー_RX Business Meeting用資料\.pdf$/.test(f.name) && f.folder === 'meeting-folder-0'));
   assert.deepStrictEqual([props.getProperty('MTG_MEETINGS_新FMT'), props.getProperty('MTG_MEETINGS_新FMT2')], before, '会議日の記録は変えない');
   assert.strictEqual(gas.created.length, copies, '時点コピーは作らない');
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /「全サブインダストリー」（統合版）：.*（23ページ）/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「全サブインダストリー」（統合版）：.*（19ページ）/);
 
   // 「いいえ」なら作らない。使わない設定なら止める
   const decks = gas.decks.length;
@@ -2415,7 +2563,7 @@ test('createBusinessMtgCombinedSummary：すべてのシートに会議日の本
   assert.strictEqual(gas.decks.length, decks);
 });
 
-test('統合版・ひな形：統合版の表紙も各資料の表紙もひな形の1枚目（緑）、扉は2枚目を使い、2回目からは複製して、最後に決まった順に並べ直す（3枚目は使わない）', () => {
+test('統合版・ひな形：統合版の表紙も各資料の表紙もひな形の1枚目（緑）を使い、2回目からは複製して、最後に決まった順に並べ直す（扉の2枚目・紫の3枚目は使わない。統合版に Appendix は入れない）', () => {
   const {gas, g} = setup();
   const id = '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
   gas.slideTemplates[id] = pptxTemplate();
@@ -2427,25 +2575,24 @@ test('統合版・ひな形：統合版の表紙も各資料の表紙もひな�
   const r = plain(deck.requests);
   const kinds = slides.map(sl => (sl.cover ? 'cover' : sl.divider ? 'divider' : ''));
   const covers = kinds.map((k, i) => (k === 'cover' ? i : -1)).filter(i => i >= 0);
-  const dividers = kinds.map((k, i) => (k === 'divider' ? i : -1)).filter(i => i >= 0);
+  assert.deepStrictEqual(kinds.filter(k => k === 'divider').length, 0, '統合版には扉（Appendix）を入れない');
   assert.deepStrictEqual(covers.length, 3, '統合版・新FMT・新FMT2 の表紙');
   assert.deepStrictEqual(r.filter(q => q.duplicateObject).map(q => [q.duplicateObject.objectId, q.duplicateObject.objectIds[q.duplicateObject.objectId]]),
-    [['g_cover', 'mtg_t' + (covers[1] + 1)], ['g_cover', 'mtg_t' + (covers[2] + 1)], ['g_divider', 'mtg_t' + (dividers[1] + 1)]],
-    '統合版の表紙が1枚目そのもの。各資料の表紙と2つ目の扉は複製');
-  assert.deepStrictEqual(r.filter(q => q.deleteObject && /^g_/.test(q.deleteObject.objectId)).map(q => q.deleteObject.objectId), ['g_combined'], '紫の3枚目は使わない');
-  const expected = slides.map((sl, i) => (i === 0 ? 'g_cover' : i === dividers[0] ? 'g_divider' : covers.indexOf(i) > 0 || i === dividers[1] ? 'mtg_t' + (i + 1)
-    : 'mtg_p' + (i + 1)));
+    [['g_cover', 'mtg_t' + (covers[1] + 1)], ['g_cover', 'mtg_t' + (covers[2] + 1)]],
+    '統合版の表紙が1枚目そのもの。各資料の表紙は複製');
+  assert.deepStrictEqual(r.filter(q => q.deleteObject && /^g_/.test(q.deleteObject.objectId)).map(q => q.deleteObject.objectId).sort(), ['g_combined', 'g_divider'],
+    '扉の2枚目・紫の3枚目は使わない');
+  const expected = slides.map((sl, i) => (i === 0 ? 'g_cover' : covers.indexOf(i) > 0 ? 'mtg_t' + (i + 1) : 'mtg_p' + (i + 1)));
   const moves = r.filter(q => q.updateSlidesPosition).map(q => [q.updateSlidesPosition.slideObjectIds[0], q.updateSlidesPosition.insertionIndex]);
   assert.deepStrictEqual(moves, plain(expected).map((page, i) => [page, i]));
   // 複製したページも、枠ごとに書き換える（複製の部品の ID はページの ID から）
   const title = page => r.filter(q => q.insertText && /_e\d+$|_title$/.test(q.insertText.objectId) && q.insertText.objectId.indexOf(page + '_') === 0)
     .map(q => q.insertText.text)[0];
-  assert.deepStrictEqual(['g_cover', 'mtg_t' + (covers[1] + 1), 'mtg_t' + (covers[2] + 1), 'g_divider', 'mtg_t' + (dividers[1] + 1)].map(title),
-    ['全サブインダストリー', '新FMT', '新FMT2', 'Appendix', 'Appendix']);
-  assert.deepStrictEqual(gas.slideBackgrounds, [], '表紙・扉はどれもひな形のページ');
+  assert.deepStrictEqual(['g_cover', 'mtg_t' + (covers[1] + 1), 'mtg_t' + (covers[2] + 1)].map(title), ['全サブインダストリー', '新FMT', '新FMT2']);
+  assert.deepStrictEqual(gas.slideBackgrounds, [], '表紙はどれもひな形のページ');
   // 目次のリンクは、ひな形のページ（複製）の ID に
   const links = r.filter(q => q.updateTextStyle && q.updateTextStyle.fields === 'link,underline,foregroundColor').map(q => q.updateTextStyle.style.link.pageObjectId);
-  assert.deepStrictEqual(links, ['mtg_p3', 'mtg_p3', 'mtg_t' + (covers[1] + 1), 'mtg_t' + (covers[1] + 1), 'mtg_t' + (covers[2] + 1), 'mtg_t' + (covers[2] + 1)]);
+  assert.deepStrictEqual(links, ['mtg_p3', 'mtg_p3', 'mtg_p4', 'mtg_p4', 'mtg_t' + (covers[1] + 1), 'mtg_t' + (covers[1] + 1), 'mtg_t' + (covers[2] + 1), 'mtg_t' + (covers[2] + 1)]);
   // 統合版は 130ページほどになるので、資料を丸ごと読まない（応答が大きすぎて 413 で失敗した）。どの読み方も項目を絞る
   assert.ok(gas.slidesGets.length >= 3 && gas.slidesGets.every(r => r.fields && /^(presentationId,pageSize,slides\/objectId|slides[(\/])/.test(r.fields)),
     JSON.stringify(gas.slidesGets.map(r => r.fields)));
@@ -2557,7 +2704,7 @@ test('mtgPdfFitLinks_：PDF のページへのリンクの飛び先「/XYZ null 
   assert.ok(Buffer.from(saved.getBytes().map(b => b & 255)).toString('latin1').indexOf('/Fit') > 0);
 });
 
-test('Appendix のページはグレー（扉に合わせる）：表の見出し・1列目・大きな数字をグレーに。区分・該当事項のラベルは意味の色のまま。本編は緑', () => {
+test('Appendix のページはグレー（扉に合わせる）：表の見出し・1列目・大きな数字をグレーに。区分のラベルは置かない。本編は緑', () => {
   const {gas, g} = setup();
   const T = gas.get('MTG_TITLES');
   const c = gas.get('MTG_OPTIONS').colors;
@@ -2570,8 +2717,8 @@ test('Appendix のページはグレー（扉に合わせる）：表の見出�
     assert.ok(f.indexOf('#7F7F7F') >= 0 && f.indexOf(c.green) < 0 && f.indexOf(c.greenSoft) < 0, sl.title + '：' + JSON.stringify(Array.from(new Set(f))));
   });
   const changes = appendix.find(sl => sl.title === T.changes);
-  const pills = changes.elements.filter(el => el.role === 'pill');
-  assert.ok(pills.some(p => p.fill === c.greenDeep), '前向きの区分は緑のまま');
+  assert.strictEqual(changes.elements.filter(el => el.role === 'pill').length, 0, '区分のラベルは置かない（今のステータスの順に並べる）');
+  assert.ok(!changes.elements.find(el => el.type === 'table').rows[0].cells.some(cell => cell.text === '区分'));
   // 本編は緑のまま（色を戻している）
   const moves = slides.find(sl => sl.title === T.progress);
   assert.ok(fills(moves).indexOf(c.green) >= 0 && fills(moves).indexOf('#7F7F7F') < 0);
@@ -2588,7 +2735,7 @@ test('サブインダストリーごとに作る：本番を1つずつ作ると�
   const o = gas.get('MTG_OPTIONS');
   const meeting = g.mtgParseDate_('10/23', new Date());
   const parent = meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
-  Object.assign(o.combined, {enabled: true, meetingFolder: parent});
+  o.combined.enabled = true;   // 統合版も、各サブインダストリーと同じ格納先（meetingFolders で設定）
   gas.promptAnswers = ['2', '10/23'];
   g.createBusinessMtgSummaries();
   const first = gas.alerts[gas.alerts.length - 1].message;
@@ -2731,4 +2878,1594 @@ test('日次の時点コピー：installDailySheetCopy() でトリガーを1つ�
   g.uninstallDailySheetCopy();
   assert.strictEqual(gas.triggers.filter(t => t.getHandlerFunction() === 'saveDailySheetCopy').length, 0);
   assert.match(gas.alerts[gas.alerts.length - 1].message, /日次の時点コピーをやめました（保存したコピーは残しています）。/);
+});
+
+test('計画に対する積み上げ：今年度の売上開始月ごとの期待値を、確度（ステータスの「-」の前）で塗り分けて積み上げ、計画（400）と比べる。時期未定・今年度より前・来年度以降・失注は除いて右に参考の棒（保留も積み上げる）', () => {
+  const {gas, g} = setup();
+  const c = gas.get('MTG_OPTIONS').colors;
+  const o = gas.get('MTG_OPTIONS').plan;
+  const now = new Date(Date.UTC(2026, 9, 19, 3));   // 2026/10/19（今年度は 2026/4〜2027/3）
+  const date = (y, m) => new gas.Date(Date.UTC(y, m - 1, 1, -9 + 12));
+  // 売上開始月：日付か「yyyy/MM」の文字だけ（33シナリオ ダッシュボード・パイプライン管理シートと同じ）
+  assert.deepStrictEqual(plain([g.mtgPlanMonth_(date(2026, 9)), g.mtgPlanMonth_('2026/12'), g.mtgPlanMonth_('2026/9'), g.mtgPlanMonth_('26/09'),
+    g.mtgPlanMonth_('2026年9月'), g.mtgPlanMonth_(12), g.mtgPlanMonth_('')]), [{y: 2026, m: 9}, {y: 2026, m: 12}, null, null, null, null, null]);
+  assert.deepStrictEqual(['A-受注済み(100%)', 'C-提案中(50%)', '創注-仮検討(10%)', 'Ｂ－クロージング中(70%)', '受注', ''].map(g.mtgPlanRank_),
+    ['A', 'C', '創注', 'B', '未設定', '未設定']);
+  const deal = (status, kind, weighted, month) => ({status, kind, weighted, planMonth: month ? g.mtgPlanMonth_(month) : null});
+  const deals = [
+    deal('B-クロージング中(70%)', 'active', 35, '2026/10'),
+    deal('C-提案中(50%)', 'active', 15, '2026/10'),
+    deal('A-受注済み(100%)', 'won', 20, '2027/03'),
+    deal('創注-仮検討(10%)', 'active', 1, '2027/03'),
+    deal('提案中', 'active', 4, '2026/06'),          // 確度の分からないステータスは「未設定」
+    deal('D-ヒアリング中(20%)', 'active', null, '2026/12'),   // 期待値が空は 0
+    deal('C-提案中(50%)', 'active', 6, '26/09'),       // 読めない月
+    deal('D-ヒアリング中(20%)', 'active', 8, '2026/03'),   // 今年度より前
+    deal('C-提案中(50%)', 'active', 9, '2027/05'),     // 来年度以降
+    deal('失注', 'lost', 0, '2026/10'),
+    deal('保留', 'hold', 3, '2026/11')                // 保留も積み上げる（2026/11/05 から。除くのは失注だけ）
+  ];
+  const p = plain(g.mtgPlanOf_(deals, '新FMT', now, {weighted: true, startMonth: true}));
+  assert.deepStrictEqual([p.plan, p.total, p.missing], [400, 78, 1]);
+  assert.deepStrictEqual([p.undated, p.before, p.after, p.excluded], [{count: 1, value: 6, values: {C: 6}, counts: {C: 1}},
+    {count: 1, value: 8, values: {D: 8}, counts: {D: 1}}, {count: 1, value: 9, values: {C: 9}, counts: {C: 1}},
+    {count: 1, value: 0, values: {'未設定': 0}, counts: {'未設定': 1}}]);
+  assert.deepStrictEqual(p.months.map(m => [m.y + '/' + m.m, m.total]).filter(m => m[1]), [['2026/6', 4], ['2026/10', 50], ['2026/11', 3], ['2027/3', 21]]);
+  assert.deepStrictEqual(p.months[6].values, {B: 35, C: 15});
+  assert.deepStrictEqual(p.byRank, {A: 20, B: 35, C: 15, D: 0, '創注': 1, '未設定': 7});
+
+  const slide = plain(g.mtgPlanSlide_(p, now));
+  assert.strictEqual(slide.title, '計画に対する積み上げ');
+  assert.strictEqual(slide.lead, '今年度（26/4〜27/3）の期待値の積み上げは 78百万円。計画 400百万円に対して ▲322（達成率 20%）。\n' +
+    '最大は10月の 50（積み上げの 64%）、確度A・B は 55（71%）。積み上げに含まない 4件（23）は右に表示。' +
+    '期待値が空・数値でない 1件は 0 として数えた。');
+  const roles = role => roleOf(slide, role);
+  // 月の段は前の月までの積み上げから浮かせ、確度の順（A が下）に塗り分ける。合計は確度別。計画は白地に枠、不足は灰色の点線
+  const oct = roles('plan-month').filter(el => el.fill === o.ranks[1].color || el.fill === o.ranks[2].color);
+  assert.strictEqual(oct.length, 2);
+  assert.ok(oct[0].y > oct[1].y && oct[0].fill === o.ranks[1].color, 'B（確度が高い）が下、C が上');
+  const jun = roles('plan-month').find(el => el.fill === o.otherColor);
+  assert.ok(Math.abs(oct[0].y + oct[0].h - jun.y) < 0.01, '10月は6月までの積み上げ（4）の高さから');
+  assert.deepStrictEqual(roles('plan-total').map(el => el.fill), [o.ranks[0].color, o.ranks[1].color, o.ranks[2].color, o.ranks[4].color, o.otherColor]);
+  assert.deepStrictEqual(roles('plan-plan').map(el => [el.fill, el.line]), [[c.white, c.dark]]);
+  assert.deepStrictEqual(roles('plan-gap').map(el => [el.fill, el.dash]), [[c.graySoft, true]]);
+  assert.deepStrictEqual(roles('plan-value').map(el => el.text), ['+4', '+50', '+3', '+21', '78', '400', '▲322', '6', '8', '9', '0']);
+  assert.deepStrictEqual(roles('plan-label').map(el => el.text), ['26/4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月', '27/1月', '2月', '3月',
+    '合計', '計画', '不足', '時期未定\n1件', '〜26/3\n1件', '27/4〜\n1件', '失注\n1件']);
+  // 積み上げに含まない案件：区切りの線の右に、0 から確度別の棒（3月と合計の数は、横に重なるときは合計を1行上げる）
+  const divider = roles('plan-divider')[0];
+  assert.ok(divider && roles('plan-aside').every(el => el.x > divider.x) && roles('plan-label').slice(0, 15).every(el => el.x < divider.x));
+  assert.deepStrictEqual(roles('plan-aside').map(el => el.fill), [o.ranks[2].color, o.ranks[3].color, o.ranks[2].color], '失注（期待値 0）の棒は無い');
+  const axis = roles('plan-aside').map(el => el.y + el.h);
+  assert.ok(axis.every(v => Math.abs(v - axis[0]) < 0.01), '参考の棒は 0 から');
+  assert.strictEqual(roles('plan-aside-title')[0].text, '積み上げに含まない（参考）');
+  assert.deepStrictEqual(roles('legend').filter(el => el.text).map(el => el.text), ['A', 'B', 'C', 'D', '創注', '未設定', '計画']);
+  assert.deepStrictEqual(roles('plan-line').map(el => [el.type, el.dash, el.h]), [['line', true, 0]], '計画の高さの横線（点線）');
+  // 直線は Slides の createLine と点線（DASH）の線の書式で作る
+  const lineRequests = plain(g.mtgSlideRequests_({title: 'x', elements: roles('plan-line')}, 'page_plan', 0));
+  const created = lineRequests.find(r => r.createLine).createLine;
+  assert.deepStrictEqual([created.lineCategory, created.elementProperties.size.height.magnitude > 0], ['STRAIGHT', true]);
+  const lineProps = lineRequests.find(r => r.updateLineProperties).updateLineProperties;
+  assert.deepStrictEqual([lineProps.objectId, lineProps.lineProperties.dashStyle, lineProps.fields], [created.objectId, 'DASH', 'lineFill,weight,dashStyle']);
+  const S = gas.get('MTG_SLIDE');
+  slide.elements.forEach(el => assert.ok(el.x >= 0 && el.x + el.w <= S.width + 0.01 && el.y + el.h <= S.bottom + 0.01, 'ページに入る：' + (el.text || el.role)));
+  // 計画を超えたら「超過」
+  const over = plain(g.mtgPlanSlide_(Object.assign({}, p, {plan: 50}), now));
+  assert.deepStrictEqual([roleOf(over, 'plan-label')[14].text, roleOf(over, 'plan-gap')[0].fill], ['超過', c.up]);
+  // 列が無ければ「データなし」と理由
+  const lacking = plain(g.mtgPlanSlide_(g.mtgPlanOf_(deals, '新FMT', now, {weighted: true, startMonth: false}), now));
+  assert.deepStrictEqual(roleOf(lacking, 'gap').map(el => el.text), ['データなし\nシートに「売上開始月」の列が無い']);
+
+  // シートごとの計画（plans）と、統合版（計画は合計。月・確度ごとに足す）
+  o.plans = {'新FMT2': 500};
+  const p2 = plain(g.mtgPlanOf_(deals.slice(0, 2), '新FMT2', now, {weighted: true, startMonth: true}));
+  assert.strictEqual(p2.plan, 500);
+  const merged = plain(g.mtgMergePlans_([p, p2]));
+  assert.deepStrictEqual([merged.plan, merged.total, merged.months[6].values, merged.byRank.B, merged.excluded.count], [900, 128, {B: 70, C: 30}, 70, 1]);
+  assert.deepStrictEqual([merged.undated, merged.after.values], [{count: 1, value: 6, values: {C: 6}, counts: {C: 1}}, {C: 9}]);
+  assert.strictEqual(plain(g.mtgPlanSlide_(merged, now, '全サブインダストリー')).title, '計画に対する積み上げ（全サブインダストリー）');
+
+  // 統合版の2ページ目：サブインダストリー別（達成率の高い順。棒は確度別、計画は点線。右に積み上げ・達成率・差・確度A・B・時期未定。いちばん下に合計）
+  const subs = [
+    {name: '低い', plan: plain(g.mtgPlanOf_(deals, '低い', now, {weighted: true, startMonth: true}))},
+    {name: '高い', plan: plain(g.mtgPlanOf_([deal('A-受注済み(100%)', 'won', 300, '2026/12'), deal('B-クロージング中(70%)', 'active', 140, '2027/01')],
+      '高い', now, {weighted: true, startMonth: true}))},
+    {name: '列なし', plan: plain(g.mtgPlanOf_(deals, '列なし', now, {weighted: true, startMonth: false}))}
+  ];
+  const bySub = plain(g.mtgPlanBySubSlide_(subs, now));
+  assert.strictEqual(bySub.title, '計画に対する積み上げ（サブインダストリー別）');
+  assert.strictEqual(bySub.lead, '達成率の高い順。計画に届いているのは 2のうち 1。最も低いのは 低い（20%）。\n' +
+    '時期未定：売上開始月が空・読めない案件の期待値（積み上げに含まない）。');
+  assert.deepStrictEqual(roleOf(bySub, 'plan-sub-name').map(el => el.text), ['高い', '低い', '合計']);
+  const values = roleOf(bySub, 'plan-sub-value').map(el => el.text);
+  assert.deepStrictEqual(values, ['440', '110%', '+40', '100%', '—', '78', '20%', '▲322', '71%', '6（1件）', '518', '65%', '▲282', '96%', '6（1件）']);
+  assert.strictEqual(roleOf(bySub, 'plan-sub-plan').length, 2, '計画の点線は合計の行には引かない');
+  assert.ok(roleOf(bySub, 'plan-sub-plan').every(el => el.type === 'line' && el.dash));
+  const bars = roleOf(bySub, 'plan-sub-bar');
+  assert.deepStrictEqual(bars.slice(0, 2).map(el => el.fill), [o.ranks[0].color, o.ranks[1].color], '確度の高い順に左から');
+  assert.strictEqual(roleOf(bySub, 'plan-sub-gap')[0].text, 'データなし：列なし（シートに「売上開始月」の列が無い）');
+  bySub.elements.forEach(el => assert.ok(el.x >= 0 && el.x + el.w <= S.width + 0.01 && el.y + el.h <= S.bottom + 0.01, 'ページに入る：' + (el.text || el.role)));
+
+  // 資料：サマリーの次のページ。使わない設定なら出さない
+  const s = summarize(g, '新FMT');
+  assert.strictEqual(plain(g.mtgSlides_(s))[2].title, '計画に対する積み上げ');
+  o.enabled = false;
+  assert.ok(!plain(g.mtgSlides_(s)).some(sl => sl.title === '計画に対する積み上げ'));
+  assert.ok(!plain(g.mtgCombinedSlides_([s], '2026/10/23', true)).some(sl => /^計画に対する積み上げ/.test(sl.title)));
+});
+
+/* ---------------- RXシナリオ構成（J列。複数選択） ---------------- */
+
+/** 2つのシートに「RXシナリオ構成」「RXシナリオ構成（サービス）」の列（P列。プルダウンの選択肢 X・Y・W）を足し、案件に選ぶ */
+function withScenario(gas, g) {
+  ['新FMT', '新FMT2'].forEach(name => {
+    const sheet = gas.ss.getSheetByName(name);
+    // 本物は、シートによって見出しが「RXシナリオ構成」か「RXシナリオ構成（サービス）」（columnAliases）。どちらでも読む
+    gas.asUser(() => sheet.getRange(2, 16).setValue(name === '新FMT' ? 'RXシナリオ構成' : 'RXシナリオ構成（サービス）'));
+    sheet.getRange('P3:P20').setDataValidation(g.SpreadsheetApp.newDataValidation().requireValueInList(['X', 'Y', 'W'], true).build());
+  });
+  const a = gas.ss.getSheetByName('新FMT');
+  gas.asUser(() => {
+    a.getRange('P3').setValue('X, Y');          // A社（10）：2つ
+    a.getRange('P5').setValue('X');             // C社（5）：単独
+    a.getRange('P7').setValue('Y, Z\nY');       // E社（40）：選択肢に無い Z も。同じものは1つ
+    gas.ss.getSheetByName('新FMT2').getRange('P3').setValue('X');   // A社（10）：単独
+  });
+}
+
+test('mtgScenarioList_：プルダウンの複数選択（「A, B」）・改行で区切り、同じものは1つ。読点は選択肢の名前の一部として切らない', () => {
+  const {g} = setup({edits: false});
+  assert.deepStrictEqual(plain(g.mtgScenarioList_('ID-POS分析, アプリ・CRM')), ['ID-POS分析', 'アプリ・CRM']);
+  assert.deepStrictEqual(plain(g.mtgScenarioList_(' A ,B\nA，C ')), ['A', 'B', 'C']);
+  assert.deepStrictEqual(plain(g.mtgScenarioList_('店頭、販促')), ['店頭、販促']);
+  assert.deepStrictEqual(plain(g.mtgScenarioList_('')), []);
+  assert.deepStrictEqual(plain(g.mtgScenarioList_(null)), []);
+});
+
+test('RXシナリオ構成の集計：按分（複数選んだ案件は等分。合計は期待値合計と一致）・関与（重複あり）・件数・単独・未設定・組み合わせ。進行中の案件だけ', () => {
+  const {gas, g} = setup({edits: false});
+  withScenario(gas, g);
+  const data = g.mtgScenarioData_(gas.ss, ['新FMT', '新FMT2']);
+  assert.deepStrictEqual(plain(data.withColumn), ['新FMT', '新FMT2']);
+  assert.deepStrictEqual(plain(data.options), ['X', 'Y', 'W', 'Z'], 'プルダウンの順。選択肢に無い値はあとに足す');
+  assert.ok(!data.deals.some(d => d.customer === 'B社'), '受注（終わった案件）は除く');
+  const t = plain(g.mtgScenarioTotals_(data));
+  assert.deepStrictEqual([t.total, t.count, t.blank], [68, 6, 1], '期待値が空の D社は 0 として数える');
+  const pick = item => [item.key, item.share, item.full, item.count, item.solo];
+  assert.deepStrictEqual(t.items.map(pick), [
+    ['Y', 25, 50, 2, 0],       // A社 10/2 + E社 40/2
+    ['X', 20, 25, 3, 2],       // A社 10/2 + C社 5 + 新FMT2 A社 10
+    ['Z', 20, 40, 1, 0],
+    ['W', 0, 0, 0, 0],         // 選ばれていない選択肢も 0 で出す
+    ['未設定', 3, 3, 2, 2]      // D社（0）・F社（3）。いちばん下
+  ]);
+  assert.strictEqual(t.items.reduce((sum, item) => sum + item.share, 0), t.total, '按分の合計は期待値合計と一致');
+  assert.ok(t.items.reduce((sum, item) => sum + item.full, 0) > t.total, '関与は重複して数える');
+  assert.deepStrictEqual(t.items[1].bySheet, {新FMT: 10, 新FMT2: 10});
+  assert.deepStrictEqual(t.combos.map(cb => [cb.key, cb.size, cb.count, cb.value]), [['Y＋Z', 2, 1, 40], ['X', 1, 2, 15], ['X＋Y', 2, 1, 10]],
+    '組み合わせの名前はプルダウンの順でつなぐ。期待値の大きい順');
+
+  // 列が無いシートは除く
+  const sheet = gas.ss.getSheetByName('新FMT2');
+  gas.asUser(() => sheet.getRange(2, 16).setValue(''));
+  const one = g.mtgScenarioData_(gas.ss, ['新FMT', '新FMT2']);
+  assert.deepStrictEqual(plain([one.withColumn, one.withoutColumn]), [['新FMT'], ['新FMT2']]);
+});
+
+test('RXシナリオ構成別の期待値の資料：表紙・全体（横棒・按分・関与・件数・単独）・サブインダストリー別（行の合計は期待値合計）・組み合わせ。ページに入る', () => {
+  const {gas, g} = setup({edits: false});
+  withScenario(gas, g);
+  const data = g.mtgScenarioData_(gas.ss, ['新FMT', '新FMT2']);
+  const t = g.mtgScenarioTotals_(data);
+  const slides = plain(g.mtgScenarioSlides_(data, t, new Date()));
+  assert.deepStrictEqual(slides.map(sl => sl.title), ['表紙', 'RXシナリオ構成別の期待値（全サブインダストリー）',
+    'RXシナリオ構成別の期待値（サブインダストリー別）', 'RXシナリオ構成別の期待値（組み合わせ）']);
+  assert.match(slides[0].template.subtitle, /参考資料【試作】$/);
+  const bars = slides[1];
+  assert.match(leadOf(bars), /^進行中案件 6件・期待値 68百万円を、RXシナリオ構成ごとに集計（按分の大きい順）。按分：複数選んだ案件（2件）は選んだ数で等分（合計＝期待値）。関与：/);
+  assert.deepStrictEqual(roleOf(bars, 'scenario-name').map(el => el.text), ['Y', 'X', 'Z', 'W', '未設定']);
+  assert.deepStrictEqual(roleOf(bars, 'scenario-value').slice(0, 4).map(el => el.text), ['25', '50', '2件', '0件']);
+  assert.deepStrictEqual(roleOf(bars, 'scenario-value').slice(-4).map(el => el.text), ['3', '3', '2件', '—'], '未設定に単独は無い');
+  const table = slides[2].elements.find(el => el.type === 'table');
+  assert.deepStrictEqual(table.rows[0].cells.map(cell => cell.text.replace(/\n/g, '')), ['サブインダストリー', 'Y', 'X', 'Z', 'W', '未設定', '合計']);
+  assert.deepStrictEqual(table.rows.slice(1).map(r => r.cells.map(cell => cell.text)), [
+    ['新FMT', '25', '10', '20', '—', '3', '58'],
+    ['新FMT2', '—', '10', '—', '—', '—', '10'],
+    ['合計', '25', '20', '20', '—', '3', '68']
+  ]);
+  const combos = slides[3].elements.find(el => el.type === 'table');
+  assert.deepStrictEqual(combos.rows.slice(1).map(r => r.cells.slice(0, 3).map(cell => cell.text)), [['Y＋Z', '1件', '40'], ['X', '2件', '15'], ['X＋Y', '1件', '10']]);
+  assert.match(combos.rows[2].cells[3].text, /^新FMT2／A社／アプリ刷新|A社／アプリ刷新（新FMT2）/, '主な案件は期待値の大きい順・シート名つき');
+  const S = gas.get('MTG_SLIDE');
+  slides.slice(1).forEach(sl => {
+    // ページの下の区切り線・出典・ページ番号（共通の枠）は除く
+    sl.elements.filter(el => el.type !== 'table' && el.y < S.bottom).forEach(el => assert.ok(el.x >= 0 && el.x + el.w <= S.width + 0.01 && el.y + el.h <= S.bottom + 0.01,
+      sl.title + '：' + (el.text || el.role)));
+    sl.elements.filter(el => el.type === 'table').forEach(tb => assert.ok(S.top + tb.rows.reduce((sum, r) => sum + r.h, 0) <= S.bottom + 0.1, sl.title));
+  });
+
+  // 組み合わせが多ければ上位 scenario.combos 件まで・続きのページ。選んだ案件が無ければ空の表に理由
+  const many = Object.assign({}, plain(t), {combos: Array.from({length: 20}, (_, i) => ({key: 'C' + i, size: 1, count: 1, value: 20 - i,
+    deals: [{sheet: '新FMT', customer: '得意先' + i, project: '案件', weighted: 20 - i}]}))});
+  const pages = plain(g.mtgScenarioCombosSlides_(many));
+  assert.strictEqual(pages.reduce((sum, p) => sum + p.elements[0].rows.length - 1, 0), 15);
+  assert.match(pages[0].lead, /期待値の大きい順に 15件（全 20通り）。$/);
+  const none = plain(g.mtgScenarioCombosSlides_(Object.assign({}, many, {combos: []})));
+  assert.strictEqual(none[0].lead, 'RXシナリオ構成を選んだ進行中の案件なし。');
+});
+
+test('createBusinessMtgScenarioSummary：シートを選び、確かめてから、保存先のフォルダに試作の PDF を作る（会議日の記録は変えない）。列が無ければ止める', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getDocumentProperties();
+  // 列が無ければ止める（何も作らない）
+  gas.promptAnswers = [''];
+  assert.throws(() => g.createBusinessMtgScenarioSummary(), /選んだシートに「RXシナリオ構成」か「RXシナリオ構成（サービス）」の列がありません/);
+  assert.strictEqual(gas.decks.length, 0);
+
+  withScenario(gas, g);
+  const before = props.getProperty('MTG_MEETINGS_新FMT');
+  // 「いいえ」なら作らない
+  gas.promptAnswers = [''];
+  gas.confirmAnswer = 'NO';
+  g.createBusinessMtgScenarioSummary();
+  assert.strictEqual(gas.decks.length, 0);
+  gas.confirmAnswer = 'YES';
+  gas.promptAnswers = ['1'];
+  g.createBusinessMtgScenarioSummary();
+  const confirm = gas.alerts[gas.alerts.length - 2].message;
+  assert.match(confirm, /^RXシナリオ構成別の期待値の資料（試作）を作ります。\n\n・対象：新FMT（進行中の案件 5件・期待値 58百万円）\n・シナリオ：Y・Z・X・W\n・未設定：2件\n/);
+  assert.match(gas.decks[gas.decks.length - 1].title, /^\d{8}_RXシナリオ構成別の期待値_試作$/);
+  assert.ok(gas.driveFiles.some(f => /^\d{8}_RXシナリオ構成別の期待値_試作\.pdf$/.test(f.name)), 'PDF を作る');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^RXシナリオ構成別の期待値の資料（試作）を作りました：\d{8}_RXシナリオ構成別の期待値_試作\.pdf（4ページ）/);
+  assert.strictEqual(props.getProperty('MTG_MEETINGS_新FMT'), before, '会議日の記録は変えない');
+});
+
+test('期待値上位案件・Appendix（停滞案件・入力内容のチェック）：RXシナリオ構成の列があれば、案件名の下に小さくシナリオの番号（空なら「未入力」）と、見出しに「／シナリオNo」。列が無ければ今のまま', () => {
+  const {gas, g} = setup({edits: false});
+  const page = s => plain(g.mtgSlides_(s)).find(sl => sl.title === '期待値上位案件の状況・課題').elements.find(el => el.type === 'table');
+  const before = page(summarize(g, '新FMT'));
+  assert.ok(before.rows.slice(1).every(r => r.cells[0].text.split('\n').length === 2), '列が無ければ2行のまま');
+  withScenario(gas, g);
+  const s = summarize(g, '新FMT');
+  assert.strictEqual(s.scenarioColumn, true);
+  const cells = page(s).rows.slice(1).map(r => r.cells[0]);
+  const line = customer => cells.find(cell => cell.text.startsWith(customer)).text.split('\n')[2];
+  assert.deepStrictEqual([line('E社'), line('A社'), line('C社')], ['Y・Z', 'X・Y', 'X']);
+  assert.strictEqual(line('F社'), '未入力');
+  assert.strictEqual(page(s).rows[0].cells[0].text, '得意先／案件名／\nシナリオNo', '見出しにも「／シナリオNo」');
+  assert.strictEqual(before.rows[0].cells[0].text, '得意先／案件名', '列が無ければ見出しも今のまま');
+  // 番号だけ（「01-05.バックオフィス業務PF」→「01-05」）
+  assert.deepStrictEqual(['01-05.バックオフィス業務PF', '01-04.顧客情報活用パッケージ'].map(g.mtgScenarioNumber_), ['01-05', '01-04']);
+  const cell = g.mtgDealScenarioCell_(s, {customer: 'ユニクロ', project: 'チラシ制作事務局', scenarios: ['01-05.バックオフィス業務PF', '01-09.顧客分析パッケージ']}, 120);
+  assert.strictEqual(cell.text, 'ユニクロ\nチラシ制作事務局\n01-05・01-09');
+  // Appendix：停滞案件・入力内容のチェックの表も同じ
+  const slides = plain(g.mtgSlides_(s));
+  const T = gas.get('MTG_TITLES');
+  let checked = 0;
+  [T.stalled, T.alerts].forEach(title => {
+    const table = slides.filter(sl => String(sl.title).indexOf(title) === 0).map(sl => sl.elements.find(el => el.type === 'table')).filter(t => t && t.rows.length > 1)[0];
+    if (!table) return;
+    checked++;
+    const k = table.rows[0].cells.findIndex(x => /^得意先／案件名/.test(x.text));
+    assert.strictEqual(table.rows[0].cells[k].text, '得意先／案件名／\nシナリオNo', title + 'の見出し');
+    table.rows.slice(1).forEach(r => assert.strictEqual(r.cells[k].text.split('\n').length, 3, title + 'の行：' + r.cells[k].text));
+  });
+  assert.ok(checked >= 1, 'Appendix の表を確かめた');
+});
+
+/* ---------------- 出力先（スクリプトのプロパティ） ---------------- */
+
+test('出力先はスクリプトのプロパティで指定できる：保存先 MTG_SAVE_FOLDER・時点コピー MTG_COPY_FOLDER（あればコードの設定より優先。URL か ID。読めない値は止める）', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getScriptProperties();
+  props.setProperty('MTG_SAVE_FOLDER', 'https://drive.google.com/drive/folders/SaveFolder00001?usp=sharing');
+  assert.strictEqual(g.mtgFolder_(gas.ss).getId(), 'SaveFolder00001');
+  props.setProperty('MTG_COPY_FOLDER', 'CopyFolder00001');
+  g.mtgSaveCopy_(gas.ss, new Date(), '');
+  assert.deepStrictEqual(plain(gas.driveCopies.map(c => c.folder)), ['CopyFolder00001']);
+  assert.strictEqual(gas.driveFolders.length, 0, 'フォルダは作らない');
+  gas.missingFolders = ['SaveFolder00001'];
+  assert.throws(() => g.mtgFolder_(gas.ss), /保存先のフォルダ（ID：SaveFolder00001）を開けません。.*（スクリプトのプロパティ「MTG_SAVE_FOLDER」）/);
+  props.setProperty('MTG_SAVE_FOLDER', '会議のフォルダ');
+  assert.throws(() => g.mtgFolder_(gas.ss), /保存先の設定（スクリプトのプロパティ「MTG_SAVE_FOLDER」）の値「会議のフォルダ」を、フォルダの URL か ID として読めません/);
+  // 空にすればコードの設定に戻る
+  props.deleteProperty('MTG_SAVE_FOLDER');
+  gas.missingFolders = [];
+  assert.strictEqual(g.mtgFolder_(gas.ss).getId(), gas.get('MTG_OPTIONS').folderId);
+});
+
+test('事前資料の格納先は全サブインダストリー共通の1つ（スクリプトのプロパティ MTG_MEETING_FOLDER → MTG_OPTIONS.meetingFolder）。その中の会議日のフォルダに、全サブインダストリーの資料を格納する', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getScriptProperties();
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  meetingFolders(gas, []);
+  assert.strictEqual(g.mtgMeetingFolderSetting_().where, 'MeetingSummary.gs の MTG_OPTIONS.meetingFolder');
+  // 2つのシートの本番の資料：同じ会議日のフォルダ（1つだけ作る）に入る
+  gas.promptAnswers = ['', '10/23'];
+  g.createBusinessMtgSummaries();
+  const folders = gas.driveFolders.filter(f => f.parent === 'SubIndustryFolder0001');
+  assert.deepStrictEqual(folders.map(f => f.name), [yymmdd(meeting) + '_RX Business Meeting_第1回'], '会議日のフォルダは1つ（サブインダストリーごとのフォルダは作らない）');
+  assert.deepStrictEqual(gas.driveFiles.filter(f => f.folder === folders[0].id).map(f => f.name.replace(/^\d+_/, '')).sort(),
+    ['新FMT2_RX Business Meeting用資料.pdf', '新FMT_RX Business Meeting用資料.pdf']);
+  // 前の版のシートごとのプロパティ・DIFF_RULES の meetingFolder は使わない
+  props.setProperty('MTG_MEETING_FOLDER_新FMT', 'OldSubFolder0001');
+  gas.get('DIFF_RULES')['新FMT'].meetingFolder = 'OldSubFolder0002';
+  assert.strictEqual(g.mtgMeetingFolder_('新FMT', meeting).folder.getId(), folders[0].id);
+  // スクリプトのプロパティがあればそちら
+  gas.driveFolders.push({id: 'RootFolder000001', name: 'RX Business Meeting', parent: 'root'});
+  props.setProperty('MTG_MEETING_FOLDER', 'https://drive.google.com/drive/folders/RootFolder000001');
+  assert.strictEqual(g.mtgMeetingFolderSetting_().prop, 'MTG_MEETING_FOLDER');
+  const found = g.mtgMeetingFolder_('新FMT2', meeting);
+  assert.strictEqual(gas.driveFolders.find(f => f.id === found.folder.getId()).parent, 'RootFolder000001');
+  props.setProperty('MTG_MEETING_FOLDER', 'ちがう');
+  assert.match(g.mtgMeetingFolder_('新FMT', meeting).error, /事前資料の格納先の設定（スクリプトのプロパティ「MTG_MEETING_FOLDER」）をフォルダの URL か ID として読めない/);
+});
+
+test('showOutputFolders：項目ごとに、使っているフォルダ・ファイル（○ 開ける・✗ 開けない）と、スクリプトのプロパティが設定ありか未設定（コードの設定を使用）かを分けて出す', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getScriptProperties();
+  props.setProperty('MTG_MEETING_FOLDER', 'MissingFolder001');
+  props.setProperty('MTG_MEETING_FOLDER_新FMT2', 'OldSubFolder0001');   // 前の版のプロパティ
+  gas.missingFolders = ['MissingFolder001'];
+  gas.driveFolders.push({id: gas.get('MTG_OPTIONS').folderId, name: '会議サマリ（テスト）', parent: 'root'});
+  g.showOutputFolders();
+  const text = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(text, /^出力先・素材の一覧（○＝開ける　✗＝開けない。スクリプトのプロパティが未設定なら、コードの設定を使います）/);
+  // プロパティを入れていない：○ はフォルダを開けるという意味。プロパティは「未設定 → コードの設定を使用」と書く
+  assert.match(text, /・事前資料などの保存先（作る場所・試作）\n　使っているもの：○ 会議サマリ（テスト）（ID：1A0rkoFLICOK4KV25dUTeRdgoOaM0vJEK）\n　スクリプトのプロパティ「MTG_SAVE_FOLDER」：未設定 → コードの設定（MeetingSummary\.gs の MTG_OPTIONS\.folderId）を使用/);
+  assert.match(text, /・時点コピーの保存先\n　使っているもの：（無し。保存先の中の「時点コピー」）\n　スクリプトのプロパティ「MTG_COPY_FOLDER」：未設定/);
+  // プロパティを入れた：設定あり（これを使用）
+  assert.match(text, /・事前資料の格納先（この中に会議日のフォルダ「yyMMdd_RX Business Meeting_第N回」を作り、全サブインダストリーと統合版の資料を入れる）\n　使っているもの：✗ 開けません（ID：MissingFolder001。[^\n]*\n　スクリプトのプロパティ「MTG_MEETING_FOLDER」：設定あり（これを使用）/);
+  assert.ok(!/・新FMT2\n/.test(text), 'サブインダストリーごとの格納先は出さない');
+  assert.match(text, /■ 使わなくなったスクリプトのプロパティ（1件。消してかまいません。removeFormerMeetingFolderProps\(\) でまとめて消せます）\n・MTG_MEETING_FOLDER_新FMT2$/);
+  assert.match(text, /・アカウントプランシートの保存先\n[^\n]*\n　スクリプトのプロパティ「AP_DEST_FOLDER」：未設定 → コードの設定（コード\.gs の AP_OPTIONS\.destFolderId）を使用/);
+  assert.match(text, /■ 素材（ひな形）\n・事前資料の表紙・扉のひな形\n　使っているもの：（無し。表紙・扉はコードで描くので、素材が無くても作れる）\n　スクリプトのプロパティ「MTG_TEMPLATE_URL」：未設定/);
+  assert.match(text, /・アカウントプランシートのひな形\n　使っているもの：[^\n]*\n　スクリプトのプロパティ「AP_TEMPLATE_FILE」：未設定 → コードの設定（コード\.gs の AP_OPTIONS\.templateFileId）を使用\n/);
+  props.setProperty('MTG_TEMPLATE_URL', 'https://docs.google.com/presentation/d/TemplateDeck0000000000001/edit');
+  g.showOutputFolders();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /・事前資料の表紙・扉のひな形\n　使っているもの：○ [^\n]*（ID：TemplateDeck0000000000001）\n　スクリプトのプロパティ「MTG_TEMPLATE_URL」：設定あり（これを使用）/);
+  assert.strictEqual(gas.driveFolders.length, 1, 'フォルダは作らない');
+  gas.noUi = true;
+  gas.logs.length = 0;
+  assert.doesNotThrow(() => g.showOutputFolders());
+  assert.ok(gas.logs.some(l => /事前資料の格納先/.test(l.line)));
+});
+
+test('removeFormerMeetingFolderProps：前の版のサブインダストリーごとの格納先のプロパティ（MTG_MEETING_FOLDER_<シート名>）を、確かめてから消す（ほかのプロパティは消さない）', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getScriptProperties();
+  ['MTG_MEETING_FOLDER_新FMT', 'MTG_MEETING_FOLDER_全サブインダストリー', 'MTG_MEETING_FOLDER', 'MTG_SAVE_FOLDER'].forEach(k => props.setProperty(k, 'Folder' + k.length + '000000'));
+  gas.confirmAnswer = 'NO';
+  g.removeFormerMeetingFolderProps();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /次のスクリプトのプロパティを消します[\s\S]*・MTG_MEETING_FOLDER_全サブインダストリー\n・MTG_MEETING_FOLDER_新FMT$/);
+  assert.ok(props.getProperty('MTG_MEETING_FOLDER_新FMT'), '「いいえ」なら消さない');
+  gas.confirmAnswer = 'YES';
+  g.removeFormerMeetingFolderProps();
+  assert.deepStrictEqual(['MTG_MEETING_FOLDER_新FMT', 'MTG_MEETING_FOLDER_全サブインダストリー', 'MTG_MEETING_FOLDER', 'MTG_SAVE_FOLDER'].map(k => !!props.getProperty(k)),
+    [false, false, true, true]);
+  g.removeFormerMeetingFolderProps();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /使わなくなったプロパティ（MTG_MEETING_FOLDER_<シート名>）はありません/);
+});
+
+test('列の見出しの変化（2026/10/29）：受注月は「受注月(yy/mm)」でも読み、変更の記録も受注月として延期に数える。FY別の売上（P〜U列）の変更は資料に出さない', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  gas.asUser(() => {
+    sheet.getRange(2, COL.orderMonth).setValue('受注月\n(yy/mm)');
+    sheet.getRange(2, 16).setValue('FY26前半期売上（百万）');
+  });
+  g.setupDiffTracking();
+  g.recordDiffEdit(gas.edit(sheet, 'P3', '5'));                         // A社：FY別の売上だけ
+  g.recordDiffEdit(gas.edit(sheet, 'I7', month(4).text));                // E社：受注月を後ろへ（延期）
+  g.recordDiffEdit(gas.edit(sheet, 'P7', '8'));                         // E社：FY別の売上も
+  const s = summarize(g, '新FMT');
+  const table = g.mtgReadDeals_(sheet, gas.get('DIFF_RULES')['新FMT']);
+  assert.strictEqual(table.has.orderMonth, true, '受注月(yy/mm) を受注月として読む');
+  assert.ok(!s.changes.some(c => c.customer === 'A社'), 'FY別の売上だけの変更は「前回から変化のある案件」に出さない');
+  const e = s.changes.find(c => c.customer === 'E社');
+  assert.ok(e.flags.indexOf('slipped') >= 0, '受注月(yy/mm) の変更は延期');
+  assert.ok(!e.columns.some(col => /FY26/.test(col)), '更新項目にも FY別の売上を出さない');
+  assert.ok(!plain(g.mtgTrackedLabels_(sheet, gas.get('DIFF_RULES')['新FMT'], table.headers)).some(x => /FY26/.test(x.header)), '時点コピーとの比較にも使わない');
+  assert.strictEqual(g.mtgShortHeader_('受注月\n(yy/mm)'), '受注月');
+});
+
+test('PowerPoint も作る（exportPptx）：PDF と同じ名前の .pptx を Drive API の書き出しで作り、本番は PDF と一緒に会議のフォルダに移す。書き出せなくても PDF は作って知らせない（止めない）', () => {
+  const {gas, g} = setup();
+  gas.get('MTG_OPTIONS').exportPptx = true;
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  meetingFolders(gas, []);
+  gas.promptAnswers = ['1', '10/23'];
+  g.createBusinessMtgSummaries();
+  const exports = gas.fetches.filter(f => /\/drive\/v3\/files\/[^/]+\/export\?mimeType=application%2Fvnd\.openxmlformats-officedocument\.presentationml\.presentation$/.test(f.url));
+  assert.strictEqual(exports.length, 1, 'Drive API の書き出し');
+  assert.match(exports[0].params.headers.Authorization, /^Bearer /);
+  const folder = gas.driveFolders.find(f => f.parent === 'SubIndustryFolder0001');
+  const names = gas.driveFiles.filter(f => f.folder === folder.id && gas.trashed.indexOf(f.id) < 0).map(f => f.name).sort();
+  const base = meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料';
+  assert.deepStrictEqual(names, [base + '.pdf', base + '.pptx'], 'PDF と PowerPoint を同じ会議のフォルダに');
+  // 書き出せないとき：PDF は作る
+  gas.fetchStatuses = [500];
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  assert.ok(gas.driveFiles.some(f => f.name === base + '_試作.pdf'), 'PDF は作る');
+  assert.ok(!gas.driveFiles.some(f => f.name === base + '_試作.pptx'));
+});
+
+test('PowerPoint を作るかは、スクリプトのプロパティ MTG_EXPORT_PPTX が優先（true/false など）。無い・読めない値ならコードの exportPptx。showOutputFolders に今の設定を出す', () => {
+  const {gas, g} = setup({edits: false});
+  const o = gas.get('MTG_OPTIONS');
+  const props = g.PropertiesService.getScriptProperties();
+  const exportsOf = () => gas.fetches.filter(f => /\/export\?mimeType=application%2Fvnd\.openxmlformats/.test(f.url)).length;
+  o.exportPptx = false;
+  assert.deepStrictEqual(plain(g.mtgExportPptxEnabled_()), {on: false, where: 'MeetingSummary.gs の MTG_OPTIONS.exportPptx'});
+  ['true', 'TRUE', ' 1 ', 'はい', 'する', 'ｔｒｕｅ'].forEach(v => {
+    props.setProperty('MTG_EXPORT_PPTX', v);
+    assert.strictEqual(g.mtgExportPptxEnabled_().on, true, v);
+  });
+  o.exportPptx = true;
+  ['false', 'No', '0', 'しない'].forEach(v => {
+    props.setProperty('MTG_EXPORT_PPTX', v);
+    assert.strictEqual(g.mtgExportPptxEnabled_().on, false, v);
+  });
+  props.setProperty('MTG_EXPORT_PPTX', 'たぶん');
+  assert.strictEqual(g.mtgExportPptxEnabled_().on, true, '読めない値はコードの設定');
+  assert.match(g.mtgExportPptxEnabled_().where, /値「たぶん」は読めないので使わない/);
+  // 資料を作るとき：プロパティが true なら、コードが false でも作る。false なら作らない
+  o.exportPptx = false;
+  props.setProperty('MTG_EXPORT_PPTX', 'true');
+  meetingFolders(gas, []);
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  assert.strictEqual(exportsOf(), 1, 'プロパティが true なら作る');
+  props.setProperty('MTG_EXPORT_PPTX', 'false');
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  assert.strictEqual(exportsOf(), 1, 'プロパティが false なら作らない');
+  props.deleteProperty('MTG_EXPORT_PPTX');
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  assert.strictEqual(exportsOf(), 1, 'プロパティが無ければコードの設定（false）');
+  g.showOutputFolders();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /■ PowerPoint（\.pptx）\n作らない（MeetingSummary\.gs の MTG_OPTIONS\.exportPptx。スクリプトのプロパティ「MTG_EXPORT_PPTX」に true \/ false を入れると切り替わる）\n/);
+  props.setProperty('MTG_EXPORT_PPTX', 'true');
+  g.showOutputFolders();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /■ PowerPoint（\.pptx）\n作る（スクリプトのプロパティ「MTG_EXPORT_PPTX」。/);
+});
+
+test('本物の設定（2026/10/29 から）：計画に対する積み上げは受注月ごと（plan.monthColumn: orderMonth）。売上開始月の列は使わず、確認事項「売上開始月不整合」は出さない（「データなし」にもしない）', () => {
+  const {gas, g} = setup({edits: false});
+  const o = gas.get('MTG_OPTIONS');
+  Object.assign(o.plan, {monthColumn: 'orderMonth'});
+  o.columns.startMonth = '';
+  const s = plain(summarize(g, '新FMT'));
+  assert.strictEqual(s.plan.gap, '', '受注月の列があれば積み上げを作る');
+  // 受注月が今年度の案件（A社：先月・C社/E社/F社：来月〜再来月）の期待値が、その受注月に積み上がる
+  const byMonth = {};
+  s.plan.months.forEach(m => { if (m.total) byMonth[m.y + '/' + m.m] = m.total; });
+  const at = mo => byMonth[month(mo).y + '/' + month(mo).m] || 0;
+  assert.ok(at(1) >= 40, '来月受注の E社（40）が来月に');
+  const slide = plain(g.mtgPlanSlide_(s.plan, new Date()));
+  assert.match(roleOf(slide, 'plan-heading').concat(slide.elements.filter(el => /別 期待値の積み上げ/.test(el.text || ''))).map(el => el.text).join(''), /受注月別 期待値の積み上げ/);
+  // 売上開始月不整合は種類ごと出さない
+  assert.ok(g.mtgAlertTypes_().indexOf('月の不整合') < 0);
+  assert.ok(!s.alerts.some(a => a.type === '月の不整合'));
+  assert.ok(!Object.keys(s.alertGaps || {}).some(k => k === '月の不整合'));
+  // 前の版の設定（売上開始月の列）に戻すこともできる
+  assert.strictEqual(gas.get('MTG_OPTIONS').columns.orderMonth, '受注月');
+  assert.deepStrictEqual(plain(gas.get('MTG_OPTIONS').columnAliases.orderMonth), ['受注月(yy/mm)', '受注予定月', '受注予定月(yy/mm)'], '「受注予定月」に変えても読む');
+});
+
+/* ---------------- RXシナリオのポートフォリオ（パイプラインの変化の次の3枚） ---------------- */
+
+/**
+ * ポートフォリオのテスト用のシート（本物と同じ見出し：RXシナリオ構成・サービスパッケージ合算・想定売上・期待値・FY26/FY27 の前半期・後半期の売上）。
+ * deals = [[得意先, シナリオ, ステータス, 想定売上, 期待値, シナリオ金額, FY26前半, FY26後半, FY27前半]]
+ */
+function portfolioSheet(gas, deals, headers) {
+  const head = headers || ['得意先', '案件名', 'RXシナリオ構成', 'サービスパッケージ合算（百万円）', '案件ステータス', '想定売上規模（百万）',
+    '期待値調整済\n想定売上規模（百万）', 'FY26前半期売上（百万）', 'FY26後半期売上（百万）', 'FY27前半期売上（百万）'];
+  const lines = [['新FMT'].concat(head.slice(1).map(() => '')), head].concat(deals.map((d, i) =>
+    [d[0], '案件' + (i + 1), d[1], d[5], d[2], d[3], d[4], d[6], d[7], d[8]].slice(0, head.length)));
+  return gas.addSheet('新FMT', lines, {rows: lines.length + 2, columns: head.length});
+}
+
+/** スライド（ページ番号などを付ける前）のリード文（改行を除く） */
+const pLead = slide => String(slide.lead || '').replace(/\n/g, '');
+
+const PORTFOLIO_DEALS = [
+  ['A社', 'ID-POS分析', 'A-クロージング(90%)', '100', '90', '40', '30', '20', '5'],
+  ['A社', 'ID-POS分析, サイネージ', 'C-提案中(50%)', '60', '30', '20', '10', '10', ''],   // 2つのシナリオ：等分
+  ['B社', 'サイネージ', 'D-初期提案(20%)', '40', '8', '10', '', '', ''],                    // 今年度の売上が空
+  ['C社', '', 'B-選定中(70%)', '30', '21', '', '5', '', ''],                                 // シナリオ未設定
+  ['D社', 'アプリ・CRM', '失注', '80', '0', '30', '40', '', '']                               // 進行中でない（数えない）
+];
+
+test('RXシナリオのポートフォリオ：シナリオ金額（サービスパッケージ合算）と今年度の売上（FY○○前半期・後半期の合計）を読み、進行中の案件をシナリオごとに按分して集計する', () => {
+  const gas = createGas();
+  const g = gas.global;
+  const sheet = portfolioSheet(gas, PORTFOLIO_DEALS);
+  const rule = gas.get('DIFF_RULES')['新FMT'];
+  const table = g.mtgReadDeals_(sheet, rule);
+  assert.deepStrictEqual(plain(table.salesYears), ['26', '27']);
+  assert.deepStrictEqual(plain(table.deals.map(d => [d.scenarioAmount, d.sales])), [
+    [40, {26: 50, 27: 5}], [20, {26: 20}], [10, {}], [null, {26: 5}], [30, {26: 40}]]);
+  // 今年度（4月始まり）から3年度分（salesYears）の列を読む（シートにある年度だけ。テストのシートは FY26・FY27）。2027/4 からは FY27 から（年度が変われば次の年度の列）
+  const now = new Date('2026-11-04T12:00:00+09:00');
+  const p = plain(g.mtgPortfolioOf_(table.deals, now, table));
+  assert.deepStrictEqual([p.fy, p.year, p.years, p.gaps, p.has], ['FY26〜27', '26', ['26', '27'], {}, {weighted: true, scenarioAmount: true}]);
+  assert.deepStrictEqual(p.deals.map(d => [d.customer, d.rank, d.salesByYear, d.sales]), [['A社', 'A', {26: 50, 27: 5}, 55], ['A社', 'C', {26: 20, 27: null}, 20],
+    ['B社', 'D', {26: null, 27: null}, null], ['C社', 'B', {26: 5, 27: null}, 5]], '進行中だけ。売上は年度ごとと、その合計');
+  assert.strictEqual(g.mtgFiscalYearKey_(new Date('2027-03-31T12:00:00+09:00')), '26');
+  const next = plain(g.mtgPortfolioOf_(table.deals, new Date('2027-04-01T12:00:00+09:00'), table));
+  assert.deepStrictEqual([next.fy, next.years, next.deals[0].sales, next.deals[1].sales], ['FY27', ['27'], 5, null]);
+  assert.deepStrictEqual(plain(g.mtgPortfolioOf_(table.deals, new Date('2028-04-01T12:00:00+09:00'), table).gaps),
+    {sales: 'シートに「FY28前半期売上」「FY28後半期売上」の列が無い'}, '今年度の列が無ければ「データなし」');
+
+  // 集計：2つのシナリオの案件は等分（合計は全体と一致）。未設定は別に
+  const t = plain(g.mtgPortfolioTotals_(p));
+  assert.deepStrictEqual(t.items.map(i => [i.key, i.count, i.customers, i.amount, i.weighted, i.scenarioAmount, i.sales, i.salesByYear]), [
+    ['ID-POS分析', 2, 1, 130, 105, 50, 65, {26: 60, 27: 5}],
+    ['サイネージ', 2, 2, 70, 23, 20, 10, {26: 10, 27: 0}]], '期待値の大きい順');
+  assert.deepStrictEqual([t.unset.key, t.unset.count, t.unset.amount, t.unset.sales], ['未設定', 1, 30, 5]);
+  assert.deepStrictEqual(t.total, {count: 4, amount: 230, weighted: 149, scenarioAmount: 70, sales: 80, salesByYear: {26: 75, 27: 5}});
+  const sum = key => t.items.reduce((a, i) => a + i[key], 0) + t.unset[key];
+  ['amount', 'weighted', 'scenarioAmount', 'sales'].forEach(key => assert.strictEqual(sum(key), t.total[key], key + ' の按分の合計は全体と一致'));
+  assert.strictEqual(t.multi, 1);
+  // 確度A・B の割合（期待値のうち A・B）と、確度（売上（年度の合計）で重み付け。A=100・C=50）
+  const idpos = t.items[0];
+  assert.deepStrictEqual([idpos.byRank, idpos.byRankWeighted], [{A: 100, C: 30}, {A: 90, C: 15}]);
+  assert.strictEqual(Math.round(idpos.sure * 1000) / 1000, Math.round(90 / 105 * 1000) / 1000);
+  assert.deepStrictEqual([Math.round(idpos.progress * 10) / 10, idpos.basis], [Math.round((55 * 100 + 10 * 50) / 65 * 10) / 10, 'sales']);
+  // 得意先ごと：売上の大きい順、セルはシナリオごとの按分（年度ごとと合計）
+  assert.deepStrictEqual(t.customers.map(cu => [cu.name, cu.sales, cu.scenarioAmount, cu.cells]), [
+    ['A社', 75, 60, {'ID-POS分析': {sales: 65, byYear: {26: 60, 27: 5}}, 'サイネージ': {sales: 10, byYear: {26: 10, 27: 0}}}],
+    ['C社', 5, 0, {'未設定': {sales: 5, byYear: {26: 5, 27: 0}}}],
+    ['B社', 0, 10, {'サイネージ': {sales: 0, byYear: {26: 0, 27: 0}}}]]);
+  // 今年度の売上が無いシナリオの進み具合は、想定売上で重み付け（それも無ければ件数）
+  const noSales = plain(g.mtgPortfolioTotals_(Object.assign({}, p, {deals: [{customer: 'X社', scenarios: ['店頭販促DX'], rank: 'B', amount: 10, sales: null},
+    {customer: 'Y社', scenarios: ['店頭販促DX'], rank: 'D', amount: 30, sales: null}]})));
+  assert.deepStrictEqual([noSales.items[0].progress, noSales.items[0].basis], [(10 * 70 + 30 * 20) / 40, 'amount']);
+});
+
+test('RXシナリオのポートフォリオのスライド：パイプラインの変化の次に ① 進捗 ② 売上ヒートマップ ③ ポートフォリオ図。按分の注記・その他の行は色なし・象限の色・円の凡例', () => {
+  const gas = createGas();
+  const g = gas.global;
+  const S = gas.get('MTG_SLIDE');
+  const T = gas.get('MTG_TITLES');
+  const o = gas.get('MTG_OPTIONS');
+  // 得意先が heatRows より多いとき、その他にまとめる（テストでは2社）
+  o.portfolio.heatRows = 2;
+  const sheet = portfolioSheet(gas, PORTFOLIO_DEALS.concat([['E社', '物流・SCM', 'B-選定中(70%)', '20', '14', '5', '3', '', '']]));
+  const table = g.mtgReadDeals_(sheet, gas.get('DIFF_RULES')['新FMT']);
+  const p = g.mtgPortfolioOf_(table.deals, new Date('2026-11-04T12:00:00+09:00'), table);
+  const [progress, heat, map] = plain(g.mtgPortfolioSlides_(p));
+  assert.deepStrictEqual([progress.title, heat.title, map.title], [T.scenarioProgress, T.scenarioHeatmap, T.scenarioMap]);
+  assert.deepStrictEqual([T.scenarioProgress, T.scenarioHeatmap, T.scenarioMap], ['RXシナリオ別の進捗', '得意先 × RXシナリオ 売上ヒートマップ', 'RXシナリオのポートフォリオ図']);
+  const inside = slide => slide.elements.every(el => el.x >= 0 && el.x + (el.w || 0) <= S.width + 0.01 && el.y >= S.top - 30 &&
+    el.y + (el.h || 0) <= S.bottom + 0.01);
+  [progress, heat, map].forEach(slide => assert.ok(inside(slide), slide.title + '：中身は見出しの下から出典の線の上まで'));
+
+  // ① 期待値の横棒（確度別）。期待値の大きい順（未設定は最後）・列は 想定売上・期待値・シナリオ金額・件数・得意先・確度A・B（期待値のうち A・B）
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-head').map(el => el.text), ['想定売上', '期待値', '前回比', 'シナリオによる見込金額', '件数', '得意先', '確度A・B']);
+  const amountHead = roleOf(progress, 'portfolio-head')[3];
+  assert.ok(g.mtgWrap_(amountHead.text, amountHead.w, amountHead.size, 9).length === 1, '「シナリオによる見込金額」の見出しは1行に入る');
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-name').map(el => el.text), ['ID-POS分析', 'サイネージ', '物流・SCM', '未設定']);
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-value').slice(0, 6).map(el => el.text), ['130', '105', '50', '2件', '1社', '86%']);
+  assert.ok(roleOf(progress, 'portfolio-delta').every(el => el.text === 'データなし'), '比べる時点コピーが無ければ前回比は「データなし」');
+  assert.strictEqual(roleOf(progress, 'portfolio-value')[5].color, o.colors.greenText, '確度A・B が 50% 以上は緑の字');
+  assert.ok(roleOf(progress, 'portfolio-value')[1].bold, '期待値の列は太字（横棒と同じ値）');
+  // 値のプロット：棒の右に期待値の合計、棒の中に確度ごとの期待値（入る幅のときだけ。A・B の上は白の字）
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-bar-total').map(el => el.text), ['105', '23', '14', '21']);
+  const segs = roleOf(progress, 'portfolio-bar-value');
+  assert.deepStrictEqual(segs.slice(0, 2).map(el => [el.text, el.color]), [['90', o.colors.white], ['15', o.colors.ink]]);
+  const bars = roleOf(progress, 'portfolio-bar');
+  assert.ok(Math.abs(bars[0].w / bars[1].w - 90 / 15) < 0.01, '棒の長さは期待値');
+  assert.match(pLead(progress), /^進行中の期待値 163百万円・案件 5件を、RXシナリオ構成ごとに確度別に表示（期待値の大きい順）。最大は ID-POS分析（105）/);
+  assert.match(pLead(progress), /複数のシナリオを選んだ 1件は選んだ数で等分。未設定は 1件。前回比はデータなし（比べる時点コピーが無い）。$/);
+  assert.strictEqual(progress.note, '※ 按分のため、シナリオの値を足しても合計と合わないことがあります');
+  // 列の見出しの下に値の出どころ（想定売上は手動入力、期待値・シナリオ金額は自動算出）を小さく
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-head-note').map(el => [el.text, el.size]), [['（手動入力）', 6], ['（自動算出）', 6], ['（自動算出）', 6]]);
+  // いちばん下に合計の行（件数・得意先は重ならずに数える。シナリオの行の合計と同じ。横棒は書かない）
+  const totals = plain(g.mtgPortfolioTotals_(p));
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-total-name').map(el => el.text), ['合計']);
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-total').map(el => el.text),
+    [g.mtgShare_(totals.total.amount), '163', 'データなし', g.mtgShare_(totals.total.scenarioAmount), '5件', totals.customers.length + '社',
+      Math.round(totals.items.concat([totals.unset]).reduce((sum, item) => sum + (item.byRankWeighted.A || 0) + (item.byRankWeighted.B || 0), 0) / 163 * 100) + '%']);
+  const rowsSum = key => totals.items.concat([totals.unset]).reduce((sum, item) => sum + item[key], 0);
+  assert.ok(Math.abs(rowsSum('weighted') - totals.total.weighted) < 0.01 && Math.abs(rowsSum('scenarioAmount') - totals.total.scenarioAmount) < 0.01,
+    'シナリオ金額・期待値は、シナリオの行（按分）を足すと合計になる');
+  const lastRow = Math.max.apply(null, roleOf(progress, 'portfolio-name').map(el => el.y));
+  assert.ok(roleOf(progress, 'portfolio-total-name')[0].y > lastRow, '合計の行はいちばん下');
+  // 出すページは portfolio.pages（本物は ① だけ。② ③ の作る処理は残す）
+  o.portfolio.pages = ['progress'];
+  assert.deepStrictEqual(plain(g.mtgPortfolioSlides_(p)).map(slide => slide.title), [T.scenarioProgress]);
+  o.portfolio.pages = ['progress', 'heatmap', 'map'];
+
+  // ② 行：売上の大きい順に2社と「その他 N社」（色を付けない）。列：シナリオ（売上の大きい順）と未設定、その下に年度（FY26・FY27）。セルの確度は書かない
+  assert.deepStrictEqual(roleOf(heat, 'heat-head').map(el => el.text.replace(/\n/g, '')), ['得意先', 'ID-POS分析', 'サイネージ', '物流・SCM', '未設定',
+    '合計FY26〜27／シナリオによる見込金額', '前回比']);
+  // 列の見出しの文字の大きさはそろえる（② は見出し・年度がすべて同じ大きさ。①・③ も portfolio.headSize）
+  const headSizes = roleOf(heat, 'heat-head').concat(roleOf(heat, 'heat-year')).map(el => el.size);
+  assert.ok(headSizes.every(v => v === headSizes[0]) && !roleOf(heat, 'heat-head').some(el => el.spans), '② の見出しは同じ大きさ：' + headSizes.join(','));
+  assert.ok(roleOf(progress, 'portfolio-head').concat(roleOf(map, 'map-table-head')).every(el => el.size === o.portfolio.headSize), '①・③ の見出しも同じ大きさ');
+  assert.strictEqual(headSizes[0], o.portfolio.headSize, '入るときは①・③ と同じ大きさ');
+  assert.deepStrictEqual(roleOf(heat, 'heat-year').map(el => el.text), ['FY26', 'FY27', 'FY26', 'FY27', 'FY26', 'FY27', 'FY26', 'FY27']);
+  assert.deepStrictEqual(roleOf(heat, 'heat-name').map(el => el.text), ['A社', 'C社', 'その他 2社']);
+  // A社：ID-POS分析 FY26 60・FY27 5、サイネージ FY26 10（FY27 は 0 なので数は書かず色だけ）。C社：未設定 FY26 5
+  assert.deepStrictEqual(roleOf(heat, 'heat-value').map(el => el.text), ['60', '5', '10', '5'], '上位の得意先のセルだけ色と数');
+  assert.strictEqual(roleOf(heat, 'heat-cell').length, 6, '案件のある組み合わせは、売上が 0 の年度も薄い色');
+  assert.deepStrictEqual(roleOf(heat, 'heat-other').map(el => el.text), ['3'], 'その他の行の数');
+  assert.ok(roleOf(heat, 'heat-other-cell').every(el => el.fill === o.colors.white), 'その他は白（ヒートマップの対象外）');
+  assert.strictEqual(roleOf(heat, 'heat-blank').length, 3 * 4 * 2 - 6 - 4, '案件の無い組み合わせは空白');
+  const values = roleOf(heat, 'heat-value');
+  const cellsOf = roleOf(heat, 'heat-cell');
+  assert.ok(cellsOf[0].fill !== cellsOf[1].fill && values[0].color === o.colors.white, '大きいほど濃い（濃いセルは白の字）');
+  assert.ok(!values.some(el => /[A-D]|創注/.test(el.text)), '確度は書かない');
+  assert.ok(values.every(el => el.w > S.padX + gas.global.mtgTextWidth_(el.text, el.size)), '細い列でも数は1行に入る（文字の箱は余白の分だけ広い）');
+  assert.deepStrictEqual(roleOf(heat, 'heat-total').map(el => el.text), ['75／60', '5／0', '3／15']);
+  // 合計の行：上に年度ごとの売上、下にシナリオ金額（行の名前の2行目に「シナリオ金額」）
+  assert.deepStrictEqual(roleOf(heat, 'heat-foot-value').map(el => el.text), ['60', '5', '10', '0', '3', '0', '5', '0']);
+  assert.deepStrictEqual(roleOf(heat, 'heat-foot-amount').map(el => el.text), ['50', '20', '5', '0']);
+  assert.strictEqual(roleOf(heat, 'heat-foot-name')[0].text, '合計（按分）\nシナリオによる見込金額');
+  assert.strictEqual(roleOf(heat, 'heat-foot-total')[0].text, '83／75');
+  assert.match(pLead(heat), /^得意先 × RXシナリオ構成の年度別売上（FY26〜27。進行中・按分）。上位 2社と、その他 2社。空白のセルは、.*合計の右はシナリオによる見込金額（サービスパッケージ合算）。前回比はデータなし（比べる時点コピーが無い）。$/);
+  // 凡例：色の濃さ（少ない → 多い（いちばん大きい値））と、セルの値の意味（シナリオごとの売上）
+  assert.deepStrictEqual(roleOf(heat, 'heat-legend').map(el => el.text), ['少ない', '多い（60）']);
+  assert.strictEqual(roleOf(heat, 'heat-legend-swatch').length, 5);
+  assert.match(roleOf(heat, 'heat-note')[0].text, /^セルの値＝その得意先・シナリオの売上（各年度の前半期＋後半期。按分。百万円）。空白は案件の無い組み合わせ。「その他」は色なし。$/);
+
+  // ③ 象限の背景（4色）・名前・点線・円（件数）・右の表（見出しと象限の帯）・円の大きさの凡例。未設定は図に含めない
+  const Q = gas.get('MTG_QUADRANTS');
+  assert.deepStrictEqual(roleOf(map, 'map-quadrant').map(el => el.fill).sort(), plain(Q.map(q => q.bg)).sort(), '象限ごとに薄い色');
+  assert.deepStrictEqual(roleOf(map, 'map-quadrant-name').map(el => el.text), ['てこ入れ（大きいが進んでいない）', '伸ばす（大きく・進んでいる）',
+    '見直し（小さく・進んでいない）', '刈り取り（小さいが進んでいる）']);
+  assert.strictEqual(roleOf(map, 'map-line').filter(el => el.dash).length, 2);
+  assert.deepStrictEqual(roleOf(map, 'map-bubble').map(el => el.shape), ['ELLIPSE', 'ELLIPSE', 'ELLIPSE']);
+  // 円には番号（今年度の売上の大きい順）だけを書き、名前は右の表に全文（名前どうしが図の中で重ならないように）
+  assert.deepStrictEqual(roleOf(map, 'map-number').map(el => el.text), ['1', '2', '3']);
+  assert.deepStrictEqual(roleOf(map, 'map-table-head').map(el => el.text), ['No.', 'シナリオ', 'FY26〜27', '前回比', '確度', '件数']);
+  assert.ok(roleOf(map, 'map-table-delta').every(el => el.text === 'データなし'));
+  assert.match(map.note, /※ 前回比はデータなし（比べる時点コピーが無い）/);
+  assert.ok(roleOf(map, 'map-table-head').every(el => !el.fill), '見出しは塗らない（上下の罫線）');
+  assert.deepStrictEqual(roleOf(map, 'map-table-quadrant').map(el => el.text), ['伸ばす', 'てこ入れ', '刈り取り', '見直し']);
+  assert.deepStrictEqual(roleOf(map, 'map-table-band').map(el => el.fill), plain(Q.map(q => q.bg)), '帯は図の背景と同じ色');
+  // 売上は年度の合計（FY26〜27）。ID-POS分析（65・確度 92.3%）は平均（(65+10+3)/3＝26）より大きく進んでいる → 伸ばす。サイネージ（10・50%）は 50% 以上で平均未満 → 刈り取り
+  const cellsText = roleOf(map, 'map-table-cell').map(el => el.text);
+  assert.deepStrictEqual(cellsText.slice(0, 5), ['1', 'ID-POS分析', '65', '92%', '2件']);
+  assert.ok(cellsText.indexOf('なし') >= 0, '該当の無い象限は「なし」');
+  const legend = roleOf(map, 'map-legend');
+  assert.deepStrictEqual(roleOf(map, 'map-legend-label').map(el => el.text), ['1件', '2件']);
+  assert.strictEqual(legend[legend.length - 1].w, Math.max.apply(null, roleOf(map, 'map-bubble').map(el => el.w)), '凡例のいちばん大きい円は図のいちばん大きい円と同じ');
+  // 4象限の線と根拠：縦は確度 50%（C の期待値率）、横は均等ライン（今年度の売上の合計 ÷ シナリオの数）。図の上・線の右端に何の線かを書く
+  assert.match(pLead(map), /縦の点線は確度 50%（C の期待値率。右は提案以降まで進み、左は D・創注が中心）、横の点線は FY26〜27売上を各シナリオに均等に分けた額（78÷3＝26）。未設定（1件）は図に含めない。$/);
+  assert.deepStrictEqual(roleOf(map, 'map-line-name').map(el => el.text), ['確度 50%（C＝提案以降）', '均等 26（78÷3）']);
+  assert.match(roleOf(map, 'map-axis').map(el => el.text).join('／'), /^FY26〜27売上（按分・百万円）$|確度（ステータスの期待値率を FY26〜27売上で重み付けした平均。B 70%・C 50%・D 20%・創注 10%）/);
+  // 目標が決まったら（salesLine）、横の点線は目標の値
+  o.portfolio.salesLine = 40;
+  const target = plain(g.mtgPortfolioMapSlide_(p, g.mtgPortfolioTotals_(p)));
+  assert.match(pLead(target), /横の点線は目標の FY26〜27売上（40）。/);
+  assert.strictEqual(roleOf(target, 'map-line-name')[1].text, '目標 40');
+  assert.deepStrictEqual(roleOf(target, 'map-table-quadrant').map(el => el.text), ['伸ばす', 'てこ入れ', '刈り取り', '見直し']);
+  o.portfolio.salesLine = null;
+  // 確度は「定義_ステータス」の期待値率を使う（定義に無いステータスは portfolio.scores）
+  const rated = plain(g.mtgPortfolioOf_(table.deals, new Date('2026-11-04T12:00:00+09:00'), table,
+    [{status: 'A-クロージング(90%)', ratio: 0.9}, {status: 'C-提案中(50%)', ratio: 0.5}]));
+  assert.deepStrictEqual(rated.deals.map(d => d.ratio), [90, 50, null, null, null]);
+  assert.strictEqual(Math.round(plain(g.mtgPortfolioTotals_(rated)).items[0].progress * 10) / 10, Math.round((55 * 90 + 10 * 50) / 65 * 10) / 10);
+
+  // 資料の並び：パイプラインの変化の次に3枚（portfolio.enabled。本物は true）
+  const {gas: gas2, g: g2} = setup({edits: false});
+  const s = summarize(g2, '新FMT');
+  const titles = () => plain(g2.mtgSlides_(s)).map(sl => sl.title);
+  const before = titles();
+  gas2.get('MTG_OPTIONS').portfolio.enabled = true;
+  const after = titles();
+  const at = after.indexOf(T.pipeline);
+  assert.deepStrictEqual(after.slice(at, at + 5), [T.pipeline, T.scenarioProgress, T.scenarioHeatmap, T.scenarioMap, T.progress]);
+  assert.strictEqual(after.length, before.length + 3);
+});
+
+test('RXシナリオのポートフォリオ：列が無い・進行中の案件が無いときは、ページの型を変えずに「データなし」と理由・「該当なし」', () => {
+  const {gas, g} = setup({edits: false});
+  const s = plain(summarize(g, '新FMT'));
+  // 新FMT（テスト）には RXシナリオ構成・年度別の売上の列が無い
+  assert.deepStrictEqual(Object.keys(s.portfolio.gaps).sort(), ['sales', 'scenario']);
+  const slides = plain(g.mtgPortfolioSlides_(s.portfolio));
+  assert.deepStrictEqual(slides.map(sl => roleOf(sl, 'gap').length), [1, 1, 1]);
+  assert.match(pLead(slides[0]), /^RXシナリオ別の進捗はデータなし（シートに「RXシナリオ構成」の列が無い）。$/);
+  // シナリオの列はあるが今年度の売上の列が無い：① は作り、②③ は「データなし」
+  const gas2 = createGas();
+  const sheet = portfolioSheet(gas2, PORTFOLIO_DEALS, ['得意先', '案件名', 'RXシナリオ構成', 'サービスパッケージ合算（百万円）', '案件ステータス',
+    '想定売上規模（百万）', '期待値調整済\n想定売上規模（百万）']);
+  const table = gas2.global.mtgReadDeals_(sheet, gas2.get('DIFF_RULES')['新FMT']);
+  const p = gas2.global.mtgPortfolioOf_(table.deals, new Date('2026-11-04T12:00:00+09:00'), table);
+  const out = plain(gas2.global.mtgPortfolioSlides_(p));
+  assert.deepStrictEqual(out.map(sl => roleOf(sl, 'gap').length), [0, 1, 1]);
+  assert.match(pLead(out[1]), /（シートに「FY26前半期売上」「FY26後半期売上」の列が無い）。$/);
+  // 進行中の案件が無い（列はそろっている）
+  const gas3 = createGas();
+  const sheet3 = portfolioSheet(gas3, PORTFOLIO_DEALS.filter(d => d[2] === '失注'));
+  const table3 = gas3.global.mtgReadDeals_(sheet3, gas3.get('DIFF_RULES')['新FMT']);
+  const none = plain(gas3.global.mtgPortfolioSlides_(gas3.global.mtgPortfolioOf_(table3.deals, new Date('2026-11-04T12:00:00+09:00'), table3)));
+  assert.deepStrictEqual(none.map(sl => [roleOf(sl, 'empty').length, roleOf(sl, 'gap').length, pLead(sl)]), [[1, 0, '進行中の案件なし。'],
+    [1, 0, '進行中の案件なし。'], [1, 0, '進行中の案件なし。']]);
+  // 今年度の売上がまだ入っていない（列はあるが空）：② はセルを 0 で出し（案件のある組み合わせは分かる）、③ は図を描かずに「該当なし」
+  const gas4 = createGas();
+  const sheet4 = portfolioSheet(gas4, PORTFOLIO_DEALS.map(d => d.slice(0, 6).concat(['', '', ''])));
+  const table4 = gas4.global.mtgReadDeals_(sheet4, gas4.get('DIFF_RULES')['新FMT']);
+  const blank = plain(gas4.global.mtgPortfolioSlides_(gas4.global.mtgPortfolioOf_(table4.deals, new Date('2026-11-04T12:00:00+09:00'), table4)));
+  assert.deepStrictEqual([roleOf(blank[1], 'heat-cell').length, roleOf(blank[1], 'heat-value').length], [8, 0], 'セルは色だけ（案件のある組み合わせ）');
+  assert.match(pLead(blank[1]), /FY26〜27売上がまだ入っていないため、セルは色だけ（得意先は想定売上の大きい順）。/);
+  assert.deepStrictEqual(roleOf(blank[1], 'heat-name').map(el => el.text), ['A社', 'B社', 'C社'], '想定売上の大きい順');
+  assert.deepStrictEqual([roleOf(blank[2], 'empty').length, roleOf(blank[2], 'map-bubble').length], [1, 0]);
+  assert.match(pLead(blank[2]), /^FY26〜27売上が入っていないため、ポートフォリオ図は描けない/);
+  // 長いシナリオの名前（本物の「01-04.顧客情報活用パッケージ」など）は、表・① の名前・② の見出しで切らずに全文（小さくする → 区切りで2行）
+  const long = ['01-01.製品・サービス開発支援', '01-03.次世代RX店舗', '01-04.顧客情報活用パッケージ', '01-05.バックオフィス業務PF', '01-08.メーカー商談変革支援',
+    '01-09.顧客分析パッケージ'];
+  const gas5 = createGas();
+  const sheet5 = portfolioSheet(gas5, long.map((name, i) => ['得意先' + i, name, 'C-提案中(50%)', String(10 + i), '5', '3', String(i + 1), '1', '']));
+  const table5 = gas5.global.mtgReadDeals_(sheet5, gas5.get('DIFF_RULES')['新FMT']);
+  const full = plain(gas5.global.mtgPortfolioSlides_(gas5.global.mtgPortfolioOf_(table5.deals, new Date('2026-11-04T12:00:00+09:00'), table5)));
+  const joined = el => el.text.replace(/\n/g, '');
+  assert.deepStrictEqual(roleOf(full[0], 'portfolio-name').map(joined).sort(), long.slice().sort(), '① の名前');
+  assert.deepStrictEqual(roleOf(full[1], 'heat-head').slice(1, -2).map(joined).sort(), long.slice().sort(), '② の見出し');
+  assert.deepStrictEqual(roleOf(full[2], 'map-table-cell').filter((el, i, list) => long.indexOf(joined(el)) >= 0).map(joined).sort(), long.slice().sort(), '③ の表');
+  assert.ok(!full.some(sl => sl.elements.some(el => /…/.test(el.text || ''))), 'どこも「…」で切らない');
+  // 2行にするときは、区切り（「.」・中黒）の後ろで分けて両方が1行に入るなら、そこで分ける
+  assert.strictEqual(gas5.global.mtgFitText_('01-03.次世代RX店舗', 64, [8, 7.5, 7, 6.5], 3).lines.join('\n'), '01-03.\n次世代RX店舗', '狭い幅では「.」の後ろで2行');
+  const S5 = gas5.get('MTG_SLIDE');
+  roleOf(full[2], 'map-table-head').forEach(el => assert.ok(gas5.global.mtgWrap_(el.text, el.w, el.size, 9).length === 1 && el.text.indexOf('\n') < 0 &&
+    gas5.global.mtgTextWidth_(el.text, el.size) <= el.w - S5.padX, '表の見出しは1行に入る：' + el.text));
+  // 端の円（確度 100%・売上 0）も図の中に収める
+  const edge = plain(gas4.global.mtgPortfolioMapSlide_({fy: 'FY26', gaps: {}, has: {weighted: true, scenarioAmount: true}, deals: []},
+    {items: [{key: 'X', count: 3, sales: 0, progress: 100}, {key: 'Y', count: 1, sales: 50, progress: 0}], unset: null, total: {count: 4}, multi: 0, customers: []}));
+  const S4 = gas4.get('MTG_SLIDE');
+  const plot = {x0: S4.x + 40, x1: S4.x + S4.w - 236 - 36, y0: S4.top + 10, y1: S4.top + 10 + 240};
+  roleOf(edge, 'map-bubble').forEach(b => assert.ok(b.x >= plot.x0 - 0.01 && b.x + b.w <= plot.x1 + 0.01 && b.y >= plot.y0 - 0.01 && b.y + b.h <= plot.y1 + 0.01, '図の中'));
+});
+
+test('前回から変化のある案件：責任者の列の代わりに先方部門・先方役職（名前は出さない）。得意先／案件名の次にシナリオの番号だけを並べる', () => {
+  const {gas, g} = setup();
+  const s = plain(summarize(g, '新FMT', {trackedSince: Date.now() - 100 * 86400000}));
+  assert.deepStrictEqual(['01-04.顧客情報活用パッケージ', '01-05.バックオフィス業務PF', '１２－３．全角', 'ID-POS分析', ''].map(g.mtgScenarioNumber_),
+    ['01-04', '01-05', '12-3', 'ID-POS分析', ''], '番号が無い名前はそのまま');
+  // シートに列がある（シナリオ・先方部門・役職）サブインダストリーの形にする
+  const changes = s.changes.map((ch, i) => Object.assign({}, ch, {clientDept: i === 0 ? 'デジタル推進本部 マーケティング部' : '',
+    clientTitle: i === 0 ? '部長' : '', scenarios: i === 0 ? ['01-04.顧客情報活用パッケージ', '01-05.バックオフィス業務PF'] : []}));
+  const gaps = Object.assign({}, s.gaps);
+  delete gaps.clientDept;
+  delete gaps.clientTitle;
+  const slide = plain(g.mtgMovesSlide_(Object.assign({}, s, {changes, gaps, scenarioColumn: true})))[0];
+  const table = slide.elements.find(el => el.type === 'table');
+  const first = table.rows[1].cells.map(cell => cell.text);
+  assert.strictEqual(first[1], '01-04\n01-05', 'シナリオは番号だけを縦に並べる');
+  assert.strictEqual(first[6].replace(/\n/g, ''), 'デジタル推進本部 マーケティング部', '先方部門（入らなければ小さく・3行まで）');
+  assert.strictEqual(first[7], '部長');
+  assert.ok(!table.rows[0].cells.some(cell => /責任者|氏名/.test(cell.text)), '責任者・担当の名前の列は無い');
+  assert.deepStrictEqual(table.rows[2].cells.map(cell => cell.text).filter((_, i) => i === 1 || i === 6 || i === 7), ['未入力', '未入力', '未入力'], '空は「未入力」');
+  assert.strictEqual(table.columns.reduce((a, b) => a + b, 0), gas.get('MTG_SLIDE').w);
+  // 長い部門名・役職も全文（小さくし、それでも入らなければ行を伸ばす）。シナリオは選んだものをすべて
+  const long = changes.map((ch, i) => (i ? ch : Object.assign({}, ch, {clientDept: 'ジャパンマーケティング部インストアメディア推進グループ',
+    clientTitle: 'シニアマネージャー兼グループリーダー',
+    scenarios: ['01-01.製品・サービス開発支援', '01-03.次世代RX店舗', '01-04.顧客情報活用パッケージ', '01-05.バックオフィス業務PF', '01-09.顧客分析パッケージ']})));
+  const longTable = plain(g.mtgMovesSlide_(Object.assign({}, s, {changes: long, gaps, scenarioColumn: true})))[0].elements.find(el => el.type === 'table');
+  const cells = longTable.rows[1].cells;
+  assert.strictEqual(cells[1].text, '01-01\n01-03\n01-04\n01-05\n01-09', 'シナリオは5つとも');
+  assert.strictEqual(cells[6].text.replace(/\n/g, ''), 'ジャパンマーケティング部インストアメディア推進グループ', '部門名は全文（「…」で切らない）');
+  assert.strictEqual(cells[7].text.replace(/\n/g, ''), 'シニアマネージャー兼グループリーダー', '役職は全文');
+  assert.ok(!cells.some(cell => /…/.test(cell.text)));
+  // 長い活動状況も全文（2026/11/05 から。行が伸びてページに入らなければ「（続き）」のページに続ける）
+  const longText = '・' + '役員より発注意思確認済み。BPR実施予算が27年度予算に先送り。'.repeat(8);
+  const many = Array.from({length: 7}, (_, i) => Object.assign({}, changes[i % changes.length], {project: '案件' + i, activity: longText}));
+  const moves = plain(g.mtgMovesSlide_(Object.assign({}, s, {changes: many, gaps, scenarioColumn: true})));
+  assert.ok(moves.length > 1, '続きのページ');
+  assert.deepStrictEqual(moves.map(sl => sl.title).slice(0, 2), ['前回から変化のある案件', '前回から変化のある案件（続き）']);
+  const all = [].concat.apply([], moves.map(sl => sl.elements.find(el => el.type === 'table').rows.slice(1)));
+  assert.strictEqual(all.length, 7, '7件とも');
+  all.forEach(r => assert.strictEqual(r.cells[5].text.replace(/\s/g, ''), longText.replace(/\s/g, ''), '活動状況は全文'));
+  moves.forEach(sl => {
+    const t = sl.elements.find(el => el.type === 'table');
+    assert.ok(t.y + t.rows.reduce((h, r) => h + r.h, 0) <= gas.get('MTG_SLIDE').bottom + 0.01, 'ページに入る');
+  });
+  // Appendix ①（一覧）も同じ列（シナリオの番号・先方部門・先方役職。責任者の列は無い）に、更新項目を足したもの。見出しはどれも1行
+  const appendix = plain(g.mtgAppendixChanges_(Object.assign({}, s, {changes: long, gaps, scenarioColumn: true})));
+  const at = appendix[0].elements.find(el => el.type === 'table');
+  assert.deepStrictEqual(at.rows[0].cells.map(cell => cell.text.replace(/\n.*/s, '')), ['得意先／案件名', 'シナリオ', 'ステータス', '期待値', '受注月',
+    '活動状況（最新）', '更新項目', '先方部門', '先方役職']);
+  assert.ok(at.rows[0].cells.every(cell => cell.text.split('\n').length <= 2), '見出しは途中で折り返さない（「前回▶今回」の2行まで）');
+  const aRow = at.rows[1].cells;
+  assert.strictEqual(aRow[1].text, '01-01\n01-03\n01-04\n01-05\n01-09', 'シナリオはすべて');
+  assert.strictEqual(aRow[7].text.replace(/\n/g, ''), 'ジャパンマーケティング部インストアメディア推進グループ', '部門名は全文');
+  assert.strictEqual(aRow[8].text.replace(/\n/g, ''), 'シニアマネージャー兼グループリーダー', '役職は全文');
+  assert.strictEqual(at.columns.reduce((a, b) => a + b, 0), gas.get('MTG_SLIDE').w);
+});
+
+test('RXシナリオのポートフォリオの前回比：前回の時点コピーの案件と比べる。① 期待値の前回比と棒の印、② 得意先の前回比と増えた組み合わせの枠、③ 前回の位置の点線の円と表の前回比', () => {
+  const gas = createGas();
+  const g = gas.global;
+  const S = gas.get('MTG_SLIDE');
+  const o = gas.get('MTG_OPTIONS');
+  const now = new Date('2026-11-04T12:00:00+09:00');
+  const sheet = portfolioSheet(gas, PORTFOLIO_DEALS.concat([['E社', '物流・SCM', 'B-選定中(70%)', '20', '14', '5', '3', '', '']]));
+  const table = g.mtgReadDeals_(sheet, gas.get('DIFF_RULES')['新FMT']);
+  // 前回（時点コピー）：A社の ID-POS分析だけ（期待値 60・売上 FY26 30）と、B社のサイネージ（期待値 8）。今は ID-POS分析・サイネージ・物流・SCM・未設定
+  const gasPrev = createGas();
+  const prevSheet = portfolioSheet(gasPrev, [['A社', 'ID-POS分析', 'A-クロージング(90%)', '100', '60', '40', '20', '10', ''],
+    ['B社', 'サイネージ', 'D-初期提案(20%)', '40', '8', '10', '', '', '']]);
+  const prevTable = gasPrev.global.mtgReadDeals_(prevSheet, gasPrev.get('DIFF_RULES')['新FMT']);
+  const p = g.mtgPortfolioWithPrevious_(g.mtgPortfolioOf_(table.deals, now, table), {table: prevTable}, {previous: null, now, copyError: ''}, null);
+  assert.deepStrictEqual([p.vs, p.previousGap, plain(p.previous.years)], ['前回比', '', ['26', '27']], '前回も今と同じ年度で数える');
+  const [progress, heat, map] = plain(g.mtgPortfolioSlides_(p));
+  const inside = slide => slide.elements.every(el => el.x >= 0 && el.x + (el.w || 0) <= S.width + 0.01 && el.y >= S.top - 30 && el.y + (el.h || 0) <= S.bottom + 0.01);
+  [progress, heat, map].forEach(slide => assert.ok(inside(slide), slide.title));
+  // ① 期待値の前回比：ID-POS分析 105 − 60 = +45、サイネージ 23 − 8 = +15、前回に無いシナリオは「新規」。前回の期待値の印（細い縦線）
+  assert.deepStrictEqual(roleOf(progress, 'portfolio-delta').map(el => [el.text, el.color]), [['+45', o.colors.greenText], ['+15', o.colors.greenText],
+    ['新規', o.colors.greenText], ['新規', o.colors.greenText]]);
+  // 前回の期待値は、0 から前回の期待値までの点線の箱（前回の棒の輪郭。塗らない）。前回にあったシナリオだけ
+  const boxes = roleOf(progress, 'portfolio-prev');
+  assert.strictEqual(boxes.length, 2, '前回にあったシナリオだけ');
+  assert.ok(boxes.every(b => b.dash && !b.fill && b.shape === 'RECTANGLE'));
+  const bars = roleOf(progress, 'portfolio-bar');
+  const unit = (bars[0].w + bars[1].w) / 105;
+  assert.ok(Math.abs(boxes[0].x - bars[0].x) < 0.01 && Math.abs(boxes[0].w - 60 * unit) < 0.01, '0 から前回の期待値（60）まで');
+  assert.match(pLead(progress), /^進行中の期待値 163百万円（前回比 \+95）・案件 5件/);
+  assert.ok(roleOf(progress, 'legend').some(el => el.text === '前回の期待値'));
+  // 減ったとき：点線の箱（前回）が今の棒より長い。期待値の合計は今の棒の右（0 なら棒の左端）
+  const down = g.mtgPortfolioWithPrevious_(g.mtgPortfolioOf_(prevTable.deals, now, prevTable), {table: table}, {previous: null, now, copyError: ''}, null);
+  const downSlide = plain(g.mtgPortfolioSlides_(down))[0];
+  const dBars = roleOf(downSlide, 'portfolio-bar');
+  const dBox = roleOf(downSlide, 'portfolio-prev')[0];
+  assert.ok(Math.abs(dBox.x - dBars[0].x) < 0.01 && dBox.w > dBars.filter(b => b.y === dBars[0].y).reduce((a, b) => a + b.w, 0), '点線の箱は 0 から。今の棒より長い');
+  const zero = Object.assign({}, plain(down), {deals: plain(down).deals.map(d => Object.assign({}, d, {weighted: 0}))});
+  const zeroSlide = plain(g.mtgPortfolioSlides_(zero))[0];
+  const barX = roleOf(zeroSlide, 'portfolio-prev')[0].x;
+  roleOf(zeroSlide, 'portfolio-bar-total').forEach(el => {
+    assert.strictEqual(el.text, '0');
+    assert.ok(el.x + S.padX / 2 - barX < 6, '期待値が 0 なら棒の左端（前回の位置まで飛ばさない）');
+  });
+  // ② 得意先の前回比（売上の合計の増減）と、前回から増えた組み合わせ（A社のサイネージ・C社の未設定は前回に無い）の枠
+  o.portfolio.heatRows = 2;
+  const heat2 = plain(g.mtgPortfolioHeatmapSlide_(p, g.mtgPortfolioTotals_(p), g.mtgPortfolioTotals_(p.previous)));
+  assert.deepStrictEqual(roleOf(heat2, 'heat-delta').map(el => el.text), ['+45', '+5', '+3'], 'A社 75 − 30、C社 5 − 0、その他（B社・E社）3 − 0');
+  assert.strictEqual(roleOf(heat2, 'heat-foot-delta')[0].text, '+53');
+  // 前回から変わったセルは、数字の下に小さく増減「(+30)」（オレンジの字・枠は使わない）。A社の ID-POS分析（FY26 30 → 60、FY27 0 → 5）・
+  // サイネージ（前回なし → FY26 10）、C社の未設定（前回なし → FY26 5）
+  const values2 = roleOf(heat2, 'heat-value');
+  assert.deepStrictEqual(values2.map(el => el.text), ['60\n(+30)', '5\n(+5)', '10\n(+10)', '5\n(+5)']);
+  assert.ok(values2.every(el => el.spans && el.spans[0].size === 5 && el.spans[0].start === el.text.indexOf('\n') + 1 && el.lineSpacing === 85));
+  assert.ok(!heat2.elements.some(el => el.line === '#ED7D31' || el.color === '#C55A11'), 'オレンジの枠・字は使わない');
+  assert.match(roleOf(heat2, 'heat-legend-changed')[0].text, /^\(\+10\)＝前回からの増減（変わったセルだけ）$/);
+  // 見切れない：シナリオが多く（年度の列が細い）、数字が大きく（4桁）、得意先が多くても、数字・増減は列の幅に入り、2行のセルの行は 14pt 以上
+  const scen = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
+  const many = [];
+  for (let i = 0; i < 20; i++) many.push(['得意先' + i, scen[i % 6] + ', ' + scen[(i + 1) % 6], 'C-提案中(50%)', '3000', '1500', '100', String(1000 + i * 37), '999', '1234']);
+  const gasM = createGas();
+  gasM.get('MTG_OPTIONS').portfolio.heatColumns = 9;
+  const tM = gasM.global.mtgReadDeals_(portfolioSheet(gasM, many), gasM.get('DIFF_RULES')['新FMT']);
+  const prevM = gasM.global.mtgReadDeals_(portfolioSheet(createGas(), many.map(d => d.slice(0, 6).concat(['500', '', '']))), gasM.get('DIFF_RULES')['新FMT']);
+  const pM = gasM.global.mtgPortfolioWithPrevious_(gasM.global.mtgPortfolioOf_(tM.deals, now, tM), {table: prevM}, {previous: null, now, copyError: ''}, null);
+  const heatM = plain(gasM.global.mtgPortfolioSlides_(pM))[1];
+  const valuesM = roleOf(heatM, 'heat-value').concat(roleOf(heatM, 'heat-foot-value'), roleOf(heatM, 'heat-year'));
+  assert.ok(valuesM.length > 10);
+  valuesM.forEach(el => {
+    const [main, sub] = el.text.split('\n');
+    const colW = el.w - S.padX;
+    assert.ok(gasM.global.mtgTextWidth_(main, el.size) <= colW, '数字が列に入る：' + main + ' ' + el.size + 'pt');
+    if (sub) assert.ok(gasM.global.mtgTextWidth_(sub, el.spans[0].size) <= colW, '増減が列に入る：' + sub);
+  });
+  const hsM = roleOf(heatM, 'heat-head').concat(roleOf(heatM, 'heat-year')).map(el => el.size);
+  assert.ok(hsM.every(v => v === hsM[0]), '列が細くても見出しは同じ大きさ（そろって小さくなる）');
+  assert.ok(!roleOf(heatM, 'heat-head').some(el => /…/.test(el.text)), '見出しは全文');
+  const rowH = roleOf(heatM, 'heat-name-cell').map(el => el.h);
+  assert.ok(rowH.every(h => h >= 14), '2行のセルの行は 14pt 以上（入らなければ上位の得意先を減らす）');
+  assert.ok(heatM.elements.every(el => el.y + (el.h || 0) <= S.bottom + 0.01), 'ページの下に見切れない');
+  // 0 になったセルも「0」と増減を書く
+  const dropped = g.mtgPortfolioWithPrevious_(g.mtgPortfolioOf_(prevTable.deals, now, prevTable), {table}, {previous: null, now, copyError: ''}, null);
+  const droppedHeat = plain(g.mtgPortfolioHeatmapSlide_(dropped, g.mtgPortfolioTotals_(dropped), g.mtgPortfolioTotals_(dropped.previous)));
+  assert.ok(roleOf(droppedHeat, 'heat-value').some(el => /^0\n\(▲5\)$/.test(el.text)), 'A社の ID-POS分析 FY27：5 → 0');
+  // 変わっていなければ今までの色（前回と同じ案件）
+  const same = g.mtgPortfolioWithPrevious_(g.mtgPortfolioOf_(table.deals, now, table), {table}, {previous: null, now, copyError: ''}, null);
+  const sameHeat = plain(g.mtgPortfolioHeatmapSlide_(same, g.mtgPortfolioTotals_(same), g.mtgPortfolioTotals_(same.previous)));
+  assert.deepStrictEqual(roleOf(sameHeat, 'heat-value').map(el => el.text), ['60', '5', '10', '5'], '変わっていなければ数字だけ');
+  assert.match(pLead(heat2), /売上の合計は前回比 \+53。/);
+  // ③ 前回の位置の点線の円（前回にあったシナリオで、位置が変わったもの）と、表の前回比（売上の増減。前回に無ければ「新規」）
+  assert.ok(roleOf(map, 'map-prev').length >= 1 && roleOf(map, 'map-prev').every(el => el.dash && !el.fill && el.shape === 'ELLIPSE'));
+  // 前回の位置から今の円への矢印（前回の円に灰色の番号）。矢印の先は今の円のふち
+  const moves = roleOf(map, 'map-move');
+  assert.ok(moves.length >= 1 && moves.every(m => m.type === 'line' && m.arrow && m.x2 != null));
+  const bubbles = roleOf(map, 'map-bubble').map(b => ({cx: b.x + b.w / 2, cy: b.y + b.h / 2, r: b.w / 2}));
+  moves.forEach(m => assert.ok(bubbles.some(b => Math.abs(Math.hypot(m.x2 - b.cx, m.y2 - b.cy) - (b.r + 1)) < 0.01), '矢印の先は今の円のふち'));
+  assert.strictEqual(roleOf(map, 'map-prev-number').length, roleOf(map, 'map-prev').length);
+  // 斜めの線は Slides API では箱を裏返して引く（左・上へ向かう線は倍率 -1）
+  const req = g.mtgSlideRequests_({title: 'x', elements: [{type: 'line', x: 100, y: 100, x2: 60, y2: 40, color: '#595959', weight: 1, arrow: true}]}, 'pageMove1', 0);
+  const created = req.find(r => r.createLine).createLine.elementProperties;
+  assert.deepStrictEqual([created.size.width.magnitude, created.size.height.magnitude, created.transform.scaleX, created.transform.scaleY,
+    created.transform.translateX, created.transform.translateY], [40, 60, -1, -1, 100, 100]);
+  assert.strictEqual(req.find(r => r.updateLineProperties).updateLineProperties.lineProperties.endArrow, 'FILL_ARROW');
+  assert.deepStrictEqual(roleOf(map, 'map-table-head').map(el => el.text), ['No.', 'シナリオ', 'FY26〜27', '前回比', '確度', '件数']);
+  assert.deepStrictEqual(roleOf(map, 'map-table-delta').map(el => el.text), ['+35', '+10', '新規']);
+  roleOf(map, 'map-table-head').forEach(el => assert.ok(g.mtgTextWidth_(el.text, el.size) <= el.w - S.padX, '表の見出しは1行：' + el.text));
+  assert.match(roleOf(map, 'map-legend-prev')[0].text, /^点線の円＝前回の位置/);
+  // 比べる時点が基準・選んだ時点なら、列の見出しは「10/17比」など
+  const chosen = g.mtgPortfolioWithPrevious_(g.mtgPortfolioOf_(table.deals, now, table), {table: prevTable},
+    {previous: {baseline: true, cutoff: new Date('2026-10-17T10:00:00+09:00').getTime()}, now, copyError: ''}, null);
+  assert.strictEqual(chosen.vs, '10/17比');
+  // 時点コピーを開けないときは、理由を書く
+  const failed = g.mtgPortfolioWithPrevious_(g.mtgPortfolioOf_(table.deals, now, table), null, {previous: null, now, copyError: '開けない'}, null);
+  assert.deepStrictEqual([failed.previous, failed.previousGap], [null, '時点コピーを開けない']);
+});
+
+
+test('Sheets API で読む（readMode: api）：SpreadsheetApp で読んだときと同じ中身になる（値・日時・表示・数式・入力規則（一覧・範囲））。元のシートは SpreadsheetApp で読まない', () => {
+  const {gas, g} = setup();
+  const names = ['新FMT', '新FMT2'];
+  // 新FMT2 のステータスのプルダウンは、ほかのシートの範囲から（定義の範囲）
+  const list = gas.addSheet('選択肢', STATUSES.map(st => [st]));
+  const sheet2 = gas.ss.getSheetByName('新FMT2');
+  gas.asUser(() => sheet2.getRange('F3:F20').setDataValidation(g.SpreadsheetApp.newDataValidation().requireValueInRange(list.getRange('A1:A6'), true).build()));
+  // 期待値の列を数式にした行（数式かどうかで前回の値の取り方が変わる）
+  const cell = gas.ss.getSheetByName('新FMT').cell(3, COL.weighted, true);
+  cell.f = '=G3*0.5';
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  const now = new Date();
+  const live = plain(g.mtgSummaries_(gas.ss, names, now, false, meeting).summaries);
+  gas.enableSheetsApi();
+  gas.reads.length = 0;
+  const book = g.mtgApiBook_(gas.ss, names);
+  const api = plain(g.mtgSummaries_(book, names, now, false, meeting).summaries);
+  assert.deepStrictEqual(api, live);
+  assert.deepStrictEqual(gas.reads.filter(r => names.concat(['変更履歴_差分', '変更時点スナップショット', '選択肢']).indexOf(r.sheet) >= 0), [],
+    '元のシートは SpreadsheetApp で読まない');
+  // 呼び出しは、シートの一覧・追跡シートとステータスの定義（1回）・記録のシート（1回）・プルダウンの範囲のシート（読んでいなかったので、そのときに1回）
+  assert.deepStrictEqual(gas.sheetsApiCalls.map(c => c.method + (c.args && c.args.includeGridData ? '(grid ' + c.args.ranges.join(',') + ')' : '')),
+    ["get", "get(grid '新FMT','新FMT2')", 'batchGet', "get(grid '選択肢')"]);
+  const table = g.mtgReadDeals_(book.getSheetByName('新FMT2'), gas.get('DIFF_RULES')['新FMT2']);
+  assert.deepStrictEqual(plain(table.statusOrder), STATUSES, '範囲のプルダウンの選択肢も読む');
+  assert.strictEqual(g.mtgReadDeals_(book.getSheetByName('新FMT'), gas.get('DIFF_RULES')['新FMT']).weightedFormula, true);
+});
+
+test('previewBusinessMtgSummaries（readMode: api）：Sheets API でまとめて読んで作る（中身は SpreadsheetApp で読んだときと同じ）。Sheets API が無ければ SpreadsheetApp で読んで知らせる', () => {
+  const run = api => {
+    const {gas, g} = setup();
+    gas.get('MTG_OPTIONS').run.readMode = 'api';
+    if (api) gas.enableSheetsApi();
+    gas.reads.length = 0;
+    gas.promptAnswers = ['1', '10/23'];
+    g.previewBusinessMtgSummaries();
+    return {gas, message: gas.alerts[gas.alerts.length - 1].message};
+  };
+  const withApi = run(true);
+  assert.match(withApi.message, /「新FMT」：.*（変化のある案件 4・停滞 0・確認事項 3）/);
+  assert.doesNotMatch(withApi.message, /※ Sheets API/);
+  assert.ok(withApi.gas.sheetsApiCalls.some(c => c.args && c.args.includeGridData), 'Sheets API で読む');
+  assert.deepStrictEqual(withApi.gas.reads.filter(r => ['新FMT', '変更履歴_差分', '変更時点スナップショット'].indexOf(r.sheet) >= 0).map(r => r.sheet), [],
+    '確かめ・作成で、元のシートを SpreadsheetApp で読まない');
+  const without = run(false);
+  assert.match(without.message, /（変化のある案件 4・停滞 0・確認事項 3）/);
+  assert.match(without.message, /※ Sheets API（拡張サービス）が使えません。資料は、このスプレッドシートを SpreadsheetApp で読んで作りました/);
+});
+
+test('createBusinessMtgSummaries（readMode: api）：本番の時点コピーの、数式で出している列（数式と、配列の数式が広げたセル）を元の値にする（期待値の列は数式のまま）', () => {
+  const {gas, g} = setup();
+  gas.get('MTG_OPTIONS').run.readMode = 'api';
+  gas.enableSheetsApi();
+  const sheet = gas.ss.getSheetByName('新FMT');
+  const last = sheet.getLastRow();
+  const col = 20;   // 配列の数式の列（先頭の行だけに数式があり、下の行は広げた値）
+  for (let r = 3; r <= last; r++) {
+    const c = sheet.cell(r, col, true);
+    c.v = 10 * r;
+    if (r === 3) c.f = '=ARRAYFORMULA(IMPORTRANGE("x","y!A3:A"))';
+    else c.spill = true;
+  }
+  sheet.cell(2, col, true).v = '見込金額';
+  const weighted = sheet.cell(3, COL.weighted, true);
+  weighted.f = '=G3*0.5';
+  // コピーの中では計算し直されて 0 になる（ほかのファイルを読めない）
+  const save = g.mtgSaveCopy_;
+  g.mtgSaveCopy_ = function () {
+    const copy = save.apply(null, arguments);
+    const book = g.SpreadsheetApp.openById(copy.id).getSheetByName('新FMT');
+    for (let r = 3; r <= last; r++) book.cell(r, col, true).v = 0;
+    return copy;
+  };
+  gas.promptAnswers = ['1', '10/23'];
+  g.createBusinessMtgSummaries();
+  // 資料の中身を読んだ実行では直さず、新しい実行（続き）で直す（メモリが足りなくならないように。2026/11/05）
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^時間がかかるため、ここで区切りました/);
+  const copySheet = gas.created[gas.created.length - 1].getSheetByName('新FMT');
+  assert.strictEqual(copySheet.getRange(3, col).getValue(), 0, 'まだ直していない');
+  const reads = gas.sheetsApiCalls.length;
+  g.continueBusinessMtgSummaries();
+  const fixReads = gas.sheetsApiCalls.slice(reads).filter(c => c.args && c.args.includeGridData);
+  assert.ok(fixReads.length >= 1 && fixReads.every(c => c.args.ranges.length === 1 && !/formattedValue|dataValidation/.test(c.args.fields)),
+    '1シートずつ、値と数式だけを読む');
+  for (let r = 3; r <= last; r++) assert.strictEqual(copySheet.getRange(r, col).getValue(), 10 * r, r + '行目は元の値');
+  assert.strictEqual(copySheet.getRange(3, col).getFormula(), '', '値にする');
+  assert.strictEqual(copySheet.getRange(3, COL.weighted).getFormula(), '=G3*0.5', '期待値の列は数式のまま');
+  g.showBusinessMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /時点コピーの、数式で出している列は、元のスプレッドシートの値にしました（新FMT のT列（見込金額））。/);
+});
+
+test('Sheets API は sheetsPerRead シートずつ読む（全シートを一度に読むとメモリが足りない）。記録のシートは同じ実行の中で1回だけ読む。中身は一度に読んだときと同じ', () => {
+  const run = perRead => {
+    const {gas, g} = setup();
+    const o = gas.get('MTG_OPTIONS');
+    o.run.readMode = 'api';
+    o.run.sheetsPerRead = perRead;
+    gas.enableSheetsApi();
+    gas.promptAnswers = ['1,2', '10/23'];
+    g.previewBusinessMtgSummaries();
+    const message = gas.alerts[gas.alerts.length - 1].message.replace(/https:\/\/\S+/g, 'URL');
+    const grids = gas.sheetsApiCalls.filter(c => c.args && c.args.includeGridData).map(c => c.args.ranges.filter(r => /新FMT/.test(r)).join(','));
+    const records = gas.sheetsApiCalls.filter(c => c.method === 'batchGet').length;
+    return {message, grids, records};
+  };
+  const one = run(1);
+  const all = run(3);
+  assert.deepStrictEqual(one.grids, ["'新FMT'", "'新FMT2'"], '1シートずつ読む');
+  assert.deepStrictEqual(all.grids, ["'新FMT','新FMT2'"]);
+  assert.deepStrictEqual([one.records, all.records], [2, 2], '記録のシートは「次へ（確かめる）」で1回・作るときに1回だけ（シートを分けて読んでも増えない）');
+  assert.strictEqual(one.message, all.message);
+  assert.match(one.message, /「新FMT」：.*\n[\s\S]*「新FMT2」：/);
+});
+
+test('統合版（readMode: api）：Sheets API で sheetsPerRead シートずつ読んで作る。中身（スライド）は SpreadsheetApp で読んだときと同じ。元の追跡シートは SpreadsheetApp で読まない', () => {
+  const run = (mode, perRead) => {
+    const {gas, g} = setup();
+    const o = gas.get('MTG_OPTIONS');
+    o.combined.enabled = true;
+    meetingFolders(gas, []);
+    gas.promptAnswers = ['', '10/23'];
+    g.createBusinessMtgSummaries();
+    o.run.readMode = mode;
+    o.run.sheetsPerRead = perRead;
+    if (mode === 'api') gas.enableSheetsApi();
+    gas.reads.length = 0;
+    gas.promptAnswers = ['10/23'];
+    g.createBusinessMtgCombinedSummary();
+    const deck = gas.decks[gas.decks.length - 1];
+    const grids = (gas.sheetsApiCalls || []).filter(c => c.args && c.args.includeGridData).map(c => c.args.ranges.filter(r => /新FMT/.test(r)).join(','));
+    const text = stableRequests(deck.requests);
+    return {gas, deck, grids, text, message: gas.alerts[gas.alerts.length - 1].message};
+  };
+  const sheet = run('sheet', 3);
+  const api = run('api', 1);
+  assert.match(api.deck.title, /_全サブインダストリー_RX Business Meeting用資料$/);
+  assert.deepStrictEqual(api.grids, ["'新FMT'", "'新FMT2'"], '1シートずつ読む');
+  assert.deepStrictEqual(api.gas.reads.filter(r => /^新FMT/.test(r.sheet)).map(r => r.sheet), [], '追跡シートは SpreadsheetApp で読まない');
+  assert.doesNotMatch(api.message, /※ Sheets API/);
+  assert.strictEqual(api.text, sheet.text, 'スライドの中身は同じ');
+});
+
+/* ---------------- 統合版も区切って続ける ---------------- */
+
+/** 統合版の前に、すべてのサブインダストリーの本番の資料を作っておく */
+function combinedReady(gas, g) {
+  const o = gas.get('MTG_OPTIONS');
+  o.combined.enabled = true;
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
+  gas.promptAnswers = ['', '10/23'];
+  g.createBusinessMtgSummaries();
+  return {o, meeting};
+}
+
+/**
+ * 別々に作った資料を比べるためのリクエストの文字（時刻は除く。テストの変更の記録は同じ日に続けて書くので、同じ日の動き（直近2か月の動き）の
+ * 並びはミリ秒の違いで入れ替わる。文字の行は並べ替えて比べる）
+ */
+function stableRequests(requests) {
+  return JSON.stringify(requests.map(r => (r.insertText ? Object.assign({}, r, {insertText: Object.assign({}, r.insertText,
+    {text: String(r.insertText.text).split('\n').sort().join('\n')})}) : r))).replace(/(\d{4}[\/-])?\d{1,2}[\/-]\d{1,2} \d{1,2}:\d{2}/g, 'TIME');
+}
+
+/** 資料のスライドの並び（ID）と、作ったときのリクエスト（stableRequests） */
+function deckShape(deck) {
+  return {slides: deck.slides.map(sl => sl.objectId), requests: stableRequests(deck.requests)};
+}
+
+test('統合版：時間がかかれば、サブインダストリーの資料のページを足したところで区切り、続き（continueBusinessMtgSummaries）で残りのページ・表紙などのページ・PDF・格納を作る。できあがりは区切らずに作ったときと同じ', () => {
+  const once = (() => {
+    const {gas, g} = setup();
+    combinedReady(gas, g);
+    gas.promptAnswers = ['10/23'];
+    g.createBusinessMtgCombinedSummary();
+    return {gas, deck: deckShape(gas.decks[gas.decks.length - 1]), message: gas.alerts[gas.alerts.length - 1].message};
+  })();
+  assert.match(once.message, /「全サブインダストリー」（統合版）：.*（19ページ）/);
+  assert.deepStrictEqual(once.deck.slides, Array.from({length: 19}, (_, i) => 'mtg_p' + (i + 1)), '表紙などのページは最後に足して、番号の順に並べる');
+
+  const {gas, g} = setup();
+  const {o} = combinedReady(gas, g);
+  const sprops = g.PropertiesService.getScriptProperties();
+  const handlers = () => gas.triggers.filter(t => t.getHandlerFunction() === 'continueBusinessMtgSummaries');
+  // スライドを足すたびに 100秒かかる時計。資料1つ分（100秒）＋次の見積もり（読む 30秒・資料 55秒）は入らない
+  const clock = {t: 0};
+  g.mtgNow_ = () => clock.t;
+  const add = g.mtgDeckAdd_;
+  g.mtgDeckAdd_ = (...args) => { clock.t += 100000; return add(...args); };
+  o.run.limitMs = 150000;
+  const decks = gas.decks.length;
+  gas.promptAnswers = ['10/23'];
+  g.createBusinessMtgCombinedSummary();
+  const first = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(first, /^時間がかかるため、ここで区切りました（Apps Script の1回の実行は6分まで）。残りは約1分後に自動で続けます：資料 1件（新FMT2）のページ・表紙・目次・状況のページと PDF・会議のフォルダへの格納とインデックス。/);
+  assert.match(first, /統合版（全サブインダストリー）：1\/2サブインダストリーのページを作りました。/);
+  assert.strictEqual(gas.decks.length, decks + 1, '資料は1つだけ作り、続きで足していく');
+  assert.deepStrictEqual(handlers().map(t => t.options.after), [60000]);
+  const saved = JSON.parse(sprops.getProperty('MTG_JOB'));
+  assert.strictEqual(saved.kind, 'combined');
+  assert.ok(JSON.stringify(saved).length < 9000, 'スクリプトのプロパティの1つの値に入る');
+  assert.ok(sprops.getProperty('MTG_JOB_ITEM_0').length < 9000);
+  assert.deepStrictEqual([saved.deck.added, saved.page], [7, 12], '足したスライドの数（1つ目の資料の表紙と本編の7枚）と、次の資料の前のページの数（前のページ 5枚 ＋ 7枚）');
+
+  // 途中：統合版も個別の資料も、すぐには作らない
+  gas.promptAnswers = ['10/23'];
+  g.createBusinessMtgCombinedSummary();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版を作っている途中です（自動で続けています）。/);
+  g.showBusinessMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /統合版（全サブインダストリー）を作っている途中です（会議日 \d{4}\/10\/23。1\/2サブインダストリーのページ）。自動で続けています。/);
+  gas.confirmAnswer = 'NO';
+  gas.promptAnswers = ['', '10/23'];
+  g.createBusinessMtgSummaries();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /前に始めた統合版（全サブインダストリー。会議日 \d{4}\/10\/23。1\/2サブインダストリーのページ。/);
+  gas.confirmAnswer = 'YES';
+
+  // 続き：1回目は残りの資料のページ、2回目で仕上げ（見積もり 150秒が入らないので、もう一度区切る）
+  o.run.limitMs = 230000;   // 資料（100秒）のあと、仕上げの見積もり（150秒）は入らない
+  clock.t = 0;
+  g.continueBusinessMtgSummaries();
+  assert.ok(sprops.getProperty('MTG_JOB'), 'まだ続く');
+  assert.strictEqual(JSON.parse(sprops.getProperty('MTG_JOB')).items, 2);
+  o.run.limitMs = 400000;
+  clock.t = 0;
+  g.continueBusinessMtgSummaries();
+  assert.deepStrictEqual([sprops.getProperty('MTG_JOB'), handlers().length], [null, 0]);
+  const deck = gas.decks[gas.decks.length - 1];
+  assert.strictEqual(gas.decks.length, decks + 1);
+  assert.deepStrictEqual(deckShape(deck), once.deck, '区切らずに作ったときと同じ');
+  g.showBusinessMtgSummariesResult();
+  const done = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(done, /に終わりました。\n\n「全サブインダストリー」（統合版）：\d{8}_全サブインダストリー_RX Business Meeting用資料\.pdf（19ページ）/);
+  assert.match(done, /会議のフォルダ「\d{6}_第5回会議」に格納しました/);
+  const index = gas.ss.getSheetByName('INDEX_会議資料');
+  assert.match(index.getRange(2, 3).getDisplayValue(), /_全サブインダストリー_RX Business Meeting用資料\.pdf$/);
+});
+
+test('統合版：作っている途中でやめた・止まったときは、作りかけの資料をゴミ箱に移す', () => {
+  const {gas, g} = setup();
+  const {o} = combinedReady(gas, g);
+  const clock = {t: 0};
+  g.mtgNow_ = () => clock.t;
+  const add = g.mtgDeckAdd_;
+  g.mtgDeckAdd_ = (...args) => { clock.t += 100000; return add(...args); };
+  o.run.limitMs = 150000;
+  gas.promptAnswers = ['10/23'];
+  g.createBusinessMtgCombinedSummary();
+  const deck1 = gas.decks[gas.decks.length - 1].id;
+  // 個別の資料を「やめて新しく作る」：作りかけの統合版はゴミ箱へ
+  g.mtgNow_ = () => 0;
+  g.mtgDeckAdd_ = add;
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  assert.ok(gas.trashed.indexOf(deck1) >= 0, 'やめた統合版はゴミ箱へ');
+  assert.strictEqual(g.PropertiesService.getScriptProperties().getProperty('MTG_JOB'), null);
+  // 続きで止まった：ゴミ箱に移して、作り直しを案内する
+  g.mtgNow_ = () => clock.t;
+  g.mtgDeckAdd_ = (...args) => { clock.t += 100000; return add(...args); };
+  clock.t = 0;
+  gas.promptAnswers = ['10/23'];
+  g.createBusinessMtgCombinedSummary();
+  const deck2 = gas.decks[gas.decks.length - 1].id;
+  g.mtgDeckAdd_ = () => { throw new Error('Slides API の失敗'); };
+  clock.t = 0;
+  o.run.limitMs = 400000;
+  g.continueBusinessMtgSummaries();
+  assert.ok(gas.trashed.indexOf(deck2) >= 0, '止まった統合版はゴミ箱へ');
+  g.showBusinessMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /統合版（全サブインダストリー）を作る途中で止まりました：Slides API の失敗\ncreateBusinessMtgCombinedSummary\(\) で、作り直してください。/);
+});
+
+test('統合版・ひな形（区切って作る）：表紙はひな形のページを毎回複製して使い（文字の枠の ID は複製のときに決める）、元のページは仕上げで消して、番号の順に並べる', () => {
+  const {gas, g} = setup();
+  const id = '1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789';
+  gas.slideTemplates[id] = pptxTemplate();
+  g.PropertiesService.getScriptProperties().setProperty('MTG_TEMPLATE_URL', 'https://docs.google.com/presentation/d/' + id + '/edit');
+  combinedReady(gas, g);
+  gas.promptAnswers = ['10/23'];
+  g.createBusinessMtgCombinedSummary();
+  const deck = gas.decks[gas.decks.length - 1];
+  assert.match(deck.title, /_全サブインダストリー_RX Business Meeting用資料$/);
+  assert.strictEqual(deck.slides.length, 19);
+  // 複製した表紙の、決まった文字の枠（見出し・会議の名前・日付・名前の4つ）だけ ID を決める
+  const dup = deck.requests.find(r => r.duplicateObject).duplicateObject;
+  assert.deepStrictEqual(Object.keys(dup.objectIds).sort(), ['g_cover', 'g_cover_date', 'g_cover_name', 'g_cover_subtitle', 'g_cover_title']);
+  // 表紙（1・6・13ページ）は複製、ほかは足したスライド
+  assert.deepStrictEqual(deck.slides.map(sl => sl.objectId), Array.from({length: 19}, (_, i) => ([0, 5, 12].indexOf(i) >= 0 ? 'mtg_t' : 'mtg_p') + (i + 1)));
+  const dups = deck.requests.filter(r => r.duplicateObject);
+  assert.deepStrictEqual(dups.map(r => r.duplicateObject.objectIds[r.duplicateObject.objectId]), ['mtg_t6', 'mtg_t13', 'mtg_t1']);
+  assert.ok(dups.every(r => r.duplicateObject.objectId === gas.slideTemplates[id].slides[0].objectId), 'どれも元のひな形の1枚目（緑）から');
+  // 元のひな形のページはどれも消す
+  const removed = deck.requests.filter(r => r.deleteObject).map(r => r.deleteObject.objectId);
+  gas.slideTemplates[id].slides.forEach(sl => assert.ok(removed.indexOf(sl.objectId) >= 0, sl.objectId));
+  // ひな形の文字（見出し）は複製の枠に書く
+  const titles = deck.requests.filter(r => r.insertText && /^mtg_t\d+_k\d+$/.test(r.insertText.objectId)).map(r => r.insertText.text);
+  assert.ok(titles.indexOf('全サブインダストリー') >= 0 && titles.indexOf('新FMT') >= 0 && titles.indexOf('新FMT2') >= 0, JSON.stringify(titles));
+  // 目次のリンク：資料の表紙は複製の ID
+  const links = deck.requests.filter(r => r.updateTextStyle && r.updateTextStyle.style.link).map(r => r.updateTextStyle.style.link.pageObjectId);
+  assert.deepStrictEqual(plain(links), ['mtg_p3', 'mtg_p3', 'mtg_p4', 'mtg_p4', 'mtg_t6', 'mtg_t6', 'mtg_t13', 'mtg_t13']);
+  // 区切って作っても（ひな形のページの文字の枠は仕事に保存して続きで使う）同じ資料
+  const again = setup();
+  again.gas.slideTemplates[id] = pptxTemplate();
+  again.g.PropertiesService.getScriptProperties().setProperty('MTG_TEMPLATE_URL', 'https://docs.google.com/presentation/d/' + id + '/edit');
+  const {o} = combinedReady(again.gas, again.g);
+  const clock = {t: 0};
+  again.g.mtgNow_ = () => clock.t;
+  const add = again.g.mtgDeckAdd_;
+  again.g.mtgDeckAdd_ = (...args) => { clock.t += 100000; return add(...args); };
+  o.run.limitMs = 150000;
+  again.gas.promptAnswers = ['10/23'];
+  again.g.createBusinessMtgCombinedSummary();
+  for (let n = 0; n < 5 && again.g.PropertiesService.getScriptProperties().getProperty('MTG_JOB'); n++) {
+    clock.t = 0;
+    o.run.limitMs = 400000;
+    again.g.continueBusinessMtgSummaries();
+  }
+  assert.deepStrictEqual(deckShape(again.gas.decks[again.gas.decks.length - 1]), deckShape(deck));
+});
+
+test('統合版の前のページ（表紙・目次・状況・計画）は、会議サマリの中身の一部（mtgCombinedLite_。JSON にして保存できる形）からでも同じに作る', () => {
+  const {gas, g} = setup();
+  const summaries = [summarize(g, '新FMT'), summarize(g, '新FMT2')];
+  const now = summaries[0].now;
+  const sections = summaries.map((s, i) => ({summary: s, start: 6 + i * 7}));
+  const lite = sections.map(x => ({summary: JSON.parse(JSON.stringify(g.mtgCombinedLite_(x.summary))), start: x.start}));
+  assert.ok(lite.every(x => JSON.stringify(x.summary).length < 9000), 'スクリプトのプロパティの1つの値に入る');
+  assert.deepStrictEqual(plain(g.mtgCombinedFront_(lite, '2026/10/23', true, now)), plain(g.mtgCombinedFront_(sections, '2026/10/23', true, now)));
+  // 基準・選んだ時点と比べたとき（前回比の書き方が変わる）も同じ
+  summaries[1].previous = Object.assign({}, summaries[1].previous || {}, {baseline: true, cutoff: new Date(2026, 9, 17).getTime(), date: '2026/10/17'});
+  const lite2 = sections.map(x => ({summary: JSON.parse(JSON.stringify(g.mtgCombinedLite_(x.summary))), start: x.start}));
+  assert.deepStrictEqual(plain(g.mtgCombinedFront_(lite2, '2026/10/23', false, now)), plain(g.mtgCombinedFront_(sections, '2026/10/23', false, now)));
+  // 前のページの数と、一度に作る並び（mtgCombinedSlides_）の前のページは同じ
+  assert.strictEqual(g.mtgCombinedFrontCount_(), 5);
+  assert.deepStrictEqual(plain(g.mtgCombinedSlides_(summaries, '2026/10/23', true).slice(0, 5)), plain(g.mtgCombinedFront_(
+    [{summary: summaries[0], start: 6}, {summary: summaries[1], start: 6 + g.mtgSlides_(summaries[0], 5, {appendix: false}).length}], '2026/10/23', true, now)));
+});
+
+test('資料の件数・想定売上合計・期待値合計は、シートの行のうちステータスに「失注」を含む行だけを除いた件数・列の合計と必ず同じ（得意先・案件名が空の行も数える。文字の値は足さない。辞退などは除かない）。diagnoseBusinessMtgTotals で突き合わせる', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  const rules = gas.get('DIFF_RULES');
+  const before = g.mtgReadDeals_(sheet, rules['新FMT']);   // 前回の時点コピーの代わり（9行目以降を足す前）
+  // 3行目〜8行目：A社 30/10（初回訪問）・B社 50/50（受注）・C社 20/5（提案中）・D社 空・E社 80/40・F社 10/3。9行目以降に足す
+  const put = (row, values) => Object.keys(values).forEach(key => sheet.getRange(row, COL[key]).setValue(values[key]));
+  put(9, {customer: 'G社', status: 'C-失注', amount: 7, weighted: 1});
+  put(10, {customer: 'H社', status: '辞退', amount: 4, weighted: 2});   // 失注ではない（シートの「失注」だけを除く）
+  put(11, {amount: 2.5, weighted: 0.5});                                // 得意先・案件名が空の行（シートの合計には入るので数える）
+  put(12, {customer: 'I社', amount: '約100'});                          // 文字（シートの合計にも入らないので足さない）
+  const last = sheet.getLastRow() - 2;
+  const column = key => sheet.getRange(3, COL[key], last, 1).getValues().map(r => r[0]);
+  const statuses = sheet.getRange(3, COL.status, last, 1).getDisplayValues().map(r => r[0]);
+  const keep = statuses.map(st => st.indexOf('失注') < 0);
+  const sheetSum = key => column(key).reduce((a, v, i) => a + (typeof v === 'number' && keep[i] ? v : 0), 0);
+  assert.deepStrictEqual([sheetSum('amount'), sheetSum('weighted')], [30 + 50 + 20 + 80 + 10 + 4 + 2.5, 10 + 50 + 5 + 40 + 3 + 2 + 0.5]);
+  const raw = summarize(g, '新FMT');
+  const s = plain(raw);
+  assert.deepStrictEqual([s.kpi.counted, s.kpi.countedAmount, s.kpi.countedWeighted, s.bridge.endCount, s.bridge.amountEnd, s.bridge.end],
+    [9, sheetSum('amount'), sheetSum('weighted'), 9, sheetSum('amount'), sheetSum('weighted')], 'シートで失注の行を除いて数えた・足したのと同じ（A〜F・H・11行目・I社）');
+  const slide = plain(g.mtgSlides_(raw))[1];
+  assert.deepStrictEqual(roleOf(slide, 'tile-value').slice(0, 3).map(el => el.text.split('　')[0]), ['9件', '196.5', '110.5']);
+  assert.match(textOf(plain(g.mtgSlides_(raw))[3]), /期待値（失注除く）は|期待値の増減（失注除く・百万円）/);
+  assert.strictEqual(raw.quarters.reduce((a, q) => a + q.value, 0), sheetSum('weighted'), '受注月別の期待値を合わせると期待値合計');
+  assert.strictEqual(raw.stages.filter(st => st.kind !== 'lost').reduce((a, st) => a + st.weighted, 0), sheetSum('weighted'), 'ステータス別も');
+  assert.strictEqual(g.mtgDealLabel_(raw.changes.concat(raw.focus).find(d => d.row === 11) || {row: 11}), '（得意先・案件名なし：11行目）');
+
+  // 前回：時点コピーの同じ行を同じ数え方で（足した行は新規）
+  const withCopy = plain(summarize(g, '新FMT', {copy: {table: before, title: '時点コピー', url: 'u'}}));
+  assert.deepStrictEqual([withCopy.bridge.startCount, withCopy.bridge.amountStart, withCopy.bridge.start], [6, 190, 108]);
+
+  // 突き合わせ（読むだけ）
+  gas.promptAnswers = ['1'];
+  g.diagnoseBusinessMtgTotals();
+  const text = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(text, /■ 新FMT\n　数える行：見出しの下で、得意先・案件名・ステータス・想定売上・期待値のどれかが入っている 10行（失注 1行）\n　案件数（失注除く）：9件/);
+  assert.match(text, new RegExp('　想定売上（' + g.diffColumnLetter_(COL.amount) + '列）：列の合計 203.5 − 失注の行 7 ＝ 資料 196.5\\n　　数値でない値（文字・エラー。足していません）：12行目「約100」'));
+  assert.match(text, new RegExp('　期待値（' + g.diffColumnLetter_(COL.weighted) + '列）：列の合計 111.5 − 失注の行 1 ＝ 資料 110.5'));
+  assert.match(text, /得意先・案件名が空の行（数えています）：11行目/);
+  assert.match(text, /　　列の中身：数式なし（手入力の値）/);
+  // 空のセル（D社は想定売上・期待値とも空。I社は想定売上が文字・期待値が空）：ステータスごとの行数と例の行
+  assert.deepStrictEqual(text.split('\n').filter(l => /空のセル/.test(l)),
+    ['　　空のセル（失注を除く 1行）：（空欄） 1行（6行目）', '　　空のセル（失注を除く 2行）：（空欄） 2行（6行目・12行目）']);
+  assert.match(text, /　　C-失注：1件・7・1　← 除く\n/);
+  assert.match(text, /　　辞退：1件・4・2\n/);
+});
+
+test('列の見出しを変えても（受注月 → 受注予定月。columnAliases）、前の見出しの時点コピー・変更の記録・変更時点スナップショット・削除した行の記録を同じ列として読む（見出しを変えただけでは変化にしない）。設定を新しい見出しにしたときも同じ', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  const rules = g.DIFF_RULES || null;
+  const before = g.mtgReadDeals_(sheet, rules ? rules['新FMT'] : {headerRow: 2});   // 前の見出し（受注月）のときの時点コピーの代わり
+  sheet.getRange(2, COL.orderMonth).setValue('受注予定月');
+  assert.strictEqual(g.mtgCanonicalLabel_('受注予定月'), g.credNormalize_('受注月'), 'どの見出しも設定の見出しにそろえる');
+  assert.strictEqual(g.mtgCanonicalLabel_('受注月\n(yy/mm)'), g.credNormalize_('受注月'));
+  const after = g.mtgReadDeals_(sheet, rules ? rules['新FMT'] : {headerRow: 2});
+  assert.deepStrictEqual(after.deals.map(d => d.orderMonthText), before.deals.map(d => d.orderMonthText), '今の見出しで読める');
+  assert.deepStrictEqual(Object.keys(after.deals[0].cells).sort(), Object.keys(before.deals[0].cells).sort(), '時点コピーと今の行を同じキーで比べる');
+  const s = plain(summarize(g, '新FMT', {copy: {table: before, title: '時点コピー', url: 'u'}}));
+  assert.ok(!s.changes.some(c => (c.columns || []).some(col => /受注/.test(col))), '見出しを変えただけでは変化にしない');
+  // 前の見出しで記録した削除した行
+  const removed = g.mtgParseRemoved_('得意先: X社\n案件名: Y案件\n案件ステータス: 提案中\n受注月: 2026/12', after.headers);
+  assert.deepStrictEqual([removed.customer, removed.project, removed.orderMonthText], ['X社', 'Y案件', '2026/12']);
+  // 必須項目の未入力は、シートに書いてある見出しで出す
+  sheet.getRange(3, COL.orderMonth).setValue('');
+  assert.ok(g.mtgReadDeals_(sheet, rules ? rules['新FMT'] : {headerRow: 2}).deals[0].missing.indexOf('受注予定月') >= 0);
+  // 設定も新しい見出しにしたとき（columns を「受注予定月」、前の見出しを columnAliases に）：前の見出しの記録も新しい見出しにそろえる
+  const o = gas.get('MTG_OPTIONS');
+  o.columns.orderMonth = '受注予定月';
+  o.columnAliases.orderMonth = ['受注月(yy/mm)', '受注月'];
+  assert.strictEqual(g.mtgCanonicalLabel_('受注月'), g.credNormalize_('受注予定月'));
+  sheet.getRange(3, COL.orderMonth).setValue(before.deals[0].orderMonthText);
+  // 時点コピー（前の見出し「受注月」のまま）は、資料を作るときに今の設定で読む
+  sheet.getRange(2, COL.orderMonth).setValue('受注月');
+  const oldCopy = g.mtgReadDeals_(sheet, rules ? rules['新FMT'] : {headerRow: 2});
+  sheet.getRange(2, COL.orderMonth).setValue('受注予定月');
+  const renamed = plain(summarize(g, '新FMT', {copy: {table: oldCopy, title: '時点コピー', url: 'u'}}));
+  assert.ok(!renamed.changes.some(c => (c.columns || []).some(col => /受注/.test(col))));
+  assert.ok(renamed.gaps.orderMonth === undefined, '受注予定月の列として読める');
+});
+
+test('リード文は中身にかからない：名前に改行（CR など）が入っていても、行の数を数えて、入らなければ小さくし、それでも入らなければ「…」で切る。資料の文字の CR は改行にそろえる', () => {
+  const gas = createGas();
+  const g = gas.global;
+  const S = gas.get('MTG_SLIDE');
+  // 長いシナリオの名前（CR 入り。シートの値に入っていることがある）
+  const long1 = '11-02.制作・本部業務の生産性を高め\r成長原資を創出する';
+  const long2 = '11-01.組合員の本音を起点とした商品開発・組合員獲得手法の変革';
+  const sheet = portfolioSheet(gas, [['A社', long1, 'A-受注済み(100%)', '300', '300', '5', '3', '', ''], ['B社', long2, 'B-選定中(70%)', '200', '140', '5', '3', '', ''],
+    ['C社', long1 + ', ' + long2, 'C-提案中(50%)', '100', '50', '5', '3', '', ''], ['D社', long2, 'D-ヒアリング中(20%)', '50', '10', '5', '3', '', '']]);
+  const table = g.mtgReadDeals_(sheet, gas.get('DIFF_RULES')['新FMT']);
+  const p = g.mtgPortfolioOf_(table.deals, new Date('2026-11-04T12:00:00+09:00'), table);
+  const raw = g.mtgPortfolioSlides_(p)[0];
+  const slide = plain(g.mtgNumberSlides_({source: '新FMT'}, [raw], 1)[0]);
+  const leads = slide.elements.filter(el => el.role === 'lead');
+  assert.ok(leads.length >= 1);
+  const bottom = Math.max.apply(null, leads.map(el => el.y + el.h));
+  assert.ok(bottom <= g.mtgContentTop_(raw) + 0.01, 'リード文が中身にかかる：' + bottom + ' > ' + g.mtgContentTop_(raw));
+  assert.ok(leads.every(el => !/\r/.test(el.text)), 'リード文に CR を残さない');
+  const lines = leads.reduce((n, el) => n + el.text.split('\n').length, 0);
+  assert.ok(bottom - S.leadY >= lines * leads[0].size * S.leadLine - 0.01, '行の数（名前の中の改行も）を数えた高さ');
+  // 資料の文字（Slides に送る文字）にも CR を残さない
+  const requests = plain(g.mtgSlideRequests_(slide, 'p1', 1));
+  assert.ok(requests.filter(r => r.insertText).every(r => !/\r/.test(r.insertText.text)));
+
+  // とても長いリード文：小さくしても入らなければ、入る行で「…」で切る（中身にはかからない）
+  const huge = plain(g.mtgLead_('あ'.repeat(400) + '\n' + 'い'.repeat(400), S.top));
+  const hb = Math.max.apply(null, huge.map(el => el.y + el.h));
+  assert.ok(hb <= S.top + 0.01);
+  assert.ok(huge.every(el => el.size === S.leadMinSize));
+  assert.match(huge[huge.length - 1].text, /…$/);
+  // 短いリード文は大きさを変えない
+  assert.ok(plain(g.mtgLead_('短い文。\n補足。')).every(el => el.size === S.leadSize));
+});
+
+/** 実行の強制終了（メモリ不足など。catch できない）のまねをする：fn の中では、仕事とトリガーを消さない（catch の片付けが動かなかったことにする） */
+function crashing(g, fn) {
+  const keep = ['mtgJobClear_', 'mtgJobDeleteTriggers_', 'mtgDeckDiscard_'].map(k => [k, g[k]]);
+  keep.forEach(([k]) => { g[k] = () => {}; });
+  try {
+    assert.throws(fn, /メモリ不足/);
+  } finally {
+    keep.forEach(([k, f]) => { g[k] = f; });
+  }
+}
+
+test('実行が強制終了されても（メモリ不足など）、資料ごとに保存した進み具合から、安全のためのトリガーで続ける。同じところで何度も止められたら、知らせを残してやめる', () => {
+  const {gas, g} = setup();
+  const sprops = g.PropertiesService.getScriptProperties();
+  const handlers = () => gas.triggers.filter(t => t.getHandlerFunction() === 'continueBusinessMtgSummaries');
+  const exportDeck = g.mtgExportDeck_;
+  let calls = 0;
+  g.mtgExportDeck_ = (...args) => { if (++calls === 2) throw new Error('メモリ不足のためエラーが発生しました。'); return exportDeck(...args); };
+  gas.promptAnswers = ['', '10/23'];
+  crashing(g, () => g.mtgRunStart_(false, g.mtgParseDate_('10/23', new Date()), ['新FMT', '新FMT2'], false, null));
+  const saved = JSON.parse(sprops.getProperty('MTG_JOB'));
+  assert.deepStrictEqual([saved.items, saved.running], [1, true], '1つ目の資料まで保存してある（実行中のまま）');
+  assert.deepStrictEqual(handlers().map(t => t.options.after), [420000], '安全のためのトリガー（6分の上限より後）');
+  // 続き：止められた回数を数え、2つ目の資料から続ける（1つ目は作り直さない）
+  g.mtgExportDeck_ = exportDeck;
+  const decks = gas.decks.length;
+  g.continueBusinessMtgSummaries();
+  assert.deepStrictEqual(gas.decks.slice(decks).map(d => d.title.replace(/^\d{8}_/, '')), ['新FMT2_RX Business Meeting用資料_試作']);
+  assert.deepStrictEqual([sprops.getProperty('MTG_JOB'), handlers().length], [null, 0], '終わったら仕事とトリガーを消す');
+  g.showBusinessMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「新FMT」：[\s\S]*「新FMT2」：/);
+
+  // 同じところで maxCrashes（2）回を超えて止められたら、やめて知らせを残す
+  calls = 0;
+  g.mtgExportDeck_ = (...args) => { if (++calls === 2) throw new Error('メモリ不足のためエラーが発生しました。'); return exportDeck(...args); };
+  crashing(g, () => g.mtgRunStart_(false, g.mtgParseDate_('10/23', new Date()), ['新FMT', '新FMT2'], false, null));
+  const job = JSON.parse(sprops.getProperty('MTG_JOB'));
+  sprops.setProperty('MTG_JOB', JSON.stringify(Object.assign(job, {crashes: 2})));
+  g.continueBusinessMtgSummaries();
+  assert.deepStrictEqual([sprops.getProperty('MTG_JOB'), handlers().length], [null, 0]);
+  g.showBusinessMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /会議サマリを作る実行が、同じところで 3回止められました（メモリ不足・6分の上限など。/);
+  g.mtgExportDeck_ = exportDeck;
+});
+
+test('統合版：実行が強制終了されたら、足しかけたスライドを消して、保存した資料の次から続ける（できあがりは止められなかったときと同じ）', () => {
+  const once = (() => {
+    const {gas, g} = setup();
+    combinedReady(gas, g);
+    gas.promptAnswers = ['10/23'];
+    g.createBusinessMtgCombinedSummary();
+    return deckShape(gas.decks[gas.decks.length - 1]).slides;
+  })();
+  const {gas, g} = setup();
+  combinedReady(gas, g);
+  const sprops = g.PropertiesService.getScriptProperties();
+  const add = g.mtgDeckAdd_;
+  let calls = 0;
+  // 2つ目の資料のスライドを足したところで止められる（進み具合は保存されない）
+  g.mtgDeckAdd_ = (...args) => { add(...args); if (++calls === 2) throw new Error('メモリ不足のためエラーが発生しました。'); };
+  crashing(g, () => g.mtgCombinedStart_(g.mtgParseDate_('10/23', new Date()), null));
+  const saved = JSON.parse(sprops.getProperty('MTG_JOB'));
+  assert.deepStrictEqual([saved.kind, saved.items, saved.running], ['combined', 1, true]);
+  const deck = gas.decks[gas.decks.length - 1];
+  assert.ok(deck.slides.length > 7, '足しかけたスライドが残っている');
+  g.mtgDeckAdd_ = add;
+  g.continueBusinessMtgSummaries();
+  assert.strictEqual(sprops.getProperty('MTG_JOB'), null);
+  assert.deepStrictEqual(deck.slides.map(sl => sl.objectId), once, '止められなかったときと同じ並び');
+  g.showBusinessMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「全サブインダストリー」（統合版）：.*（19ページ）/);
+});
+
+test('上書き（画面の「前に作った同じ資料を上書きする」）：前に作った同じ資料の PDF の中身を書き換え、ファイル（リンク）を変えない。外すと新しいファイル。上書きできなければ新しいファイルに作る', () => {
+  const {gas, g} = setup();
+  const {meeting} = combinedReady(gas, g);   // 本番（新FMT・新FMT2）を会議のフォルダに格納してある
+  const file = meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料.pdf';
+  const live = () => gas.driveFiles.filter(f => f.name === file && gas.trashed.indexOf(f.id) < 0);
+  const first = live();
+  assert.strictEqual(first.length, 1);
+  const index = gas.ss.getSheetByName('INDEX_会議資料');
+  const indexText = () => JSON.stringify(plain(index.getRange(2, 1, 1, index.getLastColumn()).getDisplayValues()));
+  const before = indexText();
+  // 上書きする：同じファイルの中身を Drive API で書き換える（新しい PDF は作らない）
+  const fetched = gas.fetches.length;
+  const r1 = g.runMeetingMaterials('business', true, meeting, ['新FMT'], false, '', true);
+  const uploads = gas.fetches.slice(fetched).filter(f => /\/upload\/drive\/v3\/files\//.test(f.url));
+  assert.strictEqual(uploads.length, 1, 'Drive API で中身を書き換える');
+  assert.ok(uploads[0].url.indexOf('/files/' + first[0].id + '?uploadType=media') > 0);
+  assert.strictEqual(uploads[0].params.method, 'patch');
+  assert.deepStrictEqual(live().map(f => [f.id, f.folder]), [[first[0].id, first[0].folder]], '同じファイルが会議のフォルダに1つ');
+  assert.match(r1.message, /（前の資料に上書き。リンクはそのまま）/);
+  assert.strictEqual(indexText(), before, 'インデックスのリンクも同じ');
+  // 外す：新しいファイルに作り、前のファイルはゴミ箱へ（リンクが変わる）
+  const r2 = g.runMeetingMaterials('business', true, meeting, ['新FMT'], false, '', false);
+  assert.strictEqual(live().length, 1);
+  assert.notStrictEqual(live()[0].id, first[0].id, 'リンクが変わる');
+  assert.ok(gas.trashed.indexOf(first[0].id) >= 0);
+  assert.doesNotMatch(r2.message, /前の資料に上書き/);
+  // 上書きできない（権限など）：新しいファイルに作る（止めない）
+  const now = live()[0].id;
+  gas.fetchStatuses = [403];
+  const r3 = g.runMeetingMaterials('business', true, meeting, ['新FMT'], false, '', true);
+  assert.notStrictEqual(live()[0].id, now);
+  assert.doesNotMatch(r3.message, /前の資料に上書き/);
+  // 試作も、保存先の同じ名前の試作を上書きする
+  g.runMeetingMaterials('business', false, meeting, ['新FMT2'], false, '', true);
+  const draftName = meeting.replace(/\//g, '') + '_新FMT2_RX Business Meeting用資料_試作.pdf';
+  const draft = gas.driveFiles.filter(f => f.name === draftName && gas.trashed.indexOf(f.id) < 0);
+  g.runMeetingMaterials('business', false, meeting, ['新FMT2'], false, '', true);
+  assert.deepStrictEqual(gas.driveFiles.filter(f => f.name === draftName && gas.trashed.indexOf(f.id) < 0).map(f => f.id), draft.map(f => f.id));
+  // 統合版も
+  g.runMeetingMaterials('combined', true, meeting, [], false, '', false);
+  const combinedName = meeting.replace(/\//g, '') + '_全サブインダストリー_RX Business Meeting用資料.pdf';
+  const c1 = gas.driveFiles.filter(f => f.name === combinedName && gas.trashed.indexOf(f.id) < 0).map(f => f.id);
+  const rc = g.runMeetingMaterials('combined', true, meeting, [], false, '', true);
+  assert.deepStrictEqual(gas.driveFiles.filter(f => f.name === combinedName && gas.trashed.indexOf(f.id) < 0).map(f => f.id), c1);
+  assert.match(rc.message, /（前の資料に上書き。リンクはそのまま）/);
+});
+
+test('期待値の週次推移（試作）：直近12週の週末の期待値（失注除く）を、変更の記録から案件ごとに出し、前の週からの増減で色を付ける。動いた案件は増減の大きい順', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  // A社：30日前に期待値 10 → 15。C社：10日前に失注（5 → 0）。E社：今日 40 → 60。B社（受注 50）・D社（空）・F社（3）は動かない
+  aged(gas, 30, () => g.recordDiffEdit(gas.edit(sheet, 'H3', '15')));
+  aged(gas, 10, () => g.recordDiffEdit(gas.edit(sheet, 'F5', '失注')));
+  aged(gas, 20, () => g.recordDiffEdit(gas.edit(sheet, 'F3', 'B-クロージング中(70%)')));   // A社：20日前に確度 B に（確度の無いステータス → B）
+  g.recordDiffEdit(gas.edit(sheet, 'H7', '60'));
+  const now = new Date();
+  const data = plain(g.mtgWeeklyData_(gas.ss, ['新FMT'], now));
+  const weeks = data.weeks.list;
+  assert.strictEqual(weeks.length, 12);
+  assert.ok(weeks[weeks.length - 1].current && weeks.slice(0, -1).every((w, k) => w.end === weeks[k + 1].start), '週は続いている（月曜〜日曜。最後は今週）');
+  const x = data.sheets[0];
+  assert.deepStrictEqual(x.deals.map(d => d.customer), ['E社', 'A社', 'C社'], '動いた案件だけ。増減の大きい順（同じなら今の期待値の大きい順）');
+  const [e, a, cc] = x.deals;
+  const ago = days => now.getTime() - days * 86400000;
+  assert.deepStrictEqual([a.before, a.values[a.values.length - 1]], [10, 15]);
+  a.values.forEach((v, k) => assert.strictEqual(v, weeks[k].end < ago(30) ? 10 : 15, weeks[k].label));
+  assert.deepStrictEqual([cc.before, cc.values[cc.values.length - 1]], [5, 0], '失注の週からは 0');
+  cc.values.forEach((v, k) => assert.strictEqual(v, weeks[k].end < ago(10) ? 5 : 0, weeks[k].label));
+  assert.deepStrictEqual([e.before, e.values.slice(-2)], [40, [40, 60]], '今週だけ増えた');
+  assert.strictEqual(x.unchanged, 3);
+  assert.deepStrictEqual([x.before, x.totals[x.totals.length - 1]], [10 + 50 + 5 + 40 + 3, 15 + 50 + 0 + 60 + 3], '合計は失注を除く（動かなかった案件も含む）');
+  // 確度別（週末のステータスの確度）：A社は 20日前から B。ほかは確度の無いステータスなので「未設定」。合わせると合計
+  x.ranks.forEach((m, k) => {
+    assert.strictEqual(m.B, weeks[k].end < ago(20) ? 0 : 15, weeks[k].label + ' の B');
+    assert.strictEqual(Object.keys(m).reduce((sum, key) => sum + m[key], 0), x.totals[k], weeks[k].label + ' の合計');
+  });
+  assert.deepStrictEqual(Object.keys(x.ranksBefore), ['A', 'B', 'C', 'D', '創注', '未設定']);
+  // スライド：確度別（行は週、列は確度と合計）→ 案件別（見出しの行（名前・12週・期間の増減）、合計の行、案件の行）。色は前の週からの増減
+  const slides = plain(g.mtgWeeklySlides_(data, now));
+  assert.deepStrictEqual(slides.map(sl => sl.title), ['期待値の週次推移（新FMT・確度別）', '期待値の週次推移（新FMT）']);
+  const rankSlide = slides.shift();
+  assert.deepStrictEqual(roleOf(rankSlide, 'rank-head').map(el => el.text), ['週（週末の期待値）', 'A', 'B', 'C', 'D', '創注', '未設定', '合計']);
+  assert.strictEqual(roleOf(rankSlide, 'rank-week').length, 13, '12週と期間の増減');
+  assert.deepStrictEqual(roleOf(rankSlide, 'rank-delta').map(el => el.text), ['±0', '+15', '±0', '±0', '±0', '+5', '+20']);
+  const S = gas.get('MTG_SLIDE');
+  rankSlide.elements.filter(el => /^(rank|legend)/.test(el.role || '')).forEach(el => assert.ok(el.y + el.h <= S.bottom + 0.01, 'ページに入る：' + (el.text || el.role)));
+  const table = slides[0].elements.find(el => el.type === 'table');
+  assert.strictEqual(table.columns.length, 14);
+  assert.match(table.rows[0].cells[12].text, /（今）$/);
+  assert.deepStrictEqual(table.rows.slice(1).map(r => r.cells[0].text), ['合計（失注除く）', 'E社／販促DX', 'A社／アプリ刷新', 'C社／店舗什器']);
+  const o = gas.get('MTG_OPTIONS').weekly;
+  const eRow = table.rows[2].cells;
+  assert.strictEqual(eRow[12].fill, o.upColors[2], '今週の増（いちばん大きい）は濃い緑');
+  assert.strictEqual(eRow[13].text, '+20');
+  const cRow = table.rows[4].cells;
+  assert.ok(cRow.slice(1, 13).some(cell => o.downColors.indexOf(cell.fill) >= 0), '減は灰');
+  assert.ok(roleOf(slides[0], 'legend').some(el => el.text === '増（大）'));
+  assert.match(leadOf(slides[0]), /^直近12週（\d+\/\d+週〜）の期待値（失注除く）は 108 → 128百万円（\+20）。/);
+  // 2つ以上のシートなら、最初にサブインダストリーごとの合計
+  const two = plain(g.mtgWeeklySlides_(plain(g.mtgWeeklyData_(gas.ss, ['新FMT', '新FMT2'], now)), now));
+  assert.deepStrictEqual(two.slice(0, 4).map(sl => sl.title), ['期待値の週次推移（サブインダストリー別）', '期待値の週次推移（確度別・2サブインダストリー）',
+    '期待値の週次推移（新FMT・確度別）', '期待値の週次推移（新FMT）']);
+  assert.deepStrictEqual(two[0].elements.find(el => el.type === 'table').rows.slice(1).map(r => r.cells[0].text), ['合計', '新FMT', '新FMT2']);
+  // エディタから：シートを選んで PDF（試作）を保存先に作る
+  gas.promptAnswers = ['1'];
+  g.createBusinessMtgWeeklyHeatmap();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^期待値の週次推移の資料（試作）を作りました：\d{8}_期待値の週次推移_試作\.pdf（2ページ）/);
+});
+
+test('backfillBusinessMtgWeeklyRecords：週次推移のスプレッドシートの「記録_週次」に、記録の無い終わった週の値を逆算して書く（記録のある週・シートは書かない。何度実行しても重ねない）', () => {
+  const {gas, g, sheet} = setup({edits: false});
+  aged(gas, 30, () => g.recordDiffEdit(gas.edit(sheet, 'H3', '15')));   // A社：期待値 10 → 15（30日前）
+  aged(gas, 10, () => g.recordDiffEdit(gas.edit(sheet, 'F5', '失注')));  // C社：失注（10日前）
+  const props = g.PropertiesService.getScriptProperties();
+  const o = gas.get('MTG_OPTIONS').weekly;
+  assert.throws(() => g.backfillBusinessMtgWeeklyRecords(), /スクリプトのプロパティ「MTG_WEEKLY_SPREADSHEET」に、期待値の週次推移のスプレッドシートの URL を入れてください/);
+  const book = g.SpreadsheetApp.create('期待値の週次推移');
+  props.setProperty('MTG_WEEKLY_SPREADSHEET', book.getUrl());
+  assert.throws(() => g.backfillBusinessMtgWeeklyRecords(), /「記録_週次」シートがありません。.*updateWeeklyHeatmap\(\) を1回実行してから/);
+  const record = book.insertSheet('記録_週次');
+  record.getRange(1, 1, 1, 7).setValues([['週', 'サブインダストリー', '時点', '出どころ', '記録日時', '分割', '案件']]);
+  assert.throws(() => g.backfillBusinessMtgWeeklyRecords(), /1行目の見出しが「週（月曜）・サブインダストリー・時点・出どころ・記録日時・分割・案件（JSON）」ではありません/);
+  record.getRange(1, 1, 1, 7).setValues([o.recordHeader]);
+  // 時点コピーから記録した週（週次推移のスプレッドシートのプロジェクトが書いた行）は書かない
+  const weeks = g.mtgWeeklyWeeks_(new gas.Date(), o.weeks);
+  const key = k => g.Utilities.formatDate(new gas.Date(weeks.list[k].start), 'Asia/Tokyo', 'yyyy/MM/dd');
+  record.getRange(2, 1, 1, 7).setValues([[key(10), '新FMT', '', '時点コピー', '', '1/1', '[]']]);
+  const message = g.backfillBusinessMtgWeeklyRecords();
+  assert.match(message, /^期待値の週次推移の記録（逆算）を書きました（12週・23行。/, '終わった11週と、その前の週 × 2シート（時点コピーの記録がある1つを除く）');
+  const rows = record.getRange(3, 1, record.getLastRow() - 2, 7).getValues();
+  assert.strictEqual(rows.length, 23);
+  assert.ok(rows.every(r => r[3] === '逆算' && r[5] === '1/1'));
+  assert.ok(!rows.some(r => r[0] === key(10) && r[1] === '新FMT'));
+  assert.strictEqual(record.getRange(3, 7).getNumberFormat(), '@', '文字として書く（「=」で始まる名前も数式にならない）');
+  const items = (week, name) => JSON.parse(rows.find(r => r[0] === week && r[1] === name)[6]);
+  const deal = (list, customer) => list.find(x => x[0] === customer);
+  // 最初の週の前の週：A社は 10（30日前に 15 に変えた）
+  const first = g.Utilities.formatDate(new gas.Date(weeks.before - 7 * 86400000), 'Asia/Tokyo', 'yyyy/MM/dd');
+  assert.strictEqual(rows[0][0], first);
+  assert.strictEqual(rows[0][2], g.Utilities.formatDate(new gas.Date(weeks.before), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm'), '時点は週の終わり（次の月曜 0時）');
+  assert.strictEqual(deal(items(first, '新FMT'), 'A社')[3], 10);
+  assert.strictEqual(deal(items(first, '新FMT'), 'A社')[4], 3, '行');
+  // 2〜3週前の週：A社は 15、C社は失注の前（失注にしたのは10日前）
+  const mid = items(key(8), '新FMT');
+  assert.strictEqual(deal(mid, 'A社')[3], 15);
+  assert.notStrictEqual(deal(mid, 'C社')[2], '失注');
+  assert.ok(items(key(8), '新FMT2').length > 0);
+  // 2回目：書く週は無い
+  assert.match(g.backfillBusinessMtgWeeklyRecords(), /^逆算して書く週はありません/);
+  assert.strictEqual(record.getLastRow(), 25);
 });
