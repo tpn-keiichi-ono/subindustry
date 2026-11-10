@@ -158,7 +158,11 @@ const MTG_OPTIONS = {
     // 上・下・右の3辺だけに引く（左の辺は確定の棒との境目なので引かない。点線の枠が B の端に重なって、つなぎ目が乱れて見えないように）
     prospect: {alpha: 0.3, line: '#548235', lineWeight: 1, dashStyle: 'DOT'},
     sureLabel: '確定（A＋B）',
+    // 集計の元（2026/11/10 から今年度の売上（FY前半期＋後半期の列）を元にする）：
+    //   salesPage：今年度の売上で集計したページ（状況・計画進捗 2枚・計画に対する積み上げ 2枚）を入れる。変化のあった案件の金額・並びも今年度の売上
+    //   amountPages：想定売上で集計したページ（同じ4枚）も入れる（参考。既定は入れない）。salesPage が false なら、想定売上のページだけにする
     salesPage: true,
+    amountPages: false,
     // FY売上の計画に対する積み上げの積み方：'orderMonth' 案件の今年度の売上の合計を受注月の月に置く（想定売上の積み上げと同じ月別の図）・
     // 'half' 前半期 → 後半期の列ごと（mtgSalesPlanSlide_）
     salesPlanBy: 'orderMonth',                // 状況・計画進捗の次に、今年度の売上（FY前半期＋後半期の列）で集計したページも入れる（false で入れない）

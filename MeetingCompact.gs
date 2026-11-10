@@ -32,8 +32,14 @@ function mtgCompactLabel_() {
 
 /** 変化のあった案件のページの前に入るページの数（表紙・全サブインダストリーの状況・計画進捗（見込（C）を含むページも）（・計画に対する積み上げ 2枚）） */
 function mtgCompactFrontCount_() {
+  const kinds = (MTG_OPTIONS.compact.salesPage ? 1 : 0) + (mtgCompactAmountOn_() ? 1 : 0);
+  return 1 + kinds * (MTG_OPTIONS.plan.enabled ? 4 : 2);
+}
+
+/** 想定売上で集計したページを入れるか（compact.amountPages。今年度の売上のページを入れないときは、想定売上のページだけにする） */
+function mtgCompactAmountOn_() {
   const C = MTG_OPTIONS.compact;
-  return (MTG_OPTIONS.plan.enabled ? 5 : 3) + (C.salesPage ? 2 : 0) + (C.salesPage && MTG_OPTIONS.plan.enabled ? 2 : 0);
+  return !!C.amountPages || !C.salesPage;
 }
 
 /** fn を、金額の小数点以下を繰り上げる設定（MTG_OPTIONS.amountCeil。mtgAmount_）で作る（compact.ceilAmounts のとき。終わったら元に戻す） */
@@ -81,11 +87,10 @@ function mtgCompactFront_(summaries, meeting, final, now) {
   const o = MTG_OPTIONS;
   const C = o.compact;
   return mtgWithAmountCeil_(() => {
+    const amountOn = mtgCompactAmountOn_();
     const merged = o.plan.enabled ? mtgMergePlans_(summaries.map(mtgCompactPlanOf_)) : null;
-    // 計画に対する積み上げ（想定売上）：全確度（統合版と同じ形）のあとに、確定（A＋B）だけ
-    const plan = merged ? [mtgPlanSlide_(merged, now, o.combined.name, {measure: C.measure}),
-      mtgPlanSlide_(mtgPlanRanksOnly_(merged, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure: C.measure})] : [];
-    // FY売上の計画に対する積み上げ（前半期・後半期）：全確度と確定（A＋B）だけ（compact.salesPage）
+    // 計画に対する積み上げ：今年度の売上（全確度・確定（A＋B））のあとに、想定売上（同じ2枚。amountPages のとき）
+    const plan = [];
     if (merged && C.salesPage) {
       // 売上の列が無いシートは除いて足す（どのシートにも無ければ「データなし」）
       const pick = list => (list.some(x => !x.gap) ? list.filter(x => !x.gap) : list.slice(0, 1));
@@ -103,10 +108,15 @@ function mtgCompactFront_(summaries, meeting, final, now) {
           mtgPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure, titleNote: measure}));
       }
     }
+    if (merged && amountOn) {
+      plan.push(mtgPlanSlide_(merged, now, o.combined.name, {measure: C.measure}),
+        mtgPlanSlide_(mtgPlanRanksOnly_(merged, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure: C.measure}));
+    }
+    // 状況・計画進捗：今年度の売上（と見込（C）を含む）のあとに、想定売上（同じ2枚。amountPages のとき）
+    const status = [].concat(C.salesPage ? [mtgCompactOverviewSlide_(summaries, {sales: true}), mtgCompactOverviewSlide_(summaries, {sales: true, withC: true})] : [],
+      amountOn ? [mtgCompactOverviewSlide_(summaries), mtgCompactOverviewSlide_(summaries, {withC: true})] : []);
     return mtgNumberSlides_(mtgCombinedFrame_(summaries, meeting, final),
-      [mtgCombinedCover_(summaries, meeting, final, now, C.coverWord), mtgCompactOverviewSlide_(summaries),
-        mtgCompactOverviewSlide_(summaries, {withC: true})].concat(C.salesPage ? [mtgCompactOverviewSlide_(summaries, {sales: true}),
-        mtgCompactOverviewSlide_(summaries, {sales: true, withC: true})] : [], plan));
+      [mtgCombinedCover_(summaries, meeting, final, now, C.coverWord)].concat(status, plan));
   });
 }
 
@@ -160,8 +170,9 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const rate = p => (p.gap || !(p.plan > 0) ? null : sum(p, ['A', 'B']) / p.plan * 100);
   const order = p => (rate(p) == null ? -1 : rate(p));
   const planOf = s => (bySales ? s.planSales || mtgSalesPlanOf_([], s.name, new Date(), {}) : mtgCompactPlanOf_(s));
-  // 並び：想定売上の進捗率（A＋B）の高い順。売上のページ（bySales）も同じ並び（想定売上で決める。ページによってサブインダストリーの順が変わらないように）
-  const base = s => mtgCompactPlanOf_(s);
+  // 並び：最初のページの集計（今年度の売上。salesPage が false なら想定売上）の進捗率（A＋B）の高い順。どのページも同じ並び
+  // （ページによってサブインダストリーの順が変わらないように）
+  const base = s => (o.compact.salesPage ? s.planSales || mtgSalesPlanOf_([], s.name, new Date(), {}) : mtgCompactPlanOf_(s));
   const items = summaries.map(s => ({s, p: planOf(s), base: base(s), lack: s.gaps || {}}))
     .sort((a, b) => (order(b.base) - order(a.base)) || (sum(b.base, ['A', 'B']) - sum(a.base, ['A', 'B'])));
   const ok = items.filter(x => !x.p.gap);
@@ -182,18 +193,21 @@ function mtgCompactOverviewSlide_(summaries, options) {
     else total.changed += mtgCompactChangedNow_(s);
   });
   const reached = ok.filter(x => rate(x.p) >= 100).length;
+  const ownOrder = bySales === !!o.compact.salesPage;   // このページの集計で並べているか
   const fy = 'FY' + (merged.year || mtgFiscalYearKey_(summaries.length && summaries[0].now ? new Date(summaries[0].now) : new Date()));
   const totalRate = ok.length ? rate(merged) : null;
   const lead = '進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '（計画に届いているのは ' + ok.length + 'のうち ' + reached + '）。' +
     '案件 ' + total.active + '件・想定売上合計 ' + mtgAmount_(total.amount) + '百万円（全期間・失注除く）。\n' +
-    (bySales ? '並びは最初のページと同じ。進捗率・確定・見込は ' + fy + ' の売上（前半期＋後半期。受注月によらない）。進捗率 ＝ A＋B ÷ 計画。'
-      : '進捗率（A＋B）の高い順。進捗率・確定（A＋B）・見込（C）は今年度（' + period + '）の' + mtgPlanMonthName_() + 'の案件の想定売上（進捗率 ＝ A＋B ÷ 計画）。');
+    // 並びの説明：このページの集計で並べたなら「進捗率（A＋B）の高い順」、ほかの集計（最初のページ）で並べたなら「並びは最初のページと同じ」
+    (ownOrder ? '進捗率（A＋B）の高い順。' : '並びは最初のページと同じ。') +
+    (bySales ? '進捗率・確定・見込は ' + fy + ' の売上（前半期＋後半期。受注月によらない）。進捗率 ＝ A＋B ÷ 計画。'
+      : '進捗率・確定（A＋B）・見込（C）は今年度（' + period + '）の' + mtgPlanMonthName_() + 'の案件の想定売上（進捗率 ＝ A＋B ÷ 計画）。');
   // 見込（C）を含むページのリード文：確定＋見込の計画比
   const withCRate = ok.length && merged.plan > 0 ? Math.round(sum(merged, ['A', 'B', 'C']) / merged.plan * 100) : null;
   const leadC = '確定（A＋B）に見込（C）を足すと ' + mtgAmount_(sum(merged, ['A', 'B', 'C'])) + '百万円で、計画の ' + (withCRate == null ? '—' : withCRate + '%') +
     '（進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '）。\n' +
-    (bySales ? '見込（C）は点線の枠。' + fy + ' の売上（前半期＋後半期。受注月によらない）。並び・右の数字は最初のページと同じ。'
-      : '見込（C）は点線の枠。並び・右の数字は前のページと同じ（進捗率（A＋B）の高い順）。');
+    '見込（C）は点線の枠。' + (bySales ? fy + ' の売上（前半期＋後半期。受注月によらない）。' : '') +
+    (ownOrder ? '並び・右の数字は前のページと同じ（進捗率（A＋B）の高い順）。' : '並び・右の数字は最初のページと同じ。');
   const x = S.x;
   const w = S.w;
   const y = S.top;
@@ -383,7 +397,11 @@ function mtgCompactChangeSlidesOf_(s, start) {
   const title = o.compact.changesTitle + s.name;
   // No は3桁が 7.5pt で余裕をもって1行に入る幅（26pt・8pt では、Google スライドで「39／2」と折り返した。2026/11/09）
   const columns = mtgColumns_([30, 120, 130, 80, 66, 130, 112], 5);
-  const head = mtgHeadRow_(columns, ['No', '得意先／案件名', 'ステータス\n' + word + '▶今回', '想定売上\n' + word + '▶今回',
+  // 金額の列：今年度の売上（salesPage。今の値。前回の売上は記録に無いため）か、想定売上（前回▶今回）
+  const bySales = !!o.compact.salesPage;
+  const year = mtgFiscalYearKey_(s.now ? new Date(s.now) : new Date());
+  const salesOf = ch => (ch.deal && ch.deal.sales ? ch.deal.sales[year] : null);
+  const head = mtgHeadRow_(columns, ['No', '得意先／案件名', 'ステータス\n' + word + '▶今回', bySales ? 'FY' + year + '売上\n（今回）' : '想定売上\n' + word + '▶今回',
     '受注月\n' + word + '▶今回', '活動状況（最新）', '活動における課題']);
   const lack = s.gaps || {};
   const noSize = text => {
@@ -391,11 +409,15 @@ function mtgCompactChangeSlidesOf_(s, start) {
     while (mtgTextWidth_(text, size) > (columns[0] - S.cellPadX) * 0.8 && size > 5.5) size -= 0.5;
     return size;
   };
-  // 並びは各サブインダストリーの資料と同じ（summary.changes：今回のステータスの確度 A → B → … → 創注 → 失注・保留・削除、その中は想定売上の大きい順）
-  const moves = s.changes.filter(ch => ch.category !== 'updated');
+  // 並び：今回のステータスの確度 A → B → … → 創注 → 失注・保留・削除（各サブインダストリーの資料と同じまとまり）、その中は今年度の売上の大きい順
+  // （salesPage。想定売上のときは各サブインダストリーの資料と同じ想定売上の大きい順）
+  const groups = s.statusGroups || mtgStatusGroups_([]);
+  const groupIndex = ch => groups.findIndex(gr => gr.key === mtgStatusGroupOf_(ch));
+  const moves = s.changes.filter(ch => ch.category !== 'updated').map((ch, i) => ({ch, i}))
+    .sort((a, b) => (groupIndex(a.ch) - groupIndex(b.ch)) || (bySales ? (salesOf(b.ch) || 0) - (salesOf(a.ch) || 0) : 0) || (a.i - b.i)).map(x => x.ch);
   const lead = lack.changes ? mtgChangedLabel_(s) + 'は' + o.gapText + '（' + lack.changes + '）。'
     : moves.length ? mtgChangedLabel_(s) + 'は ' + moves.length + '件' + mtgUpdatedNote_(s) + '。\n' +
-      'ステータス・期待値・受注月・活動状況が変わった案件。確度 A から順に、同じ確度は想定売上の大きい順。No は資料の通し番号。'
+      'ステータス・期待値・受注月・活動状況が変わった案件。確度 A から順に、同じ確度は' + (bySales ? 'FY' + year + '売上' : '想定売上') + 'の大きい順。No は資料の通し番号。'
       : mtgPeriodShort_(s) + '、ステータス・期待値・受注月・活動状況に変化のある案件なし' + mtgUpdatedNote_(s) + '。';
   if (!moves.length) {
     return {slides: [{title, lead, elements: mtgEmptyTable_(columns, head, lack.changes ? 'gap' : 'none', lack.changes || '')}], count: 0};
@@ -409,8 +431,10 @@ function mtgCompactChangeSlidesOf_(s, start) {
       mtgDealCell_(ch, columns[1]),
       // ステータスの動きが1行に入らなければ「▶」の前で改行（「B-／クロージング中」のように名前の途中で切らない）
       {text: mtgWrap_(status, columns[2], S.bodySize, 2).length > 1 ? status.replace(' ▶ ', '\n▶ ') : status, lines: 3, fill: c.white},
-      // 想定売上（前回▶今回。変わっていなければ今の値）
-      mtgFieldCell_(s, 'amount', mtgValueMove_(ch.base ? ch.base.amount : null, ch.deal ? ch.amount : null, ch), {lines: 2, fill: c.white, align: 'CENTER'}),
+      // 今年度の売上（今の値。空なら「未入力」、削除した行は「（削除）」）か、想定売上（前回▶今回。変わっていなければ今の値）
+      bySales ? {text: ch.removed ? '（削除）' : salesOf(ch) != null ? mtgAmount_(salesOf(ch)) : o.blankText, lines: 1, fill: c.white, align: 'CENTER',
+        color: salesOf(ch) != null ? c.body : c.muted}
+        : mtgFieldCell_(s, 'amount', mtgValueMove_(ch.base ? ch.base.amount : null, ch.deal ? ch.amount : null, ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'orderMonth', mtgMonthMove_(ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'activity', ch.activity, {lines: 3, fill: c.white, fit: true, grow: true}),
       mtgFieldCell_(s, 'issue', ch.issue, {lines: 3, fill: c.white, fit: true, grow: true})
