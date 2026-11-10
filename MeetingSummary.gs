@@ -3711,7 +3711,7 @@ function mtgReadDeals_(sheet, rule) {
     if (m) salesCols.push({col: c, year: String(m[1]).slice(-2), half: m[2]});
   });
 
-  const out = {headers, has, hasStamp: stampCol >= 0, statusOrder: [], deals: [], weightedFormula: false,
+  const out = {headers, has, hasStamp: stampCol >= 0, statusOrder: [], deals: [], weightedFormula: false, skippedSales: [],
     salesYears: salesCols.map(sc => sc.year).filter((y, i, list) => list.indexOf(y) === i)};
   const count = sheet.getLastRow() - headerRow;
   if (count < 1) return out;
@@ -3734,7 +3734,16 @@ function mtgReadDeals_(sheet, rule) {
     const project = text('project');
     const status = text('status');
     const unnamed = !customer && !project;
-    if (unnamed && !status && !text('amount') && !text('weighted')) return;
+    if (unnamed && !status && !text('amount') && !text('weighted')) {
+      // 案件として数えない行。年度別の売上の列に数値があれば覚える（diagnoseBusinessMtgTotals で「数えていない売上」として出す）
+      const halves = salesCols.reduce((map, sc) => {
+        const v = mtgCellNumber_(values[n][sc.col]);
+        if (v != null) map[sc.year + sc.half] = (map[sc.year + sc.half] || 0) + v;
+        return map;
+      }, {});
+      if (Object.keys(halves).length) out.skippedSales.push({row: headerRow + 1 + n, salesHalves: halves});
+      return;
+    }
     out.deals.push({
       row: headerRow + 1 + n,
       key: unnamed ? '#' + (headerRow + 1 + n) : mtgDealKey_(customer, project),
@@ -5464,6 +5473,7 @@ function mtgTotalsLines_(name, table) {
         byStatus[st].slice(0, 3).map(r => r + '行目').join('・') + (byStatus[st].length > 3 ? '…' : '') + '）').join('・'));
     }
   });
+  out.push.apply(out, mtgTotalsSalesLines_(table));
   const unnamed = deals.filter(d => d.unnamed);
   if (unnamed.length) {
     out.push('　得意先・案件名が空の行（数えています）：' + unnamed.slice(0, 10).map(d => d.row + '行目').join('・') + (unnamed.length > 10 ? ' ほか' + (unnamed.length - 10) + '行' : ''));
@@ -5472,6 +5482,72 @@ function mtgTotalsLines_(name, table) {
   mtgStages_(deals, table.statusOrder).forEach(st => {
     out.push('　　' + st.status + '：' + st.count + '件・' + mtgAmount_(st.amount) + '・' + mtgAmount_(st.weighted) + (mtgExcludedStatus_(st.status === o.blankText ? '' : st.status) ? '　← 除く' : ''));
   });
+  return out;
+}
+
+/**
+ * diagnoseBusinessMtgTotals の年度別の売上の列の行（統合版（報告用）の売上のページと突き合わせる）：今年度（FY26 なら P列＋Q列）と
+ * 3年度分（「売上合計」。P〜U列）の、数える行の合計 − 失注の行 ＝ 資料、今年度の確度別（確定（A＋B）・見込（C）・そのほか）、
+ * 数値でない値（足していない）・案件として数えない行にある売上（足していない）
+ */
+function mtgTotalsSalesLines_(table) {
+  const pattern = new RegExp(MTG_OPTIONS.portfolio.salesHeader);
+  const cols = [];
+  table.headers.forEach((h, c) => {
+    const m = pattern.exec(credNormalize_(h));
+    if (m) cols.push({col: c, key: String(m[1]).slice(-2) + m[2], year: String(m[1]).slice(-2), header: h});
+  });
+  const year = mtgFiscalYearKey_(new Date());
+  const years = [0, 1, 2].map(k => ('0' + ((Number(year) + k) % 100)).slice(-2));
+  const letters = list => list.map(sc => diffColumnLetter_(sc.col + 1)).join('・');
+  const thisYear = cols.filter(sc => sc.year === year);
+  const span = cols.filter(sc => years.indexOf(sc.year) >= 0);
+  if (!thisYear.length) return ['　FY' + year + 'の売上：✗ 列（「FY' + year + '前半期売上」「FY' + year + '後半期売上」）がありません'];
+  const deals = table.deals;
+  const lost = d => mtgExcludedStatus_(d.status);
+  const sumOf = (list, keys) => list.reduce((t, d) => t + keys.reduce((u, k) => u + ((d.salesHalves || {})[k] || 0), 0), 0);
+  const out = [];
+  [{label: 'FY' + year + 'の売上（' + letters(thisYear) + '列。状況・計画進捗の棒・確定・見込）', list: thisYear},
+    {label: 'FY' + years[0] + '〜' + years[2] + 'の売上（' + letters(span) + '列。状況・計画進捗の「売上合計」）', list: span}].forEach(item => {
+    const keys = item.list.map(sc => sc.key);
+    const all = sumOf(deals, keys);
+    const minus = sumOf(deals.filter(lost), keys);
+    out.push('　' + item.label + '：列の合計 ' + mtgAmount_(all) + ' − 失注の行 ' + mtgAmount_(minus) + ' ＝ 資料 ' + mtgAmount_(all - minus));
+  });
+  // 今年度の確度別（失注除く）。状況・計画進捗に出るのは確定（A＋B）と見込（C）だけ
+  const keys = thisYear.map(sc => sc.key);
+  const byRank = {};
+  deals.filter(d => !lost(d)).forEach(d => {
+    const v = sumOf([d], keys);
+    if (!v) return;
+    const rank = mtgPlanRank_(d.status);
+    byRank[rank] = byRank[rank] || {value: 0, count: 0};
+    byRank[rank].value += v;
+    byRank[rank].count++;
+  });
+  const sure = (MTG_OPTIONS.compact && MTG_OPTIONS.compact.sureRanks) || ['A', 'B'];
+  const part = ranks => ranks.reduce((t, r) => t + (byRank[r] ? byRank[r].value : 0), 0);
+  const others = Object.keys(byRank).filter(r => sure.indexOf(r) < 0 && r !== 'C');
+  out.push('　　うち確定（' + sure.join('＋') + '）' + mtgAmount_(part(sure)) + '・見込（C）' + mtgAmount_(part(['C'])) +
+    '・そのほか（状況・計画進捗には出ない）' + mtgAmount_(part(others)) + (others.length ? '（' + others.map(r => r + ' ' + mtgAmount_(byRank[r].value)).join('・') + '）' : ''));
+  // 数値でない値（文字・エラー。足していない）
+  const texts = [];
+  span.forEach(sc => {
+    const head = mtgCanonicalLabel_(sc.header);
+    deals.forEach(d => {
+      if ((d.salesHalves || {})[sc.key] == null && d.cells && d.cells[head]) texts.push(diffColumnLetter_(sc.col + 1) + d.row + '「' + d.cells[head] + '」');
+    });
+  });
+  if (texts.length) {
+    out.push('　　数値でない値（文字・エラー。足していません）：' + texts.slice(0, 10).join('・') + (texts.length > 10 ? ' ほか' + (texts.length - 10) + '件' : ''));
+  }
+  // 案件として数えない行（得意先・案件名・ステータス・想定売上・期待値が空）にある売上
+  const skipped = (table.skippedSales || []).filter(x => span.some(sc => x.salesHalves[sc.key] != null));
+  if (skipped.length) {
+    out.push('　　案件として数えない行（得意先・案件名・ステータス・想定売上・期待値が空）にある売上（足していません）：' +
+      skipped.slice(0, 10).map(x => x.row + '行目 ' + mtgAmount_(span.reduce((t, sc) => t + (x.salesHalves[sc.key] || 0), 0))).join('・') +
+      (skipped.length > 10 ? ' ほか' + (skipped.length - 10) + '行' : ''));
+  }
   return out;
 }
 

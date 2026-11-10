@@ -638,6 +638,25 @@ test('状況・計画進捗（FY売上）の前回比：前回の時点コピー
   assert.deepStrictEqual([s1.salesBridge.sureStart, s1.salesBridge.sureEnd], [110, 140]);
 });
 
+test('diagnoseBusinessMtgTotals：今年度（P・Q列）と3年度分の売上を、列の合計 − 失注の行 ＝ 資料で突き合わせ、確度別・数値でない値・案件として数えない行の売上も出す', () => {
+  const {gas, g, sheet} = setup();
+  const fy = fiscalYear();
+  sheet.getRange('Q4').setValue('約5');    // B社：後半期が文字（足さない）
+  sheet.getRange('P10').setValue(9);       // 得意先などが空の行の売上（案件として数えないので足さない）
+  const s1 = summarize(g, '新FMT');
+  gas.promptAnswers = ['1'];
+  g.diagnoseBusinessMtgTotals();
+  const text = gas.alerts[gas.alerts.length - 1].message;
+  // 列の合計：A社 70・B社 20・C社 10・E社（失注）50 = 150 − 50 = 100（資料の確定（A＋B）＋見込（C）＋そのほか）
+  assert.ok(text.indexOf('　FY' + fy + 'の売上（P・Q列。状況・計画進捗の棒・確定・見込）：列の合計 150 − 失注の行 50 ＝ 資料 100') >= 0, text);
+  assert.ok(text.indexOf('　FY' + fy + '〜' + (Number(fy) + 2) + 'の売上（P・Q列。状況・計画進捗の「売上合計」）：列の合計 150 − 失注の行 50 ＝ 資料 100') >= 0);
+  assert.ok(text.indexOf('　　うち確定（A＋B）100・見込（C）0・そのほか（状況・計画進捗には出ない）0') >= 0);
+  assert.strictEqual(s1.planSales.byRank.A + s1.planSales.byRank.B, 100, '資料の確定（A＋B）と同じ');
+  assert.strictEqual(s1.salesBridge.total, 100, '資料の売上合計と同じ');
+  assert.ok(text.indexOf('　　数値でない値（文字・エラー。足していません）：Q4「約5」') >= 0);
+  assert.ok(text.indexOf('　　案件として数えない行（得意先・案件名・ステータス・想定売上・期待値が空）にある売上（足していません）：10行目 9') >= 0);
+});
+
 test('状況・計画進捗（FY売上）：今年度の売上の列が無いシートは、棒の場所に「データなし」と理由', () => {
   const {g} = setup();
   const s1 = summarize(g, '新FMT');
