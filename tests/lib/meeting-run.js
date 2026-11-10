@@ -17,6 +17,7 @@ const RUNS = {
   previewBusinessMtgReportSummaries: ['report', false],
   createBusinessMtgCombinedSummary: ['combined', true],
   createBusinessMtgReportingSummary: ['compact', true],
+  createBusinessMtgReportingOverview: ['compact', false],
   createServiceMtgSummaries: ['service', true],
   previewServiceMtgSummaries: ['service', false]
 };
@@ -56,7 +57,7 @@ function emulate(gas, kind, final) {
   }
   const meeting = take();
   const point = typeof gas.runPoint === 'function' ? gas.runPoint(data) : gas.runPoint || '';
-  const check = g.checkMeetingRun(kind, final, meeting, names, point);
+  const check = g.checkMeetingRun(kind, final, meeting, names, point, cancelJob);
   if (check.error) {
     gas.alerts.push({title: 'MeetingRunDialog', message: check.error});
     return;

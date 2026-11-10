@@ -6,7 +6,7 @@
  *   1. 表紙（統合版と同じひな形の表紙。見出しの下は「事前資料」ではなく「報告資料」（compact.coverWord）。mtgCombinedCover_）
  *   2. 全サブインダストリーの状況・計画進捗（mtgCompactOverviewSlide_）：サブインダストリーごとに、今年度の確定（確度 A＋B）の想定売上の横棒（A・B を積み上げ、
  *      データラベル付き）と計画線（透明度のあるグレーの点線。上に「計画」）。右に、計画・進捗率（A＋B）・確定（A＋B）/件・見込（C）/件と、
- *      想定売上合計（失注除く）・前回比（比べた日付。増は青・減は赤）・案件数・変化のある案件（まとまりの見出しは付けない）。進捗率（A＋B）の高い順、いちばん下に合計
+ *      想定売上合計（失注除く）・前回比（比べた日付。増は青・減は赤）・案件数・変化のある案件（まとまりの見出しは付けない）。シートの順（DIFF_RULES）、いちばん下に合計
  *   2'. 同じ（見込（C）を含む。棒に続けて見込（C）を点線で足す。mtgCompactOverviewSlide_(…, {withC: true})）
  *   3. 計画に対する積み上げ（全体。統合版と同じ mtgPlanSlide_ で、想定売上を積み上げる）と、確定（A＋B）だけの積み上げ（mtgPlanRanksOnly_）
  *   4〜 変化のあった案件：{サブインダストリー}（mtgCompactChangeSlides_。シートの順にサブインダストリーごと）：No（資料の通し番号）・得意先／案件名・
@@ -25,9 +25,18 @@ function createBusinessMtgReportingSummary() {
   mschOpenRunDialog_('compact', true);
 }
 
-/** 「統合版（報告用）（全サブインダストリー）」（知らせの名前） */
-function mtgCompactLabel_() {
-  return MTG_OPTIONS.compact.label + '（' + MTG_OPTIONS.combined.name + '）';
+/**
+ * 統合版（報告用）の全体サマリだけを作る（エディタから実行。数字の確かめ用）：表紙・全サブインダストリーの状況・計画進捗・計画に対する積み上げのページだけで、
+ * 変化のあった案件のページは作らない（そのぶん早く終わる）。画面は統合版（報告用）と同じ（final: false で区別する）。
+ * 保存先のフォルダに「…_報告用_全体サマリ.pdf」として保存し、会議のフォルダには格納しない
+ */
+function createBusinessMtgReportingOverview() {
+  mschOpenRunDialog_('compact', false);
+}
+
+/** 「統合版（報告用）（全サブインダストリー）」（知らせの名前）。overview なら「統合版（報告用）の全体サマリ（全サブインダストリー）」 */
+function mtgCompactLabel_(overview) {
+  return MTG_OPTIONS.compact.label + (overview ? 'の全体サマリ' : '') + '（' + MTG_OPTIONS.combined.name + '）';
 }
 
 /** 変化のあった案件のページの前に入るページの数（表紙・全サブインダストリーの状況・計画進捗（見込（C）を含むページも）（・計画に対する積み上げ 2枚）） */
@@ -56,9 +65,10 @@ function mtgWithAmountCeil_(fn) {
   }
 }
 
-/** ファイル名（統合版の名前の後ろに fileSuffix。「20261113_全サブインダストリー_報告用」） */
-function mtgCompactFileName_(meeting) {
-  return mtgFileName_(MTG_OPTIONS.combined.name, meeting, true) + MTG_OPTIONS.compact.fileSuffix;
+/** ファイル名（統合版の名前の後ろに fileSuffix。「20261113_全サブインダストリー_報告用」。全体サマリだけなら後ろに overviewSuffix） */
+function mtgCompactFileName_(meeting, overview) {
+  const C = MTG_OPTIONS.compact;
+  return mtgFileName_(MTG_OPTIONS.combined.name, meeting, true) + C.fileSuffix + (overview ? C.overviewSuffix : '');
 }
 
 /**
@@ -91,26 +101,34 @@ function mtgCompactFront_(summaries, meeting, final, now) {
     const merged = o.plan.enabled ? mtgMergePlans_(summaries.map(mtgCompactPlanOf_)) : null;
     // 計画に対する積み上げ：今年度の売上（全確度・確定（A＋B））のあとに、想定売上（同じ2枚。amountPages のとき）
     const plan = [];
+    // タイトルは括弧書きを付けない（2026/11/10）：「計画に対する積み上げ」「計画に対する積み上げ：確定（A＋B）」。今年度の売上と想定売上の両方を
+    // 入れるとき（amountPages）は、想定売上のページに「：想定売上」を付けて見分ける
+    const T = MTG_TITLES.plan;
+    const amountWord = C.salesPage ? C.measure : '';
+    const titles = {sales: T, salesSure: T + '：' + C.sureLabel,
+      amount: T + (amountWord ? '：' + amountWord : ''), amountSure: T + '：' + [amountWord, C.sureLabel].filter(Boolean).join('・')};
     if (merged && C.salesPage) {
       // 売上の列が無いシートは除いて足す（どのシートにも無ければ「データなし」）
       const pick = list => (list.some(x => !x.gap) ? list.filter(x => !x.gap) : list.slice(0, 1));
       if (C.salesPlanBy === 'half') {
         const sales = mtgMergeSalesPlans_(pick(summaries.map(s => s.planSales || mtgSalesPlanOf_([], s.name, now, {}))));
-        plan.push(mtgSalesPlanSlide_(sales, o.combined.name), mtgSalesPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), o.combined.name,
-          {only: C.sureRanks, label: C.sureLabel}));
+        plan.push(mtgSalesPlanSlide_(sales, o.combined.name, {title: titles.sales}), mtgSalesPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), o.combined.name,
+          {only: C.sureRanks, label: C.sureLabel, title: titles.salesSure}));
       } else {
         // 案件の今年度の売上の合計を、受注月の月に置いて積み上げる（想定売上の積み上げと同じ形）
         const sales = mtgMergePlans_(pick(summaries.map(s => s.planSalesByMonth || mtgSalesPlanByMonthOf_([], s.name, now, {}))));
         sales.year = sales.year || mtgFiscalYearKey_(now);
         const fy = 'FY' + sales.year;
         const measure = fy + '売上';
-        plan.push(mtgPlanSlide_(sales, now, o.combined.name, {measure, titleNote: measure}),
-          mtgPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure, titleNote: measure}));
+        plan.push(mtgPlanSlide_(sales, now, o.combined.name, {measure, titleNote: measure, title: titles.sales}),
+          mtgPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure, titleNote: measure,
+            title: titles.salesSure}));
       }
     }
     if (merged && amountOn) {
-      plan.push(mtgPlanSlide_(merged, now, o.combined.name, {measure: C.measure}),
-        mtgPlanSlide_(mtgPlanRanksOnly_(merged, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure: C.measure}));
+      plan.push(mtgPlanSlide_(merged, now, o.combined.name, {measure: C.measure, title: titles.amount}),
+        mtgPlanSlide_(mtgPlanRanksOnly_(merged, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure: C.measure,
+          title: titles.amountSure}));
     }
     // 状況・計画進捗：今年度の売上（と見込（C）を含む）のあとに、想定売上（同じ2枚。amountPages のとき）
     const status = [].concat(C.salesPage ? [mtgCompactOverviewSlide_(summaries, {sales: true}), mtgCompactOverviewSlide_(summaries, {sales: true, withC: true})] : [],
@@ -169,13 +187,10 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const sum = (p, keys) => keys.reduce((t, k) => t + (p.byRank[k] || 0), 0);
   const cnt = (p, keys) => keys.reduce((t, k) => t + ((p.byRankCount || {})[k] || 0), 0);
   const rate = p => (p.gap || !(p.plan > 0) ? null : sum(p, ['A', 'B']) / p.plan * 100);
-  const order = p => (rate(p) == null ? -1 : rate(p));
   const planOf = s => (bySales ? s.planSales || mtgSalesPlanOf_([], s.name, new Date(), {}) : mtgCompactPlanOf_(s));
-  // 並び：最初のページの集計（今年度の売上。salesPage が false なら想定売上）の進捗率（A＋B）の高い順。どのページも同じ並び
-  // （ページによってサブインダストリーの順が変わらないように）
-  const base = s => (o.compact.salesPage ? s.planSales || mtgSalesPlanOf_([], s.name, new Date(), {}) : mtgCompactPlanOf_(s));
-  const items = summaries.map(s => ({s, p: planOf(s), base: base(s), lack: s.gaps || {}}))
-    .sort((a, b) => (order(b.base) - order(a.base)) || (sum(b.base, ['A', 'B']) - sum(a.base, ['A', 'B'])));
+  // 並び：シートの順（DIFF_RULES の順。summaries の順）に固定する。どのページも同じ並び（2026/11/10。進捗率の順に並べ替えると、
+  // ページや会議ごとにサブインダストリーの位置が変わり、隣の行の数字と見間違えやすかったため）
+  const items = summaries.map(s => ({s, p: planOf(s), lack: s.gaps || {}}));
   const ok = items.filter(x => !x.p.gap);
   const merged = mtgMergePlans_(ok.map(x => x.p));
   const first = mtgMonthOf_(merged.start);
@@ -203,14 +218,12 @@ function mtgCompactOverviewSlide_(summaries, options) {
     else total.changed += mtgCompactChangedNow_(s);
   });
   const reached = ok.filter(x => rate(x.p) >= 100).length;
-  const ownOrder = bySales === !!o.compact.salesPage;   // このページの集計で並べているか
   const fy = 'FY' + (merged.year || mtgFiscalYearKey_(summaries.length && summaries[0].now ? new Date(summaries[0].now) : new Date()));
   const totalRate = ok.length ? rate(merged) : null;
   const lead = '進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '（計画に届いているのは ' + ok.length + 'のうち ' + reached + '）。' +
     '案件 ' + total.active + '件・' + (bySales ? span + '売上合計 ' + mtgAmount_(total.amount) + '百万円（失注除く）。\n'
       : '想定売上合計 ' + mtgAmount_(total.amount) + '百万円（全期間・失注除く）。\n') +
-    // 並びの説明：このページの集計で並べたなら「進捗率（A＋B）の高い順」、ほかの集計（最初のページ）で並べたなら「並びは最初のページと同じ」
-    (ownOrder ? '進捗率（A＋B）の高い順。' : '並びは最初のページと同じ。') +
+    'サブインダストリーはシートの順。' +
     (bySales ? '進捗率・確定・見込は ' + fy + ' の売上（前半期＋後半期。受注月によらない）。進捗率 ＝ A＋B ÷ 計画。'
       : '進捗率・確定（A＋B）・見込（C）は今年度（' + period + '）の' + mtgPlanMonthName_() + 'の案件の想定売上（進捗率 ＝ A＋B ÷ 計画）。');
   // 見込（C）を含むページのリード文：確定＋見込の計画比
@@ -218,7 +231,7 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const leadC = '確定（A＋B）に見込（C）を足すと ' + mtgAmount_(sum(merged, ['A', 'B', 'C'])) + '百万円で、計画の ' + (withCRate == null ? '—' : withCRate + '%') +
     '（進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '）。\n' +
     '見込（C）は点線の枠。' + (bySales ? fy + ' の売上（前半期＋後半期。受注月によらない）。' : '') +
-    (ownOrder ? '並び・右の数字は前のページと同じ（進捗率（A＋B）の高い順）。' : '並び・右の数字は最初のページと同じ。');
+    '並び・右の数字は前のページと同じ。';
   const x = S.x;
   const w = S.w;
   const y = S.top;
@@ -242,7 +255,8 @@ function mtgCompactOverviewSlide_(summaries, options) {
     // 売上のページは、売上合計（3年度分。見出しの下に「（FY26〜28）」）。前回比は左のまとまり（確定（A＋B）の右）
     {cols: [bySales ? {key: 'amount', label: '売上合計', w: 48, period: '（' + span + '）'} : {key: 'amount', label: '想定売上合計', w: 48, period: '（全期間）'}]
       .concat(bySales ? [] : [{key: 'delta', label: deltaLabel, w: 58, period: '（全期間）'}]).concat([
-      {key: 'active', label: '案件数', w: 36, period: allYears}, {key: 'changed', label: '変化のある案件', w: 56, period: allYears}])}
+      // 売上のページは期間が「（FY26〜28）」と長いので、案件数の列を広げる（折り返さないように。2026/11/10）
+      {key: 'active', label: '案件数', w: bySales ? 44 : 36, period: allYears}, {key: 'changed', label: '変化のある案件', w: 56, period: allYears}])}
   ];
   // 列はまとまりに分けて見出しを付けない（2026/11/09。計画進捗と案件の状況を分ける必要はないため）。groups は列の並びのまとまり
   const colsW = groups.reduce((t, gr) => t + gr.cols.reduce((u, col) => u + col.w, 0), 0);
@@ -266,13 +280,17 @@ function mtgCompactOverviewSlide_(summaries, options) {
   let size = 7.5;
   const fitsAll = pt => groups.every(gr => gr.cols.every(col => mtgTextWidth_(col.label, pt) <= col.w * 0.9));
   while (!fitsAll(size) && size > 6) size -= 0.5;
+  // 期間の字も折り返さない：どの列も同じ大きさで、いちばん長い期間が列の幅に入る大きさ（6.5pt から 5.5pt まで）
+  let periodSize = 6.5;
+  const periodsFit = pt => groups.every(gr => gr.cols.every(col => !col.period || mtgTextWidth_(col.period, pt) <= col.w));
+  while (!periodsFit(periodSize) && periodSize > 5.5) periodSize -= 0.5;
   groups.forEach(gr => {
     gr.cols.forEach(col => {
       el.push(mtgBox_(cx - S.padX / 2, headY, col.w + S.padX, labelH, col.label,
         {size, color: c.sub, align: 'CENTER', valign: 'BOTTOM', role: 'compact-head'}));
       if (col.period) {
         el.push(mtgBox_(cx - S.padX / 2, headY + labelH, col.w + S.padX, periodH, col.period,
-          {size: 6.5, color: c.muted, align: 'CENTER', valign: 'MIDDLE', role: 'compact-head-period'}));
+          {size: periodSize, color: c.muted, align: 'CENTER', valign: 'MIDDLE', role: 'compact-head-period'}));
       }
       col.x = cx;
       cx += col.w;
@@ -479,17 +497,24 @@ function mtgCompactChangeSlidesOf_(s, start) {
 /* ---------------- 作る（区切りながら） ---------------- */
 
 /** 統合版（報告用）を作れるか（作れなければ {error: 理由}、作れれば {text: 確かめの文}） */
-function mtgCompactCheck_(meeting, point) {
+function mtgCompactCheck_(meeting, point, cancelJob, overview) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const o = MTG_OPTIONS;
   if (!o.compact.enabled) return {error: '統合版（報告用）を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.compact.enabled）。'};
+  // 作っている途中の仕事：「やめて新しく作る」（cancelJob）なら、作り始めるときにやめる（mtgJobCancel_）
   const pending = mtgJobLoad_();
-  if (pending) {
+  if (pending && !cancelJob) {
     return {error: (mtgDeckJob_(pending) ? mtgDeckJob_(pending).label : 'サブインダストリーの資料') + 'を作っている途中です（自動で続けています）。' +
       '終わってから（showBusinessMtgSummariesResult() で確かめてから）実行してください。'};
   }
   const names = mtgTrackedNames_(ss);
   if (!names.length) return {error: '追跡しているシート（test.gs の DIFF_RULES）が見つかりません。'};
+  if (overview) {
+    return {text: '「' + o.combined.name + '」の' + o.compact.label + 'の全体サマリ（' + names.length + 'サブインダストリーの状況・計画進捗と計画に対する積み上げ。' +
+      '変化のあった案件のページは作りません）を、今のシートの値で作ります。\n\n' +
+      '会議日 ' + mtgDateLabel_(meeting) + ' の資料として作り、保存先のフォルダに保存します（会議のフォルダには格納しません。会議日の記録・時点コピー・インデックスも変えません）。\n' +
+      '比べる時点：' + (point ? mtgChosenText_(point) + '（全シート共通）' : '前回の会議（シートごと）')};
+  }
   return {text: '「' + o.combined.name + '」の' + o.compact.label + '（' + names.length + 'サブインダストリーの状況・計画進捗と、変化のあった案件）を、' +
     '今のシートの値で作ります。\n\n' +
     '会議日 ' + mtgDateLabel_(meeting) + ' の資料として作り、会議のフォルダに格納します（会議日の記録・時点コピー・インデックスは変えません）。\n' +
@@ -500,13 +525,15 @@ function mtgCompactCheck_(meeting, point) {
  * 統合版（報告用）を作り始める（画面の「作成する」から）。時間がかかれば区切って続ける（mtgCompactRun_。続きは continueBusinessMtgSummaries）。
  * 戻り値は終わり（区切ったとき）の知らせ
  */
-function mtgCompactStart_(meeting, point, overwrite) {
+function mtgCompactStart_(meeting, point, overwrite, cancelJob, overview) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
+  if (cancelJob) mtgJobCancel_();   // 「やめて新しく作る」：作っている途中の仕事をやめる
   const check = mtgCompactCheck_(meeting, point);
   if (check.error) throw new Error(check.error);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const job = {kind: 'compact', final: true, meeting, now: Date.now(), names: mtgTrackedNames_(ss), point: point || null, items: [],
-    page: mtgCompactFrontCount_(), no: 0, deck: null, result: null, folderUrl: '', sourceError: '', overwrite: !!overwrite};
+    page: mtgCompactFrontCount_(), no: 0, deck: null, result: null, folderUrl: '', sourceError: '', overwrite: !!overwrite,
+    overview: !!overview};   // 全体サマリだけ（createBusinessMtgReportingOverview()）：変化のあった案件のページを作らない
   mtgJobSafetyTrigger_();   // 実行が強制終了されたら（メモリ不足など）、最後に保存した進み具合から続ける
   let done;
   try {
@@ -534,24 +561,35 @@ function mtgCompactRun_(ss, job, started) {
   const o = MTG_OPTIONS;
   const R = o.run;
   const fits = ms => mtgNow_() - started + ms <= R.limitMs;
+  // この実行で1つでも進んだか。まだ進んでいなければ、見積もりの時間が足りなくても区切らずに続ける（シートと記録を読むのに時間がかかる
+  // ときに区切ると、次の実行も同じだけ読んで区切り、いつまでも終わらなかった。2026/11/10）
+  let progressed = false;
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
   job.folderUrl = folder.getUrl();
-  const fileName = mtgCompactFileName_(job.meeting);
+  const fileName = mtgCompactFileName_(job.meeting, job.overview);
   if (!job.deck) {
     job.deck = mtgDeckStart_(fileName, folder);
     mtgJobCheckpoint_(job);
   }
   while (job.items.length < job.names.length) {
-    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const batch = R.readMode === 'api' ? job.names.slice(job.items.length, job.items.length + Math.max(R.sheetsPerRead || 1, 1))
       : job.names.slice(job.items.length);
     const source = mtgJobSource_(ss, job, batch);
-    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const summaries = mtgSummaries_(source, batch, new Date(job.now), true, job.meeting, job.point).summaries;
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
       const summary = summaries[i];
+      if (job.overview) {
+        // 全体サマリだけ：前のページに使う中身だけを残す（変化のあった案件のページは作らない）
+        job.items.push({name: summary.name, start: 0, pages: 0, lite: mtgCombinedLite_(summary)});
+        progressed = true;
+        job.crashes = 0;   // 進んだので、止められた回数も数え直す
+        mtgJobCheckpoint_(job);
+        continue;
+      }
       const timer = mschTimer_(o.compact.label + 'のスライド（' + summary.name + '）', true);
       const part = mtgCompactChangeSlides_(summary, job.no);
       const slides = mtgNumberSlides_(mtgCombinedFrame_([summary], job.meeting, true), part.slides, job.page);
@@ -560,11 +598,13 @@ function mtgCompactRun_(ss, job, started) {
       job.items.push({name: summary.name, start: job.page + 1, pages: slides.length, lite: mtgCombinedLite_(summary)});
       job.page += slides.length;
       job.no += part.count;
+      progressed = true;
+      job.crashes = 0;   // 進んだので、止められた回数も数え直す
       mtgJobCheckpoint_(job);   // 資料ごとに進み具合を保存（実行が止められても、この資料の次から。mtgCombinedRecover_）
     }
   }
   if (!job.result) {
-    if (!fits(R.combinedFinishMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.combinedFinishMs)) return mtgJobPause_(job);
     const timer = mschTimer_(o.compact.label + 'の仕上げ', true);
     job.deck.finishing = true;   // 仕上げの途中で止められたら、続きからは作れない（作り直す）
     mtgJobCheckpoint_(job);
@@ -574,10 +614,12 @@ function mtgCompactRun_(ss, job, started) {
     const out = mtgDeckFinish_(job.deck, fileName, folder, existing);
     timer.lap('並べて PDF に保存');
     const result = {name: o.combined.name, file: out.pdf, pages: job.page, overwritten: !!out.overwritten};
-    // 会議のフォルダに格納する（できなくても止めない）。インデックスの統合版の列には書かない
-    const stored = mtgStoreToMeetingFolder_(o.combined.name, job.meeting, out.pdf);
-    if (stored.error) result.storeError = stored.error;
-    else result.stored = stored;
+    // 会議のフォルダに格納する（できなくても止めない）。インデックスの統合版の列には書かない。全体サマリだけ（確かめ用）は格納しない
+    if (!job.overview) {
+      const stored = mtgStoreToMeetingFolder_(o.combined.name, job.meeting, out.pdf);
+      if (stored.error) result.storeError = stored.error;
+      else result.stored = stored;
+    }
     job.result = mtgCombinedPlain_(result);
     job.deck = null;
   }
@@ -586,15 +628,16 @@ function mtgCompactRun_(ss, job, started) {
 
 /** 統合版（報告用）の仕事の、終わり（done）・区切ったときの知らせ */
 function mtgCompactMessage_(job, done) {
-  const label = mtgCompactLabel_();
+  const label = mtgCompactLabel_(job.overview);
   if (!done) {
     const rest = job.names.slice(job.items.length);
-    const left = [].concat(rest.length ? ['変化のあった案件のページ ' + rest.length + '件（' + rest.join('・') + '）'] : [],
-      ['表紙・状況と計画進捗・計画のページと PDF・会議のフォルダへの格納']);
+    const left = job.overview ? [].concat(rest.length ? ['シートの読み込み ' + rest.length + '件（' + rest.join('・') + '）'] : [], ['表紙・状況と計画進捗・計画のページと PDF'])
+      : [].concat(rest.length ? ['変化のあった案件のページ ' + rest.length + '件（' + rest.join('・') + '）'] : [],
+        ['表紙・状況と計画進捗・計画のページと PDF・会議のフォルダへの格納']);
     return ['時間がかかるため、ここで区切りました（Apps Script の1回の実行は6分まで）。残りは約' + Math.round(MTG_OPTIONS.run.continueAfterMs / 60000) +
       '分後に自動で続けます：' + left.join('・') + '。',
     '続きが終わったら、エディタで showBusinessMtgSummariesResult() を実行すると結果が出ます（実行ログにも出ます）。終わるまで、会議サマリの関数は実行しないでください。',
-    '', label + '：' + job.items.length + '/' + job.names.length + 'サブインダストリーのページを作りました。',
+    '', label + '：' + job.items.length + '/' + job.names.length + 'サブインダストリーの' + (job.overview ? 'シートを読みました。' : 'ページを作りました。'),
     '', '保存先：' + job.folderUrl].join('\n');
   }
   const r = job.result;

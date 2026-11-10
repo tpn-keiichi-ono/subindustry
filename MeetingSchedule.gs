@@ -176,6 +176,9 @@ function getMeetingRunData(kind, final) {
     });
     job = mtgJobPendingText_();
     timer.lap('シートと前回の資料');
+  } else if (kind === 'combined' || kind === 'compact') {
+    // 作っている途中の仕事があれば知らせ、「やめて新しく作る」を選んでもらう（実行をキャンセルして止まったままの仕事も、これで片付ける）
+    job = mtgJobPendingText_();
   } else if (service) {
     const data = smtgRunData_();
     sheets = data.sheets;
@@ -189,10 +192,11 @@ function getMeetingRunData(kind, final) {
   }
   console.log('資料を作る画面の読み込み：' + timer.text());
   const titles = {business: '会議サマリ（' + meetingName + '）', report: '会議サマリ・報告案件版（' + meetingName + '）', combined: '統合版（' + MTG_OPTIONS.combined.name + '）',
-    compact: mtgCompactLabel_(), service: meetingName + ' の事前資料'};
+    compact: mtgCompactLabel_(!final), service: meetingName + ' の事前資料'};
   // 直前の「作成する」（画面が読み込み直されたとき・開き直したときに、作っている途中なら待ち、終わっていれば結果を出す）
   const run = getMeetingRunState(kind);
-  return {kind, final: !!final, title: titles[kind] + (final ? 'を作る' : 'を試しに作る'), meetingName,
+  // 統合版（報告用）の final でないもの（createBusinessMtgReportingOverview()）は試作ではなく、全体サマリだけを作る
+  return {kind, final: !!final, title: titles[kind] + (final || kind === 'compact' ? 'を作る' : 'を試しに作る'), meetingName,
     color: service ? SMTG_OPTIONS.colors.green : MTG_OPTIONS.colors.cover, meetings, selected, sheets, points, canPickTime: !service, job,
     run, pollSeconds: MSCH_OPTIONS.pollSeconds};
 }
@@ -440,13 +444,13 @@ function mschCheckInput_(kind, meeting, names) {
  * 作る前の確かめ（google.script.run から呼ぶ）。point は比べる時点（画面のプルダウンの key。空なら前回の会議）。
  * {text: 確かめの文} か {error: 作れない理由}
  */
-function checkMeetingRun(kind, final, meeting, names, point) {
+function checkMeetingRun(kind, final, meeting, names, point, cancelJob) {
   mschCheckKind_(kind);
   const date = mschCheckInput_(kind, meeting, names);
   if (kind === 'service') return {text: smtgRunCheckText_(!!final, date, names, smtgCheckPoint_(point))};
   const resolved = mtgResolvePoint_(point);
-  if (kind === 'combined') return mtgCombinedCheck_(date, resolved);
-  if (kind === 'compact') return mtgCompactCheck_(date, resolved);
+  if (kind === 'combined') return mtgCombinedCheck_(date, resolved, !!cancelJob);
+  if (kind === 'compact') return mtgCompactCheck_(date, resolved, !!cancelJob, !final);   // final でなければ全体サマリだけ
   const text = mtgRunCheckText_(!!final, names, date, resolved);
   return {text: kind === 'report' ? mtgReportCheckText_() + '\n\n' + text : text};
 }
@@ -472,8 +476,8 @@ function runMeetingMaterials(kind, final, meeting, names, cancelJob, point, over
       message = smtgRunStart_(!!final, date, names, !!cancelJob, smtgCheckPoint_(point), !!overwrite);
     } else {
       const resolved = mtgResolvePoint_(point);
-      message = kind === 'combined' ? mtgCombinedStart_(date, resolved, !!overwrite)
-        : kind === 'compact' ? mtgCompactStart_(date, resolved, !!overwrite)
+      message = kind === 'combined' ? mtgCombinedStart_(date, resolved, !!overwrite, !!cancelJob)
+        : kind === 'compact' ? mtgCompactStart_(date, resolved, !!overwrite, !!cancelJob, !final)
         : mtgRunStart_(!!final, date, names, !!cancelJob, resolved, !!overwrite, kind === 'report' ? 'report' : '');
     }
     mschRunStateSave_(Object.assign({status: 'done', message, finishedAt: Date.now()}, base));

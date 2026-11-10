@@ -147,6 +147,8 @@ const MTG_OPTIONS = {
     enabled: true,
     label: '統合版（報告用）',
     fileSuffix: '_報告用',
+    // 全体サマリだけ（createBusinessMtgReportingOverview()。変化のあった案件のページを作らない確かめ用）のファイル名の後ろ（fileSuffix の後ろに足す）
+    overviewSuffix: '_全体サマリ',
     planScale: 1.4,
     planLine: {color: '#808080', alpha: 0.6, weight: 1.25},
     tableMargin: 12,
@@ -883,12 +885,9 @@ function mtgRunCheckText_(final, names, meeting, point) {
 function mtgRunStart_(final, meeting, names, cancelJob, point, overwrite, variant) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const pending = mtgJobLoad_();
-  if (pending) {
+  if (mtgJobLoad_()) {
     if (!cancelJob) throw new Error(mtgJobPendingText_());
-    if (mtgDeckJob_(pending)) mtgDeckDiscard_(pending.deck);   // 作りかけの統合版（報告用も）はゴミ箱へ
-    mtgJobClear_();
-    mtgJobDeleteTriggers_();
+    mtgJobCancel_();
   }
   const now = new Date();
   const job = {final, meeting, now: now.getTime(), names, items: [], stored: 0, copy: null, index: null, folderUrl: '',
@@ -924,6 +923,9 @@ function mtgJobRun_(ss, job, started) {
   const o = MTG_OPTIONS;
   const R = o.run;
   const fits = ms => mtgNow_() - started + ms <= R.limitMs;
+  // この実行で1つでも進んだか。まだ進んでいなければ、見積もりの時間が足りなくても区切らずに続ける（シートと記録を読むのに時間がかかる
+  // ときに区切ると、次の実行も同じだけ読んで区切り、いつまでも終わらなかった。2026/11/10）
+  let progressed = false;
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
   job.folderUrl = folder.getUrl();
@@ -932,13 +934,13 @@ function mtgJobRun_(ss, job, started) {
   const props = PropertiesService.getDocumentProperties();
   let heavy = false;   // この実行で資料の中身を読んだか（読んだら、時点コピーを直す手順は新しい実行で）
   while (job.items.length < job.names.length) {
-    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const batch = R.readMode === 'api' ? job.names.slice(job.items.length, job.items.length + Math.max(R.sheetsPerRead || 1, 1))
       : job.names.slice(job.items.length);
     heavy = true;
     const source = mtgJobSource_(ss, job, batch);
     // 読むのに時間がかかって、残りの時間が足りなければここで区切る（続きで読み直す）
-    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const {plans, summaries} = mtgSummaries_(source, batch, new Date(job.now), job.final, job.meeting, job.point);
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
@@ -957,6 +959,8 @@ function mtgJobRun_(ss, job, started) {
         props.setProperty(o.draftKeyPrefix + summary.name, JSON.stringify({meeting: job.meeting, at: job.now, keys: summary.alerts.map(a => mtgHash_(a.key))}));
       }
       job.items.push({name: summary.name, pdf: out.pdf.getId(), line: mtgResultLine_(source, summary, out.pdf, out.overwritten)});
+      progressed = true;
+      job.crashes = 0;   // 進んだので、止められた回数も数え直す
       mtgJobCheckpoint_(job);   // 資料ごとに進み具合を保存（実行が止められても、続きから）
     }
   }
@@ -1274,6 +1278,17 @@ function mtgJobSafetyTrigger_() {
   ScriptApp.newTrigger(R.handler).timeBased().after(R.safetyAfterMs).create();
 }
 
+/**
+ * 作っている途中の仕事をやめる（画面の「やめて新しく作る」）：作りかけの統合版・統合版（報告用）はゴミ箱へ移し、仕事と続きのトリガーを消す。
+ * 実行を途中でキャンセルした・止まったまま続きの予約が無い仕事も、これで片付けて作り直せる
+ */
+function mtgJobCancel_() {
+  const pending = mtgJobLoad_();
+  if (pending && mtgDeckJob_(pending)) mtgDeckDiscard_(pending.deck);
+  mtgJobClear_();
+  mtgJobDeleteTriggers_();
+}
+
 /** 終わった（または止まって知らせを残した）：仕事と続きのトリガーを消す */
 function mtgJobFinish_() {
   mtgJobClear_();
@@ -1293,8 +1308,9 @@ function showBusinessMtgSummariesResult() {
       : '会議サマリを作っている途中です（会議日 ' + job.meeting + '。資料 ' + job.items.length + '/' + job.names.length + '件' +
         (job.final ? '・格納 ' + job.stored + '/' + job.names.length + '件' : '') + '）。') +
       (triggers ? '自動で続けています。少し待ってから、もう一度実行してください。'
-        : '続きの予約がありません。' + (mtgDeckJob_(job) ? mtgDeckJob_(job).again
-          : 'createBusinessMtgSummaries()（試作なら previewBusinessMtgSummaries()）') + 'で作り直してください。');
+        : '続きの予約がありません（続きの実行をキャンセルした など）。' + (mtgDeckJob_(job) ? mtgDeckJob_(job).again
+          : 'createBusinessMtgSummaries()（試作なら previewBusinessMtgSummaries()）') +
+          ' を実行し、画面で「やめて新しく作る」にチェックを入れて作り直してください（作りかけの資料はゴミ箱に移します）。');
   } else {
     const props = PropertiesService.getScriptProperties();
     const keys = props.getKeys().filter(key => key.indexOf(R.resultKey + '_') === 0).sort((a, b) => Number(a.split('_').pop()) - Number(b.split('_').pop()));
@@ -2425,6 +2441,9 @@ function mtgCombinedRun_(ss, job, started) {
   const o = MTG_OPTIONS;
   const R = o.run;
   const fits = ms => mtgNow_() - started + ms <= R.limitMs;
+  // この実行で1つでも進んだか。まだ進んでいなければ、見積もりの時間が足りなくても区切らずに続ける（シートと記録を読むのに時間がかかる
+  // ときに区切ると、次の実行も同じだけ読んで区切り、いつまでも終わらなかった。2026/11/10）
+  let progressed = false;
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
   job.folderUrl = folder.getUrl();
@@ -2434,11 +2453,11 @@ function mtgCombinedRun_(ss, job, started) {
     mtgJobCheckpoint_(job);
   }
   while (job.items.length < job.names.length) {
-    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const batch = R.readMode === 'api' ? job.names.slice(job.items.length, job.items.length + Math.max(R.sheetsPerRead || 1, 1))
       : job.names.slice(job.items.length);
     const source = mtgJobSource_(ss, job, batch);
-    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const summaries = mtgSummaries_(source, batch, new Date(job.now), true, job.meeting, job.point).summaries;
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
@@ -2449,12 +2468,14 @@ function mtgCombinedRun_(ss, job, started) {
       timer.lap('スライドを足す（' + slides.length + '枚）');
       job.items.push({name: summary.name, start: job.page + 1, pages: slides.length, lite: mtgCombinedLite_(summary)});
       job.page += slides.length;
+      progressed = true;
+      job.crashes = 0;   // 進んだので、止められた回数も数え直す
       mtgJobCheckpoint_(job);   // 資料ごとに進み具合を保存（実行が止められても、この資料の次から。mtgCombinedRecover_）
     }
   }
   // 前のページ（すべての資料のページが決まってから）を足して仕上げる
   if (!job.result) {
-    if (!fits(R.combinedFinishMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.combinedFinishMs)) return mtgJobPause_(job);
     const timer = mschTimer_('統合版の仕上げ', true);
     job.deck.finishing = true;   // 仕上げの途中で止められたら、続きからは作れない（作り直す。mtgCombinedRecover_）
     mtgJobCheckpoint_(job);
@@ -2529,12 +2550,13 @@ function createBusinessMtgCombinedSummary() {
 }
 
 /** 統合版を作れるか（作れなければ {error: 理由}、作れれば {text: 確かめの文}） */
-function mtgCombinedCheck_(meeting, point) {
+function mtgCombinedCheck_(meeting, point, cancelJob) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const o = MTG_OPTIONS.combined;
   if (!o.enabled) return {error: '統合版を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.combined.enabled）。'};
+  // 作っている途中の仕事：「やめて新しく作る」（cancelJob）なら、作り始めるときにやめる（mtgJobCancel_）
   const pending = mtgJobLoad_();
-  if (pending) {
+  if (pending && !cancelJob) {
     return {error: (pending.kind === 'combined' ? '統合版' : mtgDeckJob_(pending) ? mtgDeckJob_(pending).label : 'サブインダストリーの資料') +
       'を作っている途中です（自動で続けています）。' +
       '終わってから（showBusinessMtgSummariesResult() で確かめてから）実行してください。'};
@@ -2558,8 +2580,9 @@ function mtgCombinedCheck_(meeting, point) {
  * 統合版を作り始める（画面の「作成する」から。作れるかは先に mtgCombinedCheck_ で確かめる）。時間がかかれば区切って続ける（mtgCombinedRun_。
  * 続きは個別の資料と同じトリガー continueBusinessMtgSummaries）。戻り値は終わり（区切ったとき）の知らせ
  */
-function mtgCombinedStart_(meeting, point, overwrite) {
+function mtgCombinedStart_(meeting, point, overwrite, cancelJob) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
+  if (cancelJob) mtgJobCancel_();   // 「やめて新しく作る」：作っている途中の仕事をやめる
   const check = mtgCombinedCheck_(meeting, point);
   if (check.error) throw new Error(check.error);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -2627,8 +2650,8 @@ function mtgDeckJob_(job) {
       message: mtgCombinedMessage_, front: mtgCombinedFrontCount_};
   }
   if (job.kind === 'compact') {
-    return {label: mtgCompactLabel_(), again: 'createBusinessMtgReportingSummary()', run: mtgCompactRun_, message: mtgCompactMessage_,
-      front: mtgCompactFrontCount_};
+    return {label: mtgCompactLabel_(job.overview), again: job.overview ? 'createBusinessMtgReportingOverview()' : 'createBusinessMtgReportingSummary()',
+      run: mtgCompactRun_, message: mtgCompactMessage_, front: mtgCompactFrontCount_};
   }
   return null;
 }
@@ -5507,6 +5530,8 @@ function mtgTotalsSalesLines_(table) {
   const lost = d => mtgExcludedStatus_(d.status);
   const sumOf = (list, keys) => list.reduce((t, d) => t + keys.reduce((u, k) => u + ((d.salesHalves || {})[k] || 0), 0), 0);
   const out = [];
+  // 読んでいる列（見出しの書き方が同じ列が P・Q 以外にもあると、その列も足す）
+  out.push('　FY' + year + 'の売上として読む列：' + thisYear.map(sc => diffColumnLetter_(sc.col + 1) + '列「' + String(sc.header).replace(/\s+/g, '') + '」').join('・'));
   [{label: 'FY' + year + 'の売上（' + letters(thisYear) + '列。状況・計画進捗の棒・確定・見込）', list: thisYear},
     {label: 'FY' + years[0] + '〜' + years[2] + 'の売上（' + letters(span) + '列。状況・計画進捗の「売上合計」）', list: span}].forEach(item => {
     const keys = item.list.map(sc => sc.key);
@@ -5530,6 +5555,20 @@ function mtgTotalsSalesLines_(table) {
   const others = Object.keys(byRank).filter(r => sure.indexOf(r) < 0 && r !== 'C');
   out.push('　　うち確定（' + sure.join('＋') + '）' + mtgAmount_(part(sure)) + '・見込（C）' + mtgAmount_(part(['C'])) +
     '・そのほか（状況・計画進捗には出ない）' + mtgAmount_(part(others)) + (others.length ? '（' + others.map(r => r + ' ' + mtgAmount_(byRank[r].value)).join('・') + '）' : ''));
+  // 確定（A＋B）に入れたステータスごとの金額・件数と行（確度はステータスの「-」の前の文字。「A-受注済み(100%)」も A）
+  const byStatus = {};
+  deals.filter(d => !lost(d) && sure.indexOf(mtgPlanRank_(d.status)) >= 0).forEach(d => {
+    const v = sumOf([d], keys);
+    if (!v) return;
+    const st = byStatus[d.status] = byStatus[d.status] || {value: 0, rows: []};
+    st.value += v;
+    st.rows.push(d.row + '行目 ' + mtgAmount_(v));
+  });
+  Object.keys(byStatus).forEach(status => {
+    const st = byStatus[status];
+    out.push('　　　' + status + '：' + mtgAmount_(st.value) + '（' + st.rows.length + '件：' + st.rows.slice(0, 20).join('・') +
+      (st.rows.length > 20 ? ' ほか' + (st.rows.length - 20) + '件' : '') + '）');
+  });
   // 数値でない値（文字・エラー。足していない）
   const texts = [];
   span.forEach(sc => {
@@ -6783,7 +6822,7 @@ function mtgSalesPlanSlide_(p, name, options) {
   const o = MTG_OPTIONS.plan;
   const only = options && options.only;
   const fy = 'FY' + (p.year || '');
-  const title = MTG_TITLES.plan + '（' + [name, fy + '売上', only ? options.label : ''].filter(Boolean).join('・') + '）';
+  const title = options && options.title ? options.title : MTG_TITLES.plan + '（' + [name, fy + '売上', only ? options.label : ''].filter(Boolean).join('・') + '）';
   const what = (only ? options.label + 'の' : '') + fy + ' の売上';
   const heading = fy + ' の売上（前半期・後半期）の' + (only ? options.label + 'の' : '') + '積み上げ（百万円）';
   if (p.gap) {
@@ -6925,7 +6964,9 @@ function mtgPlanSlide_(p, now, name, options) {
   const what = only ? options.label + 'の' + measure : measure;
   // options.titleNote：見出しの名前の後ろに足す言葉（「FY26売上」。同じ名前のページと見分ける）
   const note = options && options.titleNote || '';
-  const title = MTG_TITLES.plan + (name || only || note ? '（' + [name, note, only ? options.label : ''].filter(Boolean).join('・') + '）' : '');
+  // options.title：タイトルをそのまま使う（統合版（報告用）。括弧書きを付けない。2026/11/10）
+  const title = options && options.title ? options.title
+    : MTG_TITLES.plan + (name || only || note ? '（' + [name, note, only ? options.label : ''].filter(Boolean).join('・') + '）' : '');
   const first = mtgMonthOf_(p.start);
   const last = mtgMonthOf_(p.start + 11);
   const period = String(first.y).slice(2) + '/' + first.m + '〜' + String(last.y).slice(2) + '/' + last.m;

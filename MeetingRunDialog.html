@@ -235,9 +235,10 @@
       $('meetingName').textContent = d.meetingName;
       $('dot').style.background = d.color;
       $('title').textContent = d.title;
-      $('mode').textContent = FINAL ? '本番（会議日を記録します）' : '試作（会議日は記録しません）';
+      // 統合版（報告用）の FINAL でないものは、全体サマリだけ（変化のあった案件のページを作らない確かめ用）
+      $('mode').textContent = KIND === 'compact' && !FINAL ? '全体サマリだけ（変化のあった案件のページは作りません）' : FINAL ? '本番（会議日を記録します）' : '試作（会議日は記録しません）';
       $('mode').classList.toggle('final', FINAL);
-      $('run').textContent = FINAL ? '本番として作成する' : '試作を作成する';
+      $('run').textContent = KIND === 'compact' && !FINAL ? '全体サマリを作成する' : FINAL ? '本番として作成する' : '試作を作成する';
       // 会議日程（会議日の新しい順。初めは今日以降でいちばん近い会議日）
       const select = $('meeting');
       const keep = select.value;
@@ -436,7 +437,7 @@
           show('confirm');
         })
         .withFailureHandler(e => { idle(); showError('error', e); })
-        .checkMeetingRun(KIND, FINAL, meetingValue(), pickedSheets(), pointValue());
+        .checkMeetingRun(KIND, FINAL, meetingValue(), pickedSheets(), pointValue(), $('cancelJob').checked);
     }
 
     function run() {
