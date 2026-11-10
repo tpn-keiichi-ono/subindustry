@@ -25,9 +25,18 @@ function createBusinessMtgReportingSummary() {
   mschOpenRunDialog_('compact', true);
 }
 
-/** 「統合版（報告用）（全サブインダストリー）」（知らせの名前） */
-function mtgCompactLabel_() {
-  return MTG_OPTIONS.compact.label + '（' + MTG_OPTIONS.combined.name + '）';
+/**
+ * 統合版（報告用）の全体サマリだけを作る（エディタから実行。数字の確かめ用）：表紙・全サブインダストリーの状況・計画進捗・計画に対する積み上げのページだけで、
+ * 変化のあった案件のページは作らない（そのぶん早く終わる）。画面は統合版（報告用）と同じ（final: false で区別する）。
+ * 保存先のフォルダに「…_報告用_全体サマリ.pdf」として保存し、会議のフォルダには格納しない
+ */
+function createBusinessMtgReportingOverview() {
+  mschOpenRunDialog_('compact', false);
+}
+
+/** 「統合版（報告用）（全サブインダストリー）」（知らせの名前）。overview なら「統合版（報告用）の全体サマリ（全サブインダストリー）」 */
+function mtgCompactLabel_(overview) {
+  return MTG_OPTIONS.compact.label + (overview ? 'の全体サマリ' : '') + '（' + MTG_OPTIONS.combined.name + '）';
 }
 
 /** 変化のあった案件のページの前に入るページの数（表紙・全サブインダストリーの状況・計画進捗（見込（C）を含むページも）（・計画に対する積み上げ 2枚）） */
@@ -56,9 +65,10 @@ function mtgWithAmountCeil_(fn) {
   }
 }
 
-/** ファイル名（統合版の名前の後ろに fileSuffix。「20261113_全サブインダストリー_報告用」） */
-function mtgCompactFileName_(meeting) {
-  return mtgFileName_(MTG_OPTIONS.combined.name, meeting, true) + MTG_OPTIONS.compact.fileSuffix;
+/** ファイル名（統合版の名前の後ろに fileSuffix。「20261113_全サブインダストリー_報告用」。全体サマリだけなら後ろに overviewSuffix） */
+function mtgCompactFileName_(meeting, overview) {
+  const C = MTG_OPTIONS.compact;
+  return mtgFileName_(MTG_OPTIONS.combined.name, meeting, true) + C.fileSuffix + (overview ? C.overviewSuffix : '');
 }
 
 /**
@@ -479,7 +489,7 @@ function mtgCompactChangeSlidesOf_(s, start) {
 /* ---------------- 作る（区切りながら） ---------------- */
 
 /** 統合版（報告用）を作れるか（作れなければ {error: 理由}、作れれば {text: 確かめの文}） */
-function mtgCompactCheck_(meeting, point, cancelJob) {
+function mtgCompactCheck_(meeting, point, cancelJob, overview) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const o = MTG_OPTIONS;
   if (!o.compact.enabled) return {error: '統合版（報告用）を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.compact.enabled）。'};
@@ -491,6 +501,12 @@ function mtgCompactCheck_(meeting, point, cancelJob) {
   }
   const names = mtgTrackedNames_(ss);
   if (!names.length) return {error: '追跡しているシート（test.gs の DIFF_RULES）が見つかりません。'};
+  if (overview) {
+    return {text: '「' + o.combined.name + '」の' + o.compact.label + 'の全体サマリ（' + names.length + 'サブインダストリーの状況・計画進捗と計画に対する積み上げ。' +
+      '変化のあった案件のページは作りません）を、今のシートの値で作ります。\n\n' +
+      '会議日 ' + mtgDateLabel_(meeting) + ' の資料として作り、保存先のフォルダに保存します（会議のフォルダには格納しません。会議日の記録・時点コピー・インデックスも変えません）。\n' +
+      '比べる時点：' + (point ? mtgChosenText_(point) + '（全シート共通）' : '前回の会議（シートごと）')};
+  }
   return {text: '「' + o.combined.name + '」の' + o.compact.label + '（' + names.length + 'サブインダストリーの状況・計画進捗と、変化のあった案件）を、' +
     '今のシートの値で作ります。\n\n' +
     '会議日 ' + mtgDateLabel_(meeting) + ' の資料として作り、会議のフォルダに格納します（会議日の記録・時点コピー・インデックスは変えません）。\n' +
@@ -501,14 +517,15 @@ function mtgCompactCheck_(meeting, point, cancelJob) {
  * 統合版（報告用）を作り始める（画面の「作成する」から）。時間がかかれば区切って続ける（mtgCompactRun_。続きは continueBusinessMtgSummaries）。
  * 戻り値は終わり（区切ったとき）の知らせ
  */
-function mtgCompactStart_(meeting, point, overwrite, cancelJob) {
+function mtgCompactStart_(meeting, point, overwrite, cancelJob, overview) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   if (cancelJob) mtgJobCancel_();   // 「やめて新しく作る」：作っている途中の仕事をやめる
   const check = mtgCompactCheck_(meeting, point);
   if (check.error) throw new Error(check.error);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const job = {kind: 'compact', final: true, meeting, now: Date.now(), names: mtgTrackedNames_(ss), point: point || null, items: [],
-    page: mtgCompactFrontCount_(), no: 0, deck: null, result: null, folderUrl: '', sourceError: '', overwrite: !!overwrite};
+    page: mtgCompactFrontCount_(), no: 0, deck: null, result: null, folderUrl: '', sourceError: '', overwrite: !!overwrite,
+    overview: !!overview};   // 全体サマリだけ（createBusinessMtgReportingOverview()）：変化のあった案件のページを作らない
   mtgJobSafetyTrigger_();   // 実行が強制終了されたら（メモリ不足など）、最後に保存した進み具合から続ける
   let done;
   try {
@@ -539,7 +556,7 @@ function mtgCompactRun_(ss, job, started) {
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
   job.folderUrl = folder.getUrl();
-  const fileName = mtgCompactFileName_(job.meeting);
+  const fileName = mtgCompactFileName_(job.meeting, job.overview);
   if (!job.deck) {
     job.deck = mtgDeckStart_(fileName, folder);
     mtgJobCheckpoint_(job);
@@ -554,6 +571,12 @@ function mtgCompactRun_(ss, job, started) {
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
       const summary = summaries[i];
+      if (job.overview) {
+        // 全体サマリだけ：前のページに使う中身だけを残す（変化のあった案件のページは作らない）
+        job.items.push({name: summary.name, start: 0, pages: 0, lite: mtgCombinedLite_(summary)});
+        mtgJobCheckpoint_(job);
+        continue;
+      }
       const timer = mschTimer_(o.compact.label + 'のスライド（' + summary.name + '）', true);
       const part = mtgCompactChangeSlides_(summary, job.no);
       const slides = mtgNumberSlides_(mtgCombinedFrame_([summary], job.meeting, true), part.slides, job.page);
@@ -576,10 +599,12 @@ function mtgCompactRun_(ss, job, started) {
     const out = mtgDeckFinish_(job.deck, fileName, folder, existing);
     timer.lap('並べて PDF に保存');
     const result = {name: o.combined.name, file: out.pdf, pages: job.page, overwritten: !!out.overwritten};
-    // 会議のフォルダに格納する（できなくても止めない）。インデックスの統合版の列には書かない
-    const stored = mtgStoreToMeetingFolder_(o.combined.name, job.meeting, out.pdf);
-    if (stored.error) result.storeError = stored.error;
-    else result.stored = stored;
+    // 会議のフォルダに格納する（できなくても止めない）。インデックスの統合版の列には書かない。全体サマリだけ（確かめ用）は格納しない
+    if (!job.overview) {
+      const stored = mtgStoreToMeetingFolder_(o.combined.name, job.meeting, out.pdf);
+      if (stored.error) result.storeError = stored.error;
+      else result.stored = stored;
+    }
     job.result = mtgCombinedPlain_(result);
     job.deck = null;
   }
@@ -588,15 +613,16 @@ function mtgCompactRun_(ss, job, started) {
 
 /** 統合版（報告用）の仕事の、終わり（done）・区切ったときの知らせ */
 function mtgCompactMessage_(job, done) {
-  const label = mtgCompactLabel_();
+  const label = mtgCompactLabel_(job.overview);
   if (!done) {
     const rest = job.names.slice(job.items.length);
-    const left = [].concat(rest.length ? ['変化のあった案件のページ ' + rest.length + '件（' + rest.join('・') + '）'] : [],
-      ['表紙・状況と計画進捗・計画のページと PDF・会議のフォルダへの格納']);
+    const left = job.overview ? [].concat(rest.length ? ['シートの読み込み ' + rest.length + '件（' + rest.join('・') + '）'] : [], ['表紙・状況と計画進捗・計画のページと PDF'])
+      : [].concat(rest.length ? ['変化のあった案件のページ ' + rest.length + '件（' + rest.join('・') + '）'] : [],
+        ['表紙・状況と計画進捗・計画のページと PDF・会議のフォルダへの格納']);
     return ['時間がかかるため、ここで区切りました（Apps Script の1回の実行は6分まで）。残りは約' + Math.round(MTG_OPTIONS.run.continueAfterMs / 60000) +
       '分後に自動で続けます：' + left.join('・') + '。',
     '続きが終わったら、エディタで showBusinessMtgSummariesResult() を実行すると結果が出ます（実行ログにも出ます）。終わるまで、会議サマリの関数は実行しないでください。',
-    '', label + '：' + job.items.length + '/' + job.names.length + 'サブインダストリーのページを作りました。',
+    '', label + '：' + job.items.length + '/' + job.names.length + 'サブインダストリーの' + (job.overview ? 'シートを読みました。' : 'ページを作りました。'),
     '', '保存先：' + job.folderUrl].join('\n');
   }
   const r = job.result;

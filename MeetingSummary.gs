@@ -147,6 +147,8 @@ const MTG_OPTIONS = {
     enabled: true,
     label: '統合版（報告用）',
     fileSuffix: '_報告用',
+    // 全体サマリだけ（createBusinessMtgReportingOverview()。変化のあった案件のページを作らない確かめ用）のファイル名の後ろ（fileSuffix の後ろに足す）
+    overviewSuffix: '_全体サマリ',
     planScale: 1.4,
     planLine: {color: '#808080', alpha: 0.6, weight: 1.25},
     tableMargin: 12,
@@ -2638,8 +2640,8 @@ function mtgDeckJob_(job) {
       message: mtgCombinedMessage_, front: mtgCombinedFrontCount_};
   }
   if (job.kind === 'compact') {
-    return {label: mtgCompactLabel_(), again: 'createBusinessMtgReportingSummary()', run: mtgCompactRun_, message: mtgCompactMessage_,
-      front: mtgCompactFrontCount_};
+    return {label: mtgCompactLabel_(job.overview), again: job.overview ? 'createBusinessMtgReportingOverview()' : 'createBusinessMtgReportingSummary()',
+      run: mtgCompactRun_, message: mtgCompactMessage_, front: mtgCompactFrontCount_};
   }
   return null;
 }

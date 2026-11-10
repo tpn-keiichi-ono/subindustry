@@ -288,6 +288,31 @@ test('createBusinessMtgReportingSummary：会議日を選んで作り、ファ�
   assert.strictEqual(g.PropertiesService.getScriptProperties().getProperty('MTG_JOB'), null);
 });
 
+test('createBusinessMtgReportingOverview：全体サマリだけ（表紙・状況と計画進捗・計画のページ）を作り、変化のあった案件のページは作らない。保存先に「_報告用_全体サマリ」で保存し、会議のフォルダには格納しない', () => {
+  const {gas, g, o} = setup();
+  const meeting = g.mtgParseDate_('11/13', new Date());
+  const parent = 'SubIndustryFolder0001';
+  gas.driveFolders.push({id: parent, name: 'スーパー・GMS', parent: 'root'});
+  gas.driveFolders.push({id: 'meeting-folder-0', name: meeting.slice(2, 4) + meeting.slice(5, 7) + meeting.slice(8, 10) + '_第6回会議', parent});
+  o.meetingFolder = 'https://drive.google.com/drive/folders/' + parent;
+  const data = g.getMeetingRunData('compact', false);
+  assert.strictEqual(data.title, '統合版（報告用）の全体サマリ（全サブインダストリー）を作る');
+  gas.promptAnswers = ['11/13'];
+  g.createBusinessMtgReportingOverview();
+  const done = gas.alerts[gas.alerts.length - 1].message;
+  assert.match(done, /^「統合版（報告用）の全体サマリ（全サブインダストリー）」：\d{8}_全サブインダストリー_RX Business Meeting用資料_報告用_全体サマリ\.pdf（5ページ）/);
+  assert.ok(!/会議のフォルダ/.test(done), '会議のフォルダには格納しない');
+  assert.ok(!gas.driveFiles.some(f => f.folder === 'meeting-folder-0'));
+  const deck = gas.decks[gas.decks.length - 1];
+  assert.deepStrictEqual(deck.slides.map(sl => sl.objectId), ['mtg_p1', 'mtg_p2', 'mtg_p3', 'mtg_p4', 'mtg_p5']);
+  const texts = deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
+  assert.ok(texts.indexOf('全サブインダストリーの状況・計画進捗（FY') >= 0);
+  assert.ok(texts.indexOf('変化のあった案件：') < 0, '変化のあった案件のページは作らない');
+  assert.strictEqual(g.PropertiesService.getScriptProperties().getProperty('MTG_JOB'), null);
+  // 確かめの文
+  assert.match(g.checkMeetingRun('compact', false, '11/13', [], '').text, /の全体サマリ（2サブインダストリーの状況・計画進捗と計画に対する積み上げ。変化のあった案件のページは作りません）/);
+});
+
 test('createBusinessMtgReportingSummary：時間がかかれば区切り、続き（continueBusinessMtgSummaries）で残りと仕上げを作る。できあがりは区切らずに作ったときと同じ', () => {
   const once = (() => {
     const {gas, g} = setup();

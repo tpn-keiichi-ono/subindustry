@@ -890,6 +890,8 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
 削除した行は `mtgParseRemoved_` の `salesHalves`。想定売上のページ（`amountPages`）の右の列は、前と同じ全期間の想定売上合計と、その前回比。
 
 統合版の「別バージョン」として、数字の要点と変化のあった案件だけの資料を、別の関数 `createBusinessMtgReportingSummary()` で作ります（統合版の関数・ページは変えない）。
+全体サマリだけ（前のページ）を作る `createBusinessMtgReportingOverview()` は、同じ画面を `final: false` で開き、仕事に `overview: true` を入れる（`mtgCompactRun_` は
+変化のあった案件のページを足さずに中身（`mtgCombinedLite_`）だけを残し、仕上げで会議のフォルダに格納しない。ファイル名の後ろに `compact.overviewSuffix`）。
 
 - 並び（`mtgCompactSlides_`）：表紙（統合版と同じひな形。見出しの下は `compact.coverWord`「報告資料」。`mtgCombinedCover_` の docWord）→
   全サブインダストリーの状況・計画進捗（`mtgCompactOverviewSlide_`）→ 同じ形で今年度の売上の列（年度別の売上の列のうち今年度の前半期＋後半期。今は P・Q列）で
