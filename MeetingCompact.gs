@@ -479,12 +479,13 @@ function mtgCompactChangeSlidesOf_(s, start) {
 /* ---------------- 作る（区切りながら） ---------------- */
 
 /** 統合版（報告用）を作れるか（作れなければ {error: 理由}、作れれば {text: 確かめの文}） */
-function mtgCompactCheck_(meeting, point) {
+function mtgCompactCheck_(meeting, point, cancelJob) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const o = MTG_OPTIONS;
   if (!o.compact.enabled) return {error: '統合版（報告用）を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.compact.enabled）。'};
+  // 作っている途中の仕事：「やめて新しく作る」（cancelJob）なら、作り始めるときにやめる（mtgJobCancel_）
   const pending = mtgJobLoad_();
-  if (pending) {
+  if (pending && !cancelJob) {
     return {error: (mtgDeckJob_(pending) ? mtgDeckJob_(pending).label : 'サブインダストリーの資料') + 'を作っている途中です（自動で続けています）。' +
       '終わってから（showBusinessMtgSummariesResult() で確かめてから）実行してください。'};
   }
@@ -500,8 +501,9 @@ function mtgCompactCheck_(meeting, point) {
  * 統合版（報告用）を作り始める（画面の「作成する」から）。時間がかかれば区切って続ける（mtgCompactRun_。続きは continueBusinessMtgSummaries）。
  * 戻り値は終わり（区切ったとき）の知らせ
  */
-function mtgCompactStart_(meeting, point, overwrite) {
+function mtgCompactStart_(meeting, point, overwrite, cancelJob) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
+  if (cancelJob) mtgJobCancel_();   // 「やめて新しく作る」：作っている途中の仕事をやめる
   const check = mtgCompactCheck_(meeting, point);
   if (check.error) throw new Error(check.error);
   const ss = SpreadsheetApp.getActiveSpreadsheet();

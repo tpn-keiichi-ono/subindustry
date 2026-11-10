@@ -56,7 +56,7 @@ function emulate(gas, kind, final) {
   }
   const meeting = take();
   const point = typeof gas.runPoint === 'function' ? gas.runPoint(data) : gas.runPoint || '';
-  const check = g.checkMeetingRun(kind, final, meeting, names, point);
+  const check = g.checkMeetingRun(kind, final, meeting, names, point, cancelJob);
   if (check.error) {
     gas.alerts.push({title: 'MeetingRunDialog', message: check.error});
     return;

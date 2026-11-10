@@ -176,6 +176,9 @@ function getMeetingRunData(kind, final) {
     });
     job = mtgJobPendingText_();
     timer.lap('シートと前回の資料');
+  } else if (kind === 'combined' || kind === 'compact') {
+    // 作っている途中の仕事があれば知らせ、「やめて新しく作る」を選んでもらう（実行をキャンセルして止まったままの仕事も、これで片付ける）
+    job = mtgJobPendingText_();
   } else if (service) {
     const data = smtgRunData_();
     sheets = data.sheets;
@@ -440,13 +443,13 @@ function mschCheckInput_(kind, meeting, names) {
  * 作る前の確かめ（google.script.run から呼ぶ）。point は比べる時点（画面のプルダウンの key。空なら前回の会議）。
  * {text: 確かめの文} か {error: 作れない理由}
  */
-function checkMeetingRun(kind, final, meeting, names, point) {
+function checkMeetingRun(kind, final, meeting, names, point, cancelJob) {
   mschCheckKind_(kind);
   const date = mschCheckInput_(kind, meeting, names);
   if (kind === 'service') return {text: smtgRunCheckText_(!!final, date, names, smtgCheckPoint_(point))};
   const resolved = mtgResolvePoint_(point);
-  if (kind === 'combined') return mtgCombinedCheck_(date, resolved);
-  if (kind === 'compact') return mtgCompactCheck_(date, resolved);
+  if (kind === 'combined') return mtgCombinedCheck_(date, resolved, !!cancelJob);
+  if (kind === 'compact') return mtgCompactCheck_(date, resolved, !!cancelJob);
   const text = mtgRunCheckText_(!!final, names, date, resolved);
   return {text: kind === 'report' ? mtgReportCheckText_() + '\n\n' + text : text};
 }
@@ -472,8 +475,8 @@ function runMeetingMaterials(kind, final, meeting, names, cancelJob, point, over
       message = smtgRunStart_(!!final, date, names, !!cancelJob, smtgCheckPoint_(point), !!overwrite);
     } else {
       const resolved = mtgResolvePoint_(point);
-      message = kind === 'combined' ? mtgCombinedStart_(date, resolved, !!overwrite)
-        : kind === 'compact' ? mtgCompactStart_(date, resolved, !!overwrite)
+      message = kind === 'combined' ? mtgCombinedStart_(date, resolved, !!overwrite, !!cancelJob)
+        : kind === 'compact' ? mtgCompactStart_(date, resolved, !!overwrite, !!cancelJob)
         : mtgRunStart_(!!final, date, names, !!cancelJob, resolved, !!overwrite, kind === 'report' ? 'report' : '');
     }
     mschRunStateSave_(Object.assign({status: 'done', message, finishedAt: Date.now()}, base));

@@ -314,9 +314,13 @@ test('createBusinessMtgReportingSummary：時間がかかれば区切り、続�
   // 途中：ほかの資料・統合版はすぐには作らない。結果の画面に途中と出す
   g.showBusinessMtgSummariesResult();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版（報告用）（全サブインダストリー）を作っている途中です（会議日 \d{4}\/11\/13。1\/2サブインダストリーのページ）。/);
+  // 途中にもう一度：画面に作っている途中の知らせ（「やめて新しく作る」を選ばなければ作らない）
+  gas.confirmAnswer = 'NO';
   gas.promptAnswers = ['11/13'];
   g.createBusinessMtgReportingSummary();
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版（報告用）（全サブインダストリー）を作っている途中です（自動で続けています）。/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^前に始めた統合版（報告用）（全サブインダストリー）（会議日 \d{4}\/11\/13。1\/2サブインダストリーのページ。.*「やめて新しく作る」にチェックを入れてください/);
+  assert.ok(sprops.getProperty('MTG_JOB'), '仕事はそのまま');
+  gas.confirmAnswer = 'YES';
   o.run.limitMs = 400000;
   clock.t = 0;
   g.continueBusinessMtgSummaries();
@@ -348,6 +352,38 @@ test('統合版（報告用）：作っている途中で止まったら、作�
   g.showBusinessMtgSummariesResult();
   assert.match(gas.alerts[gas.alerts.length - 1].message,
     /統合版（報告用）（全サブインダストリー）を作る途中で止まりました：Slides API の失敗\ncreateBusinessMtgReportingSummary\(\) で、作り直してください。/);
+});
+
+test('統合版（報告用）：続きの実行をキャンセルして止まったままの仕事（続きの予約なし）も、画面の「やめて新しく作る」で片付けて作り直せる（作りかけの資料はゴミ箱へ）', () => {
+  const {gas, g, o} = setup();
+  const sprops = g.PropertiesService.getScriptProperties();
+  const clock = {t: 0};
+  g.mtgNow_ = () => clock.t;
+  const add = g.mtgDeckAdd_;
+  g.mtgDeckAdd_ = (...args) => { clock.t += 100000; return add(...args); };
+  o.run.limitMs = 150000;
+  gas.confirmAnswer = 'YES';
+  gas.promptAnswers = ['11/13'];
+  g.createBusinessMtgReportingSummary();
+  const first = gas.decks[gas.decks.length - 1].id;
+  // 続きの実行をキャンセルした：仕事は「実行中」のまま、続きのトリガーも無い
+  const job = JSON.parse(sprops.getProperty('MTG_JOB'));
+  job.running = true;
+  sprops.setProperty('MTG_JOB', JSON.stringify(job));
+  g.ScriptApp.getProjectTriggers().forEach(t => g.ScriptApp.deleteTrigger(t));
+  g.showBusinessMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /続きの予約がありません（続きの実行をキャンセルした など）。createBusinessMtgReportingSummary\(\) を実行し、画面で「やめて新しく作る」にチェックを入れて作り直してください/);
+  // 作り直す：画面に作っている途中の知らせ →「やめて新しく作る」を選んで作る
+  g.mtgDeckAdd_ = add;
+  clock.t = 0;
+  o.run.limitMs = 400000;
+  gas.promptAnswers = ['11/13'];
+  g.createBusinessMtgReportingSummary();
+  assert.ok(gas.alerts.some(a => /^前に始めた統合版（報告用）/.test(a.message)), '作っている途中の知らせ');
+  assert.ok(gas.trashed.indexOf(first) >= 0, '作りかけの資料はゴミ箱へ');
+  assert.strictEqual(sprops.getProperty('MTG_JOB'), null, '新しく作り終えた');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /_報告用\.pdf（7ページ）/);
+  assert.notStrictEqual(gas.decks[gas.decks.length - 1].id, first);
 });
 
 test('No. は3桁でも折り返さない（1行に入るまで字を小さくする）', () => {

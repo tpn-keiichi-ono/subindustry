@@ -436,7 +436,7 @@
           show('confirm');
         })
         .withFailureHandler(e => { idle(); showError('error', e); })
-        .checkMeetingRun(KIND, FINAL, meetingValue(), pickedSheets(), pointValue());
+        .checkMeetingRun(KIND, FINAL, meetingValue(), pickedSheets(), pointValue(), $('cancelJob').checked);
     }
 
     function run() {

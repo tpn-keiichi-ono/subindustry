@@ -883,12 +883,9 @@ function mtgRunCheckText_(final, names, meeting, point) {
 function mtgRunStart_(final, meeting, names, cancelJob, point, overwrite, variant) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const pending = mtgJobLoad_();
-  if (pending) {
+  if (mtgJobLoad_()) {
     if (!cancelJob) throw new Error(mtgJobPendingText_());
-    if (mtgDeckJob_(pending)) mtgDeckDiscard_(pending.deck);   // 作りかけの統合版（報告用も）はゴミ箱へ
-    mtgJobClear_();
-    mtgJobDeleteTriggers_();
+    mtgJobCancel_();
   }
   const now = new Date();
   const job = {final, meeting, now: now.getTime(), names, items: [], stored: 0, copy: null, index: null, folderUrl: '',
@@ -1274,6 +1271,17 @@ function mtgJobSafetyTrigger_() {
   ScriptApp.newTrigger(R.handler).timeBased().after(R.safetyAfterMs).create();
 }
 
+/**
+ * 作っている途中の仕事をやめる（画面の「やめて新しく作る」）：作りかけの統合版・統合版（報告用）はゴミ箱へ移し、仕事と続きのトリガーを消す。
+ * 実行を途中でキャンセルした・止まったまま続きの予約が無い仕事も、これで片付けて作り直せる
+ */
+function mtgJobCancel_() {
+  const pending = mtgJobLoad_();
+  if (pending && mtgDeckJob_(pending)) mtgDeckDiscard_(pending.deck);
+  mtgJobClear_();
+  mtgJobDeleteTriggers_();
+}
+
 /** 終わった（または止まって知らせを残した）：仕事と続きのトリガーを消す */
 function mtgJobFinish_() {
   mtgJobClear_();
@@ -1293,8 +1301,9 @@ function showBusinessMtgSummariesResult() {
       : '会議サマリを作っている途中です（会議日 ' + job.meeting + '。資料 ' + job.items.length + '/' + job.names.length + '件' +
         (job.final ? '・格納 ' + job.stored + '/' + job.names.length + '件' : '') + '）。') +
       (triggers ? '自動で続けています。少し待ってから、もう一度実行してください。'
-        : '続きの予約がありません。' + (mtgDeckJob_(job) ? mtgDeckJob_(job).again
-          : 'createBusinessMtgSummaries()（試作なら previewBusinessMtgSummaries()）') + 'で作り直してください。');
+        : '続きの予約がありません（続きの実行をキャンセルした など）。' + (mtgDeckJob_(job) ? mtgDeckJob_(job).again
+          : 'createBusinessMtgSummaries()（試作なら previewBusinessMtgSummaries()）') +
+          ' を実行し、画面で「やめて新しく作る」にチェックを入れて作り直してください（作りかけの資料はゴミ箱に移します）。');
   } else {
     const props = PropertiesService.getScriptProperties();
     const keys = props.getKeys().filter(key => key.indexOf(R.resultKey + '_') === 0).sort((a, b) => Number(a.split('_').pop()) - Number(b.split('_').pop()));
@@ -2529,12 +2538,13 @@ function createBusinessMtgCombinedSummary() {
 }
 
 /** 統合版を作れるか（作れなければ {error: 理由}、作れれば {text: 確かめの文}） */
-function mtgCombinedCheck_(meeting, point) {
+function mtgCombinedCheck_(meeting, point, cancelJob) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const o = MTG_OPTIONS.combined;
   if (!o.enabled) return {error: '統合版を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.combined.enabled）。'};
+  // 作っている途中の仕事：「やめて新しく作る」（cancelJob）なら、作り始めるときにやめる（mtgJobCancel_）
   const pending = mtgJobLoad_();
-  if (pending) {
+  if (pending && !cancelJob) {
     return {error: (pending.kind === 'combined' ? '統合版' : mtgDeckJob_(pending) ? mtgDeckJob_(pending).label : 'サブインダストリーの資料') +
       'を作っている途中です（自動で続けています）。' +
       '終わってから（showBusinessMtgSummariesResult() で確かめてから）実行してください。'};
@@ -2558,8 +2568,9 @@ function mtgCombinedCheck_(meeting, point) {
  * 統合版を作り始める（画面の「作成する」から。作れるかは先に mtgCombinedCheck_ で確かめる）。時間がかかれば区切って続ける（mtgCombinedRun_。
  * 続きは個別の資料と同じトリガー continueBusinessMtgSummaries）。戻り値は終わり（区切ったとき）の知らせ
  */
-function mtgCombinedStart_(meeting, point, overwrite) {
+function mtgCombinedStart_(meeting, point, overwrite, cancelJob) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
+  if (cancelJob) mtgJobCancel_();   // 「やめて新しく作る」：作っている途中の仕事をやめる
   const check = mtgCombinedCheck_(meeting, point);
   if (check.error) throw new Error(check.error);
   const ss = SpreadsheetApp.getActiveSpreadsheet();

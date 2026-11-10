@@ -2636,8 +2636,9 @@ test('6分の上限：次の仕事が上限を越えそうなら区切り、続�
   assert.strictEqual(gas.decks.length, 2);
   o.combined.enabled = true;
   gas.promptAnswers = ['10/23'];
-  g.createBusinessMtgCombinedSummary();
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /^サブインダストリーの資料を作っている途中です/);
+  g.createBusinessMtgCombinedSummary();   // 画面に作っている途中の知らせ（「やめて新しく作る」を選ばなければ作らない）
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^前に始めた会議サマリ（会議日 \d{4}\/10\/23・本番。資料 2\/2件。.*「やめて新しく作る」にチェックを入れてください/);
+  assert.strictEqual(gas.decks.length, 2);
   g.showBusinessMtgSummariesResult();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /作っている途中です（会議日 \d{4}\/10\/23。資料 2\/2件・格納 0\/2件）。自動で続けています。/);
   gas.confirmAnswer = 'YES';
@@ -3999,10 +4000,12 @@ test('統合版：時間がかかれば、サブインダストリーの資料�
   assert.ok(sprops.getProperty('MTG_JOB_ITEM_0').length < 9000);
   assert.deepStrictEqual([saved.deck.added, saved.page], [7, 12], '足したスライドの数（1つ目の資料の表紙と本編の7枚）と、次の資料の前のページの数（前のページ 5枚 ＋ 7枚）');
 
-  // 途中：統合版も個別の資料も、すぐには作らない
+  // 途中：統合版も個別の資料も、すぐには作らない（画面に作っている途中の知らせ。「やめて新しく作る」を選ばなければ作らない）
+  gas.confirmAnswer = 'NO';
   gas.promptAnswers = ['10/23'];
   g.createBusinessMtgCombinedSummary();
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版を作っている途中です（自動で続けています）。/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^前に始めた統合版（全サブインダストリー。会議日 \d{4}\/10\/23。1\/2サブインダストリーのページ。.*「やめて新しく作る」にチェックを入れてください/);
+  assert.ok(sprops.getProperty('MTG_JOB'));
   g.showBusinessMtgSummariesResult();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /統合版（全サブインダストリー）を作っている途中です（会議日 \d{4}\/10\/23。1\/2サブインダストリーのページ）。自動で続けています。/);
   gas.confirmAnswer = 'NO';
