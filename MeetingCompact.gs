@@ -548,6 +548,9 @@ function mtgCompactRun_(ss, job, started) {
   const o = MTG_OPTIONS;
   const R = o.run;
   const fits = ms => mtgNow_() - started + ms <= R.limitMs;
+  // この実行で1つでも進んだか。まだ進んでいなければ、見積もりの時間が足りなくても区切らずに続ける（シートと記録を読むのに時間がかかる
+  // ときに区切ると、次の実行も同じだけ読んで区切り、いつまでも終わらなかった。2026/11/10）
+  let progressed = false;
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
   job.folderUrl = folder.getUrl();
@@ -557,11 +560,11 @@ function mtgCompactRun_(ss, job, started) {
     mtgJobCheckpoint_(job);
   }
   while (job.items.length < job.names.length) {
-    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const batch = R.readMode === 'api' ? job.names.slice(job.items.length, job.items.length + Math.max(R.sheetsPerRead || 1, 1))
       : job.names.slice(job.items.length);
     const source = mtgJobSource_(ss, job, batch);
-    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const summaries = mtgSummaries_(source, batch, new Date(job.now), true, job.meeting, job.point).summaries;
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
@@ -569,6 +572,8 @@ function mtgCompactRun_(ss, job, started) {
       if (job.overview) {
         // 全体サマリだけ：前のページに使う中身だけを残す（変化のあった案件のページは作らない）
         job.items.push({name: summary.name, start: 0, pages: 0, lite: mtgCombinedLite_(summary)});
+        progressed = true;
+        job.crashes = 0;   // 進んだので、止められた回数も数え直す
         mtgJobCheckpoint_(job);
         continue;
       }
@@ -580,11 +585,13 @@ function mtgCompactRun_(ss, job, started) {
       job.items.push({name: summary.name, start: job.page + 1, pages: slides.length, lite: mtgCombinedLite_(summary)});
       job.page += slides.length;
       job.no += part.count;
+      progressed = true;
+      job.crashes = 0;   // 進んだので、止められた回数も数え直す
       mtgJobCheckpoint_(job);   // 資料ごとに進み具合を保存（実行が止められても、この資料の次から。mtgCombinedRecover_）
     }
   }
   if (!job.result) {
-    if (!fits(R.combinedFinishMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.combinedFinishMs)) return mtgJobPause_(job);
     const timer = mschTimer_(o.compact.label + 'の仕上げ', true);
     job.deck.finishing = true;   // 仕上げの途中で止められたら、続きからは作れない（作り直す）
     mtgJobCheckpoint_(job);

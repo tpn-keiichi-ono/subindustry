@@ -923,6 +923,9 @@ function mtgJobRun_(ss, job, started) {
   const o = MTG_OPTIONS;
   const R = o.run;
   const fits = ms => mtgNow_() - started + ms <= R.limitMs;
+  // この実行で1つでも進んだか。まだ進んでいなければ、見積もりの時間が足りなくても区切らずに続ける（シートと記録を読むのに時間がかかる
+  // ときに区切ると、次の実行も同じだけ読んで区切り、いつまでも終わらなかった。2026/11/10）
+  let progressed = false;
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
   job.folderUrl = folder.getUrl();
@@ -931,13 +934,13 @@ function mtgJobRun_(ss, job, started) {
   const props = PropertiesService.getDocumentProperties();
   let heavy = false;   // この実行で資料の中身を読んだか（読んだら、時点コピーを直す手順は新しい実行で）
   while (job.items.length < job.names.length) {
-    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const batch = R.readMode === 'api' ? job.names.slice(job.items.length, job.items.length + Math.max(R.sheetsPerRead || 1, 1))
       : job.names.slice(job.items.length);
     heavy = true;
     const source = mtgJobSource_(ss, job, batch);
     // 読むのに時間がかかって、残りの時間が足りなければここで区切る（続きで読み直す）
-    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const {plans, summaries} = mtgSummaries_(source, batch, new Date(job.now), job.final, job.meeting, job.point);
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
@@ -956,6 +959,8 @@ function mtgJobRun_(ss, job, started) {
         props.setProperty(o.draftKeyPrefix + summary.name, JSON.stringify({meeting: job.meeting, at: job.now, keys: summary.alerts.map(a => mtgHash_(a.key))}));
       }
       job.items.push({name: summary.name, pdf: out.pdf.getId(), line: mtgResultLine_(source, summary, out.pdf, out.overwritten)});
+      progressed = true;
+      job.crashes = 0;   // 進んだので、止められた回数も数え直す
       mtgJobCheckpoint_(job);   // 資料ごとに進み具合を保存（実行が止められても、続きから）
     }
   }
@@ -2436,6 +2441,9 @@ function mtgCombinedRun_(ss, job, started) {
   const o = MTG_OPTIONS;
   const R = o.run;
   const fits = ms => mtgNow_() - started + ms <= R.limitMs;
+  // この実行で1つでも進んだか。まだ進んでいなければ、見積もりの時間が足りなくても区切らずに続ける（シートと記録を読むのに時間がかかる
+  // ときに区切ると、次の実行も同じだけ読んで区切り、いつまでも終わらなかった。2026/11/10）
+  let progressed = false;
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
   job.folderUrl = folder.getUrl();
@@ -2445,11 +2453,11 @@ function mtgCombinedRun_(ss, job, started) {
     mtgJobCheckpoint_(job);
   }
   while (job.items.length < job.names.length) {
-    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const batch = R.readMode === 'api' ? job.names.slice(job.items.length, job.items.length + Math.max(R.sheetsPerRead || 1, 1))
       : job.names.slice(job.items.length);
     const source = mtgJobSource_(ss, job, batch);
-    if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const summaries = mtgSummaries_(source, batch, new Date(job.now), true, job.meeting, job.point).summaries;
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
@@ -2460,12 +2468,14 @@ function mtgCombinedRun_(ss, job, started) {
       timer.lap('スライドを足す（' + slides.length + '枚）');
       job.items.push({name: summary.name, start: job.page + 1, pages: slides.length, lite: mtgCombinedLite_(summary)});
       job.page += slides.length;
+      progressed = true;
+      job.crashes = 0;   // 進んだので、止められた回数も数え直す
       mtgJobCheckpoint_(job);   // 資料ごとに進み具合を保存（実行が止められても、この資料の次から。mtgCombinedRecover_）
     }
   }
   // 前のページ（すべての資料のページが決まってから）を足して仕上げる
   if (!job.result) {
-    if (!fits(R.combinedFinishMs)) return mtgJobPause_(job);
+    if (progressed && !fits(R.combinedFinishMs)) return mtgJobPause_(job);
     const timer = mschTimer_('統合版の仕上げ', true);
     job.deck.finishing = true;   // 仕上げの途中で止められたら、続きからは作れない（作り直す。mtgCombinedRecover_）
     mtgJobCheckpoint_(job);

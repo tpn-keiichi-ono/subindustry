@@ -358,6 +358,30 @@ test('createBusinessMtgReportingSummary：時間がかかれば区切り、続�
   assert.match(gas.alerts[gas.alerts.length - 1].message, /「統合版（報告用）（全サブインダストリー）」：.*_報告用\.pdf（7ページ）/);
 });
 
+test('シートと記録を読むのに時間がかかっても、1回の実行で必ず1シート以上進める（読んだあとに区切ると、続きも同じだけ読んで区切り、終わらなかった）', () => {
+  const {gas, g, o} = setup();
+  const sprops = g.PropertiesService.getScriptProperties();
+  const clock = {t: 0};
+  g.mtgNow_ = () => clock.t;
+  const read = g.mtgJobSource_;
+  g.mtgJobSource_ = (...args) => { clock.t += 250000; return read(...args); };   // 読むのに約4分（見積もりの残りが足りない）
+  o.run.limitMs = 320000;
+  gas.promptAnswers = ['11/13'];
+  g.createBusinessMtgReportingOverview();
+  const runs = [];
+  for (let k = 0; k < 6 && sprops.getProperty('MTG_JOB'); k++) {
+    const before = JSON.parse(sprops.getProperty('MTG_JOB')).items;
+    runs.push(before);
+    clock.t = 0;
+    g.continueBusinessMtgSummaries();
+  }
+  assert.strictEqual(sprops.getProperty('MTG_JOB'), null, '終わった（続き ' + runs.length + '回）');
+  assert.ok(runs.length <= 2, '実行ごとに進む：' + JSON.stringify(runs));
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /全体サマリ/);
+  g.showBusinessMtgSummariesResult();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /_報告用_全体サマリ\.pdf（5ページ）/);
+});
+
 test('統合版（報告用）：作っている途中で止まったら、作りかけの資料をゴミ箱に移し、createBusinessMtgReportingSummary() での作り直しを案内する', () => {
   const {gas, g, o} = setup();
   const clock = {t: 0};
