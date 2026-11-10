@@ -568,7 +568,6 @@ function mtgCompactRun_(ss, job, started) {
     const source = mtgJobSource_(ss, job, batch);
     if (!fits(R.summaryMs + R.deckMs)) return mtgJobPause_(job);
     const summaries = mtgSummaries_(source, batch, new Date(job.now), true, job.meeting, job.point).summaries;
-    summaries.forEach(summary => mtgCompactLogSales_(source, summary));
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
       const summary = summaries[i];
@@ -610,28 +609,6 @@ function mtgCompactRun_(ss, job, started) {
     job.deck = null;
   }
   return true;
-}
-
-/**
- * 資料に使う今年度の売上の数字を、実行ログに出す（資料とシートを突き合わせる用。資料を作るのと同じ実行で、同じ読み方のシートから）：
- * 資料の値（確定（A＋B）・見込（C）・売上合計・前回比）と、diagnoseBusinessMtgTotals と同じ内訳（読む列・ステータスごとの金額と行）。
- * 得意先・案件名は出さない（行番号と金額だけ）。できなくても止めない
- */
-function mtgCompactLogSales_(book, summary) {
-  try {
-    const p = summary.planSales || {byRank: {}, byRankCount: {}};
-    const b = summary.salesBridge || {};
-    const sure = MTG_OPTIONS.compact.sureRanks || ['A', 'B'];
-    const sum = (o, keys) => keys.reduce((t, k) => t + ((o || {})[k] || 0), 0);
-    const lines = ['［報告用の売上］' + summary.name + '：資料の値 確定（' + sure.join('＋') + '）' + mtgAmount_(sum(p.byRank, sure)) + '/' + sum(p.byRankCount, sure) + '件・' +
-      '見込（C）' + mtgAmount_(sum(p.byRank, ['C'])) + '/' + sum(p.byRankCount, ['C']) + '件・売上合計 ' + mtgAmount_(b.total || 0) +
-      '・前回比（確定）' + mtgSigned_((b.sureEnd || 0) - (b.sureStart || 0)) + (p.gap ? '・' + p.gap : '')];
-    const sheet = book.getSheetByName(summary.name);
-    if (sheet) lines.push.apply(lines, mtgTotalsSalesLines_(mtgReadDeals_(sheet, DIFF_RULES[summary.name])));
-    console.log(lines.join('\n'));
-  } catch (error) {
-    console.warn('報告用の売上の数字をログに出せませんでした（' + summary.name + '）：' + (error && error.message || error));
-  }
 }
 
 /** 統合版（報告用）の仕事の、終わり（done）・区切ったときの知らせ */

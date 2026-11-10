@@ -309,11 +309,6 @@ test('createBusinessMtgReportingOverview：全体サマリだけ（表紙・状�
   assert.ok(texts.indexOf('全サブインダストリーの状況・計画進捗（FY') >= 0);
   assert.ok(texts.indexOf('変化のあった案件：') < 0, '変化のあった案件のページは作らない');
   assert.strictEqual(g.PropertiesService.getScriptProperties().getProperty('MTG_JOB'), null);
-  // 実行ログ：資料に使った売上の数字と、同じ実行で読んだシートの内訳（突き合わせ用。得意先名は出さない）
-  const log = gas.logs.map(l => l.line).find(l => /^［報告用の売上］新FMT：/.test(l));
-  assert.ok(log, '売上の数字をログに出す');
-  assert.match(log, /^［報告用の売上］新FMT：資料の値 確定（A＋B）110\/3件・見込（C）0\/0件・売上合計 110・前回比（確定）\+10\n/);
-  assert.ok(log.indexOf('　　うち確定（A＋B）110') >= 0 && log.indexOf('A社') < 0);
   // 確かめの文
   assert.match(g.checkMeetingRun('compact', false, '11/13', [], '').text, /の全体サマリ（2サブインダストリーの状況・計画進捗と計画に対する積み上げ。変化のあった案件のページは作りません）/);
 });
