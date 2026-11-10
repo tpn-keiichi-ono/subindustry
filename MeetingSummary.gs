@@ -5518,6 +5518,8 @@ function mtgTotalsSalesLines_(table) {
   const lost = d => mtgExcludedStatus_(d.status);
   const sumOf = (list, keys) => list.reduce((t, d) => t + keys.reduce((u, k) => u + ((d.salesHalves || {})[k] || 0), 0), 0);
   const out = [];
+  // 読んでいる列（見出しの書き方が同じ列が P・Q 以外にもあると、その列も足す）
+  out.push('　FY' + year + 'の売上として読む列：' + thisYear.map(sc => diffColumnLetter_(sc.col + 1) + '列「' + String(sc.header).replace(/\s+/g, '') + '」').join('・'));
   [{label: 'FY' + year + 'の売上（' + letters(thisYear) + '列。状況・計画進捗の棒・確定・見込）', list: thisYear},
     {label: 'FY' + years[0] + '〜' + years[2] + 'の売上（' + letters(span) + '列。状況・計画進捗の「売上合計」）', list: span}].forEach(item => {
     const keys = item.list.map(sc => sc.key);
@@ -5541,6 +5543,20 @@ function mtgTotalsSalesLines_(table) {
   const others = Object.keys(byRank).filter(r => sure.indexOf(r) < 0 && r !== 'C');
   out.push('　　うち確定（' + sure.join('＋') + '）' + mtgAmount_(part(sure)) + '・見込（C）' + mtgAmount_(part(['C'])) +
     '・そのほか（状況・計画進捗には出ない）' + mtgAmount_(part(others)) + (others.length ? '（' + others.map(r => r + ' ' + mtgAmount_(byRank[r].value)).join('・') + '）' : ''));
+  // 確定（A＋B）に入れたステータスごとの金額・件数と行（確度はステータスの「-」の前の文字。「A-受注済み(100%)」も A）
+  const byStatus = {};
+  deals.filter(d => !lost(d) && sure.indexOf(mtgPlanRank_(d.status)) >= 0).forEach(d => {
+    const v = sumOf([d], keys);
+    if (!v) return;
+    const st = byStatus[d.status] = byStatus[d.status] || {value: 0, rows: []};
+    st.value += v;
+    st.rows.push(d.row + '行目 ' + mtgAmount_(v));
+  });
+  Object.keys(byStatus).forEach(status => {
+    const st = byStatus[status];
+    out.push('　　　' + status + '：' + mtgAmount_(st.value) + '（' + st.rows.length + '件：' + st.rows.slice(0, 20).join('・') +
+      (st.rows.length > 20 ? ' ほか' + (st.rows.length - 20) + '件' : '') + '）');
+  });
   // 数値でない値（文字・エラー。足していない）
   const texts = [];
   span.forEach(sc => {

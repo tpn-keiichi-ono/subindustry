@@ -687,6 +687,10 @@ test('diagnoseBusinessMtgTotals：今年度（P・Q列）と3年度分の売上�
   assert.ok(text.indexOf('　FY' + fy + 'の売上（P・Q列。状況・計画進捗の棒・確定・見込）：列の合計 150 − 失注の行 50 ＝ 資料 100') >= 0, text);
   assert.ok(text.indexOf('　FY' + fy + '〜' + (Number(fy) + 2) + 'の売上（P・Q列。状況・計画進捗の「売上合計」）：列の合計 150 − 失注の行 50 ＝ 資料 100') >= 0);
   assert.ok(text.indexOf('　　うち確定（A＋B）100・見込（C）0・そのほか（状況・計画進捗には出ない）0') >= 0);
+  // 読んでいる列の見出しと、確定（A＋B）に入れたステータスごとの金額・行
+  assert.ok(text.indexOf('　FY' + fy + 'の売上として読む列：P列「FY' + fy + '前半期売上（百万）」・Q列「FY' + fy + '後半期売上（百万）」') >= 0, text);
+  assert.ok(text.indexOf('　　　A-内示(90%)：70（1件：3行目 70）') >= 0);
+  assert.ok(text.indexOf('　　　B-クロージング中(70%)：30（2件：4行目 20・5行目 10）') >= 0);
   assert.strictEqual(s1.planSales.byRank.A + s1.planSales.byRank.B, 100, '資料の確定（A＋B）と同じ');
   assert.strictEqual(s1.salesBridge.total, 100, '資料の売上合計と同じ');
   assert.ok(text.indexOf('　　数値でない値（文字・エラー。足していません）：Q4「約5」') >= 0);
