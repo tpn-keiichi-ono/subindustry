@@ -227,14 +227,15 @@ function mtgCompactOverviewSlide_(summaries, options) {
     {size: 10.5, bold: true, color: c.ink})];
   // 列：名前・横棒｜計画・進捗率（A＋B）・確定（A＋B）/件・（売上のページは前回比）・見込（C）/件｜想定売上合計（売上のページは売上合計）・（想定売上のページは前回比）・案件数・変化のある案件
   const nameW = 96;
+  const thisYear = bySales ? '（FY' + yearKey + '）' : '（今年度）';
   const groups = [
-    // 計画・進捗率・確定・見込は今年度の受注月の案件だけ：見出しの下に「（今年度）」
+    // 計画・進捗率・確定・見込は今年度の受注月の案件だけ：見出しの下に「（今年度）」。売上のページは今年度の売上の列なので「（FY26）」
     // 見出しは折り返さず1行（入らなければ字を小さくする）。その下の行に対象の期間
-    {cols: [{key: 'plan', label: '計画', w: 36, period: '（今年度）'}, {key: 'rate', label: '進捗率（A＋B）', w: 52, period: '（今年度）'},
-      {key: 'ab', label: '確定（A＋B）/件', w: 66, period: '（今年度）'}]
+    {cols: [{key: 'plan', label: '計画', w: 36, period: thisYear}, {key: 'rate', label: '進捗率（A＋B）', w: 52, period: thisYear},
+      {key: 'ab', label: '確定（A＋B）/件', w: 66, period: thisYear}]
       // 売上のページの前回比は確定（A＋B）の増減なので、確定（A＋B）/件の右
-      .concat(bySales ? [{key: 'delta', label: deltaLabel, w: 58, period: '（今年度）'}] : [])
-      .concat([{key: 'c', label: '見込（C）/件', w: 60, period: '（今年度）'}])},
+      .concat(bySales ? [{key: 'delta', label: deltaLabel, w: 58, period: thisYear}] : [])
+      .concat([{key: 'c', label: '見込（C）/件', w: 60, period: thisYear}])},
     // 想定売上合計・前回比・案件数・変化のある案件は、受注月で絞らない（今年度の列と違う）ので、見出しの下に「（全期間）」
     // 売上のページは、売上合計（3年度分。見出しの下に「（FY26〜28）」）。前回比は左のまとまり（確定（A＋B）の右）
     {cols: [bySales ? {key: 'amount', label: '売上合計', w: 48, period: '（' + span + '）'} : {key: 'amount', label: '想定売上合計', w: 48, period: '（全期間）'}]
