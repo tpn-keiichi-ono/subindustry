@@ -96,9 +96,10 @@ const DIFF_RULES = {
   // 2026/10/26 に列を消してシートは A〜AA の27列になった。追跡範囲 D3:AF はシートの中まで読む（diffRuleRange_）ので、そのままでよい
   '化粧品・トイレタリー': {headerRow: 2, ranges: ['D3:AF'], requests: true},
   '飲料・食品': {headerRow: 2, ranges: ['D3:AF'], requests: true},
+  // 並びは資料（統合版・統合版（報告用）など）のサブインダストリーの順（2026/11/10 に地方銀行を飲料・食品の次に。並びを変えても setupDiffTracking() は要らない）
+  '地方銀行': {headerRow: 2, ranges: ['D3:AF'], requests: true},
   '自動車販売': {headerRow: 2, ranges: ['D3:AF'], requests: true},
   '住設': {headerRow: 2, ranges: ['D3:AF'], requests: true},
-  '地方銀行': {headerRow: 2, ranges: ['D3:AF'], requests: true},
   '電鉄・不動産': {headerRow: 2, ranges: ['D3:AF'], requests: true},
   'エネルギー': {headerRow: 2, ranges: ['D3:AF'], requests: true},
   '生協': {headerRow: 2, ranges: ['D3:AF'], requests: true}

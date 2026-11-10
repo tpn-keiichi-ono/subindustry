@@ -180,7 +180,7 @@ test('変化のあった案件：行が入らなければ次のページに分�
   assert.deepStrictEqual(numbers, ['11', '12', '13', '14'], '前のサブインダストリーの続きの番号から');
 });
 
-test('状況・計画進捗：確定（A＋B）の横棒（A・B だけ・データラベル）と計画線（透明度のあるグレー・見出し「計画」）、進捗率（A＋B）の高い順、前回比は日付・増は青・減は赤', () => {
+test('状況・計画進捗：確定（A＋B）の横棒（A・B だけ・データラベル）と計画線（透明度のあるグレー・見出し「計画」）、シートの順（並べ替えない）、前回比は日付・増は青・減は赤', () => {
   const {gas, g} = setup();
   const o = gas.get('MTG_OPTIONS');
   const c = o.colors;
@@ -239,7 +239,7 @@ test('状況・計画進捗：確定（A＋B）の横棒（A・B だけ・デー
   const far = Math.max.apply(null, head.map(l => l.x));
   const right = Math.max.apply(null, slide.elements.filter(e => e.role === 'compact-head').map(e => e.x));
   assert.ok(far > barX && far < right, '計画線は棒の場所の中');
-  assert.match(slide.lead, /^進捗率（A＋B）は 73%（計画に届いているのは 2のうち 1）。案件 6件・想定売上合計 250百万円（全期間・失注除く）。\n進捗率（A＋B）の高い順。.*の案件の想定売上/);
+  assert.match(slide.lead, /^進捗率（A＋B）は 73%（計画に届いているのは 2のうち 1）。案件 6件・想定売上合計 250百万円（全期間・失注除く）。\nサブインダストリーはシートの順。.*の案件の想定売上/);
   assert.ok(slide.elements.some(e => /の確定（A＋B）の想定売上と計画（百万円）$/.test(e.text || '')));
 });
 
@@ -252,7 +252,7 @@ test('状況・計画進捗：前回の会議でなく基準・直近14日間と
   const gap = Object.assign({}, s, {planAmount: Object.assign({}, s.planAmount, {gap: 'シートに「想定売上規模（百万）」の列が無い'})});
   const slide = plain(g.mtgCompactOverviewSlide_([gap, summarize(g, '新FMT2')]));
   assert.ok(texts(slide).some(t => /^データなし（シートに「想定売上/.test(t)));
-  assert.deepStrictEqual(slide.elements.filter(e => e.role === 'compact-name').map(e => e.text), ['新FMT2', '新FMT', '合計'], '作れないシートは下');
+  assert.deepStrictEqual(slide.elements.filter(e => e.role === 'compact-name').map(e => e.text), ['新FMT', '新FMT2', '合計'], '作れないシートもシートの順');
 });
 
 test('計画線の透明度は Slides API の線の色に入る（alpha）。透明度の無い線は今までどおり', () => {
@@ -631,15 +631,15 @@ test('状況・計画進捗（FY売上）：今年度の売上の列（前半期
   assert.strictEqual(slide.elements.find(e => e.role === 'lead').text.split('\n').length, 2, 'リード文は2行');
   // 区切って作るときの中身の一部にも入れる
   assert.deepStrictEqual(plain(g.mtgCombinedLite_(s1)).planSales.byRank.A, 70);
-  // 並びは売上の進捗率（A＋B）の高い順。想定売上のページ（amountPages）も同じ並び
+  // 並びはシートの順（DIFF_RULES の順。進捗率で並べ替えない）。想定売上のページ（amountPages）も同じ並び
   const names = sl => sl.elements.filter(e => e.role === 'compact-name').map(e => e.text);
   assert.deepStrictEqual(names(amountPage), names(slide));
-  assert.match(leadOf(slide), /進捗率（A＋B）の高い順/);
-  assert.match(leadOf(amountPage), /並びは最初のページと同じ/);
+  assert.match(leadOf(slide), /サブインダストリーはシートの順。/);
+  assert.match(leadOf(amountPage), /サブインダストリーはシートの順。/);
   const big = Object.assign({}, s2, {planSales: Object.assign({}, s2.planSales, {byRank: Object.assign({}, s2.planSales.byRank, {A: 500})})});
-  assert.deepStrictEqual(names(plain(g.mtgCompactOverviewSlide_([s1, big], {sales: true}))), ['新FMT2', '新FMT', '合計'],
-    '売上の進捗率の高い 新FMT2 が先');
-  assert.deepStrictEqual(names(plain(g.mtgCompactOverviewSlide_([s1, big]))), ['新FMT2', '新FMT', '合計'], '想定売上のページも売上の並び');
+  assert.deepStrictEqual(names(plain(g.mtgCompactOverviewSlide_([s1, big], {sales: true}))), ['新FMT', '新FMT2', '合計'],
+    '売上の進捗率が高くても、並びはシートの順');
+  assert.deepStrictEqual(names(plain(g.mtgCompactOverviewSlide_([s1, big]))), ['新FMT', '新FMT2', '合計']);
   // 見込（C）を含む売上のページ（次のページ）：C を点線で足す。並び・右の数字は同じ
   const withC = slides[2];
   assert.strictEqual(withC.title, '全サブインダストリーの状況・計画進捗（' + fy + '売上・見込（C）を含む）');

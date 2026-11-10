@@ -173,7 +173,7 @@ test('本物のシートの見出し（2026/10/29 のスーパー・GMS の2行�
 test('本物の設定：11のサブインダストリーのシート（2026/10/16 にスーパー・GMS と同じ見出しにそろえた）を、同じ見出しの行・追跡範囲で追跡し、リクエストも読む', () => {
   const gas = createGas({realSheetNames: true});
   const rules = gas.get('DIFF_RULES');
-  const subs = ['スーパー・GMS', 'コンビニ', '百貨店', '化粧品・トイレタリー', '飲料・食品', '自動車販売', '住設', '地方銀行', '電鉄・不動産', 'エネルギー', '生協'];
+  const subs = ['スーパー・GMS', 'コンビニ', '百貨店', '化粧品・トイレタリー', '飲料・食品', '地方銀行', '自動車販売', '住設', '電鉄・不動産', 'エネルギー', '生協'];
   assert.deepStrictEqual(Object.keys(rules), subs);
   subs.forEach(name => assert.deepStrictEqual(JSON.parse(JSON.stringify([rules[name].headerRow, rules[name].ranges, rules[name].requests])),
     [2, ['D3:AF'], true], name));

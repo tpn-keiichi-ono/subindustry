@@ -6,7 +6,7 @@
  *   1. 表紙（統合版と同じひな形の表紙。見出しの下は「事前資料」ではなく「報告資料」（compact.coverWord）。mtgCombinedCover_）
  *   2. 全サブインダストリーの状況・計画進捗（mtgCompactOverviewSlide_）：サブインダストリーごとに、今年度の確定（確度 A＋B）の想定売上の横棒（A・B を積み上げ、
  *      データラベル付き）と計画線（透明度のあるグレーの点線。上に「計画」）。右に、計画・進捗率（A＋B）・確定（A＋B）/件・見込（C）/件と、
- *      想定売上合計（失注除く）・前回比（比べた日付。増は青・減は赤）・案件数・変化のある案件（まとまりの見出しは付けない）。進捗率（A＋B）の高い順、いちばん下に合計
+ *      想定売上合計（失注除く）・前回比（比べた日付。増は青・減は赤）・案件数・変化のある案件（まとまりの見出しは付けない）。シートの順（DIFF_RULES）、いちばん下に合計
  *   2'. 同じ（見込（C）を含む。棒に続けて見込（C）を点線で足す。mtgCompactOverviewSlide_(…, {withC: true})）
  *   3. 計画に対する積み上げ（全体。統合版と同じ mtgPlanSlide_ で、想定売上を積み上げる）と、確定（A＋B）だけの積み上げ（mtgPlanRanksOnly_）
  *   4〜 変化のあった案件：{サブインダストリー}（mtgCompactChangeSlides_。シートの順にサブインダストリーごと）：No（資料の通し番号）・得意先／案件名・
@@ -179,13 +179,10 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const sum = (p, keys) => keys.reduce((t, k) => t + (p.byRank[k] || 0), 0);
   const cnt = (p, keys) => keys.reduce((t, k) => t + ((p.byRankCount || {})[k] || 0), 0);
   const rate = p => (p.gap || !(p.plan > 0) ? null : sum(p, ['A', 'B']) / p.plan * 100);
-  const order = p => (rate(p) == null ? -1 : rate(p));
   const planOf = s => (bySales ? s.planSales || mtgSalesPlanOf_([], s.name, new Date(), {}) : mtgCompactPlanOf_(s));
-  // 並び：最初のページの集計（今年度の売上。salesPage が false なら想定売上）の進捗率（A＋B）の高い順。どのページも同じ並び
-  // （ページによってサブインダストリーの順が変わらないように）
-  const base = s => (o.compact.salesPage ? s.planSales || mtgSalesPlanOf_([], s.name, new Date(), {}) : mtgCompactPlanOf_(s));
-  const items = summaries.map(s => ({s, p: planOf(s), base: base(s), lack: s.gaps || {}}))
-    .sort((a, b) => (order(b.base) - order(a.base)) || (sum(b.base, ['A', 'B']) - sum(a.base, ['A', 'B'])));
+  // 並び：シートの順（DIFF_RULES の順。summaries の順）に固定する。どのページも同じ並び（2026/11/10。進捗率の順に並べ替えると、
+  // ページや会議ごとにサブインダストリーの位置が変わり、隣の行の数字と見間違えやすかったため）
+  const items = summaries.map(s => ({s, p: planOf(s), lack: s.gaps || {}}));
   const ok = items.filter(x => !x.p.gap);
   const merged = mtgMergePlans_(ok.map(x => x.p));
   const first = mtgMonthOf_(merged.start);
@@ -213,14 +210,12 @@ function mtgCompactOverviewSlide_(summaries, options) {
     else total.changed += mtgCompactChangedNow_(s);
   });
   const reached = ok.filter(x => rate(x.p) >= 100).length;
-  const ownOrder = bySales === !!o.compact.salesPage;   // このページの集計で並べているか
   const fy = 'FY' + (merged.year || mtgFiscalYearKey_(summaries.length && summaries[0].now ? new Date(summaries[0].now) : new Date()));
   const totalRate = ok.length ? rate(merged) : null;
   const lead = '進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '（計画に届いているのは ' + ok.length + 'のうち ' + reached + '）。' +
     '案件 ' + total.active + '件・' + (bySales ? span + '売上合計 ' + mtgAmount_(total.amount) + '百万円（失注除く）。\n'
       : '想定売上合計 ' + mtgAmount_(total.amount) + '百万円（全期間・失注除く）。\n') +
-    // 並びの説明：このページの集計で並べたなら「進捗率（A＋B）の高い順」、ほかの集計（最初のページ）で並べたなら「並びは最初のページと同じ」
-    (ownOrder ? '進捗率（A＋B）の高い順。' : '並びは最初のページと同じ。') +
+    'サブインダストリーはシートの順。' +
     (bySales ? '進捗率・確定・見込は ' + fy + ' の売上（前半期＋後半期。受注月によらない）。進捗率 ＝ A＋B ÷ 計画。'
       : '進捗率・確定（A＋B）・見込（C）は今年度（' + period + '）の' + mtgPlanMonthName_() + 'の案件の想定売上（進捗率 ＝ A＋B ÷ 計画）。');
   // 見込（C）を含むページのリード文：確定＋見込の計画比
@@ -228,7 +223,7 @@ function mtgCompactOverviewSlide_(summaries, options) {
   const leadC = '確定（A＋B）に見込（C）を足すと ' + mtgAmount_(sum(merged, ['A', 'B', 'C'])) + '百万円で、計画の ' + (withCRate == null ? '—' : withCRate + '%') +
     '（進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '）。\n' +
     '見込（C）は点線の枠。' + (bySales ? fy + ' の売上（前半期＋後半期。受注月によらない）。' : '') +
-    (ownOrder ? '並び・右の数字は前のページと同じ（進捗率（A＋B）の高い順）。' : '並び・右の数字は最初のページと同じ。');
+    '並び・右の数字は前のページと同じ。';
   const x = S.x;
   const w = S.w;
   const y = S.top;
