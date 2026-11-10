@@ -550,7 +550,7 @@ test('状況・計画進捗（FY売上）：今年度の売上の列（前半期
   assert.match(heads[3], /^前回比（\d+\/\d+）$/);
   // 今年度の列は「（FY26）」（想定売上のページは「（今年度）」）
   assert.deepStrictEqual(periods, ['（' + fy + '）', '（' + fy + '）', '（' + fy + '）', '（' + fy + '）', '（' + fy + '）',
-    '（' + fy + '〜' + (Number(fiscalYear()) + 2) + '）', '（全FY）', '（全FY）']);
+    '（' + fy + '〜' + (Number(fiscalYear()) + 2) + '）', '（' + fy + '〜' + (Number(fiscalYear()) + 2) + '）', '（' + fy + '〜' + (Number(fiscalYear()) + 2) + '）']);
   assert.match(leadOf(slide), new RegExp('案件 6件・' + fy + '〜' + (Number(fiscalYear()) + 2) + '売上合計 120百万円（失注除く）'));
   gas.get('MTG_OPTIONS').compact.amountPages = true;
   const both = plain(g.mtgCompactSlides_([s1, s2], '2026/11/13', true));
