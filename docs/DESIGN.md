@@ -764,7 +764,7 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
      `mtgNumber_` とは分ける）。除くのは `mtgExcludedStatus_`（失注）の行だけ。値は `mtgBridge_` の `endCount`・`amountEnd`・`end`（`kpi.counted`・
      `countedAmount`・`countedWeighted` と同じ）、前回は前回の時点コピーを同じ数え方で（時点コピーが無いときは変更の記録から）。
      前の版は進行中の案件だけで、得意先・案件名が空の行を飛ばし、文字の数字も足していたので、シートの合計と合わなかった。
-     数え方はサマリーの出典の行の後ろに注記する（`mtgAmountNote_`）。突き合わせは `diagnoseBusinessMtgTotals()`（読むだけ。`mtgTotalsLines_`）。
+     数え方はサマリーの出典の行の後ろに注記する（`mtgAmountNote_`）。突き合わせは `diagnoseBusinessMtgTotals()`（読むだけ。`mtgTotalsLines_`。年度別の売上の列は `mtgTotalsSalesLines_`、案件として数えない行の売上は `mtgReadDeals_` の `skippedSales`）。
    - 「前回以降の動き（変化のある案件 N件）」：今回のステータスのまとまりごとの行（`mtgStatusGroups_`：確度 A → 創注（名前はステータスのプルダウンの
      その確度の名前。「C 提案中・選定対応中・稟議対応中」）と、最後に失注・保留・削除（確度の無いステータスがあれば「・その他」を足す））。
      2026/10/19 に区分（受注／失注・保留・後退・削除／新規・前進・復帰…）をやめた（区分の判定が分かりにくく、ステータスで見たいため）。
