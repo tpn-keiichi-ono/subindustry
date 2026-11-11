@@ -180,24 +180,52 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.ok(a.elements.every(el => el.shape !== 'ROUND_RECTANGLE'), '角の丸い四角は使わない');
 });
 
-test('報告案件版のスライド：報告案件のあとの「前回から変化のある案件」は全件（Appendix が無いので7件までにしない・「Appendix ① を参照」と書かない）。前の版は今のまま', () => {
+test('報告案件のスライド：受注月の枠を左右に分け、右半分に売上（今年度から3年度分。年度ごとの前半期＋後半期）。列が無いシートは「データなし」', () => {
+  const {gas, g} = setup();
+  const s = summarize(g, '新FMT');
+  const year = g.mtgFiscalYearKey_(new Date());
+  const fy = k => ('0' + ((Number(year) + k) % 100)).slice(-2);
+  const item = Object.assign({}, s.reported[0], {sales: {[fy(0)]: 30, [fy(1)]: 55}});
+  const slide = plain(g.mtgReportSlide_(Object.assign({}, s, {salesYears: [fy(0), fy(1), fy(2)]}), item, 1));
+  assert.deepStrictEqual(byRole(slide, 'report-sales-head').map(el => el.text), ['FY' + fy(0), 'FY' + fy(1), 'FY' + fy(2)]);
+  assert.deepStrictEqual(byRole(slide, 'report-sales').map(el => el.text), ['30', '55', '−'], '空の年度は「−」');
+  // 受注月と年度別売上は同じ段で、左右に並ぶ。右の枠は見出しが1行に入る幅。見出しの（）書きは小さく
+  const frames = slide.elements.filter(el => el.text === '受注月' || el.text === '年度別売上（百万）');
+  assert.strictEqual(frames.length, 2);
+  assert.ok(frames[0].y === frames[1].y && frames[1].x > frames[0].x, '左に受注月・右に年度別売上');
+  assert.ok(g.mtgReportHeadWidth_(frames[1].text) <= frames[1].w - 14.4, '見出しは1行');
+  const R = gas.get('MTG_OPTIONS').report;
+  assert.deepStrictEqual(plain(frames[1].spans), [{start: 5, end: 9, size: R.headNoteSize}]);
+  const value = slide.elements.find(el => el.text === '期待値（百万円）');
+  assert.deepStrictEqual(plain(value.spans), [{start: 3, end: 8, size: R.headNoteSize}], '期待値の（）書きも小さく');
+  // 年度別の売上の列が無いシート
+  const none = plain(g.mtgReportSlide_(Object.assign({}, s, {salesYears: []}), item, 1));
+  assert.deepStrictEqual(byRole(none, 'report-sales').map(el => el.text), [gas.get('MTG_OPTIONS').gapText]);
+});
+
+test('報告案件版のスライド：報告案件のあとの「前回から変化のある案件」は、報告フラグのある案件を除く全件（Appendix が無いので7件までにしない・「Appendix ① を参照」と書かない）。前の版は今のまま', () => {
   const {gas, g} = setup();
   const s = summarize(g, '新FMT');
   const movesOf = list => plain(list).filter(sl => /^前回から変化のある案件/.test(sl.title));
   const rowsOf = list => [].concat.apply([], list.map(sl => sl.elements.find(el => el.type === 'table').rows.slice(1)));
   const leadOf = sl => byRole(sl, 'lead').map(el => el.text).join('\n');   // リード文（見出しの下。番号を付けたスライドでは部品の中）
-  // 変化のあった案件は A社（ステータス・期待値・受注月）だけ。報告案件にも載せているが、こちらの表にも出す
+  // 変化のあった案件は A社（ステータス・期待値・受注月）だけ。A社は報告案件（報告フラグあり）なので、こちらの表には出さない（2026/11/11）
   const one = movesOf(g.mtgReportSlides_(s));
   assert.strictEqual(one.length, 1);
-  assert.strictEqual(leadOf(one[0]), '直近14日間に変化のある案件は 1件。');
-  assert.deepStrictEqual(rowsOf(one).map(r => r.cells[0].text.replace(/\n/g, '／')), ['A社／店舗DX基盤の刷新']);
+  assert.strictEqual(leadOf(one[0]), '直近14日間、ステータス・期待値・受注月・活動状況に変化のある案件なし（報告案件 1件を除く）。');
   assert.ok(byRole(one[0], 'title').length === 1 && byRole(one[0], 'page').length === 1, 'ふつうの見出しとページ番号を付ける');
+  // 報告フラグの無い案件は載せる
+  const unflagged = movesOf(g.mtgReportSlides_(Object.assign({}, s, {reported: []})));
+  assert.deepStrictEqual(rowsOf(unflagged).map(r => r.cells[0].text.replace(/\n/g, '／')), ['A社／店舗DX基盤の刷新']);
+  assert.strictEqual(leadOf(unflagged[0]), '直近14日間に変化のある案件は 1件。');
+  // 前の版（会議サマリ）は、報告フラグがあっても載せる
+  assert.deepStrictEqual(rowsOf(movesOf(g.mtgSlides_(s))).map(r => r.cells[0].text.replace(/\n/g, '／')), ['A社／店舗DX基盤の刷新']);
   const slides = plain(g.mtgReportSlides_(s));
   assert.strictEqual(slides[slides.length - 1].title, '前回から変化のある案件', '資料の最後（報告案件のあと）');
   assert.match(slides[slides.length - 2].title, /報告案件②：/);
 
   // 変化のあった案件が多いとき（10件・その他の項目のみの更新 2件）：前の版は7件までで残りは Appendix ①、報告案件版は10件とも
-  const many = Array.from({length: 10}, (_, i) => Object.assign({}, s.changes[0], {project: '案件' + i}));
+  const many = Array.from({length: 10}, (_, i) => Object.assign({}, s.changes[0], {key: 'k' + i, project: '案件' + i}));
   const big = Object.assign({}, s, {changes: many, kpi: Object.assign({}, s.kpi, {updated: 2})});
   const report = movesOf(g.mtgReportSlides_(big));
   assert.deepStrictEqual(rowsOf(report).map(r => r.cells[0].text.split('\n').pop()), many.map(ch => ch.project), '10件とも（シートの値の順のまま）');
@@ -217,7 +245,7 @@ test('報告案件版のスライド：報告案件のあとの「前回から�
   assert.deepStrictEqual(pages.slice(1), pages.slice(1).map((_, i) => String(i + 2)));
 });
 
-test('報告案件版のスライド：文章が多いと、どの枠にも入る大きさまで全部の枠を小さくする。最小でも入らなくても省略しない（全文）', () => {
+test('報告案件版のスライド：文章の字は枠ごとに、入るいちばん大きい大きさ（見出しより大きくしない）。文の多い枠だけ小さくし、最小でも入らなくても省略しない（全文）', () => {
   const long = 'あいうえおかきくけこ'.repeat(60);
   const huge = 'あいうえおかきくけこ'.repeat(200);
   const {gas, g} = setup({edits: false, deals: [Object.assign({}, DEALS[0], {strategy: long}), Object.assign({}, DEALS[2], {activity: huge, reportFlag: true})]});
@@ -226,13 +254,18 @@ test('報告案件版のスライド：文章が多いと、どの枠にも入�
   const sizeOf = sl => byRole(sl, 'report-text')[0].size;
   const R = gas.get('MTG_OPTIONS').report;
   assert.ok(sizeOf(slides[0]) < R.maxSize && sizeOf(slides[0]) >= R.minSize, '長い戦略の分だけ小さく：' + sizeOf(slides[0]));
-  assert.strictEqual(new Set(byRole(slides[0], 'report-text').map(b => b.size)).size, 1);
+  // ほかの枠（短い文）は見出しと同じ大きさのまま（文の多い枠に合わせて小さくしない。2026/11/11 から）
+  assert.ok(byRole(slides[0], 'report-text').slice(1).every(b => b.size === R.maxSize), '短い文の枠は小さくしない');
+  // 活動状況が入りきらない2枚目も、戦略の枠は見出しと同じ大きさ
+  assert.strictEqual(sizeOf(slides[1]), R.maxSize);
   assert.ok(!slides[0].cut);
   assert.ok(byRole(slides[0], 'report-text')[0].text === long, '入れば全文');
-  assert.strictEqual(sizeOf(slides[1]), R.minSize, '入らなければ最小の大きさ');
   assert.strictEqual(slides[1].cut, true);
   const activity = byRole(slides[1], 'report-text')[3];   // 戦略・価値創出・課題・活動状況・次回アクションの順
+  assert.strictEqual(activity.size, R.minSize, '入らなければ最小の大きさ');
   assert.strictEqual(activity.text, huge, '最小でも入らなくても省略しない');
+  // 枠の見出しは、枠の線から離す（段落の上の余白）
+  assert.ok(byRole(slides[0], 'report-frame').every(b => b.spaceAbove === R.headTop && R.headTop > 0));
 });
 
 test('報告案件版のスライド：チェックのある案件が無ければ「該当なし」、報告フラグの列が無ければ「データなし」の1枚', () => {
@@ -274,7 +307,7 @@ test('報告案件版を作る関数：前の関数はそのままで、ファ�
   // 本番の確かめの文に、報告案件版の説明が付く
   const check = g.checkMeetingRun('report', true, '10/23', ['新FMT'], '');
   assert.match(check.text, /^【報告案件版】/);
-  assert.match(check.text, /そのあとに「前回から変化のある案件」（全件）を載せます（期待値上位案件・Appendix は入れません）/);
+  assert.match(check.text, /そのあとに「前回から変化のある案件」（報告案件を除く全件）を載せます（期待値上位案件・Appendix は入れません）/);
   assert.doesNotMatch(g.checkMeetingRun('business', true, '10/23', ['新FMT'], '').text, /報告案件版/);
   assert.match(g.getMeetingRunData('report', true).title, /報告案件版/);
 });

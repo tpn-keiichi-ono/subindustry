@@ -7,7 +7,7 @@
  *   （見出しは MTG_OPTIONS.report.title「RXシナリオ進捗における報告案件」と番号）にする。
  * - 報告案件のあとに「前回から変化のある案件」（会議サマリと同じ表。Appendix が無いので、上から7件までにせず全件を載せる。mtgMovesSlide_ の all）。
  * - 報告案件のスライドは枠の位置を固定（ひな形として同じ形）にし、中の文章の分量で字の大きさを変える
- *   （右の文章の枠は、スライドの中で同じ大きさ。MTG_OPTIONS.report の maxSize から minSize まで小さくする。どの枠も文は省略しない）。
+ *   （右の文章の枠は、枠ごとに文の量と枠の大きさで入るいちばん大きい字（MTG_OPTIONS.report の maxSize（見出しと同じ）から minSize まで）。どの枠も文は省略しない）。
  *
  * 作り方（エディタから実行）：createBusinessMtgReportSummaries()（本番）・previewBusinessMtgReportSummaries()（試作）。
  * 前の関数（createBusinessMtgSummaries()・previewBusinessMtgSummaries()）はそのまま使える。本番は、会議日ごとにどちらか一方で作る
@@ -259,7 +259,7 @@ function mtgHomeworkSlides_(s) {
 function mtgReportCheckText_() {
   const o = MTG_OPTIONS;
   return '【報告案件版】数字のページ（サマリー〜RXシナリオ）のあとに、シートの「' + o.columns.reportFlag + '」にチェックを入れた案件を1件1枚で載せ、' +
-    'そのあとに「' + MTG_TITLES.progress + '」（全件）を載せます（期待値上位案件・Appendix は入れません）。ファイル名の後ろに「' + o.report.fileSuffix + '」が付きます。';
+    'そのあとに「' + MTG_TITLES.progress + '」（報告案件を除く全件）を載せます（期待値上位案件・Appendix は入れません）。ファイル名の後ろに「' + o.report.fileSuffix + '」が付きます。';
 }
 
 /**
@@ -274,8 +274,9 @@ function mtgReportSlides_(s) {
     o.portfolio.enabled ? mtgPortfolioSlides_(s.portfolio) : []);
   const reported = s.reported || [];
   const reports = reported.length ? reported.map((item, i) => mtgReportSlide_(s, item, i + 1)) : [mtgReportEmptySlide_(s)];
-  // 報告案件のあとに、前回から変化のある案件（Appendix ① が無いので全件を載せ、「全件は Appendix ① を参照」と書かない）
-  const moves = mtgMovesSlide_(s, false, {all: true});
+  // 報告案件のあとに、前回から変化のある案件（Appendix ① が無いので全件を載せ、「全件は Appendix ① を参照」と書かない）。
+  // 報告フラグのある案件は、それぞれのページがあるので表に載せない（2026/11/11）
+  const moves = mtgMovesSlide_(s, false, {all: true, exclude: new Set(reported.map(item => item.key))});
   // 表紙のあと、サマリーの前に前回の会議の宿題事項
   return mtgNumberSlides_(mtgSheetFrame_(s), [mtgCoverSlide_(s)].concat(mtgHomeworkSlides_(s), main, reports, moves));
 }
@@ -320,11 +321,11 @@ function mtgReportLayout_() {
   const valueH = 56;
   const rowY = top + strategyH + gap + valueH + gap;
   // 左の5つの枠の高さは右の列の段にそろえる：案件・得意先情報 = 戦略の枠、ステータス = 価値創出の枠、
-  // 期待値・受注月・RXシナリオ = 下の段（課題・活動状況・次回アクション）を3つに分けた高さ
+  // 期待値・受注月（右半分は売上）・RXシナリオ = 下の段（課題・活動状況・次回アクション）を3つに分けた高さ
   const lowH = (bottom - rowY - 2 * gap) / 3;
   const leftH = [strategyH, valueH, lowH, lowH, lowH];
   return {top, bottom, gap, left, right, leftH, strategyH, valueH, rowY, rowH: bottom - rowY, rowW: (right.w - 2 * gap) / 3,
-    head: 12,    // head：枠の見出しの分（枠の上端から本文の箱の上端まで）
+    head: 12 + MTG_OPTIONS.report.headTop,    // head：枠の見出しの分（枠の上端から本文の箱の上端まで。見出しの上の余白 headTop を含む）
     prevH: 58};  // prevH：活動状況・次回アクションの枠の下の、前回の内容の帯の分（帯の上下のすき間を含む）
 }
 
@@ -336,7 +337,7 @@ function mtgReportSlide_(s, item, no) {
   const L = mtgReportLayout_();
   const el = mtgReportHeader_(item, mtgReportStaff_(item), no);
   const blank = o.blankText;
-  // 右の列：文章の枠（字の大きさはスライドの中で同じ）
+  // 右の列：文章の枠（字の大きさは枠ごとに、入るいちばん大きい字。見出しより大きくしない）
   const texts = [
     {key: 'strategy', label: o.columns.strategy, x: L.right.x, y: L.top, w: L.right.w, h: L.strategyH, fill: c.greenSoft, line: null},
     {key: 'valueCase', label: o.columns.valueCase, x: L.right.x, y: L.top + L.strategyH + L.gap, w: L.right.w, h: L.valueH},
@@ -352,15 +353,20 @@ function mtgReportSlide_(s, item, no) {
   texts.forEach((b, i) => {
     el.push(mtgReportFrame_(b.x, b.y, b.w, b.h, String(b.label).replace(/\s+/g, ''), {fill: b.fill, line: b.line}));
     el.push(mtgBox_(b.x, b.y + L.head, b.w, b.bodyH, b.text ? fit.texts[i] : blank,
-      {size: fit.size, color: b.text ? c.ink : c.faint, valign: 'TOP', role: 'report-text'}));
-    if (withPrev[b.key]) el.push.apply(el, mtgReportPrevious_(b, item, item[withPrev[b.key]], fit.size, mtgReportPrevLabel_(s)));
+      {size: fit.sizes[i], color: b.text ? c.ink : c.faint, valign: 'TOP', role: 'report-text'}));
+    if (withPrev[b.key]) el.push.apply(el, mtgReportPrevious_(b, item, item[withPrev[b.key]], fit.sizes[i], mtgReportPrevLabel_(s)));
   });
   // 左の列：先方・ステータス・期待値・受注月・RXシナリオ
   const box = k => ({x: L.left.x, y: L.top + L.leftH.slice(0, k).reduce((sum, h) => sum + h + L.gap, 0), w: L.left.w, h: L.leftH[k]});
   el.push.apply(el, mtgReportClient_(box(0), item));
   el.push.apply(el, mtgReportStatus_(box(1), item));
   el.push.apply(el, mtgReportValue_(box(2), item));
-  el.push.apply(el, mtgReportMonth_(box(3), item));
+  // 受注月の枠は左右に分け、右に年度別売上（FY26〜28。2026/11/11）。右の枠は、見出し（「年度別売上（百万）」）が1行に入る幅（半分より狭くしない）
+  const month = box(3);
+  const salesW = Math.min(month.w - L.gap - 50, Math.max((month.w - L.gap) / 2, mtgReportHeadWidth_(o.report.salesLabel) + MTG_SLIDE.padX + 2));
+  const monthW = month.w - L.gap - salesW;
+  el.push.apply(el, mtgReportMonth_(Object.assign({}, month, {w: monthW}), item));
+  el.push.apply(el, mtgReportSales_(Object.assign({}, month, {x: month.x + monthW + L.gap, w: salesW}), item, s));
   el.push.apply(el, mtgReportScenario_(box(4), item, s.scenarioColumn));
   // 出典の行は省略しない：1行に入る大きさまで小さくする（footSize から 0.5pt ずつ minSize まで）
   const footRight = mtgReportRecord_(item.record, s.recordColumn, item.recordLinks);
@@ -485,8 +491,18 @@ function mtgReportFrame_(x, y, w, h, heading, opt) {
   const c = MTG_OPTIONS.colors;
   const o = opt || {};
   const line = 'line' in o && o.line === null ? null : o.line || c.line;
-  return mtgBox_(x, y, w, h, heading, {size: 8, bold: true, color: c.greenDark, fill: o.fill || c.white,
-    line, lineWeight: 0.75, shape: 'RECTANGLE', valign: 'TOP', role: 'report-frame'});
+  // 見出しの（）書き（「期待値（百万円）」の「（百万円）」など）は小さく（report.headNoteSize）
+  const note = String(heading || '').indexOf('（');
+  return mtgBox_(x, y, w, h, heading, Object.assign({size: 8, bold: true, color: c.greenDark, fill: o.fill || c.white,
+    line, lineWeight: 0.75, shape: 'RECTANGLE', valign: 'TOP', spaceAbove: MTG_OPTIONS.report.headTop, role: 'report-frame'},
+    note > 0 ? {spans: [{start: note, end: String(heading).length, size: MTG_OPTIONS.report.headNoteSize}]} : {}));
+}
+
+/** 枠の見出しの幅（pt。（）書きは report.headNoteSize の大きさで数える。mtgReportFrame_ と同じ） */
+function mtgReportHeadWidth_(heading) {
+  const text = String(heading || '');
+  const note = text.indexOf('（');
+  return note > 0 ? mtgTextWidth_(text.slice(0, note), 8) + mtgTextWidth_(text.slice(note), MTG_OPTIONS.report.headNoteSize) : mtgTextWidth_(text, 8);
 }
 
 /**
@@ -497,10 +513,14 @@ function mtgReportFit_(boxes) {
   const R = MTG_OPTIONS.report;
   const lines = (b, size) => mtgWrap_(b.text, b.w, size, 999).length;
   const fits = (b, size) => !b.text || mtgTextHeight_(lines(b, size), size) <= b.h;
-  for (let size = R.maxSize; size >= R.minSize - 1e-9; size -= 0.5) {
-    if (boxes.every(b => fits(b, size))) return {size, texts: boxes.map(b => b.text), cut: false};
-  }
-  return {size: R.minSize, texts: boxes.map(b => b.text), cut: true};
+  // 枠ごとに、入るいちばん大きい字（maxSize = 見出しの大きさから 0.5pt ずつ。2026/11/11 から。前の版はスライドの中で同じ大きさにしていたので、
+  // 文の多い枠に合わせて、大きな枠（戦略など）の字まで小さくなっていた）
+  const sizes = boxes.map(b => {
+    for (let size = R.maxSize; size >= R.minSize - 1e-9; size -= 0.5) if (fits(b, size)) return size;
+    return R.minSize;
+  });
+  const cut = boxes.some((b, i) => !fits(b, sizes[i]));
+  return {size: Math.min.apply(null, sizes.concat([R.maxSize])), sizes, texts: boxes.map(b => b.text), cut};
 }
 
 /**
@@ -556,6 +576,37 @@ function mtgReportClient_(b, item) {
     line(item.customer),
     line(dept)
   ])];
+}
+
+/**
+ * 受注月の枠の右半分：売上（年度別の売上の列。今年度から report.salesYears 年度分を、年度ごとに前半期＋後半期で。FY26・FY27・FY28 を縦に並べ、
+ * 左に年度・右に値）。空は「−」、シートに今年度の列が無ければ「データなし」
+ */
+function mtgReportSales_(b, item, s) {
+  const o = MTG_OPTIONS;
+  const c = o.colors;
+  const R = o.report;
+  const S = MTG_SLIDE;
+  const L = mtgReportLayout_();
+  const year = mtgFiscalYearKey_(s.now);
+  const years = Array.from({length: R.salesYears}, (_, k) => ('0' + ((Number(year) + k) % 100)).slice(-2));
+  const el = [mtgReportFrame_(b.x, b.y, b.w, b.h, R.salesLabel)];
+  const has = (s.salesYears || []).indexOf(year) >= 0;
+  if (!has) {
+    el.push(mtgBox_(b.x, b.y + L.head, b.w, b.h - L.head, o.gapText, {size: R.subSize, color: c.faint, valign: 'MIDDLE', role: 'report-sales'}));
+    return el;
+  }
+  // 年度ごとの行（左に「FY26」、右に値）。見出しの下を年度の数で等分する（行の高さは 12pt まで）
+  const top = b.y + L.head + 1;
+  const rowH = Math.min(12, (b.y + b.h - 2 - top) / years.length);
+  years.forEach((y, k) => {
+    const v = (item.sales || {})[y];
+    const ry = top + rowH * k;
+    el.push(mtgBox_(b.x, ry, b.w / 2, rowH, 'FY' + y, {size: R.subSize, color: c.muted, valign: 'MIDDLE', role: 'report-sales-head'}));
+    el.push(mtgBox_(b.x + b.w / 2 - S.padX, ry, b.w / 2 + S.padX, rowH, v == null ? '−' : mtgAmount_(v),
+      {size: R.boxSize, bold: v != null, color: v == null ? c.faint : c.ink, align: 'END', valign: 'MIDDLE', role: 'report-sales'}));
+  });
+  return el;
 }
 
 /** 左の列の2つ目：ステータス（今のステータス・前回・確度の段（創注・D・C・B・A。今は緑・前回は薄い緑）） */
