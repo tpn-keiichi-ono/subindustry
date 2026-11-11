@@ -92,7 +92,7 @@ test('報告案件：報告フラグにチェックのある案件だけを、�
   assert.deepStrictEqual(['A-受注済み(100%)', 'Ｂ-クロージング中(70%)', '創注-仮検討(10%)', '失注', ''].map(g.mtgReportRank_), ['A', 'B', '創注', '', '']);
 });
 
-test('報告案件版のスライド：表紙と数字のページは会議サマリと同じで、案件のページと Appendix の代わりに報告案件を1件1枚', () => {
+test('報告案件版のスライド：表紙と数字のページは会議サマリと同じで、そのあとに報告案件を1件1枚、最後に前回から変化のある案件（期待値上位案件・Appendix は入れない）', () => {
   const {gas, g} = setup();
   const s = summarize(g, '新FMT');
   const normal = plain(g.mtgSlides_(s));
@@ -101,8 +101,9 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   const numbers = normal.slice(0, normal.findIndex(sl => sl.title === gas.get('MTG_TITLES').progress)).map(sl => sl.title);
   // 表紙のあと・サマリーの前に「前回の宿題事項」（宿題事項のシートが無いので「データなし」の1枚）
   assert.deepStrictEqual(titles.slice(0, numbers.length + 1), [numbers[0], '前回の宿題事項'].concat(numbers.slice(1)), '表紙・宿題・数字のページ');
-  assert.deepStrictEqual(titles.slice(numbers.length + 1), ['報告案件①：A社／店舗DX基盤の刷新', '報告案件②：C社／販促最適化']);
-  assert.ok(!slides.some(sl => sl.divider || /Appendix|前回から変化のある案件|期待値上位案件/.test(sl.title)), 'Appendix・案件のページは入れない');
+  assert.deepStrictEqual(titles.slice(numbers.length + 1), ['RXシナリオ進捗における報告案件①：A社／店舗DX基盤の刷新', 'RXシナリオ進捗における報告案件②：C社／販促最適化',
+    '前回から変化のある案件'], '報告案件のあとに、前回から変化のある案件');
+  assert.ok(!slides.some(sl => sl.divider || /Appendix|期待値上位案件/.test(sl.title)), 'Appendix・期待値上位案件のページは入れない');
   // サマリーは「現在の状態（進行中案件）」の表を出さない（前の版のサマリーには出す）
   const summaryOf = list => list.find(sl => sl.title === gas.get('MTG_TITLES').summary);
   assert.ok(!texts(summaryOf(slides)).some(t => /現在の状態/.test(t)), '報告案件版のサマリーに「現在の状態」は無い');
@@ -124,12 +125,13 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   const a = slides[numbers.length + 1];
   assert.ok(!byRole(a, 'title').length, '見出し（タイトル）は付けない');
   const head = byRole(a, 'report-title')[0];
-  assert.strictEqual(head.text, '報告案件①', '見出しは番号だけ（案件名・得意先名は左上の案件・得意先情報の枠）');
-  assert.strictEqual(head.size, 21, '見出しはほかのスライドと同じ大きさ');
+  assert.strictEqual(head.text, 'RXシナリオ進捗における報告案件①', '見出しは番号だけ（案件名・得意先名は左上の案件・得意先情報の枠）');
+  assert.strictEqual(head.size, 21, '見出しはほかのスライドと同じ大きさ（長くなっても1行に入る）');
+  assert.strictEqual(gas.get('MTG_OPTIONS').report.title, 'RXシナリオ進捗における報告案件');
   assert.ok(!(head.spans || []).length && head.color === '#1A1A1A', '色を付けない');
 
   assert.ok(!byRole(a, 'report-rule').length, '見出しの下の線は無い');
-  assert.strictEqual(g.mtgReportTitle_('X', 21), '報告案件(21)：X');
+  assert.strictEqual(g.mtgReportTitle_('X', 21), 'RXシナリオ進捗における報告案件(21)：X');
   const all = texts(a).join('\n');
   ['案件・得意先情報', '店舗DX基盤の刷新\n \nA社\n経営企画部／部長', 'B-クロージング中(70%)', '前回：C-提案中(50%)', '前回：50　／　想定売上：100', '2027/02', '前回：2026/12（延期）',
     'RXシナリオ', '見込金額：80百万円', '店舗オペレーション効率化', '需要予測', '提案を勝ち取るための戦略・差異化要素', '業務設計から運用定着まで一括で提案する',
@@ -178,12 +180,49 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.ok(a.elements.every(el => el.shape !== 'ROUND_RECTANGLE'), '角の丸い四角は使わない');
 });
 
+test('報告案件版のスライド：報告案件のあとの「前回から変化のある案件」は全件（Appendix が無いので7件までにしない・「Appendix ① を参照」と書かない）。前の版は今のまま', () => {
+  const {gas, g} = setup();
+  const s = summarize(g, '新FMT');
+  const movesOf = list => plain(list).filter(sl => /^前回から変化のある案件/.test(sl.title));
+  const rowsOf = list => [].concat.apply([], list.map(sl => sl.elements.find(el => el.type === 'table').rows.slice(1)));
+  const leadOf = sl => byRole(sl, 'lead').map(el => el.text).join('\n');   // リード文（見出しの下。番号を付けたスライドでは部品の中）
+  // 変化のあった案件は A社（ステータス・期待値・受注月）だけ。報告案件にも載せているが、こちらの表にも出す
+  const one = movesOf(g.mtgReportSlides_(s));
+  assert.strictEqual(one.length, 1);
+  assert.strictEqual(leadOf(one[0]), '直近14日間に変化のある案件は 1件。');
+  assert.deepStrictEqual(rowsOf(one).map(r => r.cells[0].text.replace(/\n/g, '／')), ['A社／店舗DX基盤の刷新']);
+  assert.ok(byRole(one[0], 'title').length === 1 && byRole(one[0], 'page').length === 1, 'ふつうの見出しとページ番号を付ける');
+  const slides = plain(g.mtgReportSlides_(s));
+  assert.strictEqual(slides[slides.length - 1].title, '前回から変化のある案件', '資料の最後（報告案件のあと）');
+  assert.match(slides[slides.length - 2].title, /報告案件②：/);
+
+  // 変化のあった案件が多いとき（10件・その他の項目のみの更新 2件）：前の版は7件までで残りは Appendix ①、報告案件版は10件とも
+  const many = Array.from({length: 10}, (_, i) => Object.assign({}, s.changes[0], {project: '案件' + i}));
+  const big = Object.assign({}, s, {changes: many, kpi: Object.assign({}, s.kpi, {updated: 2})});
+  const report = movesOf(g.mtgReportSlides_(big));
+  assert.deepStrictEqual(rowsOf(report).map(r => r.cells[0].text.split('\n').pop()), many.map(ch => ch.project), '10件とも（シートの値の順のまま）');
+  assert.ok(report.length > 1, '入らなければ続きのページ');
+  assert.deepStrictEqual(report.map(sl => sl.title).slice(0, 2), ['前回から変化のある案件', '前回から変化のある案件（続き）']);
+  report.forEach(sl => {
+    assert.strictEqual(leadOf(sl), '直近14日間に変化のある案件は 10件（ほかに、その他の項目のみの更新 2件）。', 'Appendix の案内・空の2行目は無い');
+    const t = sl.elements.find(el => el.type === 'table');
+    assert.ok(t.y + t.rows.reduce((h, r) => h + r.h, 0) <= gas.get('MTG_SLIDE').bottom + 0.01, 'ページに入る');
+  });
+  assert.ok(!plain(g.mtgReportSlides_(big)).some(sl => texts(sl).some(t => /Appendix/.test(t))), '報告案件版のどのページにも「Appendix」と書かない');
+  const normal = movesOf(g.mtgSlides_(big));
+  assert.strictEqual(rowsOf(normal).length, gas.get('MTG_OPTIONS').mainRows.changes, '前の版は7件まで');
+  assert.match(leadOf(normal[0]), /に 7件を掲載。全件は Appendix ① を参照。$/);
+  // ページ番号は表紙から通し（報告案件・変化のある案件にも続けて付く）
+  const pages = plain(g.mtgReportSlides_(big)).map(sl => (byRole(sl, 'page')[0] || {}).text);
+  assert.deepStrictEqual(pages.slice(1), pages.slice(1).map((_, i) => String(i + 2)));
+});
+
 test('報告案件版のスライド：文章が多いと、どの枠にも入る大きさまで全部の枠を小さくする。最小でも入らなくても省略しない（全文）', () => {
   const long = 'あいうえおかきくけこ'.repeat(60);
   const huge = 'あいうえおかきくけこ'.repeat(200);
   const {gas, g} = setup({edits: false, deals: [Object.assign({}, DEALS[0], {strategy: long}), Object.assign({}, DEALS[2], {activity: huge, reportFlag: true})]});
   const s = summarize(g, '新FMT');
-  const slides = plain(g.mtgReportSlides_(s)).filter(sl => /^報告案件[①-⑳]：/.test(sl.title));
+  const slides = plain(g.mtgReportSlides_(s)).filter(sl => /報告案件[①-⑳]：/.test(sl.title));
   const sizeOf = sl => byRole(sl, 'report-text')[0].size;
   const R = gas.get('MTG_OPTIONS').report;
   assert.ok(sizeOf(slides[0]) < R.maxSize && sizeOf(slides[0]) >= R.minSize, '長い戦略の分だけ小さく：' + sizeOf(slides[0]));
@@ -199,15 +238,18 @@ test('報告案件版のスライド：文章が多いと、どの枠にも入�
 test('報告案件版のスライド：チェックのある案件が無ければ「該当なし」、報告フラグの列が無ければ「データなし」の1枚', () => {
   const none = setup({edits: false, deals: DEALS.map(d => Object.assign({}, d, {reportFlag: false}))});
   const s1 = summarize(none.g, '新FMT');
-  const last1 = plain(none.g.mtgReportSlides_(s1)).pop();
+  // 報告案件のページ（番号の無い見出し。そのあとは前回から変化のある案件）
+  const emptyOf = (g, s) => plain(g.mtgReportSlides_(s)).find(sl => sl.title === 'RXシナリオ進捗における報告案件');
+  const last1 = emptyOf(none.g, s1);
   assert.strictEqual(last1.empty, 'none');
+  assert.strictEqual(byRole(last1, 'report-title')[0].text, 'RXシナリオ進捗における報告案件', '報告案件が無いときの見出しは番号なし');
   assert.ok(texts(last1).some(t => /報告フラグにチェックの入った案件がありません/.test(t)));
 
   const gap = setup({edits: false, noFlagColumn: true});
   const s2 = summarize(gap.g, '新FMT');
   assert.strictEqual(s2.reportColumn, false);
   assert.deepStrictEqual(plain(s2.reported), []);
-  const last2 = plain(gap.g.mtgReportSlides_(s2)).pop();
+  const last2 = emptyOf(gap.g, s2);
   assert.strictEqual(last2.empty, 'gap');
   assert.ok(texts(last2).some(t => /シートに「報告フラグ」の列が無い/.test(t)));
 });
@@ -232,6 +274,7 @@ test('報告案件版を作る関数：前の関数はそのままで、ファ�
   // 本番の確かめの文に、報告案件版の説明が付く
   const check = g.checkMeetingRun('report', true, '10/23', ['新FMT'], '');
   assert.match(check.text, /^【報告案件版】/);
+  assert.match(check.text, /そのあとに「前回から変化のある案件」（全件）を載せます（期待値上位案件・Appendix は入れません）/);
   assert.doesNotMatch(g.checkMeetingRun('business', true, '10/23', ['新FMT'], '').text, /報告案件版/);
   assert.match(g.getMeetingRunData('report', true).title, /報告案件版/);
 });
@@ -359,7 +402,7 @@ test('報告案件：活動状況・次回アクションの下に前回の内�
   const a = plain(s.reported[0]);
   assert.deepStrictEqual([a.activity, a.prevActivity, a.nextAction, a.prevNextAction],
     ['11/9 稟議の事前説明', '11/2 役員向けに最終提案', '11/15 稟議資料の事前確認', '11/15 稟議資料の事前確認']);
-  const slide = plain(g.mtgReportSlides_(s)).find(sl => sl.title === '報告案件①：A社／店舗DX基盤の刷新');
+  const slide = plain(g.mtgReportSlides_(s)).find(sl => sl.title === 'RXシナリオ進捗における報告案件①：A社／店舗DX基盤の刷新');
   const prev = byRole(slide, 'report-prev').map(el => el.text);
   assert.deepStrictEqual(prev, ['今回と同じ（前回から更新なし）', '11/2 役員向けに最終提案', '今回と同じ（前回から更新なし）'],
     '課題・活動状況・次回アクションの順。活動状況は前回の文、課題・次回アクションは更新なし');
@@ -407,7 +450,7 @@ test('報告案件：RXシナリオは番号だけ。案件・得意先情報は
   const long = Object.assign({}, DEALS[0], {customer: '株式会社サンプルリテールホールディングスジャパン', clientDept: 'デジタルマーケティング本部 本部長室',
     clientTitle: '本部長', scenario: '01-05 店舗オペレーション効率化, 02-03 需要予測'});
   const {gas, g} = setup({edits: false, deals: [long]});
-  const slide = plain(g.mtgReportSlides_(summarize(g, '新FMT'))).find(sl => /^報告案件①/.test(sl.title));
+  const slide = plain(g.mtgReportSlides_(summarize(g, '新FMT'))).find(sl => /報告案件①/.test(sl.title));
   assert.deepStrictEqual(byRole(slide, 'report-chip').map(el => el.text), ['01-05', '02-03'], 'シナリオは番号だけ');
   const client = byRole(slide, 'report-value')[0].text;
   assert.ok(client.indexOf('…') < 0, '切らない：' + client);
@@ -415,7 +458,7 @@ test('報告案件：RXシナリオは番号だけ。案件・得意先情報は
   // 枠に入らなければ、字を小さくして全文を入れる
   const huge = Object.assign({}, long, {project: 'とても長い案件名'.repeat(20), scenario: Array.from({length: 12}, (_, i) => '0' + (i % 9 + 1) + '-0' + (i % 7 + 1) + ' シナリオ' + i).join(', ')});
   const s2 = setup({edits: false, deals: [huge]});
-  const slide2 = plain(s2.g.mtgReportSlides_(summarize(s2.g, '新FMT'))).find(sl => /^報告案件①/.test(sl.title));
+  const slide2 = plain(s2.g.mtgReportSlides_(summarize(s2.g, '新FMT'))).find(sl => /報告案件①/.test(sl.title));
   const box = slide2.elements.find(el => el.role === 'report-value');
   assert.ok(box.text.indexOf('とても長い案件名'.repeat(20)) === 0, '案件名は全文');
   assert.ok(box.spans[0].size < 8, '字を小さくして入れる：' + box.spans[0].size);

@@ -82,10 +82,10 @@ const MTG_OPTIONS = {
     itemHead: '指摘事項'          // 資料の表の見出し
   },
   // 報告案件版（MeetingReport.gs。createBusinessMtgReportSummaries()）：数字のページは同じで、案件のページを、報告フラグにチェックした案件の
-  // 1件1枚にしたもの（Appendix なし）。ファイル名は fileName の後ろに fileSuffix（試作は、さらに「_試作」）。
+  // 1件1枚にしたもの（そのあとに「前回から変化のある案件」の全件。Appendix なし）。ファイル名は fileName の後ろに fileSuffix（試作は、さらに「_試作」）。
   // 右の文章の枠の字の大きさは、スライドの中で同じ（maxSize から 0.5pt ずつ minSize まで。入らなければ minSize で「…」で切る）
   report: {
-    title: '報告案件',
+    title: 'RXシナリオ進捗における報告案件',   // 報告案件のスライドの見出し（後ろに ①② と番号が付く）
     fileSuffix: '_報告案件版',
     flagColumn: 'AG',                        // 報告フラグの列を足す場所（addBusinessMtgReportFlagColumn()。追跡範囲の外）
     flagWidth: 60,                           // その列の幅（px）
@@ -5160,7 +5160,7 @@ function mtgFrame_(frame, slide, page) {
   const S = MTG_SLIDE;
   if (slide.cover || slide.divider) return [];
   const el = [];
-  // 見出しを出さないスライド（noTitle。報告案件版の案件のページは、いちばん上に自分で「報告案件：」の行を描く）
+  // 見出しを出さないスライド（noTitle。報告案件版の案件のページは、いちばん上に自分で見出し（MTG_OPTIONS.report.title と番号）の行を描く）
   if (!slide.noTitle) {
     const title = mtgTitleFit_(slide.title);
     el.push(mtgBox_(S.x, S.titleY, S.w, 30, title.text, {size: title.size, bold: true, color: c.ink, role: 'title'}));
@@ -7294,10 +7294,15 @@ function mtgBarChart_(title, rows, x, y, w, max, rowH, empty, labelW, gap) {
   return {elements: el, bottom: top + rows.length * rowH};
 }
 
-/** 3 前回から変化のある案件：ステータス・期待値・受注月・活動状況が変わった案件（今のステータスの順（mtgStatusGroups_）、その中は想定売上の大きい順） */
-function mtgMovesSlide_(s, withAppendix) {
+/**
+ * 3 前回から変化のある案件：ステータス・期待値・受注月・活動状況が変わった案件（今のステータスの順（mtgStatusGroups_）、その中は想定売上の大きい順）。
+ * options.all（報告案件版。MeetingReport.gs）：Appendix が無いので、上から mainRows.changes 件までにせず全件を載せ（入らなければ「（続き）」のページ）、
+ * 「全件は Appendix ① を参照」と書かない
+ */
+function mtgMovesSlide_(s, withAppendix, options) {
+  const everything = !!(options && options.all);
   // 全件の一覧の場所：この資料の Appendix ①（統合版は Appendix を入れないので、各サブインダストリーの資料の Appendix ①）
-  const all = withAppendix === false ? '全件は各サブインダストリーの資料の Appendix ① を参照。' : '全件は Appendix ① を参照。';
+  const all = everything ? '' : withAppendix === false ? '全件は各サブインダストリーの資料の Appendix ① を参照。' : '全件は Appendix ① を参照。';
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
   const k = s.kpi;
@@ -7309,9 +7314,9 @@ function mtgMovesSlide_(s, withAppendix) {
   const rows = [mtgHeadRow_(columns, ['得意先／案件名', 'シナリオ', 'ステータス\n' + mtgFromWord_(s) + '▶今回', '期待値\n' + mtgFromWord_(s) + '▶今回',
     '受注月\n' + mtgFromWord_(s) + '▶今回', '活動状況（最新）', '先方部門', '先方役職'])];
   const scenarioCell = ch => mtgScenarioCell_(s, ch);
-  // 上から mainRows.changes 件まで（行が伸びてページに入らなければ「（続き）」のページに続ける。mtgTablePages_）
+  // 上から mainRows.changes 件まで（報告案件版は全件。行が伸びてページに入らなければ「（続き）」のページに続ける。mtgTablePages_）
   const top = [];
-  moves.slice(0, MTG_OPTIONS.mainRows.changes).forEach(ch => {
+  moves.slice(0, everything ? moves.length : MTG_OPTIONS.mainRows.changes).forEach(ch => {
     const row = mtgRow_(columns, [
       mtgDealCell_(ch, columns[0]),
       scenarioCell(ch),
@@ -7332,7 +7337,7 @@ function mtgMovesSlide_(s, withAppendix) {
       : (moves.length ? mtgChangedLabel_(s) + 'は ' + moves.length + '件' + mtgUpdatedNote_(s) + '。'
       : mtgPeriodShort_(s) + '、ステータス・期待値・受注月・活動状況に変化のある案件なし' + mtgUpdatedNote_(s) + '。') +
       (moves.length > top.length ? '\n今回のステータスの順（確度 A → 創注 → 失注・保留・削除）に ' + top.length + '件を掲載。' + all
-        : k.updated ? '\n' + all : '');
+        : k.updated && all ? '\n' + all : '');
   if (!top.length) {
     // 表の見出しの行の下に、変更の記録が無ければ「データなし」と理由、変化が無ければ「該当なし」（状態はリード文に書くので、同じ文を2回書かない）
     return [{title: MTG_TITLES.progress, lead, elements: mtgEmptyTable_(columns, rows[0], lack.changes ? 'gap' : 'none', lack.changes || '')}];

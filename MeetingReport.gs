@@ -2,8 +2,10 @@
  * RX Business Meeting の会議サマリ「報告案件版」（MeetingSummary.gs の会議サマリと同じ作り方で、案件のページだけを変えたもの）。
  *
  * - 数字のページ（表紙・サマリー・計画に対する積み上げ・パイプラインの変化・RXシナリオのポートフォリオ）は、会議サマリと同じ。
- * - 案件のページ（前回から変化のある案件・期待値上位案件の状況・課題）と Appendix（扉と ①〜③）は入れない。
- *   代わりに、シートの「報告フラグ」（MTG_OPTIONS.columns.reportFlag）にチェックを入れた案件を、1件1枚の「報告案件」のスライドにする。
+ * - 案件のページのうち「期待値上位案件の状況・課題」と Appendix（扉と ①〜③）は入れない。
+ *   代わりに、シートの「報告フラグ」（MTG_OPTIONS.columns.reportFlag）にチェックを入れた案件を、1件1枚の「報告案件」のスライド
+ *   （見出しは MTG_OPTIONS.report.title「RXシナリオ進捗における報告案件」と番号）にする。
+ * - 報告案件のあとに「前回から変化のある案件」（会議サマリと同じ表。Appendix が無いので、上から7件までにせず全件を載せる。mtgMovesSlide_ の all）。
  * - 報告案件のスライドは枠の位置を固定（ひな形として同じ形）にし、中の文章の分量で字の大きさを変える
  *   （右の文章の枠は、スライドの中で同じ大きさ。MTG_OPTIONS.report の maxSize から minSize まで小さくする。どの枠も文は省略しない）。
  *
@@ -256,12 +258,13 @@ function mtgHomeworkSlides_(s) {
 /** 作る前の確かめ（資料を作る画面）の、報告案件版の説明（MeetingSchedule.gs の checkMeetingRun が、会議サマリの確かめの前に付ける） */
 function mtgReportCheckText_() {
   const o = MTG_OPTIONS;
-  return '【報告案件版】数字のページ（サマリー〜RXシナリオ）のあとに、シートの「' + o.columns.reportFlag + '」にチェックを入れた案件を1件1枚で載せます' +
-    '（前回から変化のある案件・期待値上位案件・Appendix は入れません）。ファイル名の後ろに「' + o.report.fileSuffix + '」が付きます。';
+  return '【報告案件版】数字のページ（サマリー〜RXシナリオ）のあとに、シートの「' + o.columns.reportFlag + '」にチェックを入れた案件を1件1枚で載せ、' +
+    'そのあとに「' + MTG_TITLES.progress + '」（全件）を載せます（期待値上位案件・Appendix は入れません）。ファイル名の後ろに「' + o.report.fileSuffix + '」が付きます。';
 }
 
 /**
- * 報告案件版のスライドの並び：表紙 → 数字のページ（mtgSlides_ と同じ部品）→ 報告案件（1件1枚。無ければ「報告案件なし」の1枚）。Appendix は入れない
+ * 報告案件版のスライドの並び：表紙 → 前回の宿題事項 → 数字のページ（mtgSlides_ と同じ部品）→ 報告案件（1件1枚。無ければ「報告案件なし」の1枚）
+ * → 前回から変化のある案件（会議サマリと同じ表を全件。入らなければ「（続き）」のページ）。Appendix は入れない
  */
 function mtgReportSlides_(s) {
   const o = MTG_OPTIONS;
@@ -271,8 +274,10 @@ function mtgReportSlides_(s) {
     o.portfolio.enabled ? mtgPortfolioSlides_(s.portfolio) : []);
   const reported = s.reported || [];
   const reports = reported.length ? reported.map((item, i) => mtgReportSlide_(s, item, i + 1)) : [mtgReportEmptySlide_(s)];
+  // 報告案件のあとに、前回から変化のある案件（Appendix ① が無いので全件を載せ、「全件は Appendix ① を参照」と書かない）
+  const moves = mtgMovesSlide_(s, false, {all: true});
   // 表紙のあと、サマリーの前に前回の会議の宿題事項
-  return mtgNumberSlides_(mtgSheetFrame_(s), [mtgCoverSlide_(s)].concat(mtgHomeworkSlides_(s), main, reports));
+  return mtgNumberSlides_(mtgSheetFrame_(s), [mtgCoverSlide_(s)].concat(mtgHomeworkSlides_(s), main, reports, moves));
 }
 
 /**
@@ -323,7 +328,7 @@ function mtgReportLayout_() {
     prevH: 58};  // prevH：活動状況・次回アクションの枠の下の、前回の内容の帯の分（帯の上下のすき間を含む）
 }
 
-/** 報告案件の1枚（item は mtgReportItems_ の1件、no は番号（1 から））。ふつうの見出し・リード文の代わりに「報告案件①」（mtgReportHeader_） */
+/** 報告案件の1枚（item は mtgReportItems_ の1件、no は番号（1 から））。ふつうの見出し・リード文の代わりに「RXシナリオ進捗における報告案件①」（mtgReportHeader_） */
 function mtgReportSlide_(s, item, no) {
   const o = MTG_OPTIONS;
   const c = o.colors;
@@ -428,9 +433,9 @@ function mtgReportEmptySlide_(s) {
 }
 
 /**
- * いちばん上の見出し「報告案件①」（案件名・得意先名は左上の案件・得意先情報の枠に書くので、見出しには入れない）。字の大きさはほかのスライドの見出しと同じ
- * （MTG_SLIDE.titleSize。入らなければ小さくする。省略はしない）。
- * item が無ければ「報告案件」だけ（報告案件が無いときの1枚）。no は報告案件の番号（1 から）。
+ * いちばん上の見出し「RXシナリオ進捗における報告案件①」（MTG_OPTIONS.report.title と番号。案件名・得意先名は左上の案件・得意先情報の枠に書くので、
+ * 見出しには入れない）。字の大きさはほかのスライドの見出しと同じ（MTG_SLIDE.titleSize。入らなければ小さくする。省略はしない）。
+ * item が無ければ番号なし（報告案件が無いときの1枚）。no は報告案件の番号（1 から）。
  * staff（担当営業・BX担当の2行の文）があれば右上に2行（見出しの半分の大きさで、2行の高さが見出しの行と同じ。灰色の右寄せ）で書き、その分だけ見出しの幅を狭める
  */
 function mtgReportHeader_(item, staff, no) {
@@ -456,7 +461,10 @@ function mtgReportHeader_(item, staff, no) {
   return el;
 }
 
-/** 報告案件の見出し「報告案件①：得意先／案件名」（スライドの名前。label が空なら「報告案件①：」。番号は ①〜⑳、21 からは「(21)」。no が無ければ「報告案件：」） */
+/**
+ * 報告案件の見出し「RXシナリオ進捗における報告案件①：得意先／案件名」（スライドの名前。前の部分は MTG_OPTIONS.report.title。label が空なら「…報告案件①：」。
+ * 番号は ①〜⑳、21 からは「(21)」。no が無ければ「…報告案件：」）
+ */
 function mtgReportTitle_(label, no) {
   const R = MTG_OPTIONS.report;
   const mark = !no ? '' : no <= 20 ? String.fromCharCode(0x2460 + no - 1) : '(' + no + ')';
