@@ -807,7 +807,9 @@ function mtgScenarioAmountLines_(ss, names, meeting) {
   const o = MTG_OPTIONS;
   const props = PropertiesService.getDocumentProperties();
   const scheduled = mtgScheduledPrevious_(meeting);
-  const book = o.run.readMode === 'api' && mtgApiAvailable_() ? mtgApiBook_(ss, names, {records: false}) : ss;
+  // 1シートずつ、値と数式だけを読む（全シートを書式・リンクまで一度に読むと「メモリ不足」で止まった。2026/11/11）
+  const api = o.run.readMode === 'api' && mtgApiAvailable_();
+  const bookOf = name => (api ? mtgApiBook_(ss, [name], {records: false, light: true, status: false}) : ss);
   const lines = ['シナリオ見込額（' + String(o.columns.scenarioAmount).replace(/\s+/g, '') + '）の前回比の突き合わせ（会議日 ' + meeting + ' の資料）', ''];
   const show = v => (v == null ? '空' : mtgAmount_(v));
   names.forEach(name => {
@@ -822,7 +824,7 @@ function mtgScenarioAmountLines_(ss, names, meeting) {
       lines.push('　' + copy.error, '');
       return;
     }
-    const sheet = book.getSheetByName(name);
+    const sheet = bookOf(name).getSheetByName(name);
     const now = mtgReadDeals_(sheet, DIFF_RULES[name]);
     const head = mtgCanonicalLabel_(o.columns.scenarioAmount);
     const col = mtgColumnIndex_(now.headers, 'scenarioAmount');
