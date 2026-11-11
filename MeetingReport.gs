@@ -781,3 +781,98 @@ function mtgReportRecord_(record, hasColumn, links) {
   });
   return box(text, spans);
 }
+
+/**
+ * シナリオ見込額（サービスパッケージ合算の列。報告案件版のサマリーの4つ目の数字）の前回比を、行ごとに確かめる（エディタから実行する。読むだけ）。
+ * シートと会議日を選ぶと、その会議日の資料が比べる「前回の時点コピー」と今のシートのシナリオ見込額を、案件（得意先＋案件名）ごとに突き合わせ、
+ * 合計（失注除く）・違う案件の行と値（数値でない値は表示の文字のまま）・列が数式か（今のシート・時点コピー）を出す。得意先名・案件名は出さない（行番号だけ）
+ */
+function diagnoseBusinessMtgScenarioAmount() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = mtgUi_();
+  const names = mtgAskSheets_(ss, ui, 'シナリオ見込額の前回比を、前回の時点コピーと行ごとに突き合わせます（読むだけ）。');
+  if (!names) return;
+  const response = ui.prompt(CRED_OPTIONS.menuTitle, '資料の会議日を入力してください（例：11/20）。その会議日の資料が比べる「前回」と突き合わせます。', ui.ButtonSet.OK_CANCEL);
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+  const text = String(response.getResponseText() || '').trim();
+  const meeting = text && mtgParseDate_(text, new Date());
+  if (!meeting) throw new Error('「' + text + '」を会議日として読めません。11/20 か 2026/11/20 のように入力してください。');
+  const lines = mtgScenarioAmountLines_(ss, names, meeting);
+  console.log(lines.join('\n'));
+  ui.alert(CRED_OPTIONS.menuTitle, lines.join('\n'), ui.ButtonSet.OK);
+}
+
+/** diagnoseBusinessMtgScenarioAmount の中身（テストできるように分ける）。lines の配列 */
+function mtgScenarioAmountLines_(ss, names, meeting) {
+  const o = MTG_OPTIONS;
+  const props = PropertiesService.getDocumentProperties();
+  const scheduled = mtgScheduledPrevious_(meeting);
+  const book = o.run.readMode === 'api' && mtgApiAvailable_() ? mtgApiBook_(ss, names, {records: false}) : ss;
+  const lines = ['シナリオ見込額（' + String(o.columns.scenarioAmount).replace(/\s+/g, '') + '）の前回比の突き合わせ（会議日 ' + meeting + ' の資料）', ''];
+  const show = v => (v == null ? '空' : mtgAmount_(v));
+  names.forEach(name => {
+    lines.push('■ ' + name);
+    const prev = mtgPreviousOf_(props, name, meeting, scheduled).previous;
+    if (!prev || !prev.copy) {
+      lines.push('　前回（' + (prev ? mtgShortDate_(prev.date) : 'なし') + '）は時点コピーと比べないので、シナリオ見込額の前回比は出ません（「データなし」）。', '');
+      return;
+    }
+    const copy = mtgOpenCopy_(prev.copy, name);
+    if (copy.error) {
+      lines.push('　' + copy.error, '');
+      return;
+    }
+    const sheet = book.getSheetByName(name);
+    const now = mtgReadDeals_(sheet, DIFF_RULES[name]);
+    const head = mtgCanonicalLabel_(o.columns.scenarioAmount);
+    const col = mtgColumnIndex_(now.headers, 'scenarioAmount');
+    if (col < 0) {
+      lines.push('　今のシートに「' + o.columns.scenarioAmount + '」の列がありません。', '');
+      return;
+    }
+    const kept = list => list.filter(d => !mtgExcludedStatus_(d.status));
+    const end = mtgSum_(kept(now.deals), 'scenarioAmount');
+    const start = mtgSum_(kept(copy.table.deals), 'scenarioAmount');
+    lines.push('　前回：' + mtgShortDate_(prev.date) + ' の時点コピー「' + copy.title + '」',
+      '　合計（失注除く）：前回 ' + mtgAmount_(start) + ' → 今 ' + mtgAmount_(end) + '（' + mtgSigned_(end - start) + '）');
+    // 列が数式か（今のシート・時点コピー）。時点コピーの数式は、コピーの中で計算し直された値（本番の資料を作る仕事が、元の値に直す前に止まった・やめた など）
+    const formulaCount = (sh, headers) => {
+      const c = mtgColumnIndex_(headers, 'scenarioAmount');
+      const rows = sh.getLastRow() - DIFF_RULES[name].headerRow;
+      if (c < 0 || rows < 1) return 0;
+      return sh.getRange(DIFF_RULES[name].headerRow + 1, c + 1, rows, 1).getFormulas().filter(line => String(line[0] || '').trim()).length;
+    };
+    let copyFormulas = 0;
+    try {
+      const copySheet = SpreadsheetApp.openById(prev.copy.id).getSheetByName(prev.copy.sheet || name);
+      copyFormulas = formulaCount(copySheet, copy.table.headers);
+    } catch (_) { /* 数えられなければ 0 のまま */ }
+    lines.push('　列の中身：今のシート ' + diffColumnLetter_(col + 1) + '列は数式 ' + formulaCount(sheet, now.headers) + '行・時点コピーは数式 ' + copyFormulas + '行' +
+      (copyFormulas ? '（時点コピーの数式は、コピーの中で計算し直された値です。元のシートの値に直されていません）' : ''));
+    // 案件ごと（得意先＋案件名）。失注は除く
+    const byKey = list => {
+      const map = new Map();
+      kept(list).forEach(d => { if (!map.has(d.key)) map.set(d.key, d); });
+      return map;
+    };
+    const a = byKey(copy.table.deals);
+    const b = byKey(now.deals);
+    const diffs = [];
+    // 数値でない値（文字・エラー。合計に入らない）は、表示の文字のまま出す（値が同じでも、どちらかが数値でなければ出す）
+    const textOf = d => (d && d.scenarioAmount == null && d.cells && d.cells[head] ? d.cells[head] : '');
+    const valueText = d => (textOf(d) ? '「' + textOf(d) + '」（数値でない）' : show(d.scenarioAmount));
+    b.forEach((d, key) => {
+      const p = a.get(key);
+      if (p && (p.scenarioAmount || 0) === (d.scenarioAmount || 0) && !textOf(p) && !textOf(d)) return;
+      diffs.push((p ? '前回 ' + p.row + '行目 ' + valueText(p) : '前回なし（または失注）') + ' → 今 ' + d.row + '行目 ' + valueText(d));
+    });
+    a.forEach((p, key) => {
+      if (!b.has(key)) diffs.push('前回 ' + p.row + '行目 ' + valueText(p) + ' → 今なし（削除・失注・名前の変更）');
+    });
+    lines.push(diffs.length ? '　違う案件（' + diffs.length + '件）：' : '　違う案件：なし');
+    diffs.slice(0, 30).forEach(t => lines.push('　　' + t));
+    if (diffs.length > 30) lines.push('　　ほか ' + (diffs.length - 30) + '件');
+    lines.push('');
+  });
+  return lines;
+}

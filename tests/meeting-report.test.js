@@ -312,6 +312,26 @@ test('報告案件版を作る関数：前の関数はそのままで、ファ�
   assert.match(g.getMeetingRunData('report', true).title, /報告案件版/);
 });
 
+test('diagnoseBusinessMtgScenarioAmount：シナリオ見込額の前回比を、前回の時点コピーと案件ごとに突き合わせる（合計・違う行と値・列が数式か。得意先名は出さない）', () => {
+  const {gas, g, sheet} = setup();
+  gas.confirmAnswer = 'YES';
+  gas.promptAnswers = ['1', '10/23'];
+  g.createBusinessMtgSummaries();   // 本番：10/23 の会議日と時点コピーを記録する
+  const ss = g.SpreadsheetApp.getActiveSpreadsheet();
+  sheet.getRange('Q3').setValue(60);           // A社：80 → 60
+  sheet.getRange('Q5').setValue('#N/A');       // C社：数値でない値
+  const lines = g.mtgScenarioAmountLines_(ss, ['新FMT'], g.mtgParseDate_('10/30', new Date())).join('\n');
+  assert.match(lines, /前回：10\/23 の時点コピー「時点コピー_/);
+  assert.match(lines, /合計（失注除く）：前回 80 → 今 60（▲20）/);
+  assert.match(lines, /前回 3行目 80 → 今 3行目 60/);
+  assert.match(lines, /前回 5行目 空 → 今 5行目 「#N\/A」（数値でない）/);
+  assert.match(lines, /列の中身：今のシート Q列は数式 0行・時点コピーは数式 0行/);
+  assert.ok(lines.indexOf('A社') < 0 && lines.indexOf('C社') < 0, '得意先名は出さない');
+  // 前回が時点コピーでなければ、そう書く
+  const none = g.mtgScenarioAmountLines_(ss, ['新FMT'], g.mtgParseDate_('10/20', new Date())).join('\n');
+  assert.match(none, /時点コピーと比べないので、シナリオ見込額の前回比は出ません/);
+});
+
 test('addBusinessMtgReportFlagColumn：各シートの AG列に「報告フラグ」の見出しとチェックボックスを足す（値は書かない）。2回目は付け直すだけ', () => {
   const gas = createGas();
   const g = gas.global;
