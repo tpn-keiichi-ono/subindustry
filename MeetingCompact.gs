@@ -452,8 +452,11 @@ function mtgCompactChangeSlidesOf_(s, start) {
   const groupIndex = ch => groups.findIndex(gr => gr.key === mtgStatusGroupOf_(ch));
   const moves = s.changes.filter(ch => ch.category !== 'updated').map((ch, i) => ({ch, i}))
     .sort((a, b) => (groupIndex(a.ch) - groupIndex(b.ch)) || (bySales ? (salesOf(b.ch) || 0) - (salesOf(a.ch) || 0) : 0) || (a.i - b.i)).map(x => x.ch);
+  const gone = moves.filter(ch => ch.removed || !ch.deal || mtgExcludedStatus_(ch.statusTo)).length;
   const lead = lack.changes ? mtgChangedLabel_(s) + 'は' + o.gapText + '（' + lack.changes + '）。'
-    : moves.length ? mtgChangedLabel_(s) + 'は ' + moves.length + '件' + mtgUpdatedNote_(s) + '。\n' +
+    // 失注・削除の案件も載せる。状況・計画進捗の「変化のある案件」は今ある案件だけを数える（mtgCompactChangedNow_）ので、その分を書き添える
+    : moves.length ? mtgChangedLabel_(s) + 'は ' + moves.length + '件' + (gone ? '（うち失注・削除 ' + gone + '件。状況・計画進捗の件数には含めない）' : '') +
+      mtgUpdatedNote_(s) + '。\n' +
       'ステータス・期待値・受注月・活動状況が変わった案件。確度 A から順に、同じ確度は' + (bySales ? 'FY' + year + '売上' : '想定売上') + 'の大きい順。No は資料の通し番号。'
       : mtgPeriodShort_(s) + '、ステータス・期待値・受注月・活動状況に変化のある案件なし' + mtgUpdatedNote_(s) + '。';
   if (!moves.length) {

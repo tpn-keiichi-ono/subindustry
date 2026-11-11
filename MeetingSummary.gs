@@ -6759,12 +6759,16 @@ function mtgSalesPlanOf_(deals, name, now, table) {
   const year = mtgFiscalYearKey_(now);
   const bucket = () => ({count: 0, value: 0, values: {}, counts: {}});
   const has = (table.salesYears || []).indexOf(year) >= 0;
+  // 受注月の列が無いシートは、今年度の案件を選べないので作らない（計画に対する積み上げと同じく「データなし」）
+  const noMonth = table.has && !table.has[o.monthColumn];
   const out = {plan: mtgPlanAmount_(name), start: mtgFiscalStart_(now), months: [], total: 0, byRank: {}, byRankCount: {}, undated: bucket(), before: bucket(),
-    after: bucket(), excluded: bucket(), missing: 0, year, gap: has ? '' : 'シートに「FY' + year + '前半期売上」「FY' + year + '後半期売上」の列が無い',
+    after: bucket(), excluded: bucket(), missing: 0, year,
+    gap: !has ? 'シートに「FY' + year + '前半期売上」「FY' + year + '後半期売上」の列が無い'
+      : noMonth ? 'シートに「' + String(MTG_OPTIONS.columns[o.monthColumn]).replace(/\s+/g, '') + '」の列が無い' : '',
     // 半期ごとの確度別（計画に対する積み上げ（FY売上）。失注は excluded に）
     halves: [{key: '前', label: '前半期', values: {}, total: 0}, {key: '後', label: '後半期', values: {}, total: 0}]};
   o.ranks.map(r => r.key).concat([o.otherLabel]).forEach(k => { out.byRank[k] = 0; out.byRankCount[k] = 0; });
-  if (!has) return out;
+  if (out.gap) return out;
   deals.forEach(d => {
     const v = (d.sales || {})[year] || 0;
     if (!v) return;

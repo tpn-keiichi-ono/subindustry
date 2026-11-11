@@ -609,6 +609,9 @@ test('状況のページの「変化のある案件」は、今ある案件（�
   // 区切って作るときの中身の一部にも入れる
   assert.strictEqual(plain(g.mtgCombinedLite_(s1)).changedNow, 2);
   assert.strictEqual(g.mtgCompactChangedNow_(plain(g.mtgCombinedLite_(s1))), 2);
+  // 変化のあった案件のページには失注も載せ、リード文にその件数を書き添える（状況・計画進捗の件数と見比べられるように）
+  const part = plain(g.mtgCompactChangeSlides_(s1, 0));
+  assert.match(part.slides[0].lead, /^前回から変化のある案件は 3件（うち失注・削除 1件。状況・計画進捗の件数には含めない）/);
 });
 
 test('状況・計画進捗（FY売上）：今年度の売上の列（前半期＋後半期。本物の P・Q列）で、棒・計画・進捗率・確定・見込を集計したページ（受注月が今年度の案件だけ。失注は除く）', () => {
@@ -664,6 +667,12 @@ test('状況・計画進捗（FY売上）：今年度の売上の列（前半期
   const moved = summarize(g, '新FMT');
   assert.deepStrictEqual([moved.planSales.byRank.A, moved.planSales.byRank.B, moved.planSales.undated.value, moved.planSales.before.value], [0, 10, 70, 30]);
   assert.deepStrictEqual([moved.salesBridge.sureEnd, moved.salesBridge.sureStart], [10, 100], '前回比の今の確定も同じく絞る（前回は前回の受注月）');
+  // 状況・計画進捗の確定・見込・参考は、計画に対する積み上げ（月別）と同じ数（ページどうしで食い違わない）
+  const inMonths = (p, keys) => p.months.reduce((t, m) => t + keys.reduce((u, k) => u + (m.values[k] || 0), 0), 0);
+  const ps = moved.planSales;
+  const pm = moved.planSalesByMonth;
+  assert.deepStrictEqual([ps.byRank.A + ps.byRank.B, ps.byRank.C, ps.total, ps.undated.value, ps.before.value, ps.excluded.value],
+    [inMonths(pm, ['A', 'B']), inMonths(pm, ['C']), pm.total, pm.undated.value, pm.before.value, pm.excluded.value]);
   assert.strictEqual(slide.elements.find(e => e.role === 'lead').text.split('\n').length, 2, 'リード文は2行');
   // 区切って作るときの中身の一部にも入れる
   assert.deepStrictEqual(plain(g.mtgCombinedLite_(s1)).planSales.byRank.A, 70);
