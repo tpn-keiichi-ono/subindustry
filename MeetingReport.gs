@@ -361,11 +361,12 @@ function mtgReportSlide_(s, item, no) {
   el.push.apply(el, mtgReportClient_(box(0), item));
   el.push.apply(el, mtgReportStatus_(box(1), item));
   el.push.apply(el, mtgReportValue_(box(2), item));
-  // 受注月の枠は左右に分け、右半分に売上（FY26〜28。2026/11/11）
+  // 受注月の枠は左右に分け、右に年度別売上（FY26〜28。2026/11/11）。右の枠は、見出し（「年度別売上（百万）」）が1行に入る幅（半分より狭くしない）
   const month = box(3);
-  const half = (month.w - L.gap) / 2;
-  el.push.apply(el, mtgReportMonth_(Object.assign({}, month, {w: half}), item));
-  el.push.apply(el, mtgReportSales_(Object.assign({}, month, {x: month.x + half + L.gap, w: half}), item, s));
+  const salesW = Math.min(month.w - L.gap - 50, Math.max((month.w - L.gap) / 2, mtgReportHeadWidth_(o.report.salesLabel) + MTG_SLIDE.padX + 2));
+  const monthW = month.w - L.gap - salesW;
+  el.push.apply(el, mtgReportMonth_(Object.assign({}, month, {w: monthW}), item));
+  el.push.apply(el, mtgReportSales_(Object.assign({}, month, {x: month.x + monthW + L.gap, w: salesW}), item, s));
   el.push.apply(el, mtgReportScenario_(box(4), item, s.scenarioColumn));
   // 出典の行は省略しない：1行に入る大きさまで小さくする（footSize から 0.5pt ずつ minSize まで）
   const footRight = mtgReportRecord_(item.record, s.recordColumn, item.recordLinks);
@@ -490,8 +491,18 @@ function mtgReportFrame_(x, y, w, h, heading, opt) {
   const c = MTG_OPTIONS.colors;
   const o = opt || {};
   const line = 'line' in o && o.line === null ? null : o.line || c.line;
-  return mtgBox_(x, y, w, h, heading, {size: 8, bold: true, color: c.greenDark, fill: o.fill || c.white,
-    line, lineWeight: 0.75, shape: 'RECTANGLE', valign: 'TOP', spaceAbove: MTG_OPTIONS.report.headTop, role: 'report-frame'});
+  // 見出しの（）書き（「期待値（百万円）」の「（百万円）」など）は小さく（report.headNoteSize）
+  const note = String(heading || '').indexOf('（');
+  return mtgBox_(x, y, w, h, heading, Object.assign({size: 8, bold: true, color: c.greenDark, fill: o.fill || c.white,
+    line, lineWeight: 0.75, shape: 'RECTANGLE', valign: 'TOP', spaceAbove: MTG_OPTIONS.report.headTop, role: 'report-frame'},
+    note > 0 ? {spans: [{start: note, end: String(heading).length, size: MTG_OPTIONS.report.headNoteSize}]} : {}));
+}
+
+/** 枠の見出しの幅（pt。（）書きは report.headNoteSize の大きさで数える。mtgReportFrame_ と同じ） */
+function mtgReportHeadWidth_(heading) {
+  const text = String(heading || '');
+  const note = text.indexOf('（');
+  return note > 0 ? mtgTextWidth_(text.slice(0, note), 8) + mtgTextWidth_(text.slice(note), MTG_OPTIONS.report.headNoteSize) : mtgTextWidth_(text, 8);
 }
 
 /**

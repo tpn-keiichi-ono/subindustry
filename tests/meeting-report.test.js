@@ -189,10 +189,15 @@ test('報告案件のスライド：受注月の枠を左右に分け、右半�
   const slide = plain(g.mtgReportSlide_(Object.assign({}, s, {salesYears: [fy(0), fy(1), fy(2)]}), item, 1));
   assert.deepStrictEqual(byRole(slide, 'report-sales-head').map(el => el.text), ['FY' + fy(0), 'FY' + fy(1), 'FY' + fy(2)]);
   assert.deepStrictEqual(byRole(slide, 'report-sales').map(el => el.text), ['30', '55', '−'], '空の年度は「−」');
-  // 受注月と売上は同じ段で、左右に並ぶ（どちらも左の列の幅の半分ほど）
-  const frames = slide.elements.filter(el => el.text === '受注月' || el.text === '売上（百万円）');
+  // 受注月と年度別売上は同じ段で、左右に並ぶ。右の枠は見出しが1行に入る幅。見出しの（）書きは小さく
+  const frames = slide.elements.filter(el => el.text === '受注月' || el.text === '年度別売上（百万）');
   assert.strictEqual(frames.length, 2);
-  assert.ok(frames[0].y === frames[1].y && frames[1].x > frames[0].x, '左に受注月・右に売上');
+  assert.ok(frames[0].y === frames[1].y && frames[1].x > frames[0].x, '左に受注月・右に年度別売上');
+  assert.ok(g.mtgReportHeadWidth_(frames[1].text) <= frames[1].w - 14.4, '見出しは1行');
+  const R = gas.get('MTG_OPTIONS').report;
+  assert.deepStrictEqual(plain(frames[1].spans), [{start: 5, end: 9, size: R.headNoteSize}]);
+  const value = slide.elements.find(el => el.text === '期待値（百万円）');
+  assert.deepStrictEqual(plain(value.spans), [{start: 3, end: 8, size: R.headNoteSize}], '期待値の（）書きも小さく');
   // 年度別の売上の列が無いシート
   const none = plain(g.mtgReportSlide_(Object.assign({}, s, {salesYears: []}), item, 1));
   assert.deepStrictEqual(byRole(none, 'report-sales').map(el => el.text), [gas.get('MTG_OPTIONS').gapText]);
