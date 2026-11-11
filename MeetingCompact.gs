@@ -224,13 +224,13 @@ function mtgCompactOverviewSlide_(summaries, options) {
     '案件 ' + total.active + '件・' + (bySales ? span + '売上合計 ' + mtgAmount_(total.amount) + '百万円（失注除く）。\n'
       : '想定売上合計 ' + mtgAmount_(total.amount) + '百万円（全期間・失注除く）。\n') +
     'サブインダストリーはシートの順。' +
-    (bySales ? '進捗率・確定・見込は ' + fy + ' の売上（前半期＋後半期。受注月によらない）。進捗率 ＝ A＋B ÷ 計画。'
+    (bySales ? '確定・見込は' + mtgPlanMonthName_() + 'が今年度（' + period + '）の案件の ' + fy + '売上。進捗率 ＝ A＋B ÷ 計画。'
       : '進捗率・確定（A＋B）・見込（C）は今年度（' + period + '）の' + mtgPlanMonthName_() + 'の案件の想定売上（進捗率 ＝ A＋B ÷ 計画）。');
   // 見込（C）を含むページのリード文：確定＋見込の計画比
   const withCRate = ok.length && merged.plan > 0 ? Math.round(sum(merged, ['A', 'B', 'C']) / merged.plan * 100) : null;
   const leadC = '確定（A＋B）に見込（C）を足すと ' + mtgAmount_(sum(merged, ['A', 'B', 'C'])) + '百万円で、計画の ' + (withCRate == null ? '—' : withCRate + '%') +
     '（進捗率（A＋B）は ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') + '）。\n' +
-    '見込（C）は点線の枠。' + (bySales ? fy + ' の売上（前半期＋後半期。受注月によらない）。' : '') +
+    '見込（C）は点線の枠。' + (bySales ? mtgPlanMonthName_() + 'が今年度（' + period + '）の案件の ' + fy + '売上。' : '') +
     '並び・右の数字は前のページと同じ。';
   const x = S.x;
   const w = S.w;

@@ -611,7 +611,7 @@ test('状況のページの「変化のある案件」は、今ある案件（�
   assert.strictEqual(g.mtgCompactChangedNow_(plain(g.mtgCombinedLite_(s1))), 2);
 });
 
-test('状況・計画進捗（FY売上）：今年度の売上の列（前半期＋後半期。本物の P・Q列）で、棒・計画・進捗率・確定・見込を集計したページ（受注月によらない。失注は除く）', () => {
+test('状況・計画進捗（FY売上）：今年度の売上の列（前半期＋後半期。本物の P・Q列）で、棒・計画・進捗率・確定・見込を集計したページ（受注月が今年度の案件だけ。失注は除く）', () => {
   const {gas, g} = setup();
   const s1 = summarize(g, '新FMT');
   const s2 = summarize(g, '新FMT2');
@@ -655,7 +655,15 @@ test('状況・計画進捗（FY売上）：今年度の売上の列（前半期
   assert.strictEqual(amountPage.elements.find(e => e.role === 'compact-head-period').text, '（今年度）');
   assert.deepStrictEqual(amountPage.elements.filter(e => e.role === 'compact-head-period').map(e => e.text).slice(4), ['（全期間）', '（全期間）', '（全期間）', '（全期間）']);
   assert.ok(slide.elements.some(e => e.text === fy + ' の売上（前半期＋後半期）の確定（A＋B）と計画（百万円）'));
-  assert.match(leadOf(slide), new RegExp('進捗率・確定・見込は ' + fy + ' の売上（前半期＋後半期。受注月によらない）'));
+  assert.match(leadOf(slide), new RegExp('確定・見込は.+が今年度（[^）]+）の案件の ' + fy + '売上。'));
+  // 受注月が時期未定・今年度より前・来年度以降の案件は、確定・見込に入れない（計画に対する積み上げと同じ）
+  const sheet = gas.ss.getSheetByName('新FMT');
+  const col = gas.get('MTG_OPTIONS').plan.monthColumn === 'startMonth' ? 'M' : 'I';
+  g.recordDiffEdit(gas.edit(sheet, col + '3', ''));            // A社（70）：時期未定
+  g.recordDiffEdit(gas.edit(sheet, col + '4', fiscalMonth(-1)));   // B社（30）：今年度より前
+  const moved = summarize(g, '新FMT');
+  assert.deepStrictEqual([moved.planSales.byRank.A, moved.planSales.byRank.B, moved.planSales.undated.value, moved.planSales.before.value], [0, 10, 70, 30]);
+  assert.deepStrictEqual([moved.salesBridge.sureEnd, moved.salesBridge.sureStart], [10, 100], '前回比の今の確定も同じく絞る（前回は前回の受注月）');
   assert.strictEqual(slide.elements.find(e => e.role === 'lead').text.split('\n').length, 2, 'リード文は2行');
   // 区切って作るときの中身の一部にも入れる
   assert.deepStrictEqual(plain(g.mtgCombinedLite_(s1)).planSales.byRank.A, 70);

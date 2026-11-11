@@ -3930,7 +3930,7 @@ function mtgSummarize_(ss, name, context) {
   const bridge = mtgBridge_(deals, byKey, changed, changes);
   // 今年度の売上の増減と、3年度分の売上の合計（統合版（報告用）の状況・計画進捗の右の列。MeetingCompact.gs）
   const salesBridge = mtgSalesBridge_(deals, byKey, changed, changes,
-    {year: mtgFiscalYearKey_(context.now), since, history, before: before && copy.table && copy.table.salesYears.indexOf(mtgFiscalYearKey_(context.now)) >= 0 ? before : null,
+    {year: mtgFiscalYearKey_(context.now), now: context.now, since, history, before: before && copy.table && copy.table.salesYears.indexOf(mtgFiscalYearKey_(context.now)) >= 0 ? before : null,
       beforeStatus: before, removedLines});
 
   // 進行中の案件の、ステータスが同じ日数：最後に変わってから（または案件ができてから）。変わった記録が無ければ、
@@ -4674,6 +4674,9 @@ function mtgSalesBridge_(deals, byKey, changed, changes, ctx) {
   const out = {year, years, start: 0, end: 0, total: 0, sureStart: 0, sureEnd: 0};
   const sureRanks = (MTG_OPTIONS.compact && MTG_OPTIONS.compact.sureRanks) || ['A', 'B'];
   const sure = status => sureRanks.indexOf(mtgPlanRank_(status)) >= 0;
+  // 確定は、受注月が今年度の案件だけ（planSales と同じ。前回は前回の受注月で）
+  const start = mtgFiscalStart_(ctx.now || new Date());
+  const inYear = month => { const i = mtgSalesMonthIndex_(month, start); return i != null && i >= 0 && i < 12; };
   const halfKeys = ['前', '後'].map(h => year + h);
   const valueOf = halves => halfKeys.reduce((t, k) => t + ((halves || {})[k] || 0), 0);
   // 前回の時点の今年度の売上（halves は今の値・削除した行の値）
@@ -4695,14 +4698,14 @@ function mtgSalesBridge_(deals, byKey, changed, changes, ctx) {
     const value = valueOf(d.salesHalves);
     if (now) {
       out.end += value;
-      if (sure(d.status)) out.sureEnd += value;
+      if (sure(d.status) && inYear(d.planMonth)) out.sureEnd += value;
       out.total += years.reduce((t, y) => t + ((d.sales || {})[y] || 0), 0);
     }
     // 同じ名前の2行目以降は、前回も同じ値とみなす（mtgBridge_ と同じ）
     if (byKey.get(d.key) !== d) {
       if (now) {
         out.start += value;
-        if (sure(d.status)) out.sureStart += value;
+        if (sure(d.status) && inYear(d.planMonth)) out.sureStart += value;
       }
       return;
     }
@@ -4710,17 +4713,19 @@ function mtgSalesBridge_(deals, byKey, changed, changes, ctx) {
     const prev = ctx.beforeStatus ? ctx.beforeStatus.get(d.key) : null;
     const was = ctx.beforeStatus ? !!prev && inScope(prev.status) : item ? !!item.base && inScope(item.base.status) : now;
     const status = ctx.beforeStatus ? prev && prev.status : item ? item.base && item.base.status : d.status;   // 前回のステータス
+    // 前回の受注月（時点コピーの行・変化の前回の値。変化が無ければ今の受注月）
+    const month = ctx.beforeStatus ? prev && prev.planMonth : item && item.base ? mtgMonth_(item.base.monthText) : d.planMonth;
     if (was) {
       const v = before(d.key, d.salesHalves);
       out.start += v;
-      if (sure(status)) out.sureStart += v;
+      if (sure(status) && inYear(month)) out.sureStart += v;
     }
   });
   changes.filter(c => c.removed && c.base && inScope(c.base.status)).forEach(c => {
     const line = (ctx.removedLines || []).filter(r => ctx.history.root(r.key) === c.key || r.key === c.key).pop();
     const v = before(c.key, line ? line.salesHalves : null);
     out.start += v;
-    if (sure(c.base.status)) out.sureStart += v;
+    if (sure(c.base.status) && inYear(mtgMonth_(c.base.monthText))) out.sureStart += v;
   });
   return out;
 }
@@ -6744,7 +6749,8 @@ function mtgPlanRanksOnly_(p, keys) {
 
 /**
  * 今年度の売上（年度別の売上の列のうち今年度の前半期＋後半期。今は P・Q列「FY26前半期売上（百万）」「FY26後半期売上（百万）」）を、確度ごとに足したもの
- * （統合版（報告用）の「状況・計画進捗（FY26売上）」のページ）。失注を除く案件が対象で、受注月では絞らない（売上の列そのものが今年度の分）。
+ * （統合版（報告用）の「状況・計画進捗（FY26売上）」のページ）。失注を除き、受注月（plan.monthColumn）が今年度の案件が対象（2026/11/11 から。計画に対する積み上げと同じ。
+ * 時期未定・今年度より前・来年度以降は undated・before・after）。
  * 件数は今年度の売上が 0 でない案件。mtgPlanOf_ と同じ形（mtgMergePlans_ で足せる。months は空）。今年度の列が無ければ gap に理由。
  * 戻り値に year（'26'）
  */
@@ -6763,11 +6769,15 @@ function mtgSalesPlanOf_(deals, name, now, table) {
     const v = (d.sales || {})[year] || 0;
     if (!v) return;
     const rank = mtgPlanRank_(d.status);
-    if (mtgExcludedStatus_(d.status)) {
-      out.excluded.count++;
-      out.excluded.value += v;
-      out.excluded.values[rank] = (out.excluded.values[rank] || 0) + v;
-      out.excluded.counts[rank] = (out.excluded.counts[rank] || 0) + 1;
+    // 受注月（plan.monthColumn）が今年度の案件だけ（計画に対する積み上げと同じ。2026/11/11 から。時期未定・今年度より前・来年度以降は
+    // undated・before・after に分けて、確定・見込には入れない）
+    const i = mtgSalesMonthIndex_(d.planMonth, out.start);
+    const aside = mtgExcludedStatus_(d.status) ? out.excluded : i == null ? out.undated : i < 0 ? out.before : i >= 12 ? out.after : null;
+    if (aside) {
+      aside.count++;
+      aside.value += v;
+      aside.values[rank] = (aside.values[rank] || 0) + v;
+      aside.counts[rank] = (aside.counts[rank] || 0) + 1;
       return;
     }
     out.byRank[rank] += v;
@@ -6780,6 +6790,11 @@ function mtgSalesPlanOf_(deals, name, now, table) {
     });
   });
   return out;
+}
+
+/** 受注月 {y, m} の、今年度の始まり（start。mtgFiscalStart_）からの月の番号（0〜11 が今年度。受注月が無ければ null） */
+function mtgSalesMonthIndex_(month, start) {
+  return month ? mtgMonthIndex_(month) - start : null;
 }
 
 /**
