@@ -89,7 +89,8 @@ const MTG_OPTIONS = {
     fileSuffix: '_報告案件版',
     flagColumn: 'AG',                        // 報告フラグの列を足す場所（addBusinessMtgReportFlagColumn()。追跡範囲の外）
     flagWidth: 60,                           // その列の幅（px）
-    maxSize: 8,                              // 文章の字の大きさ（既定は枠の緑の見出しと同じ 8pt。長ければ minSize まで小さくする）
+    maxSize: 8,                              // 文章の字の大きさ（枠の緑の見出しと同じ 8pt まで。枠ごとに、文の量と枠の大きさで入るいちばん大きい字にする（minSize まで））
+    headTop: 3,                              // 枠の見出しの上の余白（pt。枠の線と見出しの間をあける。2026/11/11）
     minSize: 4,                              // 字を小さくする下限（報告案件のスライドでは文を省略しない。入らなければこの大きさまで小さくする）
     steps: ['創注', 'D', 'C', 'B', 'A'],   // ステータスの枠の確度の段（左から）
     newText: '（新規）',                     // 前回に無かった案件の「前回：」
@@ -8358,7 +8359,8 @@ function mtgTextStyle_(item, scale) {
 /** 段落の書式（寄せ・行間）。 */
 function mtgParagraphStyle_(item) {
   return {
-    style: {alignment: item.align || 'START', lineSpacing: item.lineSpacing || 100, spaceAbove: mtgPt_(0), spaceBelow: mtgPt_(0)},   // lineSpacing：行の間を詰める（%）
+    // lineSpacing：行の間を詰める（%）。spaceAbove：段落の上の余白（pt。報告案件の枠の見出しを枠の線から離す）
+    style: {alignment: item.align || 'START', lineSpacing: item.lineSpacing || 100, spaceAbove: mtgPt_(item.spaceAbove || 0), spaceBelow: mtgPt_(0)},
     fields: 'alignment,lineSpacing,spaceAbove,spaceBelow'
   };
 }

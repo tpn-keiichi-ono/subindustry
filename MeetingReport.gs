@@ -7,7 +7,7 @@
  *   （見出しは MTG_OPTIONS.report.title「RXシナリオ進捗における報告案件」と番号）にする。
  * - 報告案件のあとに「前回から変化のある案件」（会議サマリと同じ表。Appendix が無いので、上から7件までにせず全件を載せる。mtgMovesSlide_ の all）。
  * - 報告案件のスライドは枠の位置を固定（ひな形として同じ形）にし、中の文章の分量で字の大きさを変える
- *   （右の文章の枠は、スライドの中で同じ大きさ。MTG_OPTIONS.report の maxSize から minSize まで小さくする。どの枠も文は省略しない）。
+ *   （右の文章の枠は、枠ごとに文の量と枠の大きさで入るいちばん大きい字（MTG_OPTIONS.report の maxSize（見出しと同じ）から minSize まで）。どの枠も文は省略しない）。
  *
  * 作り方（エディタから実行）：createBusinessMtgReportSummaries()（本番）・previewBusinessMtgReportSummaries()（試作）。
  * 前の関数（createBusinessMtgSummaries()・previewBusinessMtgSummaries()）はそのまま使える。本番は、会議日ごとにどちらか一方で作る
@@ -325,7 +325,7 @@ function mtgReportLayout_() {
   const lowH = (bottom - rowY - 2 * gap) / 3;
   const leftH = [strategyH, valueH, lowH, lowH, lowH];
   return {top, bottom, gap, left, right, leftH, strategyH, valueH, rowY, rowH: bottom - rowY, rowW: (right.w - 2 * gap) / 3,
-    head: 12,    // head：枠の見出しの分（枠の上端から本文の箱の上端まで）
+    head: 12 + MTG_OPTIONS.report.headTop,    // head：枠の見出しの分（枠の上端から本文の箱の上端まで。見出しの上の余白 headTop を含む）
     prevH: 58};  // prevH：活動状況・次回アクションの枠の下の、前回の内容の帯の分（帯の上下のすき間を含む）
 }
 
@@ -337,7 +337,7 @@ function mtgReportSlide_(s, item, no) {
   const L = mtgReportLayout_();
   const el = mtgReportHeader_(item, mtgReportStaff_(item), no);
   const blank = o.blankText;
-  // 右の列：文章の枠（字の大きさはスライドの中で同じ）
+  // 右の列：文章の枠（字の大きさは枠ごとに、入るいちばん大きい字。見出しより大きくしない）
   const texts = [
     {key: 'strategy', label: o.columns.strategy, x: L.right.x, y: L.top, w: L.right.w, h: L.strategyH, fill: c.greenSoft, line: null},
     {key: 'valueCase', label: o.columns.valueCase, x: L.right.x, y: L.top + L.strategyH + L.gap, w: L.right.w, h: L.valueH},
@@ -353,8 +353,8 @@ function mtgReportSlide_(s, item, no) {
   texts.forEach((b, i) => {
     el.push(mtgReportFrame_(b.x, b.y, b.w, b.h, String(b.label).replace(/\s+/g, ''), {fill: b.fill, line: b.line}));
     el.push(mtgBox_(b.x, b.y + L.head, b.w, b.bodyH, b.text ? fit.texts[i] : blank,
-      {size: fit.size, color: b.text ? c.ink : c.faint, valign: 'TOP', role: 'report-text'}));
-    if (withPrev[b.key]) el.push.apply(el, mtgReportPrevious_(b, item, item[withPrev[b.key]], fit.size, mtgReportPrevLabel_(s)));
+      {size: fit.sizes[i], color: b.text ? c.ink : c.faint, valign: 'TOP', role: 'report-text'}));
+    if (withPrev[b.key]) el.push.apply(el, mtgReportPrevious_(b, item, item[withPrev[b.key]], fit.sizes[i], mtgReportPrevLabel_(s)));
   });
   // 左の列：先方・ステータス・期待値・受注月・RXシナリオ
   const box = k => ({x: L.left.x, y: L.top + L.leftH.slice(0, k).reduce((sum, h) => sum + h + L.gap, 0), w: L.left.w, h: L.leftH[k]});
@@ -491,7 +491,7 @@ function mtgReportFrame_(x, y, w, h, heading, opt) {
   const o = opt || {};
   const line = 'line' in o && o.line === null ? null : o.line || c.line;
   return mtgBox_(x, y, w, h, heading, {size: 8, bold: true, color: c.greenDark, fill: o.fill || c.white,
-    line, lineWeight: 0.75, shape: 'RECTANGLE', valign: 'TOP', role: 'report-frame'});
+    line, lineWeight: 0.75, shape: 'RECTANGLE', valign: 'TOP', spaceAbove: MTG_OPTIONS.report.headTop, role: 'report-frame'});
 }
 
 /**
@@ -502,10 +502,14 @@ function mtgReportFit_(boxes) {
   const R = MTG_OPTIONS.report;
   const lines = (b, size) => mtgWrap_(b.text, b.w, size, 999).length;
   const fits = (b, size) => !b.text || mtgTextHeight_(lines(b, size), size) <= b.h;
-  for (let size = R.maxSize; size >= R.minSize - 1e-9; size -= 0.5) {
-    if (boxes.every(b => fits(b, size))) return {size, texts: boxes.map(b => b.text), cut: false};
-  }
-  return {size: R.minSize, texts: boxes.map(b => b.text), cut: true};
+  // 枠ごとに、入るいちばん大きい字（maxSize = 見出しの大きさから 0.5pt ずつ。2026/11/11 から。前の版はスライドの中で同じ大きさにしていたので、
+  // 文の多い枠に合わせて、大きな枠（戦略など）の字まで小さくなっていた）
+  const sizes = boxes.map(b => {
+    for (let size = R.maxSize; size >= R.minSize - 1e-9; size -= 0.5) if (fits(b, size)) return size;
+    return R.minSize;
+  });
+  const cut = boxes.some((b, i) => !fits(b, sizes[i]));
+  return {size: Math.min.apply(null, sizes.concat([R.maxSize])), sizes, texts: boxes.map(b => b.text), cut};
 }
 
 /**

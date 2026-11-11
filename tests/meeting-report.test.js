@@ -240,7 +240,7 @@ test('報告案件版のスライド：報告案件のあとの「前回から�
   assert.deepStrictEqual(pages.slice(1), pages.slice(1).map((_, i) => String(i + 2)));
 });
 
-test('報告案件版のスライド：文章が多いと、どの枠にも入る大きさまで全部の枠を小さくする。最小でも入らなくても省略しない（全文）', () => {
+test('報告案件版のスライド：文章の字は枠ごとに、入るいちばん大きい大きさ（見出しより大きくしない）。文の多い枠だけ小さくし、最小でも入らなくても省略しない（全文）', () => {
   const long = 'あいうえおかきくけこ'.repeat(60);
   const huge = 'あいうえおかきくけこ'.repeat(200);
   const {gas, g} = setup({edits: false, deals: [Object.assign({}, DEALS[0], {strategy: long}), Object.assign({}, DEALS[2], {activity: huge, reportFlag: true})]});
@@ -249,13 +249,18 @@ test('報告案件版のスライド：文章が多いと、どの枠にも入�
   const sizeOf = sl => byRole(sl, 'report-text')[0].size;
   const R = gas.get('MTG_OPTIONS').report;
   assert.ok(sizeOf(slides[0]) < R.maxSize && sizeOf(slides[0]) >= R.minSize, '長い戦略の分だけ小さく：' + sizeOf(slides[0]));
-  assert.strictEqual(new Set(byRole(slides[0], 'report-text').map(b => b.size)).size, 1);
+  // ほかの枠（短い文）は見出しと同じ大きさのまま（文の多い枠に合わせて小さくしない。2026/11/11 から）
+  assert.ok(byRole(slides[0], 'report-text').slice(1).every(b => b.size === R.maxSize), '短い文の枠は小さくしない');
+  // 活動状況が入りきらない2枚目も、戦略の枠は見出しと同じ大きさ
+  assert.strictEqual(sizeOf(slides[1]), R.maxSize);
   assert.ok(!slides[0].cut);
   assert.ok(byRole(slides[0], 'report-text')[0].text === long, '入れば全文');
-  assert.strictEqual(sizeOf(slides[1]), R.minSize, '入らなければ最小の大きさ');
   assert.strictEqual(slides[1].cut, true);
   const activity = byRole(slides[1], 'report-text')[3];   // 戦略・価値創出・課題・活動状況・次回アクションの順
+  assert.strictEqual(activity.size, R.minSize, '入らなければ最小の大きさ');
   assert.strictEqual(activity.text, huge, '最小でも入らなくても省略しない');
+  // 枠の見出しは、枠の線から離す（段落の上の余白）
+  assert.ok(byRole(slides[0], 'report-frame').every(b => b.spaceAbove === R.headTop && R.headTop > 0));
 });
 
 test('報告案件版のスライド：チェックのある案件が無ければ「該当なし」、報告フラグの列が無ければ「データなし」の1枚', () => {
