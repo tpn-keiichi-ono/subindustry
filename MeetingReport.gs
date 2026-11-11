@@ -259,7 +259,7 @@ function mtgHomeworkSlides_(s) {
 function mtgReportCheckText_() {
   const o = MTG_OPTIONS;
   return '【報告案件版】数字のページ（サマリー〜RXシナリオ）のあとに、シートの「' + o.columns.reportFlag + '」にチェックを入れた案件を1件1枚で載せ、' +
-    'そのあとに「' + MTG_TITLES.progress + '」（全件）を載せます（期待値上位案件・Appendix は入れません）。ファイル名の後ろに「' + o.report.fileSuffix + '」が付きます。';
+    'そのあとに「' + MTG_TITLES.progress + '」（報告案件を除く全件）を載せます（期待値上位案件・Appendix は入れません）。ファイル名の後ろに「' + o.report.fileSuffix + '」が付きます。';
 }
 
 /**
@@ -274,8 +274,9 @@ function mtgReportSlides_(s) {
     o.portfolio.enabled ? mtgPortfolioSlides_(s.portfolio) : []);
   const reported = s.reported || [];
   const reports = reported.length ? reported.map((item, i) => mtgReportSlide_(s, item, i + 1)) : [mtgReportEmptySlide_(s)];
-  // 報告案件のあとに、前回から変化のある案件（Appendix ① が無いので全件を載せ、「全件は Appendix ① を参照」と書かない）
-  const moves = mtgMovesSlide_(s, false, {all: true});
+  // 報告案件のあとに、前回から変化のある案件（Appendix ① が無いので全件を載せ、「全件は Appendix ① を参照」と書かない）。
+  // 報告フラグのある案件は、それぞれのページがあるので表に載せない（2026/11/11）
+  const moves = mtgMovesSlide_(s, false, {all: true, exclude: new Set(reported.map(item => item.key))});
   // 表紙のあと、サマリーの前に前回の会議の宿題事項
   return mtgNumberSlides_(mtgSheetFrame_(s), [mtgCoverSlide_(s)].concat(mtgHomeworkSlides_(s), main, reports, moves));
 }
@@ -320,7 +321,7 @@ function mtgReportLayout_() {
   const valueH = 56;
   const rowY = top + strategyH + gap + valueH + gap;
   // 左の5つの枠の高さは右の列の段にそろえる：案件・得意先情報 = 戦略の枠、ステータス = 価値創出の枠、
-  // 期待値・受注月・RXシナリオ = 下の段（課題・活動状況・次回アクション）を3つに分けた高さ
+  // 期待値・受注月（右半分は売上）・RXシナリオ = 下の段（課題・活動状況・次回アクション）を3つに分けた高さ
   const lowH = (bottom - rowY - 2 * gap) / 3;
   const leftH = [strategyH, valueH, lowH, lowH, lowH];
   return {top, bottom, gap, left, right, leftH, strategyH, valueH, rowY, rowH: bottom - rowY, rowW: (right.w - 2 * gap) / 3,
@@ -360,7 +361,11 @@ function mtgReportSlide_(s, item, no) {
   el.push.apply(el, mtgReportClient_(box(0), item));
   el.push.apply(el, mtgReportStatus_(box(1), item));
   el.push.apply(el, mtgReportValue_(box(2), item));
-  el.push.apply(el, mtgReportMonth_(box(3), item));
+  // 受注月の枠は左右に分け、右半分に売上（FY26〜28。2026/11/11）
+  const month = box(3);
+  const half = (month.w - L.gap) / 2;
+  el.push.apply(el, mtgReportMonth_(Object.assign({}, month, {w: half}), item));
+  el.push.apply(el, mtgReportSales_(Object.assign({}, month, {x: month.x + half + L.gap, w: half}), item, s));
   el.push.apply(el, mtgReportScenario_(box(4), item, s.scenarioColumn));
   // 出典の行は省略しない：1行に入る大きさまで小さくする（footSize から 0.5pt ずつ minSize まで）
   const footRight = mtgReportRecord_(item.record, s.recordColumn, item.recordLinks);
@@ -556,6 +561,37 @@ function mtgReportClient_(b, item) {
     line(item.customer),
     line(dept)
   ])];
+}
+
+/**
+ * 受注月の枠の右半分：売上（年度別の売上の列。今年度から report.salesYears 年度分を、年度ごとに前半期＋後半期で。FY26・FY27・FY28 を縦に並べ、
+ * 左に年度・右に値）。空は「−」、シートに今年度の列が無ければ「データなし」
+ */
+function mtgReportSales_(b, item, s) {
+  const o = MTG_OPTIONS;
+  const c = o.colors;
+  const R = o.report;
+  const S = MTG_SLIDE;
+  const L = mtgReportLayout_();
+  const year = mtgFiscalYearKey_(s.now);
+  const years = Array.from({length: R.salesYears}, (_, k) => ('0' + ((Number(year) + k) % 100)).slice(-2));
+  const el = [mtgReportFrame_(b.x, b.y, b.w, b.h, R.salesLabel)];
+  const has = (s.salesYears || []).indexOf(year) >= 0;
+  if (!has) {
+    el.push(mtgBox_(b.x, b.y + L.head, b.w, b.h - L.head, o.gapText, {size: R.subSize, color: c.faint, valign: 'MIDDLE', role: 'report-sales'}));
+    return el;
+  }
+  // 年度ごとの行（左に「FY26」、右に値）。見出しの下を年度の数で等分する（行の高さは 12pt まで）
+  const top = b.y + L.head + 1;
+  const rowH = Math.min(12, (b.y + b.h - 2 - top) / years.length);
+  years.forEach((y, k) => {
+    const v = (item.sales || {})[y];
+    const ry = top + rowH * k;
+    el.push(mtgBox_(b.x, ry, b.w / 2, rowH, 'FY' + y, {size: R.subSize, color: c.muted, valign: 'MIDDLE', role: 'report-sales-head'}));
+    el.push(mtgBox_(b.x + b.w / 2 - S.padX, ry, b.w / 2 + S.padX, rowH, v == null ? '−' : mtgAmount_(v),
+      {size: R.boxSize, bold: v != null, color: v == null ? c.faint : c.ink, align: 'END', valign: 'MIDDLE', role: 'report-sales'}));
+  });
+  return el;
 }
 
 /** 左の列の2つ目：ステータス（今のステータス・前回・確度の段（創注・D・C・B・A。今は緑・前回は薄い緑）） */

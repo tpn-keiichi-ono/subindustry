@@ -102,6 +102,9 @@ const MTG_OPTIONS = {
     recordWidth: 200,                        // 右下の「商談記録：」の幅の上限（pt。文字に合わせて狭くし、残りを出典の行に使う）
     linkLabel: '格納先リンク',               // 商談記録のリンクの文字（商談記録のセルのリンクへのハイパーリンク）
     clientLabel: '案件・得意先情報',         // 左の列の1つ目の枠の見出し（案件名・得意先名・先方部門／先方担当役職）
+    // 受注月の枠の右半分：年度別の売上の列（portfolio.salesHeader。FY26〜28 の前半期＋後半期）を年度ごとに（2026/11/11）。salesYears は今年度から何年度分
+    salesLabel: '売上（百万円）',
+    salesYears: 3,
     staffWidth: 180,                         // 右上の「担当営業：…」「BX担当：…」（2行）の幅の上限（pt）
     noneText: '報告フラグにチェックの入った案件がありません（シートの「報告フラグ」にチェックを入れた案件を、1件1枚で載せます）'
   },
@@ -4049,6 +4052,7 @@ function mtgSummarize_(ss, name, context) {
     scenarioColumn: !!table.has.scenario,
     scenarioAmountColumn: !!table.has.scenarioAmount,
     reportColumn: !!table.has.reportFlag,
+    salesYears: table.salesYears || [],   // 年度別の売上の列のある年度（下2桁。報告案件の「売上」の枠。MeetingReport.gs）
     // シナリオ見込額（サービスパッケージ合算。失注除く）の合計：今と、前回の時点コピーの値（コピーと比べないときは null）。報告案件版のサマリー
     scenarioTotal: {end: mtgSum_(counted, 'scenarioAmount'),
       start: copy && copy.table ? mtgSum_(copy.table.deals.filter(d => !mtgExcludedStatus_(d.status)), 'scenarioAmount') : null},
@@ -7320,13 +7324,18 @@ function mtgBarChart_(title, rows, x, y, w, max, rowH, empty, labelW, gap) {
  */
 function mtgMovesSlide_(s, withAppendix, options) {
   const everything = !!(options && options.all);
+  // options.exclude：載せない案件のキー（報告案件版：報告フラグのある案件は、それぞれのページがあるので表から外す。2026/11/11）
+  const exclude = options && options.exclude || null;
   // 全件の一覧の場所：この資料の Appendix ①（統合版は Appendix を入れないので、各サブインダストリーの資料の Appendix ①）
   const all = everything ? '' : withAppendix === false ? '全件は各サブインダストリーの資料の Appendix ① を参照。' : '全件は Appendix ① を参照。';
   const c = MTG_OPTIONS.colors;
   const S = MTG_SLIDE;
   const k = s.kpi;
   const lack = s.gaps || {};
-  const moves = s.changes.filter(ch => ch.category !== 'updated');
+  const changed = s.changes.filter(ch => ch.category !== 'updated');
+  const moves = exclude ? changed.filter(ch => !exclude.has(ch.key)) : changed;
+  const excluded = changed.length - moves.length;
+  const exceptNote = excluded ? '（報告案件 ' + excluded + '件を除く）' : '';
   // 列：得意先／案件名・シナリオ（番号だけ）・ステータス・期待値・受注月・活動状況・先方部門・先方役職（2026/11/04 に責任者の列を外し、シナリオと得意先の部署・役職を足した。
   // 担当の名前は出さない）。ステータスの列は「C-稟議対応中(50%) ▶」「B-クロージング中(70%)」が1行ずつ入る幅。残りは活動状況
   const columns = mtgColumns_([116, 52, 126, 60, 76, 122, 70, 54], 5);   // シナリオ・先方役職は「01-04」・見出しが1行に入る幅。期待値・受注月は前と同じ幅
@@ -7353,8 +7362,8 @@ function mtgMovesSlide_(s, withAppendix, options) {
     top.push(ch);
   });
   const lead = lack.changes ? mtgChangedLabel_(s) + 'は' + MTG_OPTIONS.gapText + '（' + lack.changes + '）。'
-      : (moves.length ? mtgChangedLabel_(s) + 'は ' + moves.length + '件' + mtgUpdatedNote_(s) + '。'
-      : mtgPeriodShort_(s) + '、ステータス・期待値・受注月・活動状況に変化のある案件なし' + mtgUpdatedNote_(s) + '。') +
+      : (moves.length ? mtgChangedLabel_(s) + 'は ' + moves.length + '件' + exceptNote + mtgUpdatedNote_(s) + '。'
+      : mtgPeriodShort_(s) + '、ステータス・期待値・受注月・活動状況に変化のある案件なし' + exceptNote + mtgUpdatedNote_(s) + '。') +
       (moves.length > top.length ? '\n今回のステータスの順（確度 A → 創注 → 失注・保留・削除）に ' + top.length + '件を掲載。' + all
         : k.updated && all ? '\n' + all : '');
   if (!top.length) {
