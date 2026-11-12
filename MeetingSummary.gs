@@ -154,6 +154,8 @@ const MTG_OPTIONS = {
     fileSuffix: '_報告用',
     // 全体サマリだけ（createBusinessMtgReportingOverview()。変化のあった案件のページを作らない確かめ用）のファイル名の後ろ（fileSuffix の後ろに足す）
     overviewSuffix: '_全体サマリ',
+    // 変化のあった案件だけ（createBusinessMtgReportingChanges()。表紙と変化のあった案件のページだけ）のファイル名の後ろ
+    changesSuffix: '_変化のあった案件',
     planScale: 1.4,
     planLine: {color: '#808080', alpha: 0.6, weight: 1.25},
     tableMargin: 12,
@@ -165,6 +167,10 @@ const MTG_OPTIONS = {
     // 上・下・右の3辺だけに引く（左の辺は確定の棒との境目なので引かない。点線の枠が B の端に重なって、つなぎ目が乱れて見えないように）
     prospect: {alpha: 0.3, line: '#548235', lineWeight: 1, dashStyle: 'DOT'},
     sureLabel: '確定（A＋B）',
+    // 状況・計画進捗（FY26〜28売上）のページ（mtgCompactOutlookSlide_。2026/11/12）：今年度の売上の状況・計画進捗の2枚のあとに入れる（salesPage のとき）。
+    // outlookRanks：棒に積み上げる確度と、右の「全体合計（A〜D）」の確度
+    outlookPage: true,
+    outlookRanks: ['A', 'B', 'C', 'D'],
     // 集計の元（2026/11/10 から今年度の売上（FY前半期＋後半期の列）を元にする）：
     //   salesPage：今年度の売上で集計したページ（状況・計画進捗 2枚・計画に対する積み上げ 2枚）を入れる。変化のあった案件の金額・並びも今年度の売上
     //   amountPages：想定売上で集計したページ（同じ4枚）も入れる（参考。既定は入れない）。salesPage が false なら、想定売上のページだけにする
@@ -2655,8 +2661,10 @@ function mtgDeckJob_(job) {
       message: mtgCombinedMessage_, front: mtgCombinedFrontCount_};
   }
   if (job.kind === 'compact') {
-    return {label: mtgCompactLabel_(job.overview), again: job.overview ? 'createBusinessMtgReportingOverview()' : 'createBusinessMtgReportingSummary()',
-      run: mtgCompactRun_, message: mtgCompactMessage_, front: mtgCompactFrontCount_};
+    const part = mtgCompactJobPart_(job);
+    return {label: mtgCompactLabel_(part), again: part === 'overview' ? 'createBusinessMtgReportingOverview()'
+      : part === 'changes' ? 'createBusinessMtgReportingChanges()' : 'createBusinessMtgReportingSummary()',
+      run: mtgCompactRun_, message: mtgCompactMessage_, front: () => mtgCompactFrontCount_(part)};
   }
   return null;
 }
@@ -4070,6 +4078,7 @@ function mtgSummarize_(ss, name, context) {
     planAmount: mtgPlanOf_(deals, name, context.now, table.has, 'amount'),   // 想定売上の積み上げ（統合版（報告用）。MeetingCompact.gs）
     planSales: mtgSalesPlanOf_(deals, name, context.now, table),             // 今年度の売上（FY前半期＋後半期の列）の確度別（統合版（報告用））
     planSalesByMonth: mtgSalesPlanByMonthOf_(deals, name, context.now, table),   // 今年度の売上の合計を受注月で積み上げたもの（統合版（報告用））
+    salesOutlook: mtgSalesOutlookOf_(deals, name, context.now, table),          // FY26〜28 の売上の確度別（統合版（報告用）の FY26〜28 のページ）
     portfolio: mtgPortfolioWithPrevious_(mtgPortfolioOf_(deals, context.now, table, statusTable), copy, context, statusTable),
     changes,
     stalled,
@@ -4971,7 +4980,7 @@ function mtgCombinedLite_(s) {
   return JSON.parse(JSON.stringify({name: s.name, dummy: s.dummy || 0, first: s.first || false, kpi: s.kpi, gaps: s.gaps || {},
     bridge: {start: s.bridge.start, end: s.bridge.end, startCount: s.bridge.startCount, endCount: s.bridge.endCount,
       amountStart: s.bridge.amountStart, amountEnd: s.bridge.amountEnd}, salesBridge: s.salesBridge || null, plan: s.plan || null, planAmount: s.planAmount || null, planSales: s.planSales || null,
-    planSalesByMonth: s.planSalesByMonth || null,
+    planSalesByMonth: s.planSalesByMonth || null, salesOutlook: s.salesOutlook || null,
     changedNow: s.changes ? mtgCompactChangedNow_(s) : null,   // 変化のある案件のうち今ある案件（統合版（報告用）の状況のページ）
     previous: prev ? {date: prev.date, cutoff: prev.cutoff, baseline: !!prev.baseline, chosen: !!prev.chosen} : null}));
 }
@@ -6797,6 +6806,45 @@ function mtgSalesPlanOf_(deals, name, now, table) {
       const hv = (d.salesHalves || {})[year + h.key] || 0;
       h.values[rank] = (h.values[rank] || 0) + hv;
       h.total += hv;
+    });
+  });
+  return out;
+}
+
+/**
+ * 今年度と来年度の売上の確度別と、3年度分（今年度から）の確度 A〜D の売上の合計（統合版（報告用）の「状況・計画進捗（FY26〜28売上）」のページ。2026/11/12）。
+ * 対象は失注を除く案件。byYear[年度] = {A: 売上, B: …}（確度は compact.outlookRanks）：
+ * - 今年度（FY26）：受注月（plan.monthColumn）が今年度の案件の、今年度の売上（planSales の確定・見込と同じ）
+ * - 来年度（FY27）：受注月が今年度か来年度の案件の、来年度の売上（今年度に受注して来年度に売上が立つ案件も入れる）
+ * 受注月が空・範囲の外の案件は入れない。all は、確度 A〜D の案件の3年度分の売上の合計（受注月によらない。状況・計画進捗の「売上合計」と同じ数え方で、確度だけ絞る）。
+ * plan は計画（mtgPlanAmount_）。今年度の売上の列・受注月の列が無ければ gap に理由（mtgSalesPlanOf_ と同じ）
+ * {year: '26', years: ['26', '27', '28'], plan, byYear: {'26': {A, B, C, D}, '27': {…}}, all, gap}
+ */
+function mtgSalesOutlookOf_(deals, name, now, table) {
+  const o = MTG_OPTIONS;
+  const year = mtgFiscalYearKey_(now);
+  const years = [0, 1, 2].map(k => ('0' + ((Number(year) + k) % 100)).slice(-2));
+  const ranks = (o.compact && o.compact.outlookRanks) || ['A', 'B', 'C', 'D'];
+  const zero = () => ranks.reduce((m, k) => (m[k] = 0, m), {});
+  const out = {year, years, plan: mtgPlanAmount_(name), byYear: {[years[0]]: zero(), [years[1]]: zero()}, all: 0, gap: ''};
+  const has = (table.salesYears || []).indexOf(year) >= 0;
+  const noMonth = table.has && !table.has[o.plan.monthColumn];
+  out.gap = !has ? 'シートに「FY' + year + '前半期売上」「FY' + year + '後半期売上」の列が無い'
+    : noMonth ? 'シートに「' + String(o.columns[o.plan.monthColumn]).replace(/\s+/g, '') + '」の列が無い' : '';
+  if (out.gap) return out;
+  const start = mtgFiscalStart_(now);
+  // 年度ごとの受注月の範囲（今年度の始まりからの月の番号）：今年度は 0〜11、来年度は 0〜23
+  const spans = [[years[0], 12], [years[1], 24]];
+  deals.forEach(d => {
+    if (mtgExcludedStatus_(d.status)) return;
+    const rank = mtgPlanRank_(d.status);
+    if (ranks.indexOf(rank) < 0) return;
+    const sales = d.sales || {};
+    out.all += years.reduce((t, y) => t + (sales[y] || 0), 0);
+    const i = mtgSalesMonthIndex_(d.planMonth, start);
+    if (i == null || i < 0) return;
+    spans.forEach(([y, end]) => {
+      if (i < end) out.byYear[y][rank] += sales[y] || 0;
     });
   });
   return out;

@@ -892,8 +892,12 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
 削除した行は `mtgParseRemoved_` の `salesHalves`。想定売上のページ（`amountPages`）の右の列は、前と同じ全期間の想定売上合計と、その前回比。
 
 統合版の「別バージョン」として、数字の要点と変化のあった案件だけの資料を、別の関数 `createBusinessMtgReportingSummary()` で作ります（統合版の関数・ページは変えない）。
-全体サマリだけ（前のページ）を作る `createBusinessMtgReportingOverview()` は、同じ画面を `final: false` で開き、仕事に `overview: true` を入れる（`mtgCompactRun_` は
-変化のあった案件のページを足さずに中身（`mtgCombinedLite_`）だけを残し、仕上げで会議のフォルダに格納しない。ファイル名の後ろに `compact.overviewSuffix`）。
+全体サマリだけ（前のページ）を作る `createBusinessMtgReportingOverview()` は、同じ画面を `final: false` で開き、仕事に `part: 'overview'` を入れる（`mtgCompactRun_` は
+変化のあった案件のページを足さずに中身（`mtgCombinedLite_`）だけを残し、仕上げで会議のフォルダに格納しない。ファイル名の後ろに `compact.overviewSuffix`。
+前の版で保存した仕事の `overview: true` も同じに読む（`mtgCompactJobPart_`））。
+変化のあった案件だけを作る `createBusinessMtgReportingChanges()`（2026/11/12）は、同じ画面を `final: 'changes'` で開き（画面の `data-final` が `'changes'`。
+サーバーには `FINAL_ARG` として `'changes'` を渡し、`mtgCompactPart_` で `part: 'changes'` にする）、前のページは表紙だけ（`mtgCompactFrontCount_('changes')` が 1・
+`mtgCompactFront_(…, 'changes')`）。会議のフォルダには格納しない。ファイル名の後ろに `compact.changesSuffix`（`_変化のあった案件`）。
 
 - 並び（`mtgCompactSlides_`）：表紙（統合版と同じひな形。見出しの下は `compact.coverWord`「報告資料」。`mtgCombinedCover_` の docWord）→
   全サブインダストリーの状況・計画進捗（`mtgCompactOverviewSlide_`）→ 同じ形で今年度の売上の列（年度別の売上の列のうち今年度の前半期＋後半期。今は P・Q列）で
@@ -908,6 +912,11 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
   `mtgPlanSlide_` の月別の図にする（`mtgSalesPlanByMonthOf_`・`summary.planSalesByMonth`。今年度の売上がある案件だけ）。`'half'` は `mtgSalesPlanSlide_`：前半期 → 後半期の滝の図・合計・計画・差、参考に失注。
   半期ごとの値は `deal.salesHalves`（「26前」「26後」）・`planSales.halves`、足すのは `mtgMergeSalesPlans_`。`compact.salesPage` のとき）→ 変化のあった案件：{サブインダストリー}（`mtgCompactChangeSlides_`。`DIFF_RULES` の順）。
   目次・統合版の「全サブインダストリーの状況」・「計画に対する積み上げ（サブインダストリー別）」・各サブインダストリーの資料のページは入れない。
+  今年度の売上の2枚のあとに、状況・計画進捗（FY26〜28売上）（`mtgCompactOutlookSlide_`。2026/11/12。`compact.salesPage` かつ `compact.outlookPage` のとき）：
+  横棒は今年度の売上（受注月が今年度の案件）を確度 A〜D（`compact.outlookRanks`）で積み上げ（棒の中に値・右に合計）と計画の点線。
+  右の列は計画・進捗率（A＋B）・確定（A＋B）（FY26）・確定（A＋B）（FY27。受注月が FY26〜27 の案件の FY27 の売上）・確定 合計（FY26＋27）・見込（C）（FY26・FY27）・
+  全体合計（A〜D）（FY26〜28。確度 A〜D の案件の3年度分の売上。受注月によらない）。件数は出さない。中身は `summary.salesOutlook` = `mtgSalesOutlookOf_`
+  （{year, years, plan, byYear: {'26': {A, B, C, D}, '27': {…}}, all, gap}。`mtgCombinedLite_` にも入れる）。売上・受注月の列が無いシートは「データなし」、合計は ※。
 - 状況・計画進捗は、統合版の「計画に対する積み上げ（サブインダストリー別）」の図を土台に、「全サブインダストリーの状況」の数字をまとめたもの：
   - 横棒は確定（確度 A・B）だけを積み上げる（`plan.byRank`。棒の中に白い字で値、入らなければ棒の右に「A 36」）。凡例は棒の上に A・B。
   - 計画線は計画の位置に透明度のあるグレーの点線（`compact.planLine`。Slides API の線の `solidFill.alpha`）。線の上に見出し「計画」（位置が近い線は1つにまとめる）。

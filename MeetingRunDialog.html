@@ -99,7 +99,7 @@
     }
   </style>
 </head>
-<!-- data-kind：'business' 会議サマリ・'report' 報告案件版・'combined' 統合版・'compact' 統合版（報告用）・'service' RX Service Meeting。data-final：本番なら true（MeetingSchedule.gs の mschOpenRunDialog_ が入れる） -->
+<!-- data-kind：'business' 会議サマリ・'report' 報告案件版・'combined' 統合版・'compact' 統合版（報告用）・'service' RX Service Meeting。data-final：本番なら true（MeetingSchedule.gs の mschOpenRunDialog_ が入れる。統合版（報告用）の変化のあった案件だけは 'changes'） -->
 <body data-kind="<?= kind ?>" data-final="<?= final ?>">
   <div class="loading" id="loading" role="status" aria-live="polite">
     <div class="spinner"></div>
@@ -177,6 +177,9 @@
     const $ = id => document.getElementById(id);
     const KIND = document.body.dataset.kind;
     const FINAL = document.body.dataset.final === 'true';
+    // 統合版（報告用）の変化のあった案件だけ（createBusinessMtgReportingChanges()）。サーバーには final の代わりに 'changes' を渡す（FINAL_ARG）
+    const CHANGES = KIND === 'compact' && document.body.dataset.final === 'changes';
+    const FINAL_ARG = CHANGES ? 'changes' : FINAL;
     const MANUAL = '__manual__';
     const TIME = '__time__';
     let data = null;
@@ -236,9 +239,11 @@
       $('dot').style.background = d.color;
       $('title').textContent = d.title;
       // 統合版（報告用）の FINAL でないものは、全体サマリだけ（変化のあった案件のページを作らない確かめ用）
-      $('mode').textContent = KIND === 'compact' && !FINAL ? '全体サマリだけ（変化のあった案件のページは作りません）' : FINAL ? '本番（会議日を記録します）' : '試作（会議日は記録しません）';
+      $('mode').textContent = CHANGES ? '変化のあった案件だけ（状況・計画進捗と計画に対する積み上げのページは作りません）'
+        : KIND === 'compact' && !FINAL ? '全体サマリだけ（変化のあった案件のページは作りません）' : FINAL ? '本番（会議日を記録します）' : '試作（会議日は記録しません）';
       $('mode').classList.toggle('final', FINAL);
-      $('run').textContent = KIND === 'compact' && !FINAL ? '全体サマリを作成する' : FINAL ? '本番として作成する' : '試作を作成する';
+      $('run').textContent = CHANGES ? '変化のあった案件を作成する'
+        : KIND === 'compact' && !FINAL ? '全体サマリを作成する' : FINAL ? '本番として作成する' : '試作を作成する';
       // 会議日程（会議日の新しい順。初めは今日以降でいちばん近い会議日）
       const select = $('meeting');
       const keep = select.value;
@@ -370,7 +375,7 @@
           if (d.run && d.run.status === 'running') waitRun(d.run.started);
         })
         .withFailureHandler(failLoading)
-        .getMeetingRunData(KIND, FINAL);
+        .getMeetingRunData(KIND, FINAL_ARG);
     }
 
     // 直前の「作成する」の結果を、選ぶ画面の上に出す（画面が読み込み直されると初めの画面に戻るため。作り終えてから30分のあいだ）
@@ -417,7 +422,7 @@
           $('importResult').hidden = false;
         })
         .withFailureHandler(e => { idle(); showError('error', e); })
-        .importMeetingSchedulesFromDialog(KIND, FINAL);
+        .importMeetingSchedulesFromDialog(KIND, FINAL_ARG);
     }
 
     function check() {
@@ -437,7 +442,7 @@
           show('confirm');
         })
         .withFailureHandler(e => { idle(); showError('error', e); })
-        .checkMeetingRun(KIND, FINAL, meetingValue(), pickedSheets(), pointValue(), $('cancelJob').checked);
+        .checkMeetingRun(KIND, FINAL_ARG, meetingValue(), pickedSheets(), pointValue(), $('cancelJob').checked);
     }
 
     function run() {
@@ -462,7 +467,7 @@
             .withFailureHandler(() => { idle(); showError('confirmError', e); })
             .getMeetingRunState(KIND);
         })
-        .runMeetingMaterials(KIND, FINAL, meetingValue(), pickedSheets(), $('cancelJob').checked, pointValue(), $('overwrite').checked);
+        .runMeetingMaterials(KIND, FINAL_ARG, meetingValue(), pickedSheets(), $('cancelJob').checked, pointValue(), $('overwrite').checked);
     }
 
     // 知らせの文の URL をリンクにする（文字は textContent で入れる）

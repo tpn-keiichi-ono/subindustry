@@ -18,6 +18,7 @@ const RUNS = {
   createBusinessMtgCombinedSummary: ['combined', true],
   createBusinessMtgReportingSummary: ['compact', true],
   createBusinessMtgReportingOverview: ['compact', false],
+  createBusinessMtgReportingChanges: ['compact', 'changes'],
   createServiceMtgSummaries: ['service', true],
   previewServiceMtgSummaries: ['service', false]
 };
@@ -62,7 +63,7 @@ function emulate(gas, kind, final) {
     gas.alerts.push({title: 'MeetingRunDialog', message: check.error});
     return;
   }
-  if (final) {
+  if (final === true) {   // 画面は本番（data-final が true）のときだけ「作成してよろしいですか？」と確かめる
     gas.alerts.push({title: 'MeetingRunDialog', message: check.text});
     if (gas.confirmAnswer !== 'YES') return;
   }
