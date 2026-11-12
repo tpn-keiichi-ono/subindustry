@@ -74,8 +74,9 @@ function mtgCompactFrontCount_(part) {
   if (part === 'changes') return 1;
   const C = MTG_OPTIONS.compact;
   const kinds = (C.salesPage ? 1 : 0) + (mtgCompactAmountOn_() ? 1 : 0);
-  // 売上のページを FY26〜28 のページにする（outlookPage）ときは、状況・計画進捗が1枚（計画に対する積み上げは同じ2枚）
-  return 1 + kinds * (MTG_OPTIONS.plan.enabled ? 4 : 2) - (C.salesPage && C.outlookPage ? 1 : 0);
+  // 売上のページを FY26〜28 のページにする（outlookPage）ときは、状況・計画進捗が1枚で、計画に対する積み上げは FY26だけの2枚と FY26〜28 の2枚
+  const outlook = C.salesPage && C.outlookPage ? (MTG_OPTIONS.plan.enabled ? 2 : 0) - 1 : 0;
+  return 1 + kinds * (MTG_OPTIONS.plan.enabled ? 4 : 2) + outlook;
 }
 
 /** 想定売上で集計したページを入れるか（compact.amountPages。今年度の売上のページを入れないときは、想定売上のページだけにする） */
@@ -151,22 +152,26 @@ function mtgCompactFront_(summaries, meeting, final, now, part) {
     if (merged && C.salesPage) {
       // 売上の列が無いシートは除いて足す（どのシートにも無ければ「データなし」）
       const pick = list => (list.some(x => !x.gap) ? list.filter(x => !x.gap) : list.slice(0, 1));
-      if (C.salesPlanBy === 'half' && !C.outlookPage) {
+      // 案件の今年度の売上の合計を、受注月の月に置いて積み上げたもの（FY26〜28 のページにも使う）
+      const byMonth = mtgMergePlans_(pick(summaries.map(s => s.planSalesByMonth || mtgSalesPlanByMonthOf_([], s.name, now, {}))));
+      byMonth.year = byMonth.year || mtgFiscalYearKey_(now);
+      const fy = 'FY' + byMonth.year;
+      const measure = fy + '売上';
+      // FY26〜28 のページを入れる（outlookPage）ときは、FY26だけのページのタイトルに「（FY26売上）」を付けて見分ける（2026/11/12）
+      const salesTitles = C.outlookPage ? {sales: T + '（' + measure + '）', salesSure: T + '（' + measure + '）：' + C.sureLabel} : titles;
+      if (C.salesPlanBy === 'half') {
         const sales = mtgMergeSalesPlans_(pick(summaries.map(s => s.planSales || mtgSalesPlanOf_([], s.name, now, {}))));
-        plan.push(mtgSalesPlanSlide_(sales, o.combined.name, {title: titles.sales}), mtgSalesPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), o.combined.name,
-          {only: C.sureRanks, label: C.sureLabel, title: titles.salesSure}));
+        plan.push(mtgSalesPlanSlide_(sales, o.combined.name, {title: salesTitles.sales}), mtgSalesPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), o.combined.name,
+          {only: C.sureRanks, label: C.sureLabel, title: salesTitles.salesSure}));
       } else {
         // 案件の今年度の売上の合計を、受注月の月に置いて積み上げる（想定売上の積み上げと同じ形）
-        const sales = mtgMergePlans_(pick(summaries.map(s => s.planSalesByMonth || mtgSalesPlanByMonthOf_([], s.name, now, {}))));
-        sales.year = sales.year || mtgFiscalYearKey_(now);
-        const fy = 'FY' + sales.year;
-        const measure = fy + '売上';
-        // FY26〜28 のページ（outlookPage）：今年度の四半期と来年度以降の半期を続けて積み上げる2枚（全確度・確定（A＋B））
-        if (C.outlookPage) {
-          plan.push(mtgCompactPlanYearsSlide_(sales, summaries, now), mtgCompactPlanYearsSlide_(sales, summaries, now, {only: C.sureRanks, label: C.sureLabel}));
-        } else plan.push(mtgPlanSlide_(sales, now, o.combined.name, {measure, titleNote: measure, title: titles.sales}),
-          mtgPlanSlide_(mtgPlanRanksOnly_(sales, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure, titleNote: measure,
-            title: titles.salesSure}));
+        plan.push(mtgPlanSlide_(byMonth, now, o.combined.name, {measure, titleNote: measure, title: salesTitles.sales}),
+          mtgPlanSlide_(mtgPlanRanksOnly_(byMonth, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure, titleNote: measure,
+            title: salesTitles.salesSure}));
+      }
+      // FY26〜28 のページ（outlookPage）：FY26だけの2枚のあとに、今年度の四半期と来年度以降の半期を続けて積み上げる2枚（A〜D・確定（A＋B））
+      if (C.outlookPage) {
+        plan.push(mtgCompactPlanYearsSlide_(byMonth, summaries, now), mtgCompactPlanYearsSlide_(byMonth, summaries, now, {only: C.sureRanks, label: C.sureLabel}));
       }
     }
     if (merged && amountOn) {
@@ -187,7 +192,7 @@ function mtgCompactFront_(summaries, meeting, final, now, part) {
 /**
  * 全サブインダストリーの状況・計画進捗（FY26〜28売上）（2026/11/12）：今年度の売上の状況・計画進捗の2枚のあとのページ。
  * 横棒は今年度の売上（受注月が今年度の案件）を確度 A〜D（compact.outlookRanks）で積み上げ（棒の中に値。右に合計）、計画の位置に点線（compact.planLine）。
- * 右の列：計画・進捗率（A＋B）・確定（A＋B）・見込（C）（FY26）｜売上（FY27）・売上（FY28）（受注月・確度によらない）｜全体合計（FY26 の A〜D ＋ FY27 ＋ FY28）。
+ * 右の列：計画・進捗率（A＋B）・確定（A＋B）・見込（C）・見込（D）（FY26）｜売上（FY27）・売上（FY28）（受注月・確度によらない）｜全体合計（FY26 の A〜D ＋ FY27 ＋ FY28）。
  * 件数は出さない。並びはシートの順（ほかのページと同じ）、いちばん下に合計。中身は summary.salesOutlook
  * （mtgSalesOutlookOf_）。売上・受注月の列が無いシートは、棒の場所に「データなし」と理由（合計はそのシートを除いて ※）
  */
@@ -240,6 +245,7 @@ function mtgCompactOutlookSlide_(summaries) {
   // 列：今年度（計画・進捗率・確定（A＋B）・見込（C））｜来年度・再来年度の売上（受注月・確度によらない）｜全体合計
   const cols = [{key: 'plan', label: '計画', period: '（' + fy(year) + '）', w: 40}, {key: 'rate', label: '進捗率（A＋B）', period: '（' + fy(year) + '）', w: 56},
     {key: 'ab0', label: sureWord, period: '（' + fy(year) + '）', w: 56}, {key: 'c0', label: '見込（C）', period: '（' + fy(year) + '）', w: 50},
+    {key: 'd0', label: '見込（D）', period: '（' + fy(year) + '）', w: 50},
     {key: 'y1', label: '売上', period: '（' + fy(next) + '）', w: 48}, {key: 'y2', label: '売上', period: '（' + fy(last) + '）', w: 48},
     {key: 'all', label: '全体合計', period: '（' + fy(year) + '〜' + last + '）', w: 56}];
   const colsW = cols.reduce((t, col) => t + col.w, 0);
@@ -321,7 +327,7 @@ function mtgCompactOutlookSlide_(summaries) {
     const amount = v => (none ? G : mtgAmount_(v) + mark);
     const rate = none ? null : rateOf(p);
     const values = {plan: amount(p.plan || 0), rate: rate == null ? '—' : Math.round(rate) + '%', ab0: amount(sumOf(p, year, sure)),
-      c0: amount(sumOf(p, year, ['C'])), y1: amount(laterOf(p, next)), y2: amount(laterOf(p, last)), all: amount(p.all || 0)};
+      c0: amount(sumOf(p, year, ['C'])), d0: amount(sumOf(p, year, ['D'])), y1: amount(laterOf(p, next)), y2: amount(laterOf(p, last)), all: amount(p.all || 0)};
     cols.forEach(col => {
       const text = values[col.key];
       const gap = text === G;
