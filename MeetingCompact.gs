@@ -369,7 +369,7 @@ function mtgCompactPlanYearsSlide_(sales, summaries, now, options) {
   const thisTotal = totalOf(thisValues);
   // 来年度・再来年度：半期ごとの売上（受注月・確度によらない。確定（A＋B）のページも同じ値。売上の列が無い・受注月の列が無いシートは除く）。
   // 確度で分けず、年度・半期ごとの色（compact.laterColors：年度ごとに色味を変え、前半期は濃く・後半期は薄く）。凡例は「FY27前」など
-  const colors = C.laterColors || [['#2E75B6', '#9DC3E6'], ['#C55A11', '#F4B183']];
+  const colors = C.laterColors || [['#2E75B6', '#9DC3E6'], ['#6F3FA6', '#C0A3E0']];
   const outlooks = summaries.map(sm => sm.salesOutlook).filter(x => x && !x.gap && x.halves);
   const later = [yy(1), yy(2)].reduce((list, y, k) => list.concat(['前', '後'].map((h, n) => {
     const key = 'FY' + y + h;
