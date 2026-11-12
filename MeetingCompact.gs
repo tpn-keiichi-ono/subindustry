@@ -350,9 +350,15 @@ function mtgCompactPlanYearsSlide_(sales, summaries, now, options) {
   const C = o.compact;
   const only = options && options.only;
   const label = (options && options.label) || C.sureLabel;
-  const keys = o.plan.ranks.map(r => r.key).concat([o.plan.otherLabel]).filter(k => !only || only.indexOf(k) >= 0);
+  // 今年度の分の確度：確定（A＋B）のページは only、ほかは状況・計画進捗（FY26〜28売上）と同じ A〜D（compact.outlookRanks。創注・未設定は除く。
+  // 累計を状況・計画進捗の全体合計とそろえるため。2026/11/12）
+  const outlookKeys = C.outlookRanks || ['A', 'B', 'C', 'D'];
+  const keys = o.plan.ranks.map(r => r.key).concat([o.plan.otherLabel]).filter(k => (only || outlookKeys).indexOf(k) >= 0);
   const ranks = o.plan.ranks.concat([{key: o.plan.otherLabel, color: o.plan.otherColor}]).filter(r => keys.indexOf(r.key) >= 0);
-  const p = only ? mtgPlanRanksOnly_(sales, only) : sales;
+  const p = mtgPlanRanksOnly_(sales, keys);
+  const rangeWord = keys[0] + '〜' + keys[keys.length - 1];
+  // 除いた確度（「創注・未設定」）
+  const dropped = o.plan.ranks.map(r => r.key).concat([o.plan.otherLabel]).filter(k => keys.indexOf(k) < 0);
   const year = Number(p.year || mtgFiscalYearKey_(now));
   const yy = k => ('0' + ((year + k) % 100)).slice(-2);
   const pick = values => keys.reduce((m, k) => (values && values[k] ? (m[k] = values[k], m) : m), {});
@@ -467,15 +473,13 @@ function mtgCompactPlanYearsSlide_(sales, summaries, now, options) {
   valueLabel(bx, base - grand * k, mtgAmount_(grand));
   axis(bx, '累計', span);
   el.push({type: 'line', x, y: base, w, h: 0, color: c.line, weight: 0.75});
-  const start = mtgMonthOf_(p.start);
-  const end = mtgMonthOf_(p.start + 11);
-  const period = String(start.y).slice(2) + '/' + start.m + '〜' + String(end.y).slice(2) + '/' + end.m;
-  const lead = '今年度（' + period + '）の' + word + ' ' + fy + '売上の積み上げは ' + mtgAmount_(thisTotal) + '百万円' +
+  // 確定（A＋B）のページでないときは、今年度の分の確度（A〜D。除いた確度）と、累計が状況・計画進捗の全体合計と同じことを書く
+  const lead = (only ? word + ' ' + fy + '売上' : fy + '売上（' + rangeWord + (dropped.length ? '。' + dropped.join('・') + 'を除く' : '') + '）') + 'の積み上げは ' +
+    mtgAmount_(thisTotal) + '百万円' +
     (plan > 0 ? 'で、計画 ' + mtgAmount_(plan) + '百万円に対して ' + (gap > 0 ? '▲' + mtgAmount_(gap) : '+' + mtgAmount_(-gap)) +
       '（' + (only ? '進捗率' : '達成率') + ' ' + Math.round(thisTotal / plan * 100) + '%）' : '') + '。\n' +
-    'FY' + yy(1) + ' ' + mtgAmount_(yearTotal(yy(1))) + '・FY' + yy(2) + ' ' + mtgAmount_(yearTotal(yy(2))) + 'を半期ごとに続けて積み上げると、' +
-    span + 'の累計は ' +
-    mtgAmount_(grand) + '百万円（失注除く）。';
+    'FY' + yy(1) + ' ' + mtgAmount_(yearTotal(yy(1))) + '・FY' + yy(2) + ' ' + mtgAmount_(yearTotal(yy(2))) + 'を続けた ' + span + 'の累計は ' +
+    mtgAmount_(grand) + '百万円（' + (only ? '' : '状況・計画進捗の全体合計と同じ。') + '失注除く）。';
   // 受注月が空・今年度の外の案件の今年度の売上（四半期に置けないので入れない）
   const aside = ['undated', 'before', 'after'].reduce((t, key) => t + ((p[key] || {}).value || 0), 0);
   const note = aside > 0 ? '※ ' + mtgPlanMonthName_() + 'が空・' + fy + '外の ' + fy + '売上 ' + mtgAmount_(aside) + '百万円は除く' : '';
