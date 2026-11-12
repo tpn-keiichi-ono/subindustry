@@ -167,8 +167,10 @@ const MTG_OPTIONS = {
     // 上・下・右の3辺だけに引く（左の辺は確定の棒との境目なので引かない。点線の枠が B の端に重なって、つなぎ目が乱れて見えないように）
     prospect: {alpha: 0.3, line: '#548235', lineWeight: 1, dashStyle: 'DOT'},
     sureLabel: '確定（A＋B）',
-    // 状況・計画進捗（FY26〜28売上）のページ（mtgCompactOutlookSlide_。2026/11/12）：今年度の売上の状況・計画進捗の2枚のあとに入れる（salesPage のとき）。
-    // outlookRanks：棒に積み上げる確度と、右の「全体合計（A〜D）」の確度
+    // FY26〜28 のページ（2026/11/12。salesPage のとき）：今年度の売上の状況・計画進捗の2枚（FY26売上・見込（C）を含む）の代わりに
+    // 状況・計画進捗（FY26〜28売上）（mtgCompactOutlookSlide_）、計画に対する積み上げの2枚の代わりに計画に対する積み上げ（FY26〜28売上）
+    // （mtgCompactPlanYearsSlide_。全確度と確定（A＋B））を入れる。false なら前の FY26売上のページ。
+    // outlookRanks：状況・計画進捗の棒に積み上げる確度と、右の「全体合計（A〜D）」の確度
     outlookPage: true,
     outlookRanks: ['A', 'B', 'C', 'D'],
     // 集計の元（2026/11/10 から今年度の売上（FY前半期＋後半期の列）を元にする）：
@@ -6817,8 +6819,10 @@ function mtgSalesPlanOf_(deals, name, now, table) {
  * - 今年度（FY26）：受注月（plan.monthColumn）が今年度の案件の、今年度の売上（planSales の確定・見込と同じ）
  * - 来年度（FY27）：受注月が今年度か来年度の案件の、来年度の売上（今年度に受注して来年度に売上が立つ案件も入れる）
  * 受注月が空・範囲の外の案件は入れない。all は、確度 A〜D の案件の3年度分の売上の合計（受注月によらない。状況・計画進捗の「売上合計」と同じ数え方で、確度だけ絞る）。
- * plan は計画（mtgPlanAmount_）。今年度の売上の列・受注月の列が無ければ gap に理由（mtgSalesPlanOf_ と同じ）
- * {year: '26', years: ['26', '27', '28'], plan, byYear: {'26': {A, B, C, D}, '27': {…}}, all, gap}
+ * plan は計画（mtgPlanAmount_）。今年度の売上の列・受注月の列が無ければ gap に理由（mtgSalesPlanOf_ と同じ）。
+ * halves は、来年度・再来年度の半期ごとの売上の確度別（計画に対する積み上げ（FY26〜28）の右側。mtgCompactPlanYearsSlide_）：
+ * 失注を除くすべての確度（創注・未設定も）の案件の、半期の列（「27前」「27後」「28前」「28後」）の値。受注月によらない。
+ * {year: '26', years: ['26', '27', '28'], plan, byYear: {'26': {A, B, C, D}, '27': {…}}, all, halves: [{year: '27', half: '前', values: {A: …}}, …], gap}
  */
 function mtgSalesOutlookOf_(deals, name, now, table) {
   const o = MTG_OPTIONS;
@@ -6826,7 +6830,8 @@ function mtgSalesOutlookOf_(deals, name, now, table) {
   const years = [0, 1, 2].map(k => ('0' + ((Number(year) + k) % 100)).slice(-2));
   const ranks = (o.compact && o.compact.outlookRanks) || ['A', 'B', 'C', 'D'];
   const zero = () => ranks.reduce((m, k) => (m[k] = 0, m), {});
-  const out = {year, years, plan: mtgPlanAmount_(name), byYear: {[years[0]]: zero(), [years[1]]: zero()}, all: 0, gap: ''};
+  const out = {year, years, plan: mtgPlanAmount_(name), byYear: {[years[0]]: zero(), [years[1]]: zero()}, all: 0,
+    halves: [years[1], years[2]].reduce((list, y) => list.concat(['前', '後'].map(h => ({year: y, half: h, values: {}}))), []), gap: ''};
   const has = (table.salesYears || []).indexOf(year) >= 0;
   const noMonth = table.has && !table.has[o.plan.monthColumn];
   out.gap = !has ? 'シートに「FY' + year + '前半期売上」「FY' + year + '後半期売上」の列が無い'
@@ -6838,6 +6843,10 @@ function mtgSalesOutlookOf_(deals, name, now, table) {
   deals.forEach(d => {
     if (mtgExcludedStatus_(d.status)) return;
     const rank = mtgPlanRank_(d.status);
+    out.halves.forEach(h => {
+      const v = (d.salesHalves || {})[h.year + h.half] || 0;
+      if (v) h.values[rank] = (h.values[rank] || 0) + v;
+    });
     if (ranks.indexOf(rank) < 0) return;
     const sales = d.sales || {};
     out.all += years.reduce((t, y) => t + (sales[y] || 0), 0);

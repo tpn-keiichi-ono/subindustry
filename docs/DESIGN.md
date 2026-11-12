@@ -912,7 +912,13 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
   `mtgPlanSlide_` の月別の図にする（`mtgSalesPlanByMonthOf_`・`summary.planSalesByMonth`。今年度の売上がある案件だけ）。`'half'` は `mtgSalesPlanSlide_`：前半期 → 後半期の滝の図・合計・計画・差、参考に失注。
   半期ごとの値は `deal.salesHalves`（「26前」「26後」）・`planSales.halves`、足すのは `mtgMergeSalesPlans_`。`compact.salesPage` のとき）→ 変化のあった案件：{サブインダストリー}（`mtgCompactChangeSlides_`。`DIFF_RULES` の順）。
   目次・統合版の「全サブインダストリーの状況」・「計画に対する積み上げ（サブインダストリー別）」・各サブインダストリーの資料のページは入れない。
-  今年度の売上の2枚のあとに、状況・計画進捗（FY26〜28売上）（`mtgCompactOutlookSlide_`。2026/11/12。`compact.salesPage` かつ `compact.outlookPage` のとき）：
+  2026/11/12 から（`compact.salesPage` かつ `compact.outlookPage` のとき）、今年度の売上の状況・計画進捗の2枚（FY26売上・見込（C）を含む）の代わりに
+  状況・計画進捗（FY26〜28売上）（`mtgCompactOutlookSlide_`）を、計画に対する積み上げの2枚の代わりに計画に対する積み上げ（FY26〜28売上）の2枚
+  （`mtgCompactPlanYearsSlide_`。全確度と確定（A＋B）（`{only: compact.sureRanks}`））を入れる（`outlookPage: false` で前の FY26売上のページ。`salesPlanBy` は使わない）。
+  計画に対する積み上げ（FY26〜28売上）：左に今年度の売上（`planSalesByMonth` を足したもの）を受注月の四半期 Q1〜Q4 ごとに前の四半期の上に続けて積み上げ（上に「+増分」）、
+  FY26合計・計画（白抜き）・不足（計画との差。点線の枠。超えたら「超過」）。区切り線の右に、来年度・再来年度の半期の売上（`salesOutlook.halves`。失注を除くすべての確度・受注月によらない）を
+  FY26合計の高さから続けて積み上げ、いちばん右に累計。受注月が空・今年度の外の案件の FY26売上は入れず、note に金額。
+  状況・計画進捗（FY26〜28売上）：
   横棒は今年度の売上（受注月が今年度の案件）を確度 A〜D（`compact.outlookRanks`）で積み上げ（棒の中に値・右に合計）と計画の点線。
   右の列は計画・進捗率（A＋B）・確定（A＋B）（FY26）・確定（A＋B）（FY27。受注月が FY26〜27 の案件の FY27 の売上）・確定 合計（FY26＋27）・見込（C）（FY26・FY27）・
   全体合計（A〜D）（FY26〜28。確度 A〜D の案件の3年度分の売上。受注月によらない）。件数は出さない。中身は `summary.salesOutlook` = `mtgSalesOutlookOf_`
