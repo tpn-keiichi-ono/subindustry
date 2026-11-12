@@ -371,27 +371,30 @@ test('createBusinessMtgReportingChanges：時間がかかれば区切り、続�
   assert.match(gas.alerts[gas.alerts.length - 1].message, /_報告用_変化のあった案件\.pdf（3ページ）/);
 });
 
-test('状況・計画進捗（FY26〜28売上）の中身：今年度は受注月が今年度、来年度は受注月が今年度〜来年度の案件の売上を確度 A〜D 別に。全体合計は A〜D の3年度分（受注月によらない）。失注・創注は入れない', () => {
+test('状況・計画進捗（FY26〜28売上）の中身：今年度は受注月が今年度の案件の売上を確度 A〜D 別に。来年度以降は受注月・確度によらない売上（半期ごとも）。全体合計は今年度（A〜D）＋来年度以降。失注は入れない', () => {
   const {g, o} = setup();
   const y0 = fiscalYear();
   const y1 = String(Number(y0) + 1);
   const y2 = String(Number(y0) + 2);
   const month = n => g.mtgMonth_(fiscalMonth(n));
-  const deal = (status, n, sales) => ({status, planMonth: n == null ? null : month(n), sales});
+  const deal = (status, n, y0Sales, halves) => ({status, planMonth: n == null ? null : month(n), sales: {[y0]: y0Sales},
+    salesHalves: Object.keys(halves || {}).reduce((m, k) => (m[k.replace('Y1', y1).replace('Y2', y2)] = halves[k], m), {})});
   const deals = [
-    deal('A-内示(90%)', 2, {[y0]: 30, [y1]: 20, [y2]: 10}),          // 今年度 A 30・来年度 A 20
-    deal('B-クロージング中(70%)', 14, {[y0]: 5, [y1]: 40}),          // 受注月が来年度：来年度 B 40 だけ
-    deal('C-提案中(50%)', null, {[y0]: 15, [y1]: 15}),               // 受注月が空：全体合計だけ
-    deal('D-初回提案(30%)', 0, {[y0]: 8}),                           // 今年度 D 8
-    deal('創注-ニーズ探索(10%)', 0, {[y0]: 100}),                     // 確度 A〜D の外
-    deal('失注', 0, {[y0]: 50}),                                     // 失注
-    deal('A-内示(90%)', -3, {[y0]: 7}),                              // 受注月が今年度より前：全体合計だけ
-    deal('B-クロージング中(70%)', 30, {[y1]: 9, [y2]: 9})             // 受注月が再来年度：全体合計だけ
+    deal('A-内示(90%)', 2, 30, {Y1前: 12, Y1後: 8, Y2前: 10}),        // 今年度 A 30。来年度以降はそのまま
+    deal('B-クロージング中(70%)', 14, 5, {Y1前: 40}),                 // 受注月が来年度：今年度の分は入れない（来年度以降は入れる）
+    deal('C-提案中(50%)', null, 15, {Y1後: 15}),                      // 受注月が空：同じ
+    deal('D-初回提案(30%)', 0, 8),                                    // 今年度 D 8
+    deal('創注-ニーズ探索(10%)', 0, 100, {Y1前: 6}),                   // 今年度は確度 A〜D の外。来年度以降は確度によらず入れる
+    deal('失注', 0, 50, {Y1前: 99}),                                  // 失注はどれにも入れない
+    deal('A-内示(90%)', -3, 7),                                       // 受注月が今年度より前：今年度の分は入れない
+    deal('B-クロージング中(70%)', 30, 0, {Y1後: 9, Y2前: 9})           // 受注月が再来年度でも、来年度以降は入れる
   ];
   const table = {salesYears: [y0, y1, y2], has: {[o.plan.monthColumn]: true}};
   const out = plain(g.mtgSalesOutlookOf_(deals, '新FMT', new Date(), table));
-  assert.deepStrictEqual(out.byYear, {[y0]: {A: 30, B: 0, C: 0, D: 8}, [y1]: {A: 20, B: 40, C: 0, D: 0}});
-  assert.strictEqual(out.all, 60 + 45 + 30 + 8 + 7 + 18);
+  assert.deepStrictEqual(out.byYear, {[y0]: {A: 30, B: 0, C: 0, D: 8}});
+  assert.deepStrictEqual(out.later, {[y1]: 90, [y2]: 19});
+  assert.deepStrictEqual(out.halves.map(h => [h.year + h.half, h.value]), [[y1 + '前', 58], [y1 + '後', 32], [y2 + '前', 19], [y2 + '後', 0]]);
+  assert.strictEqual(out.all, 38 + 90 + 19);
   assert.deepStrictEqual([out.year, out.years, out.plan, out.gap], [y0, [y0, y1, y2], 200, '']);
   // 今年度の売上の列・受注月の列が無ければ「データなし」の理由
   assert.match(g.mtgSalesOutlookOf_(deals, '新FMT', new Date(), {salesYears: [y1], has: {[o.plan.monthColumn]: true}}).gap, new RegExp('FY' + y0 + '前半期売上'));
@@ -403,47 +406,50 @@ test('状況・計画進捗（FY26〜28売上）の中身：今年度は受注�
   assert.deepStrictEqual(plain(g.mtgCombinedLite_(s1)).salesOutlook, plain(s1.salesOutlook));
 });
 
-test('状況・計画進捗（FY26〜28売上）のページ：棒は今年度の A〜D、右に計画・進捗率・確定（A＋B）FY26/FY27・確定 合計・見込（C）FY26/FY27・全体合計（A〜D）（FY26〜28）。件数は出さない。列の無いシートは「データなし」、合計に ※', () => {
+test('状況・計画進捗（FY26〜28売上）のページ：棒は今年度の A〜D、右に計画・進捗率・確定（A＋B）・見込（C）（FY26）｜売上（FY27・FY28。受注月・確度によらない）｜全体合計。件数は出さない。列の無いシートは「データなし」、合計に ※', () => {
   const {gas, g} = setup();
   const y0 = fiscalYear();
   const y1 = String(Number(y0) + 1);
-  const span = 'FY' + y0 + '〜' + (Number(y0) + 2);
+  const y2 = String(Number(y0) + 2);
+  const span = 'FY' + y0 + '〜' + y2;
   const now = new Date();
-  const outlook = (plan, a0, b0, c0, d0, a1, b1, c1, all) => ({year: y0, years: [y0, y1], plan, all, gap: '',
-    byYear: {[y0]: {A: a0, B: b0, C: c0, D: d0}, [y1]: {A: a1, B: b1, C: c1, D: 0}}});
+  const outlook = (plan, a0, b0, c0, d0, l1, l2) => ({year: y0, years: [y0, y1, y2], plan, all: a0 + b0 + c0 + d0 + l1 + l2, gap: '',
+    byYear: {[y0]: {A: a0, B: b0, C: c0, D: d0}}, later: {[y1]: l1, [y2]: l2}});
   const summaries = [
-    {name: '新FMT', now, salesOutlook: outlook(200, 70, 40, 10, 5, 20, 10, 30, 300)},
-    {name: '新FMT2', now, salesOutlook: outlook(100, 0, 10, 0, 0, 0, 0, 5, 40)},
-    {name: '新FMT3', now, salesOutlook: {year: y0, years: [y0, y1], plan: 50, all: 0, gap: 'シートに「FY' + y0 + '前半期売上」「FY' + y0 + '後半期売上」の列が無い', byYear: {}}}
+    {name: '新FMT', now, salesOutlook: outlook(200, 70, 40, 10, 5, 50, 20)},
+    {name: '新FMT2', now, salesOutlook: outlook(100, 0, 10, 0, 0, 5, 0)},
+    {name: '新FMT3', now, salesOutlook: {year: y0, years: [y0, y1, y2], plan: 50, all: 0, gap: 'シートに「FY' + y0 + '前半期売上」「FY' + y0 + '後半期売上」の列が無い',
+      byYear: {}, later: {}}}
   ];
   const slide = plain(g.mtgCompactOutlookSlide_(summaries));
   assert.strictEqual(slide.title, '全サブインダストリーの状況・計画進捗（' + span + '売上）');
   const heads = slide.elements.filter(e => e.role === 'compact-head').map(e => e.text);
-  assert.deepStrictEqual(heads, ['計画', '進捗率（A＋B）', '確定（A＋B）', '確定（A＋B）', '確定 合計', '見込（C）', '見込（C）', '全体合計（A〜D）']);
+  assert.deepStrictEqual(heads, ['計画', '進捗率（A＋B）', '確定（A＋B）', '見込（C）', '売上', '売上', '全体合計']);
   const periods = slide.elements.filter(e => e.role === 'compact-head-period').map(e => e.text);
-  assert.deepStrictEqual(periods, ['（FY' + y0 + '）', '（FY' + y0 + '）', '（FY' + y0 + '）', '（FY' + y1 + '）', '（FY' + y0 + '＋' + y1 + '）',
-    '（FY' + y0 + '）', '（FY' + y1 + '）', '（' + span + '）']);
+  assert.deepStrictEqual(periods, ['（FY' + y0 + '）', '（FY' + y0 + '）', '（FY' + y0 + '）', '（FY' + y0 + '）', '（FY' + y1 + '）', '（FY' + y2 + '）', '（' + span + '）']);
   slide.elements.filter(e => e.role === 'compact-head' || e.role === 'compact-head-period').forEach(e => {
     assert.ok(g.mtgTextWidth_(e.text, e.size) <= e.w - 14.4 + 0.01, e.text + ' は1行（' + e.size + 'pt）');
   });
   const values = slide.elements.filter(e => e.role === 'compact-value').map(e => e.text);
-  assert.deepStrictEqual(values.slice(0, 8), ['200', '55%', '110', '30', '140', '10', '30', '300'], '新FMT の行（件数は出さない）');
-  assert.deepStrictEqual(values.slice(8, 16), ['100', '10%', '10', '0', '10', '0', '5', '40'], '新FMT2 の行');
+  assert.deepStrictEqual(values.slice(0, 7), ['200', '55%', '110', '10', '50', '20', '195'], '新FMT の行（件数は出さない）');
+  assert.deepStrictEqual(values.slice(7, 14), ['100', '10%', '10', '0', '5', '0', '15'], '新FMT2 の行');
   const G = gas.get('MTG_OPTIONS').gapText;
-  assert.deepStrictEqual(values.slice(16, 24), [G, '—', G, G, G, G, G, G], '列の無いシート');
-  assert.deepStrictEqual(values.slice(24), ['300※', '40%', '120※', '30※', '150※', '10※', '35※', '340※'], '合計は作れたシートの分だけ（※）');
-  assert.match(slide.note, /※ は「/);
+  assert.deepStrictEqual(values.slice(14, 21), [G, '—', G, G, G, G, G], '列の無いシート');
+  assert.deepStrictEqual(values.slice(21), ['300※', '40%', '120※', '10※', '55※', '20※', '210※'], '合計は作れたシートの分だけ（※）');
+  assert.strictEqual(slide.note, '※ 全体合計 ＝ FY' + y0 + '（A〜D）＋FY' + y1 + '＋FY' + y2 + '。※ のある合計は「' + G + '」のシートを除く');
   // 棒：今年度の A〜D を積み上げ（新FMT は A・B・C・D の4本、新FMT2 は B の1本）。棒の右に A〜D の合計。計画線は2本
   assert.strictEqual(slide.elements.filter(e => e.role === 'compact-bar').length, 5);
   assert.deepStrictEqual(slide.elements.filter(e => e.role === 'compact-bar-total').map(e => e.text), ['125', '10']);
   assert.strictEqual(slide.elements.filter(e => e.role === 'compact-plan').length, 2);
   assert.strictEqual(slide.elements.filter(e => e.role === 'compact-gap').length, 1);
   assert.deepStrictEqual(slide.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text), ['A', 'B', 'C', 'D']);
-  assert.match(slide.lead, new RegExp('^FY' + y0 + ' の確定（A＋B）は 120百万円（計画比 40%）、A〜D の合計は 135百万円。FY' + y1 + ' の確定（A＋B）は 30百万円（失注除く）。'));
-  assert.match(slide.lead, new RegExp('全体合計は' + g.mtgPlanMonthName_() + 'によらない。$'));
+  assert.match(slide.lead, new RegExp('^FY' + y0 + ' の確定（A＋B）は 120百万円（計画比 40%）、A〜D の合計は 135百万円。FY' + y1 + ' 55・FY' + y2 + ' 20百万円（失注除く）。\n'));
+  assert.match(slide.lead, new RegExp('FY' + y1 + '・FY' + y2 + ' は' + g.mtgPlanMonthName_() + '・確度によらない。$'));
+  // 列の無いシートが無ければ、補足は全体合計の数え方だけ
+  assert.strictEqual(plain(g.mtgCompactOutlookSlide_(summaries.slice(0, 2))).note, '※ 全体合計 ＝ FY' + y0 + '（A〜D）＋FY' + y1 + '＋FY' + y2);
 });
 
-test('計画に対する積み上げ（FY26〜28売上）：今年度は受注月の四半期ごとに続けて積み上げ、合計・計画・不足。来年度以降は半期ごと（受注月によらない）に今年度の合計から続けて積み上げ、累計。確定（A＋B）だけのページも', () => {
+test('計画に対する積み上げ（FY26〜28売上）：今年度は受注月の四半期ごとに続けて積み上げ、合計・計画・不足。来年度以降は半期ごと（受注月・確度によらない1色）に今年度の合計から続けて積み上げ、累計。確定（A＋B）だけのページも', () => {
   const {gas, g} = setup();
   const T = gas.get('MTG_TITLES');
   const y0 = fiscalYear();
@@ -453,8 +459,7 @@ test('計画に対する積み上げ（FY26〜28売上）：今年度は受注�
   const s1 = summarize(g, '新FMT');
   const s2 = summarize(g, '新FMT2');
   // 来年度以降の半期（テストのシートには列が無いので、中身に入れる）
-  s1.salesOutlook.halves = [{year: y1, half: '前', values: {A: 20, C: 5}}, {year: y1, half: '後', values: {B: 10}},
-    {year: y2, half: '前', values: {D: 4}}, {year: y2, half: '後', values: {}}];
+  s1.salesOutlook.halves = [{year: y1, half: '前', value: 25}, {year: y1, half: '後', value: 10}, {year: y2, half: '前', value: 4}, {year: y2, half: '後', value: 0}];
   const now = new Date();
   const sales = g.mtgMergePlans_([s1.planSalesByMonth, s2.planSalesByMonth]);
   sales.year = y0;
@@ -468,13 +473,16 @@ test('計画に対する積み上げ（FY26〜28売上）：今年度は受注�
   assert.match(all.lead, new RegExp('の FY' + y0 + '売上の積み上げは 120百万円で、計画 300百万円に対して ▲180（達成率 40%）。\nFY' + y1 + ' 35・FY' + y2 +
     ' 4を半期ごとに続けて積み上げると、' + span + 'の累計は 159百万円（失注除く）。$'));
   assert.ok(!all.note, '受注月が空・今年度の外の案件の売上が無ければ補足なし');
-  // 凡例は確度（創注・未設定も）と計画
-  assert.deepStrictEqual(all.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text).slice(-1), ['計画']);
-  // 確定（A＋B）だけ：来年度以降も A・B の分だけ
+  // 凡例は確度（創注・未設定も）・来年度以降（1色）・計画。来年度以降の棒は確度によらない1色（compact.laterColor）
+  assert.deepStrictEqual(all.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text).slice(-2), ['FY' + y1 + '以降', '計画']);
+  const laterColor = gas.get('MTG_OPTIONS').compact.laterColor;
+  const bars = all.elements.filter(e => e.role === 'plan-years-bar');
+  assert.strictEqual(bars.filter(e => e.fill === laterColor).length, 3 + 1, '来年度以降の3本と、累計の上の1つ');
+  // 確定（A＋B）だけ：今年度は A・B の分だけ。来年度以降は確度によらないので同じ値
   const sure = plain(g.mtgCompactPlanYearsSlide_(sales, [s1, s2], now, {only: ['A', 'B'], label: '確定（A＋B）'}));
   assert.strictEqual(sure.title, T.plan + '（' + span + '売上）：確定（A＋B）');
-  assert.deepStrictEqual(valuesOf(sure), ['+80', '+40', '120', '300', '▲180', '+20', '+10', '150']);
-  assert.deepStrictEqual(sure.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text), ['A', 'B', '計画']);
+  assert.deepStrictEqual(valuesOf(sure), ['+80', '+40', '120', '300', '▲180', '+25', '+10', '+4', '159']);
+  assert.deepStrictEqual(sure.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text), ['A', 'B', 'FY' + y1 + '以降', '計画']);
   assert.match(sure.lead, /の確定（A＋B）の FY\d+売上の積み上げは 120百万円で、計画 300百万円に対して ▲180（進捗率 40%）。/);
   // 計画を超えたら「超過」
   const over = plain(g.mtgCompactPlanYearsSlide_(Object.assign({}, sales, {plan: 100}), [s1, s2], now));
