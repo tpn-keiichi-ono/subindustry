@@ -338,7 +338,7 @@ function mtgCompactOutlookSlide_(summaries) {
 /**
  * 計画に対する積み上げ（FY26〜28売上）（2026/11/12）：左に今年度の売上を受注月の四半期（Q1〜Q4）ごとに確度別に積み上げ（前の四半期の上に続ける。
  * 上に「+増えた分」）、今年度の合計・計画（白抜き）・不足（計画との差。グレーの点線の枠。計画を超えたら「超過」）。区切り線の右に、来年度・再来年度の
- * 半期ごとの売上（受注月・確度によらない1色（compact.laterColor）。summary.salesOutlook.halves。確定（A＋B）のページも同じ値）を、今年度の合計の上に
+ * 半期ごとの売上（受注月・確度によらない。年度ごとに色味を変え、前半期・後半期は同じ色味の濃淡（compact.laterColors）。summary.salesOutlook.halves。確定（A＋B）のページも同じ値）を、今年度の合計の上に
  * 続けて積み上げ、いちばん右に3年度分の累計。
  * sales は今年度の売上を受注月の月に置いた積み上げ（mtgSalesPlanByMonthOf_ を足したもの）。options.only（['A', 'B']）なら確定（A＋B）だけのページ。
  * 受注月が空・今年度の外の案件の今年度の売上は入れない（note に金額）。失注は除く
@@ -368,14 +368,15 @@ function mtgCompactPlanYearsSlide_(sales, summaries, now, options) {
   const thisValues = sumValues(quarters.map(q => q.values));
   const thisTotal = totalOf(thisValues);
   // 来年度・再来年度：半期ごとの売上（受注月・確度によらない。確定（A＋B）のページも同じ値。売上の列が無い・受注月の列が無いシートは除く）。
-  // 確度で分けず、来年度以降の色（compact.laterColor）の1色
-  const laterKey = 'FY' + yy(1) + '以降';
-  const laterColor = C.laterColor || '#9DC3E6';
+  // 確度で分けず、年度・半期ごとの色（compact.laterColors：年度ごとに色味を変え、前半期は濃く・後半期は薄く）。凡例は「FY27前」など
+  const colors = C.laterColors || [['#2E75B6', '#9DC3E6'], ['#C55A11', '#F4B183']];
   const outlooks = summaries.map(sm => sm.salesOutlook).filter(x => x && !x.gap && x.halves);
-  const later = [yy(1), yy(2)].reduce((list, y) => list.concat(['前', '後'].map(h => {
+  const later = [yy(1), yy(2)].reduce((list, y, k) => list.concat(['前', '後'].map((h, n) => {
+    const key = 'FY' + y + h;
     const total = outlooks.reduce((t, x) => t + ((x.halves.find(v => v.year === y && v.half === h) || {}).value || 0), 0);
-    return {label: 'FY' + y, sub: h + '半期', year: y, values: total ? {[laterKey]: total} : {}, total};
+    return {label: 'FY' + y, sub: h + '半期', year: y, key, color: (colors[k] || [])[n] || '#9DC3E6', values: total ? {[key]: total} : {}, total};
   })), []);
+  const laterRanks = later.map(l => ({key: l.key, color: l.color}));
   const yearTotal = y => later.filter(l => l.year === y).reduce((t, l) => t + l.total, 0);
   const grand = thisTotal + later.reduce((t, l) => t + l.total, 0);
   const plan = p.plan || 0;
@@ -387,7 +388,7 @@ function mtgCompactPlanYearsSlide_(sales, summaries, now, options) {
   const top = S.top;
   const el = [mtgBox_(x, top - 2, 400, 20, span + 'の' + (only ? label + 'の' : '') + '売上の積み上げ（百万円）', {size: 10.5, bold: true, color: c.ink})];
   // 凡例（右上）：確度・来年度以降・計画（白抜き）
-  const legend = ranks.map(r => ({key: r.key, color: r.color})).concat([{key: laterKey, color: laterColor}, {key: '計画', outline: true}]);
+  const legend = ranks.map(r => ({key: r.key, color: r.color})).concat(laterRanks, [{key: '計画', outline: true}]);
   const legendW = legend.reduce((t, r) => t + 12 + mtgTextWidth_(r.key, 8) + 2 + 8, 0);
   let lx = x + w - legendW;
   legend.forEach(r => {
@@ -407,7 +408,7 @@ function mtgCompactPlanYearsSlide_(sales, summaries, now, options) {
   const xOf = i => x + slot * i + (slot - bw) / 2 + (i >= 7 ? slot * 0.6 : 0);
   const stack = (bx, from, values) => {
     let level = from;
-    ranks.concat([{key: laterKey, color: laterColor}]).forEach(r => {
+    ranks.concat(laterRanks).forEach(r => {
       const v = values[r.key] || 0;
       if (!v) return;
       el.push({type: 'box', x: bx, y: base - (level + v) * k, w: bw, h: Math.max(v * k, 0.5), fill: r.color, line: c.white, lineWeight: 0.4, shape: 'RECTANGLE',

@@ -473,16 +473,20 @@ test('計画に対する積み上げ（FY26〜28売上）：今年度は受注�
   assert.match(all.lead, new RegExp('の FY' + y0 + '売上の積み上げは 120百万円で、計画 300百万円に対して ▲180（達成率 40%）。\nFY' + y1 + ' 35・FY' + y2 +
     ' 4を半期ごとに続けて積み上げると、' + span + 'の累計は 159百万円（失注除く）。$'));
   assert.ok(!all.note, '受注月が空・今年度の外の案件の売上が無ければ補足なし');
-  // 凡例は確度（創注・未設定も）・来年度以降（1色）・計画。来年度以降の棒は確度によらない1色（compact.laterColor）
-  assert.deepStrictEqual(all.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text).slice(-2), ['FY' + y1 + '以降', '計画']);
-  const laterColor = gas.get('MTG_OPTIONS').compact.laterColor;
+  // 凡例は確度（創注・未設定も）・来年度以降の年度・半期・計画。来年度以降の棒は確度によらず、年度ごとの色味の濃淡（compact.laterColors）
+  const halfKeys = ['FY' + y1 + '前', 'FY' + y1 + '後', 'FY' + y2 + '前', 'FY' + y2 + '後'];
+  assert.deepStrictEqual(all.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text).slice(-5), halfKeys.concat(['計画']));
+  const colors = gas.get('MTG_OPTIONS').compact.laterColors;
   const bars = all.elements.filter(e => e.role === 'plan-years-bar');
-  assert.strictEqual(bars.filter(e => e.fill === laterColor).length, 3 + 1, '来年度以降の3本と、累計の上の1つ');
+  [colors[0][0], colors[0][1], colors[1][0]].forEach((color, n) => {
+    assert.strictEqual(bars.filter(e => e.fill === color).length, 2, halfKeys[n] + '：その半期の棒と、累計の上の1つ');
+  });
+  assert.ok(colors[0][0] !== colors[1][0] && colors[0][0] !== colors[0][1], '年度・半期で色が違う');
   // 確定（A＋B）だけ：今年度は A・B の分だけ。来年度以降は確度によらないので同じ値
   const sure = plain(g.mtgCompactPlanYearsSlide_(sales, [s1, s2], now, {only: ['A', 'B'], label: '確定（A＋B）'}));
   assert.strictEqual(sure.title, T.plan + '（' + span + '売上）：確定（A＋B）');
   assert.deepStrictEqual(valuesOf(sure), ['+80', '+40', '120', '300', '▲180', '+25', '+10', '+4', '159']);
-  assert.deepStrictEqual(sure.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text), ['A', 'B', 'FY' + y1 + '以降', '計画']);
+  assert.deepStrictEqual(sure.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text), ['A', 'B'].concat(halfKeys, ['計画']));
   assert.match(sure.lead, /の確定（A＋B）の FY\d+売上の積み上げは 120百万円で、計画 300百万円に対して ▲180（進捗率 40%）。/);
   // 計画を超えたら「超過」
   const over = plain(g.mtgCompactPlanYearsSlide_(Object.assign({}, sales, {plan: 100}), [s1, s2], now));
