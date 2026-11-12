@@ -338,7 +338,7 @@ function mtgCompactOutlookSlide_(summaries) {
 /**
  * 計画に対する積み上げ（FY26〜28売上）（2026/11/12）：左に今年度の売上を受注月の四半期（Q1〜Q4）ごとに確度別に積み上げ（前の四半期の上に続ける。
  * 上に「+増えた分」）、今年度の合計・計画（白抜き）・不足（計画との差。グレーの点線の枠。計画を超えたら「超過」）。区切り線の右に、来年度・再来年度の
- * 半期ごとの売上（受注月・確度によらない。年度ごとに色味を変え、前半期・後半期は同じ色味の濃淡（compact.laterColors）。summary.salesOutlook.halves。確定（A＋B）のページも同じ値）を、今年度の合計の上に
+ * 半期ごとの売上（受注月・確度によらない。年度ごとに通期で1色（compact.laterColors）。累計の棒には前半期・後半期の境目に点線。summary.salesOutlook.halves。確定（A＋B）のページも同じ値）を、今年度の合計の上に
  * 続けて積み上げ、いちばん右に3年度分の累計。
  * sales は今年度の売上を受注月の月に置いた積み上げ（mtgSalesPlanByMonthOf_ を足したもの）。options.only（['A', 'B']）なら確定（A＋B）だけのページ。
  * 受注月が空・今年度の外の案件の今年度の売上は入れない（note に金額）。失注は除く
@@ -374,15 +374,16 @@ function mtgCompactPlanYearsSlide_(sales, summaries, now, options) {
   const thisValues = sumValues(quarters.map(q => q.values));
   const thisTotal = totalOf(thisValues);
   // 来年度・再来年度：半期ごとの売上（受注月・確度によらない。確定（A＋B）のページも同じ値。売上の列が無い・受注月の列が無いシートは除く）。
-  // 確度で分けず、年度・半期ごとの色（compact.laterColors：年度ごとに色味を変え、前半期は濃く・後半期は薄く）。凡例は「FY27前」など
-  const colors = C.laterColors || [['#2E75B6', '#9DC3E6'], ['#6F3FA6', '#C0A3E0']];
+  // 確度で分けず、年度ごとに通期で1色（compact.laterColors）。凡例は「FY27」「FY28」。累計の棒では前半期・後半期の境目に点線
+  const colors = C.laterColors || ['#5B9BD5', '#966BC7'];
   const outlooks = summaries.map(sm => sm.salesOutlook).filter(x => x && !x.gap && x.halves);
-  const later = [yy(1), yy(2)].reduce((list, y, k) => list.concat(['前', '後'].map((h, n) => {
-    const key = 'FY' + y + h;
+  const later = [yy(1), yy(2)].reduce((list, y, k) => list.concat(['前', '後'].map(h => {
+    const key = 'FY' + y;
     const total = outlooks.reduce((t, x) => t + ((x.halves.find(v => v.year === y && v.half === h) || {}).value || 0), 0);
-    return {label: 'FY' + y, sub: h + '半期', year: y, key, color: (colors[k] || [])[n] || '#9DC3E6', values: total ? {[key]: total} : {}, total};
+    const color = Array.isArray(colors[k]) ? colors[k][0] : colors[k] || '#5B9BD5';
+    return {label: 'FY' + y, sub: h + '半期', year: y, half: h, key, color, values: total ? {[key]: total} : {}, total};
   })), []);
-  const laterRanks = later.map(l => ({key: l.key, color: l.color}));
+  const laterRanks = later.filter(l => l.half === '前').map(l => ({key: l.key, color: l.color}));
   const yearTotal = y => later.filter(l => l.year === y).reduce((t, l) => t + l.total, 0);
   const grand = thisTotal + later.reduce((t, l) => t + l.total, 0);
   const plan = p.plan || 0;
@@ -470,6 +471,15 @@ function mtgCompactPlanYearsSlide_(sales, summaries, now, options) {
   });
   bx = xOf(11);
   stack(bx, 0, sumValues([thisValues].concat(later.map(l => l.values))));
+  // 累計の棒：年度の中の前半期・後半期の境目に白い点線（どちらの半期にも売上があるときだけ）
+  let cum = thisTotal;
+  later.forEach(l => {
+    cum += l.total;
+    const pair = later.find(v => v.year === l.year && v.half === '後');
+    if (l.half === '前' && l.total > 0 && pair && pair.total > 0) {
+      el.push({type: 'line', x: bx, y: base - cum * k, w: bw, h: 0, color: c.white, weight: 1.5, dashStyle: 'DOT', role: 'plan-years-half-line'});
+    }
+  });
   valueLabel(bx, base - grand * k, mtgAmount_(grand));
   axis(bx, '累計', span);
   el.push({type: 'line', x, y: base, w, h: 0, color: c.line, weight: 0.75});

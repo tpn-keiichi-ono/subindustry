@@ -449,7 +449,7 @@ test('状況・計画進捗（FY26〜28売上）のページ：棒は今年度�
   assert.strictEqual(plain(g.mtgCompactOutlookSlide_(summaries.slice(0, 2))).note, '※ 全体合計 ＝ FY' + y0 + '（A〜D）＋FY' + y1 + '＋FY' + y2);
 });
 
-test('計画に対する積み上げ（FY26〜28売上）：今年度は受注月の四半期ごとに確度 A〜D を続けて積み上げ（累計を状況・計画進捗の全体合計とそろえる）、合計・計画・不足。来年度以降は半期ごと（受注月・確度によらない1色）に今年度の合計から続けて積み上げ、累計。確定（A＋B）だけのページも', () => {
+test('計画に対する積み上げ（FY26〜28売上）：今年度は受注月の四半期ごとに確度 A〜D を続けて積み上げ（累計を状況・計画進捗の全体合計とそろえる）、合計・計画・不足。来年度以降は半期ごと（受注月・確度によらない。年度ごとに通期で1色、累計の棒に半期の境目の点線）に今年度の合計から続けて積み上げ、累計。確定（A＋B）だけのページも', () => {
   const {gas, g} = setup();
   const T = gas.get('MTG_TITLES');
   const y0 = fiscalYear();
@@ -480,20 +480,26 @@ test('計画に対する積み上げ（FY26〜28売上）：今年度は受注�
     ' 35・FY' + y2 + ' 4を続けた ' + span + 'の累計は 159百万円（状況・計画進捗の全体合計と同じ。失注除く）。');
   assert.ok(!all.note, '受注月が空・今年度の外の案件の売上が無ければ補足なし');
   assert.deepStrictEqual(all.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text).slice(0, 4), ['A', 'B', 'C', 'D'], '創注・未設定は凡例にも出さない');
-  // 凡例は確度 A〜D・来年度以降の年度・半期・計画。来年度以降の棒は確度によらず、年度ごとの色味の濃淡（compact.laterColors）
-  const halfKeys = ['FY' + y1 + '前', 'FY' + y1 + '後', 'FY' + y2 + '前', 'FY' + y2 + '後'];
-  assert.deepStrictEqual(all.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text).slice(-5), halfKeys.concat(['計画']));
+  // 凡例は確度 A〜D・来年度以降の年度・計画。来年度以降の棒は確度によらず、年度ごとに通期で1色（compact.laterColors）
+  const yearKeys = ['FY' + y1, 'FY' + y2];
+  assert.deepStrictEqual(all.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text).slice(-3), yearKeys.concat(['計画']));
   const colors = gas.get('MTG_OPTIONS').compact.laterColors;
+  assert.notStrictEqual(colors[0], colors[1], '年度で色が違う');
   const bars = all.elements.filter(e => e.role === 'plan-years-bar');
-  [colors[0][0], colors[0][1], colors[1][0]].forEach((color, n) => {
-    assert.strictEqual(bars.filter(e => e.fill === color).length, 2, halfKeys[n] + '：その半期の棒と、累計の上の1つ');
-  });
-  assert.ok(colors[0][0] !== colors[1][0] && colors[0][0] !== colors[0][1], '年度・半期で色が違う');
+  assert.strictEqual(bars.filter(e => e.fill === colors[0]).length, 3, 'FY' + y1 + '：前半期・後半期の棒と、累計の上の1つ（通期で1色）');
+  assert.strictEqual(bars.filter(e => e.fill === colors[1]).length, 2, 'FY' + y2 + '：前半期の棒と、累計の上の1つ');
+  // 累計の棒の中の、前半期・後半期の境目の点線（FY27 は両方の半期に売上があるので1本。FY28 は後半期が 0 なので引かない）
+  const halfLines = all.elements.filter(e => e.role === 'plan-years-half-line');
+  assert.strictEqual(halfLines.length, 1);
+  const cumBar = bars.filter(e => e.fill === colors[0]).pop();
+  assert.ok(halfLines[0].dashStyle === 'DOT' && Math.abs(halfLines[0].x - cumBar.x) < 0.01 && halfLines[0].w === cumBar.w, '累計の棒の幅');
+  assert.ok(halfLines[0].y > cumBar.y && halfLines[0].y < cumBar.y + cumBar.h, 'FY' + y1 + ' の分の中（前半期 25 の上の境目）');
+  assert.ok(Math.abs((cumBar.y + cumBar.h - halfLines[0].y) / cumBar.h - 25 / 35) < 0.01, '前半期 25 ÷ 通期 35 の位置');
   // 確定（A＋B）だけ：今年度は A・B の分だけ。来年度以降は確度によらないので同じ値
   const sure = plain(g.mtgCompactPlanYearsSlide_(sales, [s1, s2], now, {only: ['A', 'B'], label: '確定（A＋B）'}));
   assert.strictEqual(sure.title, T.plan + '（' + span + '売上）：確定（A＋B）');
   assert.deepStrictEqual(valuesOf(sure), ['+80', '+40', '120', '300', '▲180', '+25', '+10', '+4', '159']);
-  assert.deepStrictEqual(sure.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text), ['A', 'B'].concat(halfKeys, ['計画']));
+  assert.deepStrictEqual(sure.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text), ['A', 'B'].concat(yearKeys, ['計画']));
   assert.match(sure.lead, /^確定（A＋B）の FY\d+売上の積み上げは 120百万円で、計画 300百万円に対して ▲180（進捗率 40%）。\n.*の累計は 159百万円（失注除く）。$/);
   // 計画を超えたら「超過」
   const over = plain(g.mtgCompactPlanYearsSlide_(Object.assign({}, sales, {plan: 100}), [s1, s2], now));
