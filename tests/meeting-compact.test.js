@@ -183,6 +183,26 @@ test('変化のあった案件：活動状況・課題の列を広く（ほか�
   assert.ok(fits('100 ▶ 101', 9, w2[3]) && w2[5] > w2[2], w2.join(','));
 });
 
+test('変化のあった案件の並び：今回のステータスの期待値（名前の %）の高い順、同じ期待値は FY26売上の大きい順。失注・保留・削除は最後', () => {
+  const {g} = setup();
+  const s1 = summarize(g, '新FMT');
+  const y0 = fiscalYear();
+  const base = s1.changes.find(ch => ch.category !== 'updated' && ch.deal);
+  // [今回のステータス, FY26売上]（シートの選択肢の順とは逆に並べておく）
+  const list = [['創注-仮検討(10%)', 90], ['D-課題整理中(20%)', 5], ['D-ヒアリング中(20%)', 30], ['C-稟議対応中(50%)', 10], ['失注', 999],
+    ['C-選定対応中(50%)', 60], ['C-提案中(50%)', 20], ['B-クロージング中(70%)', 1], ['A-受注済み(100%)', 3], ['保留', 500]];
+  s1.changes = list.map(([status, sales], i) => Object.assign({}, base, {key: 'k' + i, statusTo: status, removed: false, category: 'status',
+    customer: '社' + i, deal: Object.assign({}, base.deal, {status, sales: {[y0]: sales}})}));
+  const slides = plain(g.mtgCompactChangeSlides_(s1, 0)).slides;
+  const order = [].concat.apply([], slides.map(sl => cellTexts(tableOf(sl)).slice(1).map(r => r[1].split('\n')[0])));
+  assert.deepStrictEqual(order.map(c => list[Number(c.slice(1))][0]), ['A-受注済み(100%)', 'B-クロージング中(70%)', 'C-選定対応中(50%)', 'C-提案中(50%)',
+    'C-稟議対応中(50%)', 'D-ヒアリング中(20%)', 'D-課題整理中(20%)', '創注-仮検討(10%)', '失注', '保留']);
+  // % の無いステータスは確度の順の目安（同じ確度で % のあるものの少し後ろ）
+  assert.ok(g.mtgCompactStatusRate_({statusTo: 'B-交渉中'}) < 70 && g.mtgCompactStatusRate_({statusTo: 'B-交渉中'}) > 50);
+  assert.strictEqual(g.mtgCompactStatusRate_({statusTo: 'A-内示(90%)'}), 90);
+  assert.strictEqual(g.mtgCompactStatusRate_({statusTo: 'B-クロージング中(70%)', removed: true}), -1, '削除は最後');
+});
+
 test('変化のあった案件：RXシナリオ構成の列があれば、案件名の下にシナリオの番号（見出しは「得意先／案件名／シナリオNo」。空は「未入力」）', () => {
   const {g} = setup();
   const s1 = summarize(g, '新FMT');
@@ -746,7 +766,7 @@ test('変化のあった案件は、確度 A から今回のステータスの�
   const rows = cellTexts(tableOf(part.slides[0])).slice(1);
   assert.deepStrictEqual(rows.map(r => [r[0], r[1].split('\n')[0], r[3]]),
     [['1', 'A社', '100'], ['2', 'B社', '50'], ['3', 'C社', '40'], ['4', 'D社', '20 ▶ 500']]);
-  assert.match(part.slides[0].lead, /確度 A から順に、同じ確度は想定売上の大きい順/);
+  assert.match(part.slides[0].lead, /ステータスの期待値の高い順に、同じ期待値は想定売上の大きい順/);
 });
 
 test('変化のあった案件（既定）：金額は今年度の売上の列（前半期＋後半期）。確度 A から今回のステータスの順、その中は今年度の売上の大きい順', () => {
@@ -763,7 +783,7 @@ test('変化のあった案件（既定）：金額は今年度の売上の列�
   // C社は B に前進（売上 10）で B社（30）のあと。D社は C で売上なし
   assert.deepStrictEqual(table.slice(1).map(r => [r[0], r[1].split('\n')[0], r[3]]),
     [['1', 'A社', '70'], ['2', 'B社', '30'], ['3', 'C社', '10'], ['4', 'D社', blank]]);
-  assert.match(part.slides[0].lead, new RegExp('確度 A から順に、同じ確度はFY' + fy + '売上の大きい順'));
+  assert.match(part.slides[0].lead, new RegExp('ステータスの期待値の高い順に、同じ期待値はFY' + fy + '売上の大きい順'));
 });
 
 test('状況・計画進捗の次のページ（見込（C）を含む）：棒の確定（A・B）の右に、見込（C）を薄い地と点線の枠で足す。並び・右の数字は前のページと同じ', () => {

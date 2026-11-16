@@ -342,6 +342,20 @@ function mtgCompactOutlookSlide_(summaries) {
 }
 
 /**
+ * 変化のあった案件の並びに使う、今回のステータスの期待値（%）。ステータスの名前の「(70%)」から読む（「A-受注済み(100%)」は 100）。
+ * 名前に % が無ければ確度の順（plan.ranks の順に 90・70・50・30・10）の目安。失注・保留・削除・確度の無いステータスは -1（最後）
+ */
+function mtgCompactStatusRate_(ch) {
+  const group = mtgStatusGroupOf_(ch);
+  if (group === 'closed') return -1;
+  const m = /\((\d+(?:\.\d+)?)\s*%\)/.exec(String(ch.statusTo || '').normalize('NFKC'));
+  if (m) return Number(m[1]);
+  const i = MTG_OPTIONS.plan.ranks.findIndex(r => r.key === group);
+  // 確度の順に 90・70・50・30・10（A〜創注のふつうの期待値）。同じ確度で % のあるステータスより少し後ろ
+  return Math.max(0, (MTG_OPTIONS.plan.ranks.length - i) * 20 - 10) - 0.5;
+}
+
+/**
  * 計画に対する積み上げ（FY26〜28売上）（2026/11/12）：左に今年度の売上を受注月の四半期（Q1〜Q4）ごとに確度別に積み上げ（前の四半期の上に続ける。
  * 上に「+増えた分」）、今年度の合計・計画（白抜き）・不足（計画との差。グレーの点線の枠。計画を超えたら「超過」）。区切り線の右に、来年度・再来年度の
  * 半期ごとの売上（受注月・確度によらない。年度ごとに通期で1色（compact.laterColors）。累計の棒には前半期・後半期の境目に点線。summary.salesOutlook.halves。確定（A＋B）のページも同じ値）を、今年度の合計の上に
@@ -813,18 +827,19 @@ function mtgCompactChangeSlidesOf_(s, start) {
     while (mtgTextWidth_(text, size) > (columns[0] - S.cellPadX) * 0.8 && size > 5.5) size -= 0.5;
     return size;
   };
-  // 並び：今回のステータスの確度 A → B → … → 創注 → 失注・保留・削除（各サブインダストリーの資料と同じまとまり）、その中は今年度の売上の大きい順
+  // 並び：今回のステータスの期待値の高い順 → 失注・保留・削除、同じ期待値は今年度の売上の大きい順
   // （salesPage。想定売上のときは各サブインダストリーの資料と同じ想定売上の大きい順）
-  const groups = s.statusGroups || mtgStatusGroups_([]);
-  const groupIndex = ch => groups.findIndex(gr => gr.key === mtgStatusGroupOf_(ch));
-  const moves = s.changes.filter(ch => ch.category !== 'updated').map((ch, i) => ({ch, i}))
-    .sort((a, b) => (groupIndex(a.ch) - groupIndex(b.ch)) || (bySales ? (salesOf(b.ch) || 0) - (salesOf(a.ch) || 0) : 0) || (a.i - b.i)).map(x => x.ch);
+  // 2026/11/16 から、今回のステータスの期待値（「B-クロージング中(70%)」の %。mtgCompactStatusRate_）の高い順に並べ、同じ期待値は売上の大きい順
+  // （同じ確度の文字でも期待値の違うステータスがあれば、期待値で分ける）。失注・保留・削除は最後
+  const moves = s.changes.filter(ch => ch.category !== 'updated').map((ch, i) => ({ch, i, rate: mtgCompactStatusRate_(ch)}))
+    .sort((a, b) => (b.rate - a.rate) || (bySales ? (salesOf(b.ch) || 0) - (salesOf(a.ch) || 0) : 0) || (a.i - b.i)).map(x => x.ch);
   const gone = moves.filter(ch => ch.removed || !ch.deal || mtgExcludedStatus_(ch.statusTo)).length;
   const lead = lack.changes ? mtgChangedLabel_(s) + 'は' + o.gapText + '（' + lack.changes + '）。'
     // 失注・削除の案件も載せる。状況・計画進捗の「変化のある案件」は今ある案件だけを数える（mtgCompactChangedNow_）ので、その分を書き添える
     : moves.length ? mtgChangedLabel_(s) + 'は ' + moves.length + '件' + (gone ? '（うち失注・削除 ' + gone + '件。状況・計画進捗の件数には含めない）' : '') +
       mtgUpdatedNote_(s) + '。\n' +
-      'ステータス・期待値・受注月・活動状況が変わった案件。確度 A から順に、同じ確度は' + (bySales ? 'FY' + year + '売上' : '想定売上') + 'の大きい順。No は資料の通し番号。'
+      'ステータス・期待値・受注月・活動状況が変わった案件。ステータスの期待値の高い順に、同じ期待値は' + (bySales ? 'FY' + year + '売上' : '想定売上') +
+      'の大きい順。No は資料の通し番号。'
       : mtgPeriodShort_(s) + '、ステータス・期待値・受注月・活動状況に変化のある案件なし' + mtgUpdatedNote_(s) + '。';
   if (!moves.length) {
     return {slides: [{title, lead, elements: mtgEmptyTable_(columns, head, lack.changes ? 'gap' : 'none', lack.changes || '')}], count: 0};
