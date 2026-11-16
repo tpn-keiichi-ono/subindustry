@@ -168,7 +168,7 @@ test('変化のあった案件：活動状況・課題の列を広く（ほか�
   const table = tableOf(plain(g.mtgCompactChangeSlides_(s1, 0)).slides[0]);
   const w = table.columns.map(Number);
   assert.ok(Math.abs(w.reduce((a, b) => a + b, 0) - S.w) < 0.01, '表の幅は本文の幅');
-  assert.ok(w[5] >= 176 && w[6] >= 140, '活動状況・課題が広い：' + w.join(','));
+  assert.ok(w[5] >= 160 && w[6] >= 130, '活動状況・課題が広い（前は 138・112）：' + w.join(','));
   assert.ok(w[5] + w[6] >= S.w * 0.45, '活動状況と課題で表の半分ほど');
   // ステータスの「▶ B-クロージング中(70%)」・見出しの「FY26売上」・受注月の「2027/3 ▶」が1行に入る
   const fits = (text, size, width) => g.mtgTextWidth_(text, size) <= (width - S.cellPadX) * S.cellFit;
@@ -319,6 +319,33 @@ test('RXシナリオ一覧は、統合版（報告用）と変化のあった案
   const overview = run('createBusinessMtgReportingOverview');
   assert.strictEqual(overview.at, -1, '全体サマリには入れない');
   assert.match(overview.message, /_報告用_全体サマリ\.pdf（6ページ）/);
+});
+
+test('統合版（報告用）のどのページも、リード文・表の見出しが途中で折り返さない（リード文は書いた行のまま、見出しは太字の余裕をとって1行ずつ入る）', () => {
+  const {gas, g} = setup();
+  const S = gas.get('MTG_SLIDE');
+  const C = gas.get('MTG_OPTIONS').compact;
+  // 長めの中身：失注・削除・その他の項目のみの更新もあるシート
+  g.recordDiffEdit(gas.edit(gas.ss.getSheetByName('新FMT'), 'F4', '失注'));
+  const s1 = summarize(g, '新FMT');
+  s1.kpi.updated = 12;
+  const deck = plain(g.mtgCompactSlides_([s1, summarize(g, '新FMT2')], '2026/11/13', true));
+  deck.filter(sl => !sl.cover).forEach(sl => {
+    const lead = sl.elements.find(e => e.role === 'lead');
+    // どの行も文の終わり（「。」）で終わる（文の途中で折り返していない）
+    const lines = lead.text.split('\n');
+    lines.forEach(line => assert.ok(/。$/.test(line), sl.title + '：リード文が文の途中で折り返している：' + lead.text));
+    // Google スライドの字は見積もりより広いので、どの行も幅の 92% まで
+    lines.forEach(line => assert.ok(g.mtgTextWidth_(line, lead.size) <= (S.w - S.padX) * 0.92, sl.title + '：リード文の行が長い：' + line));
+    sl.elements.filter(e => e.type === 'table').forEach(t => {
+      t.rows[0].cells.forEach((cell, i) => {
+        String(cell.text).split('\n').forEach(line => {
+          assert.ok(g.mtgTextWidth_(line, cell.size || S.bodySize) <= (Number(t.columns[i]) - S.cellPadX) * C.headFit + 0.01,
+            sl.title + '：見出し「' + line + '」が列（' + Math.round(t.columns[i]) + 'pt）に入らない');
+        });
+      });
+    });
+  });
 });
 
 test('変化のあった案件：RXシナリオ構成の列があれば、案件名の下にシナリオの番号（見出しは「得意先／案件名／シナリオNo」。空は「未入力」）', () => {
@@ -621,8 +648,8 @@ test('状況・計画進捗（FY26〜28売上）のページ：棒は今年度�
   assert.strictEqual(slide.elements.filter(e => e.role === 'compact-plan').length, 2);
   assert.strictEqual(slide.elements.filter(e => e.role === 'compact-gap').length, 1);
   assert.deepStrictEqual(slide.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text), ['A', 'B', 'C', 'D']);
-  assert.match(slide.lead, new RegExp('^FY' + y0 + ' の確定（A＋B）は 120百万円（計画比 40%）、A〜D の合計は 135百万円。FY' + y1 + ' 55・FY' + y2 + ' 20百万円（失注除く）。\n'));
-  assert.match(slide.lead, new RegExp('FY' + y1 + '・FY' + y2 + ' は' + g.mtgPlanMonthName_() + '・確度によらない。$'));
+  assert.strictEqual(slide.lead, 'FY' + y0 + ' の確定（A＋B）は 120百万円（計画比 40%）、A〜D の合計は 135百万円（失注除く）。\n' +
+    'FY' + y1 + ' 55・FY' + y2 + ' 20百万円（' + g.mtgPlanMonthName_() + '・確度によらない）。棒は FY' + y0 + '売上を A〜D で積み上げ。');
   // 列の無いシートが無ければ、補足は全体合計の数え方だけ
   assert.strictEqual(plain(g.mtgCompactOutlookSlide_(summaries.slice(0, 2))).note, '※ 全体合計 ＝ FY' + y0 + '（A〜D）＋FY' + y1 + '＋FY' + y2);
 });
@@ -884,7 +911,7 @@ test('変化のあった案件は、確度 A から今回のステータスの�
   const rows = cellTexts(tableOf(part.slides[0])).slice(1);
   assert.deepStrictEqual(rows.map(r => [r[0], r[1].split('\n')[0], r[3]]),
     [['1', 'A社', '100'], ['2', 'B社', '50'], ['3', 'C社', '40'], ['4', 'D社', '20 ▶ 500']]);
-  assert.match(part.slides[0].lead, /ステータスの期待値の高い順に、同じ期待値は想定売上の大きい順/);
+  assert.match(part.slides[0].lead, /並びはステータスの期待値の高い順・想定売上の大きい順。No は通し番号。/);
 });
 
 test('変化のあった案件（既定）：金額は今年度の売上の列（前半期＋後半期）。確度 A から今回のステータスの順、その中は今年度の売上の大きい順', () => {
@@ -901,7 +928,7 @@ test('変化のあった案件（既定）：金額は今年度の売上の列�
   // C社は B に前進（売上 10）で B社（30）のあと。D社は C で売上なし
   assert.deepStrictEqual(table.slice(1).map(r => [r[0], r[1].split('\n')[0], r[3]]),
     [['1', 'A社', '70'], ['2', 'B社', '30'], ['3', 'C社', '10'], ['4', 'D社', blank]]);
-  assert.match(part.slides[0].lead, new RegExp('ステータスの期待値の高い順に、同じ期待値はFY' + fy + '売上の大きい順'));
+  assert.match(part.slides[0].lead, new RegExp('並びはステータスの期待値の高い順・FY' + fy + '売上の大きい順。No は通し番号。'));
 });
 
 test('状況・計画進捗の次のページ（見込（C）を含む）：棒の確定（A・B）の右に、見込（C）を薄い地と点線の枠で足す。並び・右の数字は前のページと同じ', () => {
@@ -992,7 +1019,7 @@ test('状況のページの「変化のある案件」は、今ある案件（�
   assert.strictEqual(g.mtgCompactChangedNow_(plain(g.mtgCombinedLite_(s1))), 2);
   // 変化のあった案件のページには失注も載せ、リード文にその件数を書き添える（状況・計画進捗の件数と見比べられるように）
   const part = plain(g.mtgCompactChangeSlides_(s1, 0));
-  assert.match(part.slides[0].lead, /^前回から変化のある案件は 3件（うち失注・削除 1件。状況・計画進捗の件数には含めない）/);
+  assert.match(part.slides[0].lead, /^前回から変化のある案件は 3件（うち失注・削除 1件は、状況・計画進捗の件数に含めない）。\n/);
 });
 
 test('状況・計画進捗（FY売上）：今年度の売上の列（前半期＋後半期。本物の P・Q列）で、棒・計画・進捗率・確定・見込を集計したページ（受注月が今年度の案件だけ。失注は除く）', () => {
@@ -1199,8 +1226,9 @@ test('計画に対する積み上げ（FY売上・salesPlanBy: orderMonth。既�
   const sure = slides.find(sl => sl.title === T.plan + '：確定（A＋B）');
   assert.ok(all && sure && slides.indexOf(all) === 3 && slides.indexOf(sure) === 4);
   assert.ok(all.elements.some(e => /月別 FY\d+売上の積み上げ（百万円）$/.test(e.text || '')), '月別の図');
-  assert.match(leadOf(all), new RegExp('^今年度（[^）]+）の' + fy + '売上の積み上げは 120百万円。計画 300百万円に対して ▲180（達成率 40%）。'));
-  assert.match(leadOf(sure), new RegExp('^今年度（[^）]+）の確定（A＋B）の' + fy + '売上の積み上げは 120百万円。.*（進捗率 40%）'));
+  // 期間は図の見出しにあるので、リード文には書かない（折り返さない長さに。shortLead）
+  assert.match(leadOf(all), new RegExp('^' + fy + '売上の積み上げは 120百万円。計画 300百万円に対して ▲180（達成率 40%）。'));
+  assert.match(leadOf(sure), new RegExp('^確定（A＋B）の' + fy + '売上の積み上げは 120百万円。.*（進捗率 40%）'));
   assert.ok(!all.elements.some(e => /空・数値でない/.test(e.text || '')), '売上が空の案件の件数は書かない');
   // 今年度の売上が無い案件（D社・G社）は数えない（積み上げに含まない案件は、失注の E社 1件だけ）
   assert.strictEqual(merged.undated.count + merged.before.count + merged.after.count + merged.excluded.count, 1);

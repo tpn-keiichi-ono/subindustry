@@ -156,6 +156,10 @@ const MTG_OPTIONS = {
     overviewSuffix: '_全体サマリ',
     // 変化のあった案件のページの前に「RXシナリオ一覧（シナリオNo）」を入れる（変化のあった案件のページのある資料だけ。mtgCompactScenarioSlides_。2026/11/16）
     scenarioPage: true,
+    // 表の文字が折り返さないかの見積もりの余裕（列の幅から余白を引いた幅のうち、本文は bodyFit・太字の見出しは headFit まで。mtgCompactLineFits_。
+    // Google スライドの字は見積もりより広く、ぎりぎりだと「FY26売 / 上」のように折り返したため。2026/11/16）
+    bodyFit: 0.92,
+    headFit: 0.85,
     // 変化のあった案件だけ（createBusinessMtgReportingChanges()。表紙と変化のあった案件のページだけ）のファイル名の後ろ
     changesSuffix: '_変化のあった案件',
     planScale: 1.4,
@@ -7083,7 +7087,8 @@ function mtgPlanSlide_(p, now, name, options) {
   ];
   const asideCount = asides.reduce((sum, a) => sum + p[a.key].count, 0);
   const asideValue = asides.reduce((sum, a) => sum + p[a.key].value, 0);
-  const lead = '今年度（' + period + '）の' + what + 'の積み上げは ' + mtgAmount_(p.total) + '百万円。計画 ' + mtgAmount_(p.plan) + '百万円に対して ' +
+  // options.shortLead：期間（「今年度（26/4〜27/3）の」）を書かない（図の見出しにあるので。統合版（報告用）で、リード文を折り返さない長さにするため）
+  const lead = (options && options.shortLead ? what : '今年度（' + period + '）の' + what) + 'の積み上げは ' + mtgAmount_(p.total) + '百万円。計画 ' + mtgAmount_(p.plan) + '百万円に対して ' +
     mtgSigned_(diff) + (rate == null ? '' : '（' + (only ? '進捗率' : '達成率') + ' ' + rate + '%）') + '。\n' +
     (peak && peak.total > 0 ? '最大は' + peak.m + '月の ' + mtgAmount_(peak.total) + '（積み上げの ' + share(peak.total) + '）' +
       (only ? '。' : '、確度A・B は ' + mtgAmount_(sure) + '（' + share(sure) + '）。') : '今年度に' + monthName + 'がある案件の' + what + 'はなし。') +

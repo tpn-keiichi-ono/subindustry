@@ -168,9 +168,10 @@ function mtgCompactFront_(summaries, meeting, final, now, part) {
           {only: C.sureRanks, label: C.sureLabel, title: salesTitles.salesSure}));
       } else {
         // 案件の今年度の売上の合計を、受注月の月に置いて積み上げる（想定売上の積み上げと同じ形）
-        plan.push(mtgPlanSlide_(byMonth, now, o.combined.name, {measure, titleNote: measure, title: salesTitles.sales}),
+        // リード文は期間を書かない（図の見出しにある。折り返さない長さにするため。shortLead）
+        plan.push(mtgPlanSlide_(byMonth, now, o.combined.name, {measure, titleNote: measure, title: salesTitles.sales, shortLead: true}),
           mtgPlanSlide_(mtgPlanRanksOnly_(byMonth, C.sureRanks), now, o.combined.name, {only: C.sureRanks, label: C.sureLabel, measure, titleNote: measure,
-            title: salesTitles.salesSure}));
+            title: salesTitles.salesSure, shortLead: true}));
       }
       // FY26〜28 のページ（outlookPage）：FY26だけの2枚のあとに、今年度の四半期と来年度以降の半期を続けて積み上げる2枚（A〜D・確定（A＋B））
       if (C.outlookPage) {
@@ -232,11 +233,11 @@ function mtgCompactOutlookSlide_(summaries) {
   const totalRate = ok.length ? rateOf(total.p) : null;
   const range = keys[0] + '〜' + keys[keys.length - 1];
   // 来年度以降（FY27・FY28）は受注月・確度によらない売上（受注月・営業ステータスは今年度の受注を見込んだ列のため。2026/11/12）
+  // リード文は2行（金額が5桁でも折り返さない長さ。2026/11/16）：1行目に今年度、2行目に来年度以降と棒の説明
   const lead = fy(year) + ' の' + sureWord + 'は ' + mtgAmount_(sumOf(total.p, year, sure)) + '百万円（計画比 ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') +
-    '）、' + range + ' の合計は ' + mtgAmount_(sumOf(total.p, year, keys)) + '百万円。' + fy(next) + ' ' + mtgAmount_(laterOf(total.p, next)) + '・' + fy(last) + ' ' +
-    mtgAmount_(laterOf(total.p, last)) + '百万円（失注除く）。\n' +
-    '棒は ' + fy(year) + '売上（' + mtgPlanMonthName_() + 'が ' + fy(year) + '）を ' + range + ' で積み上げ。' + fy(next) + '・' + fy(last) + ' は' + mtgPlanMonthName_() +
-    '・確度によらない。';
+    '）、' + range + ' の合計は ' + mtgAmount_(sumOf(total.p, year, keys)) + '百万円（失注除く）。\n' +
+    fy(next) + ' ' + mtgAmount_(laterOf(total.p, next)) + '・' + fy(last) + ' ' + mtgAmount_(laterOf(total.p, last)) + '百万円（' + mtgPlanMonthName_() +
+    '・確度によらない）。棒は ' + fy(year) + '売上を ' + range + ' で積み上げ。';
   // 全体合計の数え方は出典の行に（リード文を2行に収めるため）
   const sumNote = '※ 全体合計 ＝ ' + fy(year) + '（' + range + '）＋' + fy(next) + '＋' + fy(last);
   const x = S.x;
@@ -342,6 +343,64 @@ function mtgCompactOutlookSlide_(summaries) {
   });
   return {title: MTG_TITLES.compactOverview + '（' + fy(year) + '〜' + last + '売上）', lead, elements: el,
     note: sumNote + (marked ? '。※ のある合計は「' + G + '」のシートを除く' : '')};
+}
+
+/**
+ * 1行の文字が、表のセル（幅 width）に折り返さずに入るか。文字の幅は見積もり（mtgTextWidth_）なので、本文は compact.bodyFit、
+ * 太字の見出し（bold）は compact.headFit の余裕をとる（Google スライドの字は見積もりより広く、ぎりぎりだと折り返す。2026/11/16）
+ */
+function mtgCompactLineFits_(text, size, width, bold) {
+  const C = MTG_OPTIONS.compact;
+  const ratio = bold ? C.headFit || 0.85 : C.bodyFit || 0.92;
+  return String(text).split('\n').every(line => mtgTextWidth_(line, size) <= (Number(width) - MTG_SLIDE.cellPadX) * ratio);
+}
+
+/** 1行の文字を、折り返さずに入れるのに要るセルの幅（mtgCompactLineFits_ の逆） */
+function mtgCompactLineWidth_(lines, size, bold) {
+  const C = MTG_OPTIONS.compact;
+  const ratio = bold ? C.headFit || 0.85 : C.bodyFit || 0.92;
+  const widest = Math.max.apply(null, [0].concat(lines.map(line => mtgTextWidth_(line, size))));
+  return Math.ceil(widest / ratio + MTG_SLIDE.cellPadX);
+}
+
+/**
+ * 変化のあった案件の表の列の幅。specs は活動状況・課題より前の列（No・得意先／案件名・ステータス・金額・受注月）：{min, size, texts, arrow}。
+ * 見出し（labels。太字。改行で行を分ける）と中身（texts。「前 ▶ 今」は arrow の側で2行に分けた、長いほうの行）が折り返さずに入る幅
+ * （min より狭くはしない）。残りを活動状況・課題に 55:45 で分ける（2026/11/16）
+ */
+function mtgCompactChangeColumns_(labels, specs) {
+  const S = MTG_SLIDE;
+  const fixed = specs.map((spec, i) => {
+    const size = spec.size || S.bodySize;
+    const head = mtgCompactLineWidth_(String(labels[i]).split('\n'), S.bodySize, true);
+    const parts = [];
+    (spec.texts || []).forEach(t => {
+      const text = String(t == null ? '' : t);
+      if (!spec.arrow || text.indexOf(' ▶ ') < 0) {
+        parts.push(text);
+        return;
+      }
+      const [from, to] = text.split(' ▶ ');
+      parts.push.apply(parts, spec.arrow === 'before' ? [from, '▶ ' + to] : [from + ' ▶', to]);
+    });
+    return Math.max(spec.min || 0, head, mtgCompactLineWidth_(parts, size, false));
+  });
+  const rest = S.w - fixed.reduce((a, b) => a + b, 0);
+  const activity = Math.round(rest * 0.55);
+  return mtgTableWidths_(fixed.concat([activity, rest - activity]));
+}
+
+/**
+ * 変化のあった案件の表の見出しの行（mtgHeadRow_ と同じ形）。見出しの各行が太字で折り返さずに入るように、入らなければ字を小さくする（7pt まで）
+ */
+function mtgCompactHeadRow_(columns, labels) {
+  const S = MTG_SLIDE;
+  const c = MTG_OPTIONS.colors;
+  return mtgRow_(columns, labels.map((text, i) => {
+    let size = S.bodySize;
+    while (!mtgCompactLineFits_(text, size, columns[i], true) && size > 7) size -= 0.5;
+    return {text, size, bold: true, color: c.white, fill: c.green, align: 'CENTER', lines: 3};
+  }), S.headRow);
 }
 
 /**
@@ -956,42 +1015,53 @@ function mtgCompactChangeSlidesOf_(s, start) {
   const c = o.colors;
   const word = mtgFromWord_(s);
   const title = o.compact.changesTitle + s.name;
-  // No は3桁が 7.5pt で余裕をもって1行に入る幅（26pt・8pt では、Google スライドで「39／2」と折り返した。2026/11/09）
-  // 活動状況・活動における課題は文が長くなりやすいので広く（2026/11/16）：ほかの列は中身が1行（ステータスは「前回」「▶ 今回」の2行）に入る幅まで
-  // 狭める（FY26売上は見出しの「FY26売上」、受注月は「2027/3 ▶」、ステータスは 8pt の「▶ B-クロージング中(70%)」が入る幅）
-  // 金額の列：今年度の売上（salesPage。今の値。前回の売上は記録に無いため）か、想定売上（前回▶今回。「100 ▶ 101」が1行に入る幅）
+  // 金額の列：今年度の売上（salesPage。今の値。前回の売上は記録に無いため）か、想定売上（前回▶今回）
   const bySales = !!o.compact.salesPage;
-  const columns = mtgColumns_(bySales ? [30, 100, 116, 54, 60, 176, 140] : [30, 100, 116, 80, 60, 160, 130], 5);
   const year = mtgFiscalYearKey_(s.now ? new Date(s.now) : new Date());
   const salesOf = ch => (ch.deal && ch.deal.sales ? ch.deal.sales[year] : null);
-  // 得意先／案件名の列：RXシナリオ構成の列があれば、案件名の下にシナリオの番号（mtgDealScenarioCell_。見出しは「得意先／案件名／シナリオNo」。2026/11/16）
-  const head = mtgHeadRow_(columns, ['No', mtgDealHead_(s), 'ステータス\n' + word + '▶今回', bySales ? 'FY' + year + '売上\n（今回）' : '想定売上\n' + word + '▶今回',
-    '受注月\n' + word + '▶今回', '活動状況（最新）', '活動における課題']);
   const lack = s.gaps || {};
-  const noSize = text => {
-    let size = 7.5;
-    while (mtgTextWidth_(text, size) > (columns[0] - S.cellPadX) * 0.8 && size > 5.5) size -= 0.5;
-    return size;
-  };
   // 並び：今回のステータスの期待値の高い順 → 失注・保留・削除、同じ期待値は今年度の売上の大きい順
   // （salesPage。想定売上のときは各サブインダストリーの資料と同じ想定売上の大きい順）
   // 2026/11/16 から、今回のステータスの期待値（「B-クロージング中(70%)」の %。mtgCompactStatusRate_）の高い順に並べ、同じ期待値は売上の大きい順
   // （同じ確度の文字でも期待値の違うステータスがあれば、期待値で分ける）。失注・保留・削除は最後
   const moves = s.changes.filter(ch => ch.category !== 'updated').map((ch, i) => ({ch, i, rate: mtgCompactStatusRate_(ch)}))
     .sort((a, b) => (b.rate - a.rate) || (bySales ? (salesOf(b.ch) || 0) - (salesOf(a.ch) || 0) : 0) || (a.i - b.i)).map(x => x.ch);
+  // セルの中身（列の幅を決めるのにも使う）。「前 ▶ 今」は、1行に入らなければ矢印の前（ステータス）・あと（受注月・金額）で改行する
+  const statusText = ch => mtgStatusMove_(ch);
+  const salesText = ch => (ch.removed ? '（削除）' : salesOf(ch) != null ? mtgAmount_(salesOf(ch)) : o.blankText);
+  const amountMove = ch => mtgValueMove_(ch.base ? ch.base.amount : null, ch.deal ? ch.amount : null, ch);
+  const labels = ['No', mtgDealHead_(s), 'ステータス\n' + word + '▶今回', bySales ? 'FY' + year + '売上\n（今回）' : '想定売上\n' + word + '▶今回',
+    '受注月\n' + word + '▶今回', '活動状況（最新）', '活動における課題'];
+  // 列の幅（2026/11/16）：活動状況・活動における課題は文が長くなりやすいので広く、ほかの列は見出しと中身が折り返さずに入る幅まで狭める。
+  // 幅は見出し・中身の実際の文字から決める（見出しは太字で、見積もりより Google スライドの字が広いので余裕を大きく（compact.headFit）。
+  // 「FY26売上」が「FY26売 / 上」と折り返した。2026/11/16）。No は3桁が 7.5pt で1行に入る幅（26pt では「39／2」と折り返した）
+  const columns = mtgCompactChangeColumns_(labels, [
+    {min: 30},
+    {min: 100},
+    {size: 8, texts: moves.map(statusText), arrow: 'before'},
+    {texts: moves.map(ch => (bySales ? salesText(ch) : String(amountMove(ch)))), arrow: 'after'},
+    {texts: moves.map(ch => mtgMonthMove_(ch)), arrow: 'after'}
+  ]);
+  // 得意先／案件名の列：RXシナリオ構成の列があれば、案件名の下にシナリオの番号（mtgDealScenarioCell_。見出しは「得意先／案件名／シナリオNo」。2026/11/16）
+  const head = mtgCompactHeadRow_(columns, labels);
+  const noSize = text => {
+    let size = 7.5;
+    while (mtgTextWidth_(text, size) > (columns[0] - S.cellPadX) * 0.8 && size > 5.5) size -= 0.5;
+    return size;
+  };
   const gone = moves.filter(ch => ch.removed || !ch.deal || mtgExcludedStatus_(ch.statusTo)).length;
+  // リード文は2行（どちらも折り返さない長さ。2026/11/16）：1行目に件数（失注・削除の案件も載せる。状況・計画進捗の「変化のある案件」は今ある案件だけを
+  // 数える（mtgCompactChangedNow_）ので、その分を書き添える）、2行目に並びと、その他の項目のみの更新の件数
+  const updated = s.kpi && s.kpi.updated ? 'ほかにその他の項目のみの更新 ' + s.kpi.updated + '件。' : '';
   const lead = lack.changes ? mtgChangedLabel_(s) + 'は' + o.gapText + '（' + lack.changes + '）。'
-    // 失注・削除の案件も載せる。状況・計画進捗の「変化のある案件」は今ある案件だけを数える（mtgCompactChangedNow_）ので、その分を書き添える
-    : moves.length ? mtgChangedLabel_(s) + 'は ' + moves.length + '件' + (gone ? '（うち失注・削除 ' + gone + '件。状況・計画進捗の件数には含めない）' : '') +
-      mtgUpdatedNote_(s) + '。\n' +
-      'ステータス・期待値・受注月・活動状況が変わった案件。ステータスの期待値の高い順に、同じ期待値は' + (bySales ? 'FY' + year + '売上' : '想定売上') +
-      'の大きい順。No は資料の通し番号。'
+    : moves.length ? mtgChangedLabel_(s) + 'は ' + moves.length + '件' + (gone ? '（うち失注・削除 ' + gone + '件は、状況・計画進捗の件数に含めない）' : '') + '。\n' +
+      '並びはステータスの期待値の高い順・' + (bySales ? 'FY' + year + '売上' : '想定売上') + 'の大きい順。No は通し番号。' + updated
       : mtgPeriodShort_(s) + '、ステータス・期待値・受注月・活動状況に変化のある案件なし' + mtgUpdatedNote_(s) + '。';
   if (!moves.length) {
     return {slides: [{title, lead, elements: mtgEmptyTable_(columns, head, lack.changes ? 'gap' : 'none', lack.changes || '')}], count: 0};
   }
   const rows = moves.map((ch, i) => {
-    const status = mtgStatusMove_(ch);
+    const status = statusText(ch);
     return mtgRow_(columns, [
       // No：3桁（「392」）でも折り返さないように、小さめの字（7.5pt）で1行。セルの幅の 8割に入らなければさらに小さくする
       // （見積もりぎりぎりだと、Google スライドでは折り返すことがあるため）
@@ -999,11 +1069,11 @@ function mtgCompactChangeSlidesOf_(s, start) {
       mtgDealScenarioCell_(s, ch, columns[1]),
       // ステータスの動きが1行に入らなければ「▶」の前で改行（「B-／クロージング中」のように名前の途中で切らない）
       // 字は 8pt（列を狭めて活動状況・課題を広くしたため。「▶ B-クロージング中(70%)」が1行に入る大きさ）
-      {text: mtgWrap_(status, columns[2], 8, 2).length > 1 ? status.replace(' ▶ ', '\n▶ ') : status, size: 8, lines: 3, fill: c.white},
+      {text: mtgCompactLineFits_(status, 8, columns[2]) ? status : status.replace(' ▶ ', '\n▶ '), size: 8, lines: 3, fill: c.white},
       // 今年度の売上（今の値。空なら「未入力」、削除した行は「（削除）」）か、想定売上（前回▶今回。変わっていなければ今の値）
-      bySales ? {text: ch.removed ? '（削除）' : salesOf(ch) != null ? mtgAmount_(salesOf(ch)) : o.blankText, lines: 1, fill: c.white, align: 'CENTER',
+      bySales ? {text: salesText(ch), lines: 1, fill: c.white, align: 'CENTER',
         color: salesOf(ch) != null ? c.body : c.muted}
-        : mtgFieldCell_(s, 'amount', mtgValueMove_(ch.base ? ch.base.amount : null, ch.deal ? ch.amount : null, ch), {lines: 2, fill: c.white, align: 'CENTER'}),
+        : mtgFieldCell_(s, 'amount', amountMove(ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'orderMonth', mtgMonthMove_(ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       // 活動状況・課題は4行まで今の字の大きさで（長い文を小さくしすぎないように。2026/11/16）。入らなければ小さくし、それでも入らなければ行を伸ばす
       mtgFieldCell_(s, 'activity', ch.activity, {lines: 4, fill: c.white, fit: true, grow: true}),
