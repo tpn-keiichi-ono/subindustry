@@ -154,6 +154,8 @@ const MTG_OPTIONS = {
     fileSuffix: '_報告用',
     // 全体サマリだけ（createBusinessMtgReportingOverview()。変化のあった案件のページを作らない確かめ用）のファイル名の後ろ（fileSuffix の後ろに足す）
     overviewSuffix: '_全体サマリ',
+    // 資料の最後に Appendix「RXシナリオ一覧（シナリオNo）」を入れる（変化のあった案件のページのある資料だけ。mtgCompactScenarioSlides_。2026/11/16）
+    scenarioAppendix: true,
     // 変化のあった案件だけ（createBusinessMtgReportingChanges()。表紙と変化のあった案件のページだけ）のファイル名の後ろ
     changesSuffix: '_変化のあった案件',
     planScale: 1.4,
@@ -3716,7 +3718,8 @@ function mtgReadSnapshots_(ss, since) {
 
 /**
  * 追跡シートの案件を読む。
- * {headers, has: {見出しのキー: シートにあるか}, statusOrder: ステータスのプルダウンの選択肢（無ければ空）, weightedFormula: 期待値の列が数式か,
+ * {headers, has: {見出しのキー: シートにあるか}, statusOrder: ステータスのプルダウンの選択肢（無ければ空）, scenarioOptions: RXシナリオ構成のプルダウンの選択肢,
+ *  weightedFormula: 期待値の列が数式か,
  *  salesYears: 年度別の売上の列の年度（下2桁）,
  *  deals: [{row, key, customer, project, status, kind, amount, weighted, orderMonth: {y, m}|null, orderMonthText,
  *  startMonth: {y, m}|null, startMonthText, activity, issue, owner, delivery, record, scenarios, scenarioAmount,
@@ -3761,6 +3764,9 @@ function mtgReadDeals_(sheet, rule) {
   if (has.weighted) out.weightedFormula = sheet.getRange(headerRow + 1, cols.weighted + 1, count, 1).getFormulas().some(line => !!String(line[0] || '').trim());
   // ステータスのプルダウンの選択肢（一覧でも、定義のシートの範囲でも）
   out.statusOrder = mtgListOptions_(sheet.getRange(headerRow + 1, cols.status + 1).getDataValidation()) || [];
+  // RXシナリオ構成のプルダウンの選択肢（「01-04.顧客情報活用パッケージ」など。各シートには、そのサブインダストリーのシナリオだけがある。
+  // 統合版（報告用）の Appendix「RXシナリオ一覧」。2026/11/16）
+  out.scenarioOptions = has.scenario ? mtgListOptions_(sheet.getRange(headerRow + 1, cols.scenario + 1).getDataValidation()) || [] : [];
   const range = sheet.getRange(headerRow + 1, 1, count, width);
   const values = range.getValues();
   const shown = range.getDisplayValues();
@@ -4068,6 +4074,7 @@ function mtgSummarize_(ss, name, context) {
     scenarioAmountColumn: !!table.has.scenarioAmount,
     reportColumn: !!table.has.reportFlag,
     salesYears: table.salesYears || [],   // 年度別の売上の列のある年度（下2桁。報告案件の「売上」の枠。MeetingReport.gs）
+    scenarioOptions: table.scenarioOptions || [],   // RXシナリオ構成のプルダウンの選択肢（統合版（報告用）の Appendix「RXシナリオ一覧」）
     // シナリオ見込額（サービスパッケージ合算。失注除く）の合計：今と、前回の時点コピーの値（コピーと比べないときは null）。報告案件版のサマリー
     scenarioTotal: {end: mtgSum_(counted, 'scenarioAmount'),
       start: copy && copy.table ? mtgSum_(copy.table.deals.filter(d => !mtgExcludedStatus_(d.status)), 'scenarioAmount') : null},
@@ -4986,6 +4993,8 @@ function mtgCombinedLite_(s) {
     bridge: {start: s.bridge.start, end: s.bridge.end, startCount: s.bridge.startCount, endCount: s.bridge.endCount,
       amountStart: s.bridge.amountStart, amountEnd: s.bridge.amountEnd}, salesBridge: s.salesBridge || null, plan: s.plan || null, planAmount: s.planAmount || null, planSales: s.planSales || null,
     planSalesByMonth: s.planSalesByMonth || null, salesOutlook: s.salesOutlook || null,
+    // RXシナリオ一覧（統合版（報告用）の Appendix）：シナリオ構成の列があるか・プルダウンの選択肢・変化のあった案件で選ばれているシナリオの数
+    scenarioColumn: !!s.scenarioColumn, scenarioOptions: s.scenarioOptions || [], scenarioUsed: s.changes ? mtgCompactScenarioUsed_(s) : null,
     changedNow: s.changes ? mtgCompactChangedNow_(s) : null,   // 変化のある案件のうち今ある案件（統合版（報告用）の状況のページ）
     previous: prev ? {date: prev.date, cutoff: prev.cutoff, baseline: !!prev.baseline, chosen: !!prev.chosen} : null}));
 }

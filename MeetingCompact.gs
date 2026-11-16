@@ -10,6 +10,7 @@
  *   2'. 同じ（見込（C）を含む。棒に続けて見込（C）を点線で足す。mtgCompactOverviewSlide_(…, {withC: true})）
  *   2''. 状況・計画進捗（FY26〜28売上）（mtgCompactOutlookSlide_。2026/11/12）：FY26売上の確度 A〜D の横棒と、FY26・FY27 の確定・見込、FY26〜28 の A〜D の合計
  *   3. 計画に対する積み上げ（全体。統合版と同じ mtgPlanSlide_ で、想定売上を積み上げる）と、確定（A＋B）だけの積み上げ（mtgPlanRanksOnly_）
+ *   （最後）Appendix　RXシナリオ一覧（シナリオNo）（mtgCompactScenarioSlides_。全体サマリだけのときは入れない）
  *   4〜 変化のあった案件：{サブインダストリー}（mtgCompactChangeSlides_。シートの順にサブインダストリーごと）：No（資料の通し番号）・得意先／案件名（／シナリオNo）・
  *      ステータス・想定売上・受注月（前回▶今回）・活動状況・活動における課題。変化が無ければ「該当なし」の1ページ
  * 集計はどれも期待値ではなく想定売上（summary.planAmount = mtgPlanOf_(…, 'amount')・bridge.amountStart / amountEnd。2026/11/09）。
@@ -124,7 +125,9 @@ function mtgCompactSlides_(summaries, meeting, final) {
     pages.push.apply(pages, mtgNumberSlides_(mtgCombinedFrame_([s], meeting, final), part.slides, page));
     page += part.slides.length;
   });
-  return mtgCompactFront_(summaries, meeting, final, now).concat(pages);
+  // 最後に Appendix（RXシナリオ一覧）
+  const appendix = mtgNumberSlides_(mtgCombinedFrame_(summaries, meeting, final), mtgCompactScenarioSlides_(summaries), page);
+  return mtgCompactFront_(summaries, meeting, final, now).concat(pages, appendix);
 }
 
 /**
@@ -339,6 +342,124 @@ function mtgCompactOutlookSlide_(summaries) {
   });
   return {title: MTG_TITLES.compactOverview + '（' + fy(year) + '〜' + last + '売上）', lead, elements: el,
     note: sumNote + (marked ? '。※ のある合計は「' + G + '」のシートを除く' : '')};
+}
+
+/**
+ * 変化のあった案件のページに載る案件（その他の項目のみの更新を除く）で選ばれているシナリオの数 {シナリオNo: 件数}（Appendix の RXシナリオ一覧）
+ */
+function mtgCompactScenarioUsed_(s) {
+  const out = {};
+  (s.changes || []).filter(ch => ch.category !== 'updated').forEach(ch => {
+    (ch.scenarios || []).map(mtgScenarioNumber_).filter((no, i, list) => list.indexOf(no) === i).forEach(no => { out[no] = (out[no] || 0) + 1; });
+  });
+  return out;
+}
+
+/** プルダウンの選択肢「01-04.顧客情報活用パッケージ」を {no: '01-04', name: '顧客情報活用パッケージ'} に（番号が無ければ no は空） */
+function mtgCompactScenarioItem_(text) {
+  const t = String(text || '').normalize('NFKC').trim();
+  const m = /^(\d+(?:[-‐−ー]\d+)*)[.．、\s]*(.*)$/.exec(t);
+  return m ? {no: m[1].replace(/[‐−ー]/g, '-'), name: m[2].trim() || t} : {no: '', name: t};
+}
+
+/**
+ * Appendix「RXシナリオ一覧（シナリオNo）」（2026/11/16）：変化のあった案件のページの「シナリオNo」と、シナリオの名前の一覧。
+ * シナリオは各シートの RXシナリオ構成のプルダウンの選択肢（各シートには、そのサブインダストリーのシナリオだけがある）で、シナリオNo の上2桁が
+ * サブインダストリー。サブインダストリーごとに見出しの帯（「01　スーパー・GMS」。上2桁の順）と、No・名前・件数（この資料の変化のあった案件のうち、
+ * そのシナリオを選んだ案件の数。選ばれているものは太字、無ければ「—」）。4列に流し込み（サブインダストリーは列の途中で分けない）、入らなければ次のページ（「（続き）」）。
+ * 色は Appendix の色（appendixColors。グレー）。どのシートにも選択肢が無ければページを作らない（[]）。summaries は中身か、その一部（mtgCombinedLite_）
+ */
+function mtgCompactScenarioSlides_(summaries) {
+  const o = MTG_OPTIONS;
+  if (!o.compact.scenarioAppendix) return [];
+  const groups = summaries.filter(s => s.scenarioColumn).map((s, i) => {
+    const items = (s.scenarioOptions || []).map(mtgCompactScenarioItem_);
+    // 上2桁（いちばん多いもの）。無ければシートの順
+    const counts = {};
+    items.forEach(it => { const pre = it.no.slice(0, 2); if (/^\d{2}$/.test(pre)) counts[pre] = (counts[pre] || 0) + 1; });
+    const pre = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0] || '';
+    return {pre, name: s.name, items, order: i};
+  });
+  if (!groups.some(gr => gr.items.length)) return [];
+  groups.sort((a, b) => (a.pre && b.pre ? a.pre.localeCompare(b.pre) : a.pre ? -1 : b.pre ? 1 : 0) || (a.order - b.order));
+  const used = {};
+  summaries.forEach(s => {
+    // 区切って作るときの中身の一部（mtgCombinedLite_）には数を入れてある。中身そのものなら変化のある案件から数える
+    const counts = s.scenarioUsed || (s.changes ? mtgCompactScenarioUsed_(s) : {});
+    Object.keys(counts).forEach(no => { used[no] = (used[no] || 0) + counts[no]; });
+  });
+  const total = groups.reduce((t, gr) => t + gr.items.length, 0);
+  const usedCount = Object.keys(used).length;
+  return mtgWithColors_(o.appendixColors, () => {
+    const S = MTG_SLIDE;
+    const c = o.colors;
+    const P = S.padX;
+    const nc = 4;
+    const gap = 10;
+    const cw = (S.w - gap * (nc - 1)) / nc;
+    const headH = 15;
+    const rowH = 13;
+    const noW = 38;
+    const cntW = 26;
+    const top = S.top - 4;
+    const bottom = S.bottom;
+    const pages = [];
+    let el = null;
+    let col = nc;
+    let y = top;
+    const nextCol = () => {
+      col++;
+      y = top;
+      if (col >= nc) {
+        el = [];
+        pages.push(el);
+        col = 0;
+      }
+    };
+    const header = (gr, more) => {
+      const x0 = S.x + col * (cw + gap);
+      el.push({type: 'box', x: x0, y, w: cw, h: headH, fill: c.green, shape: 'RECTANGLE', role: 'scenario-group'});
+      el.push(mtgBox_(x0 + 2 - P / 2, y, cw + P, headH, mtgWrap_((gr.pre ? gr.pre + '　' : '') + gr.name + (more ? '（続き）' : ''), cw - 4 + P, 8, 1)[0],
+        {size: 8, bold: true, color: c.white, role: 'scenario-group'}));
+      y += headH;
+    };
+    nextCol();
+    groups.forEach(gr => {
+      const rows = Math.max(gr.items.length, 1);
+      // サブインダストリーは列の途中で分けない（1列に入らないほど多ければ、列の終わりで分けて「（続き）」）
+      if (y > top && y + headH + rowH * Math.min(rows, Math.floor((bottom - top - headH) / rowH)) > bottom) nextCol();
+      header(gr);
+      if (!gr.items.length) {
+        el.push(mtgBox_(S.x + col * (cw + gap) + 2 - P / 2, y, cw + P, rowH, 'プルダウンの選択肢なし', {size: 7, color: c.muted, role: 'scenario-none'}));
+        y += rowH + 5;
+        return;
+      }
+      gr.items.forEach(it => {
+        if (y + rowH > bottom) {
+          nextCol();
+          header(gr, true);
+        }
+        const x0 = S.x + col * (cw + gap);
+        const n = used[it.no] || 0;
+        el.push({type: 'box', x: x0, y, w: noW, h: rowH, fill: c.greenSoft, shape: 'RECTANGLE'});
+        el.push(mtgBox_(x0 - P / 2, y, noW + P, rowH, it.no || '—', {size: 7.5, bold: true, color: c.ink, align: 'CENTER', role: 'scenario-no'}));
+        // 名前は1行。入らなければ 6pt まで小さくし、それでも入らなければ「…」で切る
+        const nameW = cw - noW - 4 - cntW;
+        let size = 7.5;
+        while (mtgWrap_(it.name, nameW + P, size, 2).length > 1 && size > 6) size -= 0.5;
+        el.push(mtgBox_(x0 + noW + 4 - P / 2, y, nameW + P, rowH, mtgWrap_(it.name, nameW + P, size, 1)[0],
+          {size, bold: !!n, color: n ? c.ink : c.sub, role: 'scenario-name'}));
+        el.push(mtgBox_(x0 + cw - cntW - P / 2, y, cntW + P, rowH, n ? n + '件' : '—', {size: 7, color: n ? c.ink : c.muted, align: 'END', role: 'scenario-count'}));
+        el.push({type: 'line', x: x0, y: y + rowH, w: cw, h: 0, color: c.line, weight: 0.5});
+        y += rowH;
+      });
+      y += 5;
+    });
+    const title = 'Appendix　RXシナリオ一覧（シナリオNo）';
+    const lead = 'シナリオNo の上2桁はサブインダストリー（RXシナリオ構成の選択肢 ' + total + '件）。\n' +
+      '右の件数は、この資料の変化のあった案件のうち、そのシナリオを選んだ案件の数（' + usedCount + 'シナリオ。太字）。';
+    return pages.map((elements, n) => ({title: title + (pages.length > 1 ? '（' + (n + 1) + '/' + pages.length + 'ページ）' : ''), lead, elements}));
+  });
 }
 
 /**
@@ -1005,6 +1126,16 @@ function mtgCompactRun_(ss, job, started) {
     const timer = mschTimer_(o.compact.label + 'の仕上げ', true);
     job.deck.finishing = true;   // 仕上げの途中で止められたら、続きからは作れない（作り直す）
     mtgJobCheckpoint_(job);
+    // 変化のあった案件のページのあとに Appendix（RXシナリオ一覧）。全体サマリだけのときは入れない
+    if (part !== 'overview') {
+      const lites = job.items.map(item => item.lite);
+      const appendix = mtgNumberSlides_(mtgCombinedFrame_(lites, job.meeting, true), mtgCompactScenarioSlides_(lites), job.page);
+      if (appendix.length) {
+        mtgDeckAdd_(job.deck, appendix, job.page);
+        job.page += appendix.length;
+        timer.lap('Appendix（RXシナリオ一覧）');
+      }
+    }
     mtgDeckAdd_(job.deck, mtgCompactFront_(job.items.map(item => item.lite), job.meeting, true, new Date(job.now), part), 0);
     timer.lap(part === 'changes' ? '表紙' : '表紙・状況と計画進捗・計画のページ');
     const existing = job.overwrite ? mtgExistingPdf_(fileName, o.combined.name, job.meeting, true, folder) : null;

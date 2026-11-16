@@ -203,6 +203,92 @@ test('変化のあった案件の並び：今回のステータスの期待値�
   assert.strictEqual(g.mtgCompactStatusRate_({statusTo: 'B-クロージング中(70%)', removed: true}), -1, '削除は最後');
 });
 
+test('Appendix「RXシナリオ一覧」：各シートの RXシナリオ構成のプルダウンの選択肢を、上2桁（サブインダストリー）ごとに No・名前・変化のあった案件で選ばれた数で並べる', () => {
+  const {gas, g} = setup();
+  const T = gas.get('MTG_TITLES');
+  // 新FMT に RXシナリオ構成の列（R列）とプルダウンを足し、A社（行3）・B社（行4）にシナリオを入れる
+  const sheet = gas.ss.getSheetByName('新FMT');
+  sheet.getRange(2, 18).setValue('RXシナリオ構成');
+  const opts = ['01-01.顧客情報活用パッケージ', '01-02.店舗オペレーション効率化', '01-03.生成AI 活用'];
+  sheet.getRange('R3:R30').setDataValidation(g.SpreadsheetApp.newDataValidation().requireValueInList(opts, true).build());
+  sheet.getRange(3, 18).setValue('01-01.顧客情報活用パッケージ, 01-03.生成AI 活用');
+  sheet.getRange(5, 18).setValue('01-01.顧客情報活用パッケージ');
+  const s1 = summarize(g, '新FMT');
+  assert.deepStrictEqual(plain(s1.scenarioOptions), opts, 'プルダウンの選択肢を読む');
+  const lite = plain(g.mtgCombinedLite_(s1));
+  assert.deepStrictEqual([lite.scenarioColumn, lite.scenarioOptions], [true, opts]);
+  // 変化のあった案件（C社・D社・…）のうち、選んだシナリオの数（C社 = 行5 は 01-01）
+  const expected = {};
+  s1.changes.filter(ch => ch.category !== 'updated').forEach(ch => (ch.scenarios || []).forEach(t => {
+    const no = g.mtgScenarioNumber_(t);
+    expected[no] = (expected[no] || 0) + 1;
+  }));
+  assert.ok(expected['01-01'] >= 1);
+  assert.deepStrictEqual(lite.scenarioUsed, expected);
+  // ページ：上2桁の順。列の無いシートは載せない。選択肢の無いシートは「プルダウンの選択肢なし」
+  const other = {name: '新FMT2', scenarioColumn: true, scenarioOptions: ['02-01.需要予測パッケージ', '02-02.在庫最適化'], scenarioUsed: {'02-02': 2}};
+  const none = {name: '新FMT3', scenarioColumn: true, scenarioOptions: [], scenarioUsed: {}};
+  const noColumn = {name: '新FMT4', scenarioColumn: false, scenarioOptions: [], scenarioUsed: {}};
+  const slides = plain(g.mtgCompactScenarioSlides_([other, none, noColumn, lite]));
+  assert.strictEqual(slides.length, 1);
+  assert.strictEqual(slides[0].title, 'Appendix　RXシナリオ一覧（シナリオNo）');
+  const texts = role => slides[0].elements.filter(e => e.role === role && e.text != null).map(e => e.text);
+  assert.deepStrictEqual(texts('scenario-group'), ['01　新FMT', '02　新FMT2', '新FMT3'], '上2桁の順、番号の無いシートは後ろ');
+  assert.deepStrictEqual(texts('scenario-no'), ['01-01', '01-02', '01-03', '02-01', '02-02']);
+  assert.deepStrictEqual(texts('scenario-name'), ['顧客情報活用パッケージ', '店舗オペレーション効率化', '生成AI 活用', '需要予測パッケージ', '在庫最適化']);
+  const counts = texts('scenario-count');
+  assert.strictEqual(counts[0], expected['01-01'] + '件');
+  assert.strictEqual(counts[4], '2件');
+  assert.strictEqual(counts[3], '—', '選ばれていなければ「—」');
+  assert.deepStrictEqual(slides[0].elements.filter(e => e.role === 'scenario-name').map(e => !!e.bold), counts.map(t => t !== '—'), '選ばれていれば太字');
+  assert.deepStrictEqual(texts('scenario-none'), ['プルダウンの選択肢なし']);
+  assert.match(slides[0].lead, /^シナリオNo の上2桁はサブインダストリー（RXシナリオ構成の選択肢 5件）。/);
+  // 色は Appendix の色（グレー）
+  assert.strictEqual(slides[0].elements.find(e => e.role === 'scenario-group' && e.type === 'box').fill, gas.get('MTG_OPTIONS').appendixColors.green);
+  // 1ページに入らなければ次のページ（「（1/2ページ）」）。サブインダストリーが列をまたげば「（続き）」
+  const big = Array.from({length: 12}, (_, i) => ({name: 'S' + i, scenarioColumn: true, scenarioUsed: {},
+    scenarioOptions: Array.from({length: 9}, (__, j) => String(i + 1).padStart(2, '0') + '-0' + (j + 1) + '.シナリオ' + j)}));
+  const many = plain(g.mtgCompactScenarioSlides_(big));
+  assert.ok(many.length >= 2 && /（1\/\d+ページ）$/.test(many[0].title));
+  assert.strictEqual([].concat.apply([], many.map(sl => sl.elements.filter(e => e.role === 'scenario-no'))).length, 108, 'すべて載せる');
+  many.forEach(sl => sl.elements.filter(e => e.role === 'scenario-no').forEach(e => assert.ok(e.y + e.h <= gas.get('MTG_SLIDE').bottom + 0.01)));
+  // どのシートにも選択肢が無ければ作らない。設定で入れないこともできる
+  assert.deepStrictEqual(plain(g.mtgCompactScenarioSlides_([noColumn, none])), []);
+  gas.get('MTG_OPTIONS').compact.scenarioAppendix = false;
+  assert.deepStrictEqual(plain(g.mtgCompactScenarioSlides_([lite, other])), []);
+  gas.get('MTG_OPTIONS').compact.scenarioAppendix = true;
+  // 統合版（報告用）の最後（変化のあった案件のあと）に入る。ページ番号は通し
+  const deck = plain(g.mtgCompactSlides_([s1, summarize(g, '新FMT2')], '2026/11/13', true));
+  assert.strictEqual(deck[deck.length - 1].title, 'Appendix　RXシナリオ一覧（シナリオNo）');
+  assert.ok(/^変化のあった案件：/.test(deck[deck.length - 2].title));
+  assert.strictEqual(deck[deck.length - 1].elements.find(e => e.role === 'page').text, String(deck.length));
+  assert.ok(T);
+});
+
+test('Appendix「RXシナリオ一覧」は、統合版（報告用）と変化のあった案件だけの資料の最後に入れる（全体サマリには入れない）', () => {
+  const run = (fn, answer) => {
+    const {gas, g} = setup();
+    const sheet = gas.ss.getSheetByName('新FMT');
+    sheet.getRange(2, 18).setValue('RXシナリオ構成');
+    sheet.getRange('R3:R30').setDataValidation(g.SpreadsheetApp.newDataValidation().requireValueInList(['01-01.顧客情報活用パッケージ'], true).build());
+    gas.confirmAnswer = answer;
+    gas.promptAnswers = ['11/13'];
+    g[fn]();
+    const deck = gas.decks[gas.decks.length - 1];
+    const texts = deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
+    return {pages: deck.slides.length, has: texts.indexOf('Appendix　RXシナリオ一覧（シナリオNo）') >= 0, message: gas.alerts[gas.alerts.length - 1].message};
+  };
+  const full = run('createBusinessMtgReportingSummary', 'YES');
+  assert.ok(full.has);
+  assert.match(full.message, /_報告用\.pdf（9ページ）/, '前の8ページ ＋ Appendix');
+  const changes = run('createBusinessMtgReportingChanges');
+  assert.ok(changes.has);
+  assert.match(changes.message, /_報告用_変化のあった案件\.pdf（4ページ）/, '表紙・変化のあった案件2ページ ＋ Appendix');
+  const overview = run('createBusinessMtgReportingOverview');
+  assert.ok(!overview.has, '全体サマリには入れない');
+  assert.match(overview.message, /_報告用_全体サマリ\.pdf（6ページ）/);
+});
+
 test('変化のあった案件：RXシナリオ構成の列があれば、案件名の下にシナリオの番号（見出しは「得意先／案件名／シナリオNo」。空は「未入力」）', () => {
   const {g} = setup();
   const s1 = summarize(g, '新FMT');
