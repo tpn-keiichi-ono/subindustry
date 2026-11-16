@@ -161,6 +161,22 @@ test('変化のあった案件：サブインダストリーごとのページ�
   assert.match(leadOf(empty), /変化のある案件なし/);
 });
 
+test('変化のあった案件：RXシナリオ構成の列があれば、案件名の下にシナリオの番号（見出しは「得意先／案件名／シナリオNo」。空は「未入力」）', () => {
+  const {g} = setup();
+  const s1 = summarize(g, '新FMT');
+  assert.strictEqual(cellTexts(tableOf(plain(g.mtgCompactChangeSlides_(s1, 0)).slides[0]))[0][1], '得意先／案件名', '列が無いシートは前のまま');
+  s1.scenarioColumn = true;
+  const moves = s1.changes.filter(ch => ch.category !== 'updated');
+  moves.forEach(ch => { ch.scenarios = []; });
+  moves[0].scenarios = ['01-04.顧客情報活用パッケージ', '02-01.需要予測パッケージ'];
+  const table = tableOf(plain(g.mtgCompactChangeSlides_(s1, 0)).slides[0]);
+  const texts = cellTexts(table);
+  assert.strictEqual(texts[0][1], '得意先／案件名／\nシナリオNo');
+  const row = texts.slice(1).find(r => r[1].split('\n')[2] !== '未入力');
+  assert.strictEqual(row[1], moves[0].customer + '\n' + moves[0].project + '\n01-04・02-01', '番号だけを「・」でつなぐ');
+  assert.ok(texts.slice(1).filter(r => r !== row).every(r => r[1].split('\n')[2] === '未入力'), 'シナリオが空なら「未入力」');
+});
+
 test('変化のあった案件：行が入らなければ次のページに分け、タイトルに「（1/2ページ）」。表は出典の行の上の区切り線より tableMargin 上までに収める', () => {
   const {gas, g} = setup();
   const S = gas.get('MTG_SLIDE');

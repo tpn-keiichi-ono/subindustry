@@ -10,7 +10,7 @@
  *   2'. 同じ（見込（C）を含む。棒に続けて見込（C）を点線で足す。mtgCompactOverviewSlide_(…, {withC: true})）
  *   2''. 状況・計画進捗（FY26〜28売上）（mtgCompactOutlookSlide_。2026/11/12）：FY26売上の確度 A〜D の横棒と、FY26・FY27 の確定・見込、FY26〜28 の A〜D の合計
  *   3. 計画に対する積み上げ（全体。統合版と同じ mtgPlanSlide_ で、想定売上を積み上げる）と、確定（A＋B）だけの積み上げ（mtgPlanRanksOnly_）
- *   4〜 変化のあった案件：{サブインダストリー}（mtgCompactChangeSlides_。シートの順にサブインダストリーごと）：No（資料の通し番号）・得意先／案件名・
+ *   4〜 変化のあった案件：{サブインダストリー}（mtgCompactChangeSlides_。シートの順にサブインダストリーごと）：No（資料の通し番号）・得意先／案件名（／シナリオNo）・
  *      ステータス・想定売上・受注月（前回▶今回）・活動状況・活動における課題。変化が無ければ「該当なし」の1ページ
  * 集計はどれも期待値ではなく想定売上（summary.planAmount = mtgPlanOf_(…, 'amount')・bridge.amountStart / amountEnd。2026/11/09）。
  * 金額は小数点以下を繰り上げた整数で出す（compact.ceilAmounts。mtgWithAmountCeil_）
@@ -802,7 +802,8 @@ function mtgCompactChangeSlidesOf_(s, start) {
   const bySales = !!o.compact.salesPage;
   const year = mtgFiscalYearKey_(s.now ? new Date(s.now) : new Date());
   const salesOf = ch => (ch.deal && ch.deal.sales ? ch.deal.sales[year] : null);
-  const head = mtgHeadRow_(columns, ['No', '得意先／案件名', 'ステータス\n' + word + '▶今回', bySales ? 'FY' + year + '売上\n（今回）' : '想定売上\n' + word + '▶今回',
+  // 得意先／案件名の列：RXシナリオ構成の列があれば、案件名の下にシナリオの番号（mtgDealScenarioCell_。見出しは「得意先／案件名／シナリオNo」。2026/11/16）
+  const head = mtgHeadRow_(columns, ['No', mtgDealHead_(s), 'ステータス\n' + word + '▶今回', bySales ? 'FY' + year + '売上\n（今回）' : '想定売上\n' + word + '▶今回',
     '受注月\n' + word + '▶今回', '活動状況（最新）', '活動における課題']);
   const lack = s.gaps || {};
   const noSize = text => {
@@ -832,7 +833,7 @@ function mtgCompactChangeSlidesOf_(s, start) {
       // No：3桁（「392」）でも折り返さないように、小さめの字（7.5pt）で1行。セルの幅の 8割に入らなければさらに小さくする
       // （見積もりぎりぎりだと、Google スライドでは折り返すことがあるため）
       {text: String(start + i + 1), size: noSize(String(start + i + 1)), lines: 1, align: 'CENTER', fill: c.greenSoft, color: c.ink, bold: true},
-      mtgDealCell_(ch, columns[1]),
+      mtgDealScenarioCell_(s, ch, columns[1]),
       // ステータスの動きが1行に入らなければ「▶」の前で改行（「B-／クロージング中」のように名前の途中で切らない）
       {text: mtgWrap_(status, columns[2], S.bodySize, 2).length > 1 ? status.replace(' ▶ ', '\n▶ ') : status, lines: 3, fill: c.white},
       // 今年度の売上（今の値。空なら「未入力」、削除した行は「（削除）」）か、想定売上（前回▶今回。変わっていなければ今の値）
