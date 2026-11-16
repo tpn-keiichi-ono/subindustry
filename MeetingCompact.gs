@@ -797,9 +797,11 @@ function mtgCompactChangeSlidesOf_(s, start) {
   const word = mtgFromWord_(s);
   const title = o.compact.changesTitle + s.name;
   // No は3桁が 7.5pt で余裕をもって1行に入る幅（26pt・8pt では、Google スライドで「39／2」と折り返した。2026/11/09）
-  const columns = mtgColumns_([30, 120, 130, 80, 66, 130, 112], 5);
-  // 金額の列：今年度の売上（salesPage。今の値。前回の売上は記録に無いため）か、想定売上（前回▶今回）
+  // 活動状況・活動における課題は文が長くなりやすいので広く（2026/11/16）：ほかの列は中身が1行（ステータスは「前回」「▶ 今回」の2行）に入る幅まで
+  // 狭める（FY26売上は見出しの「FY26売上」、受注月は「2027/3 ▶」、ステータスは 8pt の「▶ B-クロージング中(70%)」が入る幅）
+  // 金額の列：今年度の売上（salesPage。今の値。前回の売上は記録に無いため）か、想定売上（前回▶今回。「100 ▶ 101」が1行に入る幅）
   const bySales = !!o.compact.salesPage;
+  const columns = mtgColumns_(bySales ? [30, 100, 116, 54, 60, 176, 140] : [30, 100, 116, 80, 60, 160, 130], 5);
   const year = mtgFiscalYearKey_(s.now ? new Date(s.now) : new Date());
   const salesOf = ch => (ch.deal && ch.deal.sales ? ch.deal.sales[year] : null);
   // 得意先／案件名の列：RXシナリオ構成の列があれば、案件名の下にシナリオの番号（mtgDealScenarioCell_。見出しは「得意先／案件名／シナリオNo」。2026/11/16）
@@ -835,14 +837,16 @@ function mtgCompactChangeSlidesOf_(s, start) {
       {text: String(start + i + 1), size: noSize(String(start + i + 1)), lines: 1, align: 'CENTER', fill: c.greenSoft, color: c.ink, bold: true},
       mtgDealScenarioCell_(s, ch, columns[1]),
       // ステータスの動きが1行に入らなければ「▶」の前で改行（「B-／クロージング中」のように名前の途中で切らない）
-      {text: mtgWrap_(status, columns[2], S.bodySize, 2).length > 1 ? status.replace(' ▶ ', '\n▶ ') : status, lines: 3, fill: c.white},
+      // 字は 8pt（列を狭めて活動状況・課題を広くしたため。「▶ B-クロージング中(70%)」が1行に入る大きさ）
+      {text: mtgWrap_(status, columns[2], 8, 2).length > 1 ? status.replace(' ▶ ', '\n▶ ') : status, size: 8, lines: 3, fill: c.white},
       // 今年度の売上（今の値。空なら「未入力」、削除した行は「（削除）」）か、想定売上（前回▶今回。変わっていなければ今の値）
       bySales ? {text: ch.removed ? '（削除）' : salesOf(ch) != null ? mtgAmount_(salesOf(ch)) : o.blankText, lines: 1, fill: c.white, align: 'CENTER',
         color: salesOf(ch) != null ? c.body : c.muted}
         : mtgFieldCell_(s, 'amount', mtgValueMove_(ch.base ? ch.base.amount : null, ch.deal ? ch.amount : null, ch), {lines: 2, fill: c.white, align: 'CENTER'}),
       mtgFieldCell_(s, 'orderMonth', mtgMonthMove_(ch), {lines: 2, fill: c.white, align: 'CENTER'}),
-      mtgFieldCell_(s, 'activity', ch.activity, {lines: 3, fill: c.white, fit: true, grow: true}),
-      mtgFieldCell_(s, 'issue', ch.issue, {lines: 3, fill: c.white, fit: true, grow: true})
+      // 活動状況・課題は4行まで今の字の大きさで（長い文を小さくしすぎないように。2026/11/16）。入らなければ小さくし、それでも入らなければ行を伸ばす
+      mtgFieldCell_(s, 'activity', ch.activity, {lines: 4, fill: c.white, fit: true, grow: true}),
+      mtgFieldCell_(s, 'issue', ch.issue, {lines: 4, fill: c.white, fit: true, grow: true})
     ]);
   });
   // ページに分ける（区切り線より tableMargin 上まで。入らない行は次のページ）

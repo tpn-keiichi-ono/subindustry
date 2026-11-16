@@ -161,6 +161,28 @@ test('変化のあった案件：サブインダストリーごとのページ�
   assert.match(leadOf(empty), /変化のある案件なし/);
 });
 
+test('変化のあった案件：活動状況・課題の列を広く（ほかの列は中身が入る幅まで狭める）。活動状況・課題は4行まで今の字の大きさ。ステータスは 8pt で「前回」「▶ 今回」が1行ずつ', () => {
+  const {gas, g} = setup();
+  const S = gas.get('MTG_SLIDE');
+  const s1 = summarize(g, '新FMT');
+  const table = tableOf(plain(g.mtgCompactChangeSlides_(s1, 0)).slides[0]);
+  const w = table.columns.map(Number);
+  assert.ok(Math.abs(w.reduce((a, b) => a + b, 0) - S.w) < 0.01, '表の幅は本文の幅');
+  assert.ok(w[5] >= 176 && w[6] >= 140, '活動状況・課題が広い：' + w.join(','));
+  assert.ok(w[5] + w[6] >= S.w * 0.45, '活動状況と課題で表の半分ほど');
+  // ステータスの「▶ B-クロージング中(70%)」・見出しの「FY26売上」・受注月の「2027/3 ▶」が1行に入る
+  const fits = (text, size, width) => g.mtgTextWidth_(text, size) <= (width - S.cellPadX) * S.cellFit;
+  assert.ok(fits('▶ B-クロージング中(70%)', 8, w[2]) && fits('FY' + fiscalYear() + '売上', 9, w[3]) && fits('2027/3 ▶', 9, w[4]));
+  table.rows.slice(1).forEach(r => {
+    assert.strictEqual(r.cells[2].size, 8);
+    String(r.cells[2].text).split('\n').forEach(line => assert.ok(fits(line, 8, w[2]), line + ' は1行'));
+  });
+  // 想定売上で集計するとき（salesPage: false）は、金額の列を「100 ▶ 101」が入る幅に
+  gas.get('MTG_OPTIONS').compact.salesPage = false;
+  const w2 = tableOf(plain(g.mtgCompactChangeSlides_(s1, 0)).slides[0]).columns.map(Number);
+  assert.ok(fits('100 ▶ 101', 9, w2[3]) && w2[5] > w2[2], w2.join(','));
+});
+
 test('変化のあった案件：RXシナリオ構成の列があれば、案件名の下にシナリオの番号（見出しは「得意先／案件名／シナリオNo」。空は「未入力」）', () => {
   const {g} = setup();
   const s1 = summarize(g, '新FMT');
