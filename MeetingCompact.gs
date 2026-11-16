@@ -10,7 +10,7 @@
  *   2'. 同じ（見込（C）を含む。棒に続けて見込（C）を点線で足す。mtgCompactOverviewSlide_(…, {withC: true})）
  *   2''. 状況・計画進捗（FY26〜28売上）（mtgCompactOutlookSlide_。2026/11/12）：FY26売上の確度 A〜D の横棒と、FY26・FY27 の確定・見込、FY26〜28 の A〜D の合計
  *   3. 計画に対する積み上げ（全体。統合版と同じ mtgPlanSlide_ で、想定売上を積み上げる）と、確定（A＋B）だけの積み上げ（mtgPlanRanksOnly_）
- *   （最後）Appendix　RXシナリオ一覧（シナリオNo）（mtgCompactScenarioSlides_。全体サマリだけのときは入れない）
+ *   （変化のあった案件の前）RXシナリオ一覧（シナリオNo）（mtgCompactScenarioSlides_。全体サマリだけのときは入れない）
  *   4〜 変化のあった案件：{サブインダストリー}（mtgCompactChangeSlides_。シートの順にサブインダストリーごと）：No（資料の通し番号）・得意先／案件名（／シナリオNo）・
  *      ステータス・想定売上・受注月（前回▶今回）・活動状況・活動における課題。変化が無ければ「該当なし」の1ページ
  * 集計はどれも期待値ではなく想定売上（summary.planAmount = mtgPlanOf_(…, 'amount')・bridge.amountStart / amountEnd。2026/11/09）。
@@ -116,7 +116,9 @@ function mtgCompactFileName_(meeting, part) {
  */
 function mtgCompactSlides_(summaries, meeting, final) {
   const now = summaries.length ? summaries[0].now : new Date();
-  let page = mtgCompactFrontCount_();
+  // 変化のあった案件のページの前に RXシナリオ一覧
+  const scenario = mtgNumberSlides_(mtgCombinedFrame_(summaries, meeting, final), mtgCompactScenarioSlides_(summaries), mtgCompactFrontCount_());
+  let page = mtgCompactFrontCount_() + scenario.length;
   let no = 0;
   const pages = [];
   summaries.forEach(s => {
@@ -125,9 +127,7 @@ function mtgCompactSlides_(summaries, meeting, final) {
     pages.push.apply(pages, mtgNumberSlides_(mtgCombinedFrame_([s], meeting, final), part.slides, page));
     page += part.slides.length;
   });
-  // 最後に Appendix（RXシナリオ一覧）
-  const appendix = mtgNumberSlides_(mtgCombinedFrame_(summaries, meeting, final), mtgCompactScenarioSlides_(summaries), page);
-  return mtgCompactFront_(summaries, meeting, final, now).concat(pages, appendix);
+  return mtgCompactFront_(summaries, meeting, final, now).concat(scenario, pages);
 }
 
 /**
@@ -363,16 +363,41 @@ function mtgCompactScenarioItem_(text) {
 }
 
 /**
- * Appendix「RXシナリオ一覧（シナリオNo）」（2026/11/16）：変化のあった案件のページの「シナリオNo」と、シナリオの名前の一覧。
+ * 区切って作るときに、作り始めに各シートの RXシナリオ構成のプルダウンの選択肢だけを読む（見出しの行と、見出しの下の1セルの入力規則）。
+ * RXシナリオ一覧は変化のあった案件のページの前に入れるが、変化のあった案件のページはシートを読むたびにページ番号を付けて足すので、
+ * 先に一覧のページの数を決めておくため（一覧の形は選択肢だけで決まる。数は仕上げで、読んだシートの中身から入れる）。
+ * [{name, scenarioColumn, scenarioOptions}]（読めないシートは列なし）
+ */
+function mtgCompactScenarioOptions_(ss, names) {
+  return names.map(name => {
+    try {
+      const sheet = ss.getSheetByName(name);
+      const rule = DIFF_RULES[name];
+      if (!sheet || !rule) return {name, scenarioColumn: false, scenarioOptions: []};
+      const headers = sheet.getRange(rule.headerRow, 1, 1, Math.max(sheet.getLastColumn(), 1)).getDisplayValues()[0];
+      const col = mtgColumnIndex_(headers, 'scenario');
+      if (col < 0) return {name, scenarioColumn: false, scenarioOptions: []};
+      return {name, scenarioColumn: true, scenarioOptions: mtgListOptions_(sheet.getRange(rule.headerRow + 1, col + 1).getDataValidation()) || []};
+    } catch (error) {
+      console.log('RXシナリオ一覧：「' + name + '」のプルダウンを読めませんでした（' + (error && error.message || error) + '）');
+      return {name, scenarioColumn: false, scenarioOptions: []};
+    }
+  });
+}
+
+/**
+ * 「RXシナリオ一覧（シナリオNo）」（2026/11/16。変化のあった案件のページの前）：変化のあった案件のページの「シナリオNo」と、シナリオの名前の一覧。
  * シナリオは各シートの RXシナリオ構成のプルダウンの選択肢（各シートには、そのサブインダストリーのシナリオだけがある）で、シナリオNo の上2桁が
  * サブインダストリー。サブインダストリーごとに見出しの帯（「01　スーパー・GMS」。上2桁の順）と、No・名前・件数（この資料の変化のあった案件のうち、
  * そのシナリオを選んだ案件の数。選ばれているものは太字、無ければ「—」）。4列に流し込み（サブインダストリーは列の途中で分けない）、入らなければ次のページ（「（続き）」）。
- * 色は Appendix の色（appendixColors。グレー）。どのシートにも選択肢が無ければページを作らない（[]）。summaries は中身か、その一部（mtgCombinedLite_）
+ * どのシートにも選択肢が無ければページを作らない（[]）。summaries は中身か、その一部（mtgCombinedLite_）。
+ * options（[{name, scenarioColumn, scenarioOptions}]。mtgCompactScenarioOptions_）があれば、一覧の形はそれで決める（作り始めに数えたページの数と合わせるため）
  */
-function mtgCompactScenarioSlides_(summaries) {
+function mtgCompactScenarioSlides_(summaries, options) {
   const o = MTG_OPTIONS;
-  if (!o.compact.scenarioAppendix) return [];
-  const groups = summaries.filter(s => s.scenarioColumn).map((s, i) => {
+  if (!o.compact.scenarioPage) return [];
+  const sources = options || summaries;
+  const groups = sources.filter(s => s.scenarioColumn).map((s, i) => {
     const items = (s.scenarioOptions || []).map(mtgCompactScenarioItem_);
     // 上2桁（いちばん多いもの）。無ければシートの順
     const counts = {};
@@ -390,7 +415,7 @@ function mtgCompactScenarioSlides_(summaries) {
   });
   const total = groups.reduce((t, gr) => t + gr.items.length, 0);
   const usedCount = Object.keys(used).length;
-  return mtgWithColors_(o.appendixColors, () => {
+  return (() => {
     const S = MTG_SLIDE;
     const c = o.colors;
     const P = S.padX;
@@ -455,11 +480,11 @@ function mtgCompactScenarioSlides_(summaries) {
       });
       y += 5;
     });
-    const title = 'Appendix　RXシナリオ一覧（シナリオNo）';
+    const title = 'RXシナリオ一覧（シナリオNo）';
     const lead = 'シナリオNo の上2桁はサブインダストリー（RXシナリオ構成の選択肢 ' + total + '件）。\n' +
-      '右の件数は、この資料の変化のあった案件のうち、そのシナリオを選んだ案件の数（' + usedCount + 'シナリオ。太字）。';
+      '右の件数は、次のページからの変化のあった案件のうち、そのシナリオを選んだ案件の数（' + usedCount + 'シナリオ。太字）。';
     return pages.map((elements, n) => ({title: title + (pages.length > 1 ? '（' + (n + 1) + '/' + pages.length + 'ページ）' : ''), lead, elements}));
-  });
+  })();
 }
 
 /**
@@ -1046,8 +1071,12 @@ function mtgCompactStart_(meeting, point, overwrite, cancelJob, part) {
   const check = mtgCompactCheck_(meeting, point);
   if (check.error) throw new Error(check.error);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const job = {kind: 'compact', final: true, meeting, now: Date.now(), names: mtgTrackedNames_(ss), point: point || null, items: [],
-    page: mtgCompactFrontCount_(part), no: 0, deck: null, result: null, folderUrl: '', sourceError: '', overwrite: !!overwrite,
+  const names = mtgTrackedNames_(ss);
+  // 変化のあった案件のページの前の RXシナリオ一覧：プルダウンの選択肢だけを先に読み、ページの数を決める（全体サマリだけのときは入れない）
+  const scenarioOptions = part !== 'overview' && MTG_OPTIONS.compact.scenarioPage ? mtgCompactScenarioOptions_(ss, names) : [];
+  const scenarioPages = scenarioOptions.length ? mtgCompactScenarioSlides_([], scenarioOptions).length : 0;
+  const job = {kind: 'compact', final: true, meeting, now: Date.now(), names, point: point || null, items: [], scenarioOptions, scenarioPages,
+    page: mtgCompactFrontCount_(part) + scenarioPages, no: 0, deck: null, result: null, folderUrl: '', sourceError: '', overwrite: !!overwrite,
     // 作る範囲：'overview' 全体サマリだけ（createBusinessMtgReportingOverview()。変化のあった案件のページを作らない）・
     // 'changes' 変化のあった案件だけ（createBusinessMtgReportingChanges()。前のページは表紙だけ）
     part: part || ''};
@@ -1126,15 +1155,15 @@ function mtgCompactRun_(ss, job, started) {
     const timer = mschTimer_(o.compact.label + 'の仕上げ', true);
     job.deck.finishing = true;   // 仕上げの途中で止められたら、続きからは作れない（作り直す）
     mtgJobCheckpoint_(job);
-    // 変化のあった案件のページのあとに Appendix（RXシナリオ一覧）。全体サマリだけのときは入れない
-    if (part !== 'overview') {
+    // 変化のあった案件のページの前（前のページのすぐあと）に RXシナリオ一覧。形は作り始めに読んだ選択肢で決め（取っておいたページの数と同じ）、
+    // 数は読んだシートの中身から
+    if (job.scenarioPages) {
       const lites = job.items.map(item => item.lite);
-      const appendix = mtgNumberSlides_(mtgCombinedFrame_(lites, job.meeting, true), mtgCompactScenarioSlides_(lites), job.page);
-      if (appendix.length) {
-        mtgDeckAdd_(job.deck, appendix, job.page);
-        job.page += appendix.length;
-        timer.lap('Appendix（RXシナリオ一覧）');
-      }
+      const start = mtgCompactFrontCount_(part);
+      const scenario = mtgNumberSlides_(mtgCombinedFrame_(lites, job.meeting, true), mtgCompactScenarioSlides_(lites, job.scenarioOptions), start)
+        .slice(0, job.scenarioPages);
+      mtgDeckAdd_(job.deck, scenario, start);
+      timer.lap('RXシナリオ一覧');
     }
     mtgDeckAdd_(job.deck, mtgCompactFront_(job.items.map(item => item.lite), job.meeting, true, new Date(job.now), part), 0);
     timer.lap(part === 'changes' ? '表紙' : '表紙・状況と計画進捗・計画のページ');
@@ -1162,7 +1191,8 @@ function mtgCompactMessage_(job, done) {
     const rest = job.names.slice(job.items.length);
     const left = part === 'overview' ? [].concat(rest.length ? ['シートの読み込み ' + rest.length + '件（' + rest.join('・') + '）'] : [], ['表紙・状況と計画進捗・計画のページと PDF'])
       : [].concat(rest.length ? ['変化のあった案件のページ ' + rest.length + '件（' + rest.join('・') + '）'] : [],
-        [part === 'changes' ? '表紙と PDF' : '表紙・状況と計画進捗・計画のページと PDF・会議のフォルダへの格納']);
+        [(part === 'changes' ? '表紙' : '表紙・状況と計画進捗・計画のページ') + (job.scenarioPages ? '・RXシナリオ一覧' : '') + 'と PDF' +
+          (part === 'changes' ? '' : '・会議のフォルダへの格納')]);
     return ['時間がかかるため、ここで区切りました（Apps Script の1回の実行は6分まで）。残りは約' + Math.round(MTG_OPTIONS.run.continueAfterMs / 60000) +
       '分後に自動で続けます：' + left.join('・') + '。',
     '続きが終わったら、エディタで showBusinessMtgSummariesResult() を実行すると結果が出ます（実行ログにも出ます）。終わるまで、会議サマリの関数は実行しないでください。',

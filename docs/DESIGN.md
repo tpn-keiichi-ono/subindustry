@@ -912,10 +912,12 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
   `mtgPlanSlide_` の月別の図にする（`mtgSalesPlanByMonthOf_`・`summary.planSalesByMonth`。今年度の売上がある案件だけ）。`'half'` は `mtgSalesPlanSlide_`：前半期 → 後半期の滝の図・合計・計画・差、参考に失注。
   半期ごとの値は `deal.salesHalves`（「26前」「26後」）・`planSales.halves`、足すのは `mtgMergeSalesPlans_`。`compact.salesPage` のとき）→ 変化のあった案件：{サブインダストリー}（`mtgCompactChangeSlides_`。`DIFF_RULES` の順。得意先／案件名の列は `mtgDealScenarioCell_` で案件名の下にシナリオの番号。2026/11/16。
   並びは今回のステータスの期待値（名前の「(50%)」。`mtgCompactStatusRate_`。% が無ければ確度の順の目安）の高い順、同じ期待値は FY26売上の大きい順、失注・保留・削除は最後。
-  最後に Appendix　RXシナリオ一覧（シナリオNo）（`mtgCompactScenarioSlides_`。`compact.scenarioAppendix`。全体サマリには入れない）：各シートの RXシナリオ構成の
+  変化のあった案件のページの前に RXシナリオ一覧（シナリオNo）（`mtgCompactScenarioSlides_`。`compact.scenarioPage`。全体サマリには入れない）：各シートの RXシナリオ構成の
   プルダウンの選択肢（`table.scenarioOptions` → `summary.scenarioOptions`・`mtgCombinedLite_` に `scenarioColumn`・`scenarioOptions`・`scenarioUsed`（`mtgCompactScenarioUsed_`））を、
   シナリオNo の上2桁（＝サブインダストリー）の順に、見出しの帯「01　スーパー・GMS」と No・名前・変化のあった案件で選ばれた数で4列に流し込む（サブインダストリーは列の途中で分けない。
-  入らなければ次のページ）。色は appendixColors。区切って作るときは、仕上げで変化のあった案件のページのあと（`job.page`）に足す。
+  入らなければ次のページ）。区切って作るときは、作り始めに各シートのプルダウンの選択肢だけを読み（`mtgCompactScenarioOptions_` → `job.scenarioOptions`）、
+  一覧のページの数（`job.scenarioPages`）を前のページのあとに取っておいて、変化のあった案件のページ番号をその後ろから振る。仕上げで、その選択肢で決めた形に
+  読んだシートの数（`scenarioUsed`）を入れて足す（`mtgDeckJob_` の front も一覧の分を含める）。
   活動状況・課題の列を広く（ほかの列は中身が入る幅まで狭め、ステータスは 8pt。活動状況・課題は4行まで今の字の大きさで、入らなければ小さく・それでも入らなければ行を伸ばす））。
   目次・統合版の「全サブインダストリーの状況」・「計画に対する積み上げ（サブインダストリー別）」・各サブインダストリーの資料のページは入れない。
   2026/11/12 から（`compact.salesPage` かつ `compact.outlookPage` のとき）、今年度の売上の状況・計画進捗の2枚（FY26売上・見込（C）を含む）の代わりに
