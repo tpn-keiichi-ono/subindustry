@@ -222,6 +222,10 @@ const MTG_OPTIONS = {
     kind: 'RX Business Meeting',     // 会議名の列に書く値（同じ日付でも会議名が違う行には書かない）
     formerKinds: ['RX Business MTG'], // 前の版で書いた会議名（同じ会議の行として使い、書くときに今の会議名に書き換える）
     // C列は統合版（combined.name の見出し）、その後ろにサブインダストリーの列（DIFF_RULES の順）
+    // 2026/11/19 から、列＝会議日の形（mtgIndexMatrix_）にも書く：1行目「日付」（会議日。2列を結合）・2行目「会議名」・3行目「サブインダストリー」の見出しの行
+    // （会議日ごとに「会議資料」「宿題」の2列）、その下の行の A列にサブインダストリー（統合版は combined.name「全サブインダストリー」）。
+    // A列の見出しは homework の dateLabel・kindLabel・nameLabel、会議資料の列の見出しは docLabel、宿題の列の見出しは homework.column
+    docLabel: '会議資料',
     link: 'file',
     chip: true,
     dateFormat: 'yyyy/m/d',
@@ -3001,6 +3005,21 @@ function mtgWriteIndex_(name, meeting, stored, kind) {
     try {
       const ss = SpreadsheetApp.getActiveSpreadsheet();
       const {sheet, layout} = mtgIndexPrepare_(ss);
+      const target = o.link === 'folder' || !stored.file ? stored.folder : stored.file;
+      const url = target.getUrl();
+      // 列＝会議日の形（2026/11/19 から）：サブインダストリーの行 × 会議日の「会議資料」の列（無ければ足す）
+      if (layout.matrix) {
+        const ensured = mtgIndexMatrixEnsure_(sheet, layout, meeting, rowKind);
+        const placed = mtgIndexMatrixRow_(sheet, ensured.layout, name);
+        const cell = mtgIndexMatrixMeeting_(placed.layout, meeting, rowKind);
+        const chip = !!o.chip && mtgWriteChip_(ss, sheet, placed.row, cell.doc, url);
+        if (!chip) {
+          sheet.getRange(placed.row, cell.doc).setRichTextValues([[SpreadsheetApp.newRichTextValue().setText(target.getName()).setLinkUrl(url)
+            .setTextStyle(SpreadsheetApp.newTextStyle().setForegroundColor('#000000').setUnderline(false).build()).build()]]);
+        }
+        mtgIndexCacheUpdate_(meeting, rowKind, true);
+        return {url: ss.getUrl() + '#gid=' + sheet.getSheetId(), title: o.sheet, chip};
+      }
       // サブインダストリーの列（前の名前で書いてあれば今の名前とみなす。無ければ右に足す）
       let col = layout.columns[name];
       if (!col) {
@@ -3011,8 +3030,6 @@ function mtgWriteIndex_(name, meeting, stored, kind) {
         sheet.setColumnWidth(col, name === MTG_OPTIONS.combined.name ? o.widths.combined : o.widths.sheet);
       }
       const row = mtgIndexRow_(sheet, layout, meeting, rowKind).row;
-      const target = o.link === 'folder' || !stored.file ? stored.folder : stored.file;
-      const url = target.getUrl();
       const chip = !!o.chip && mtgWriteChip_(ss, sheet, row, col, url);
       if (!chip) {
         const fileName = target.getName();
@@ -3043,7 +3060,7 @@ function mtgIndexPrepare_(ss) {
     error.hint = '前の形式（行がサブインダストリー）のシートは、エディタで rebuildBusinessMtgIndex() を実行すると、今の形式で作り直します。';
     throw error;
   }
-  if (layout.kind && layout.kindStale) sheet.getRange(1, layout.kind).setValue(credText_(o.kindHeader));
+  if (!layout.matrix && layout.kind && layout.kindStale) sheet.getRange(1, layout.kind).setValue(credText_(o.kindHeader));
   return {sheet, layout};
 }
 
@@ -3101,8 +3118,16 @@ function mtgIndexEnsureRows_(entries) {
       const ss = SpreadsheetApp.getActiveSpreadsheet();
       const {sheet, layout} = mtgIndexPrepare_(ss);
       let added = 0;
+      let current = layout;
       entries.forEach(e => {
-        if (mtgIndexRow_(sheet, layout, e.date, e.kind).added) added++;
+        if (current.matrix) {
+          // 列＝会議日の形：会議日の2列（会議資料・宿題）を用意する
+          const ensured = mtgIndexMatrixEnsure_(sheet, current, e.date, e.kind);
+          current = ensured.layout;
+          if (ensured.added) added++;
+        } else if (mtgIndexRow_(sheet, current, e.date, e.kind).added) {
+          added++;
+        }
         mtgIndexCacheUpdate_(e.date, e.kind, false);
       });
       return {added, existing: entries.length - added, url: ss.getUrl() + '#gid=' + sheet.getSheetId()};
@@ -3139,8 +3164,15 @@ function mtgIndexMeetings_(kind) {
 function mtgIndexRowsFromSheet_() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(MTG_OPTIONS.index.sheet);
   if (!sheet) return [];
-  const lines = sheet.getDataRange().getValues();
+  const range = sheet.getDataRange();
+  const lines = range.getValues();
   if (lines.length < 2) return [];
+  // 列＝会議日の形：会議日の列ごとに、「会議資料」の列に何か書いてあれば資料あり
+  const matrix = mtgIndexMatrix_(lines, range.getDisplayValues());
+  if (matrix) {
+    return matrix.meetings.map(m => ({date: m.date, kind: m.kind,
+      filled: lines.slice(matrix.head).some(line => line[m.doc - 1] != null && String(line[m.doc - 1]).trim() !== '')}));
+  }
   const layout = mtgIndexLayoutOf_(lines[0]);
   if (!layout) return [];
   const rows = [];
@@ -3240,12 +3272,161 @@ function mtgIndexFormat_(range) {
 }
 
 /**
- * インデックスの見出し（1行目）から列の位置を読む。{date, kind, columns: {シート名（統合版は combined.name）: 列}}（列は 1 から。前の名前の見出しは今の名前に）。
+ * インデックスの見出しから位置を読む。行＝会議日の形なら {date, kind, columns: {シート名（統合版は combined.name）: 列}}（列は 1 から。前の名前の見出しは今の名前に）。
+ * 列＝会議日の形（2026/11/19 から。A列に「日付」「会議名」「サブインダストリー」の見出し）なら mtgIndexMatrix_ の形（matrix: true）。
  * 「日付」の見出しが無ければ null（前の形式（行＝サブインダストリー）など）
  */
 function mtgIndexLayout_(sheet) {
   const width = Math.max(sheet.getLastColumn(), 1);
-  return mtgIndexLayoutOf_(sheet.getRange(1, 1, 1, width).getDisplayValues()[0]);
+  const height = Math.max(sheet.getLastRow(), 1);
+  const range = sheet.getRange(1, 1, height, width);
+  return mtgIndexLayoutFromGrid_(range.getValues(), range.getDisplayValues());
+}
+
+/** シートの値（values）と表示の値（shown）から、mtgIndexLayout_ と同じ形を読む（列＝会議日の形か、行＝会議日の形） */
+function mtgIndexLayoutFromGrid_(values, shown) {
+  return mtgIndexMatrix_(values, shown) || mtgIndexLayoutOf_(shown[0] || []);
+}
+
+/**
+ * 列＝会議日の形のインデックス（2026/11/19 から）の位置。A列の上のほうに「日付」と「サブインダストリー」（homework.dateLabel・nameLabel）の見出しが無ければ null。
+ * {matrix: true, date: 「日付」の行, kind: 「会議名」の行（無ければ 0）, head: 「サブインダストリー」の行, rows: {シート名（統合版は combined.name）: 行},
+ *  meetings: [{date: 'yyyy/MM/dd', kind, doc: 「会議資料」の列, homework: 「宿題」の列（無ければ 0）, first, last: その会議日の列の範囲}]（左から）}。行・列は 1 から。
+ * 会議日・会議名のセルは2列を結合しているので、左の列の値を右へ引き継ぐ
+ */
+function mtgIndexMatrix_(values, shown) {
+  const H = MTG_OPTIONS.homework;
+  const o = MTG_OPTIONS.index;
+  const label = r => String(shown[r] && shown[r][0] != null ? shown[r][0] : '').trim();
+  const top = Math.min(shown.length, 10);
+  const find = text => { for (let r = 0; r < top; r++) if (label(r) === text) return r; return -1; };
+  const dateRow = find(H.dateLabel);
+  const headRow = find(H.nameLabel);
+  if (dateRow < 0 || headRow < 0 || headRow <= dateRow) return null;
+  const kindRow = find(H.kindLabel);
+  const width = Math.max.apply(null, shown.map(line => line.length));
+  const meetings = [];
+  let date = '';
+  let kind = '';
+  let current = null;
+  for (let c = 1; c < width; c++) {
+    const d = mtgIndexDate_(values[dateRow][c]) || mtgIndexDate_(shown[dateRow][c]);
+    if (d) {
+      date = d;
+      kind = '';
+      current = null;
+    }
+    const k = kindRow >= 0 ? String(shown[kindRow][c] || '').trim() : '';
+    if (k) kind = k;
+    if (!date) continue;
+    const sub = String(shown[headRow][c] || '').trim();
+    if (!current || (k && current.kind !== kind)) {
+      current = {date, kind, doc: 0, homework: 0, first: c + 1, last: c + 1};
+      meetings.push(current);
+    }
+    current.kind = kind;
+    current.last = c + 1;
+    if (sub === o.docLabel && !current.doc) current.doc = c + 1;
+    if (sub === H.column && !current.homework) current.homework = c + 1;
+  }
+  const resolve = diffSheetNameResolver_();
+  const rows = {};
+  for (let r = headRow + 1; r < shown.length; r++) {
+    // A列の名前（前の名前は今の名前に。追跡シート・全サブインダストリーのほかの名前の行も、同じ名前の行として使う）
+    const name = resolve(label(r));
+    if (name && !rows[name]) rows[name] = r + 1;
+  }
+  return {matrix: true, date: dateRow + 1, kind: kindRow >= 0 ? kindRow + 1 : 0, head: headRow + 1, rows, meetings: meetings.filter(m => m.doc)};
+}
+
+/** 列＝会議日の形のインデックスの、会議日 meeting・会議名 kind（前の版の会議名・空も同じ会議）の列のまとまり（mtgIndexMatrix_ の meetings の1つ。無ければ null） */
+function mtgIndexMatrixMeeting_(layout, meeting, kind) {
+  const kinds = mtgIndexKinds_(kind);
+  return layout.meetings.find(m => m.date === meeting && (!m.kind || kinds.indexOf(m.kind) >= 0)) || null;
+}
+
+/**
+ * 列＝会議日の形のインデックスに、会議日 meeting・会議名 kind の列（「会議資料」「宿題」の2列）を用意する（ロックの中で呼ぶ）。あればそのまま。
+ * 無ければ、会議日の順（左が古い）になる位置に2列を差し込み、日付・会議名のセルを2列で結合して書き、見出し（会議資料・宿題）を書く。
+ * 書式・列の幅・列のグループは、同じ会議名のいちばん近い会議日の列（無ければどれかの会議日の列）に合わせる。{meeting: 列のまとまり, added, layout: 読み直した位置}
+ */
+function mtgIndexMatrixEnsure_(sheet, layout, meeting, kind) {
+  const o = MTG_OPTIONS.index;
+  const H = MTG_OPTIONS.homework;
+  const found = mtgIndexMatrixMeeting_(layout, meeting, kind);
+  if (found) {
+    if (layout.kind && found.kind !== kind) sheet.getRange(layout.kind, found.first).setValue(credText_(kind));   // 前の版の会議名・空なら今の会議名に
+    return {meeting: found, added: false, layout};
+  }
+  const kinds = mtgIndexKinds_(kind);
+  const after = layout.meetings.filter(m => m.date > meeting)[0];
+  const at = after ? after.first : Math.max(sheet.getLastColumn(), 1) + 1;
+  if (after) sheet.insertColumnsBefore(at, 2);
+  else diffEnsureGrid_(sheet, Math.max(sheet.getLastRow(), layout.head), at + 1);
+  // ひな形：同じ会議名で日付のいちばん近い列（差し込んだあとの位置に直す）
+  const shift = m => (after && m.first >= at ? 2 : 0);
+  const same = layout.meetings.filter(m => !m.kind || kinds.indexOf(m.kind) >= 0);
+  const pool = same.length ? same : layout.meetings;
+  const template = pool.slice().sort((a, b) => Math.abs(mtgMonthDays_(a.date) - mtgMonthDays_(meeting)) - Math.abs(mtgMonthDays_(b.date) - mtgMonthDays_(meeting)))[0];
+  const height = Math.max(sheet.getLastRow(), layout.head);
+  if (template) {
+    const from = template.first + shift(template);
+    const span = Math.min(2, template.last - template.first + 1);
+    sheet.getRange(1, from, height, span).copyTo(sheet.getRange(1, at, height, span), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+    for (let k = 0; k < 2; k++) {
+      const src = from + Math.min(k, span - 1);
+      try {
+        sheet.setColumnWidth(at + k, sheet.getColumnWidth(src));
+      } catch (_) {
+        // 幅を読めなければそのまま
+      }
+      // 列のグループ（折りたたみ）も同じ深さに
+      try {
+        const depth = typeof sheet.getColumnGroupDepth === 'function' ? sheet.getColumnGroupDepth(src) : 0;
+        if (depth > 0) sheet.getRange(1, at + k, 1, 1).shiftColumnGroupDepth(depth);
+      } catch (_) {
+        // グループを付けられなければそのまま
+      }
+    }
+  }
+  const date = Utilities.parseDate(meeting, Session.getScriptTimeZone(), 'yyyy/MM/dd');
+  sheet.getRange(layout.date, at, 1, 2).merge();
+  sheet.getRange(layout.date, at).setValue(date);
+  if (layout.kind) {
+    sheet.getRange(layout.kind, at, 1, 2).merge();
+    sheet.getRange(layout.kind, at).setValue(credText_(kind));
+  }
+  sheet.getRange(layout.head, at, 1, 2).setValues([[credText_(o.docLabel), credText_(H.column)]]);
+  const next = mtgIndexLayout_(sheet);
+  return {meeting: mtgIndexMatrixMeeting_(next, meeting, kind), added: true, layout: next};
+}
+
+/** 'yyyy/MM/dd' を日の通し番号に（近い会議日を選ぶため） */
+function mtgMonthDays_(date) {
+  const p = String(date).split('/').map(Number);
+  return Date.UTC(p[0], p[1] - 1, p[2]) / 86400000;
+}
+
+/**
+ * 列＝会議日の形のインデックスで、サブインダストリー name の行（ロックの中で呼ぶ）。無ければいちばん下に足す（A列に名前。書式は上の行に合わせる）。{row, layout}
+ */
+function mtgIndexMatrixRow_(sheet, layout, name) {
+  if (layout.rows[name]) return {row: layout.rows[name], layout};
+  const last = Math.max(sheet.getLastRow(), layout.head);
+  const row = last + 1;
+  diffEnsureGrid_(sheet, row, Math.max(sheet.getLastColumn(), 1));
+  if (last > layout.head) {
+    const width = Math.max(sheet.getLastColumn(), 1);
+    sheet.getRange(last, 1, 1, width).copyTo(sheet.getRange(row, 1, 1, width), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+    try {
+      sheet.setRowHeight(row, sheet.getRowHeight(last));
+    } catch (_) {
+      // 高さを読めなければそのまま
+    }
+  }
+  sheet.getRange(row, 1).setValue(credText_(name));
+  const next = mtgIndexLayout_(sheet);
+  return {row: next.rows[name] || row, layout: next};
 }
 
 /** 見出しの行の値 heads から、mtgIndexLayout_ と同じ列の位置を読む */

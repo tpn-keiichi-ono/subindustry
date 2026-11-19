@@ -24,7 +24,7 @@
 | 会議資料の中身を読む | `MeetingRead.gs` | 会議サマリの中身（追跡シート・変更の記録など）を Sheets API でまとめて読み、SpreadsheetApp と同じ使い方ができる入れ物にする（大勢が編集している間も待たされにくい） |
 | 統合版（報告用） | `MeetingCompact.gs` | 全サブインダストリーの状況・計画進捗（確定（A＋B）の横棒と計画線）・計画に対する積み上げ・サブインダストリーごとの変化のあった案件だけの資料。統合版とは別の関数で、作る仕事（区切って続ける）は統合版と共通 |
 | 会議サマリの報告案件版 | `MeetingReport.gs` | 会議サマリの数字のページのあとに、報告フラグにチェックを入れた案件を1件1枚で載せ、そのあとに前回から変化のある案件を全件載せる版（Appendix なし）。作る仕事は `MeetingSummary.gs` と共通 |
-| 会議の日程と資料を作る画面 | `MeetingSchedule.gs`・`MeetingRunDialog.html` | Google カレンダーから RX Business Meeting・RX Service Meeting の日程を読み、`INDEX_会議資料` に会議日と会議名の行を先に出す。資料を作る関数は画面を開き、その一覧から会議日程をプルダウンで選んで作る |
+| 会議の日程と資料を作る画面 | `MeetingSchedule.gs`・`MeetingRunDialog.html` | Google カレンダーから RX Business Meeting・RX Service Meeting の日程を読み、`INDEX_会議資料` に会議日と会議名の行（列＝会議日の形なら2列）を先に出す。資料を作る関数は画面を開き、その一覧から会議日程をプルダウンで選んで作る |
 | RX Service Meeting の事前資料 | `ServiceMeeting.gs` | RX Service Meeting（サービス改善）の事前資料（16:9 の Google スライドと PDF。紫）を、リクエスト・タスク管理のシートから、サブインダストリーごと（と全サブインダストリー）に作る。スライドの部品・ひな形・保存・インデックスは会議サマリと共通 |
 
 ファイル名は Apps Script エディタ側の名前に合わせています（`clasp pull` で同じ名前になるように）。
@@ -591,6 +591,11 @@ RX Business Meeting（パイプライン会議）の **事前資料**（16:9 の
   行＝会議日（A列「日付」。日付の値で、表示形式 `yyyy/m/d`。B列「会議名」は `RX Business Meeting`・`RX Service Meeting`。2026/10/17 に見出しを「種別」から改めた。前の見出し（`formerKindHeaders`）は `mtgIndexPrepare_` が書き換える）・列＝サブインダストリー（1行目の見出しがシート名。
   `formerNames` の前の名前も今の名前とみなす）のセルに、PDF（`link: 'folder'` なら会議のフォルダ）をスマートチップで書きます
   （2026/10/17 にいただいた「INDEX_会議資料 のコピー」の形。C列「全サブインダストリー」（`MTG_OPTIONS.combined.name`）には統合版を書く）。
+  2026/11/19 から、列＝会議日の形（A列に「日付」「会議名」「サブインダストリー」（`homework` の dateLabel・kindLabel・nameLabel）の見出しの行があるシート。
+  宿題事項と同じ形。`mtgIndexMatrix_`。`mtgIndexLayout_` はシート全体を読み、この形なら `matrix: true`）にも書く：会議日・会議名の「会議資料」（`index.docLabel`）の列 ×
+  A列のサブインダストリーの行（`mtgIndexMatrixRow_`。無ければ下に足す）。会議日の列が無ければ `mtgIndexMatrixEnsure_` が会議日の順の位置に「会議資料」「宿題」の2列を差し込み
+  （日付・会議名は2列を結合。書式・列の幅・列のグループの深さは同じ会議名のいちばん近い会議日の列から写す）。`mtgIndexEnsureRows_`（カレンダー）も同じく2列を足し、
+  `mtgIndexRowsFromSheet_`（会議日の控え）は会議日の列ごとに「会議資料」の列に何かあれば資料ありとする。
   チップは `mtgWriteChip_` で書きます（SpreadsheetApp ではチップを書けないので、拡張サービス Sheets API の
   `batchUpdate` の `updateCells` で、`userEnteredValue` を `@`、`chipRuns` に `richLinkProperties.uri` を入れる。先に `SpreadsheetApp.flush()`）。
   文字は黒・下線なしにします（`userEnteredFormat.textFormat`。リンクの青・下線の書式が残っていると、チップの名前も青の下線になるため。リンクで書くときも同じ）。

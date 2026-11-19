@@ -1457,6 +1457,84 @@ test('インデックス：会議のフォルダに格納したら、「INDEX_�
   assert.strictEqual(sheet.getLastColumn(), 6, '列は増やさない');
 });
 
+test('インデックス（列＝会議日の形。2026/11/19 から）：サブインダストリーの行 × 会議日の「会議資料」の列に書く。会議日の列が無ければ「会議資料」「宿題」の2列を日付の順の位置に足し、行が無ければ下に足す', () => {
+  const {gas, g} = setup();
+  const year = g.mtgParseDate_('1/1', new Date()).slice(0, 4);
+  // 画像の形：1行目 日付（2列を結合）・2行目 会議名・3行目 見出し、4行目から A列にサブインダストリー
+  const sheet = gas.addSheet('INDEX_会議資料', [
+    ['日付', year + '/10/23', '', year + '/10/30', '', year + '/11/06', ''],
+    ['会議名', 'RX Business Meeting', '', 'RX Service Meeting', '', 'RX Business Meeting', ''],
+    ['サブインダストリー', '会議資料', '宿題', '会議資料', '宿題', '会議資料', '宿題'],
+    ['全サブインダストリー', '20261023_全サブインダストリー.pdf', '', '', '', '', ''],
+    ['新FMT', '20261023_新FMT.pdf', '①宿題A', '', '', '', '①宿題B'],
+    ['新FMT2', '', '', '', '', '', '']
+  ], {rows: 6, columns: 7});
+  sheet.getRange('B1:C1').merge();
+  sheet.getRange('F1:G1').merge();
+  const before = plain(sheet.getRange(1, 1, 6, 7).getDisplayValues());
+  const at = url => ({folder: {getUrl: () => 'folder', getName: () => 'folder'}, file: {getUrl: () => url, getName: () => url}});
+  // 会議日の列があれば、その「会議資料」の列に書く（宿題・ほかのセルはそのまま）
+  assert.ok(g.mtgWriteIndex_('新FMT', year + '/11/06', at('u-1106')).url);
+  assert.ok(g.mtgWriteIndex_('全サブインダストリー', year + '/11/06', at('u-all')).url);
+  const now = plain(sheet.getRange(1, 1, 6, 7).getDisplayValues());
+  assert.strictEqual(now[4][5], 'u-1106');
+  assert.strictEqual(now[3][5], 'u-all', '統合版は「全サブインダストリー」の行');
+  assert.strictEqual(sheet.getRange(5, 6).getRichTextValues()[0][0].getLinkUrl(), 'u-1106');
+  now[4][5] = before[4][5];
+  now[3][5] = before[3][5];
+  assert.deepStrictEqual(now, before, 'ほかのセルは変えない（列・行も足さない）');
+  assert.strictEqual(sheet.getLastColumn(), 7);
+  // RX Service Meeting の資料は、その会議日の列（同じ日付でも会議名の違う列には書かない）
+  assert.ok(g.mtgWriteIndex_('全サブインダストリー', year + '/10/30', at('u-svc'), 'RX Service Meeting').url);
+  assert.strictEqual(sheet.getRange(4, 4).getDisplayValue(), 'u-svc');
+  // 会議日の列が無ければ、日付の順の位置（10/30 と 11/06 の間）に2列を足す。日付・会議名は2列を結合、見出しは会議資料・宿題
+  assert.ok(g.mtgWriteIndex_('新FMT2', year + '/11/03', at('u-1103')).url);
+  assert.deepStrictEqual(plain(sheet.getRange(1, 6, 3, 2).getDisplayValues()), [
+    [year + '/11/03', ''], ['RX Business Meeting', ''], ['会議資料', '宿題']]);
+  assert.ok(sheet.merges.indexOf('F1:G1') >= 0 && sheet.merges.indexOf('F2:G2') >= 0, '日付・会議名のセルを結合');
+  assert.strictEqual(sheet.getRange(6, 6).getDisplayValue(), 'u-1103');
+  assert.deepStrictEqual(plain(sheet.getRange(1, 8, 1, 1).getDisplayValues())[0][0], year + '/11/06', 'あとの会議日の列は右へずれる');
+  assert.strictEqual(sheet.getRange(5, 9).getDisplayValue(), '①宿題B', '宿題もそのまま');
+  // いちばん新しい会議日なら右端に足す
+  g.mtgWriteIndex_('新FMT', year + '/11/20', at('u-1120'));
+  assert.deepStrictEqual(plain(sheet.getRange(1, 10, 3, 2).getDisplayValues()), [[year + '/11/20', ''], ['RX Business Meeting', ''], ['会議資料', '宿題']]);
+  assert.strictEqual(sheet.getRange(5, 10).getDisplayValue(), 'u-1120');
+  // サブインダストリーの行が無ければ下に足す
+  g.mtgWriteIndex_('専門店', year + '/11/20', at('u-x'));
+  assert.deepStrictEqual(plain(sheet.getRange(7, 1, 1, 1).getDisplayValues())[0][0], '専門店');
+  assert.strictEqual(sheet.getRange(7, 10).getDisplayValue(), 'u-x');
+  g.mtgWriteIndex_('専門店', year + '/11/03', at('u-y'));
+  assert.deepStrictEqual([sheet.getLastRow(), sheet.getRange(7, 6).getDisplayValue()], [7, 'u-y'], '足した行は次から同じ行に書く（行を増やさない）');
+  assert.ok(gas.writes.filter(w => w.sheet === 'INDEX_会議資料').every(w => w.locked), '書き込みはロックの中');
+  // 資料を作る画面の会議日（控えをシートから作り直す）：会議日の列ごと、「会議資料」に何かあれば資料あり
+  g.refreshMeetingIndexCache();
+  assert.deepStrictEqual(plain(g.mtgIndexMeetings_('RX Business Meeting')), [
+    {date: year + '/10/23', filled: true}, {date: year + '/11/03', filled: true}, {date: year + '/11/06', filled: true}, {date: year + '/11/20', filled: true}]);
+  assert.deepStrictEqual(plain(g.mtgIndexMeetings_('RX Service Meeting')), [{date: year + '/10/30', filled: true}]);
+  // 前回の宿題事項（報告案件版）は、同じシートの「宿題」の列から読む
+  assert.strictEqual(g.mtgHomeworkOf_(gas.ss, '新FMT', year + '/11/10').date, year + '/11/06');
+});
+
+test('インデックス（列＝会議日の形）：カレンダーから読んだ会議日は、会議日の2列（会議資料・宿題）を足す（ある列はそのまま）', () => {
+  const {gas, g} = setup();
+  const year = g.mtgParseDate_('1/1', new Date()).slice(0, 4);
+  const sheet = gas.addSheet('INDEX_会議資料', [
+    ['日付', year + '/10/23', ''],
+    ['会議名', 'RX Business Meeting', ''],
+    ['サブインダストリー', '会議資料', '宿題'],
+    ['全サブインダストリー', '', ''],
+    ['新FMT', '', '']
+  ], {rows: 5, columns: 3});
+  const result = g.mtgIndexEnsureRows_([{date: year + '/10/23', kind: 'RX Business Meeting'}, {date: year + '/10/30', kind: 'RX Service Meeting'},
+    {date: year + '/11/06', kind: 'RX Business Meeting'}]);
+  assert.deepStrictEqual([result.added, result.existing], [2, 1]);
+  assert.deepStrictEqual(plain(sheet.getRange(1, 1, 3, 7).getDisplayValues()), [
+    ['日付', year + '/10/23', '', year + '/10/30', '', year + '/11/06', ''],
+    ['会議名', 'RX Business Meeting', '', 'RX Service Meeting', '', 'RX Business Meeting', ''],
+    ['サブインダストリー', '会議資料', '宿題', '会議資料', '宿題', '会議資料', '宿題']]);
+  assert.strictEqual(sheet.getLastRow(), 5, '行は足さない');
+});
+
 test('インデックス：前の形式（行＝サブインダストリー）のシートには書かずに知らせ、rebuildBusinessMtgIndex() で会議のフォルダの資料から今の形式に作り直す', () => {
   const {gas, g} = setup({edits: false});
   const year = g.mtgParseDate_('10/23', new Date()).slice(0, 4);
