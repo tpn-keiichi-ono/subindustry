@@ -1351,7 +1351,7 @@ test('会議のフォルダを作らない設定（createMeetingFolder: false）
 
   gas.promptAnswers = ['1', '10/30'];
   g.storeBusinessMtgSummaries();
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /「新FMT」：本番の資料（\d{4}1030_新FMT_RX Business Meeting用資料\.pdf）が保存先・会議のフォルダにありません。createBusinessMtgSummaries\(\) で作ってください。/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「新FMT」：本番の資料（\d{4}1030_新FMT_RX Business Meeting用資料\.pdf・\d{4}1030_新FMT_RX Business Meeting用資料_報告案件版\.pdf）が保存先・会議のフォルダにありません。createBusinessMtgSummaries\(\) か createBusinessMtgReportSummaries\(\) で作ってください。/);
 });
 
 test('会議のフォルダが無ければ「yyMMdd_RX Business Meeting_第N回」を作って格納する（N は前の同じ会議のフォルダの回数＋1。後の会議・ほかの会議のフォルダは数えない）', () => {
@@ -2246,6 +2246,29 @@ test('notifySubBusinessMtgSummaries：その会議日の本番の事前資料（
   gas.promptAnswers = ['10/23', '1', '【訂正】事前資料（差し替え）のご案内'];
   g.notifySubBusinessMtgSummaries();
   assert.match(sentCard(gas.fetches[gas.fetches.length - 1]).sections[0].widgets[0].textParagraph.text, /^<b>【訂正】事前資料（差し替え）のご案内<\/b>/);
+});
+
+test('notifySubBusinessMtgSummaries：報告案件版（createBusinessMtgReportSummaries()。ファイル名の後ろに「_報告案件版」）で作った本番の資料も、事前資料として案内する', () => {
+  const {gas, g} = setup({edits: false});
+  const props = g.PropertiesService.getScriptProperties();
+  props.setProperty('MTG_SUBCHAT_新FMT', 'https://chat.googleapis.com/v1/spaces/SPACE1/messages?key=K&token=T');
+  gas.confirmAnswer = 'YES';
+  gas.promptAnswers = ['1', '10/23'];
+  g.createBusinessMtgReportSummaries();   // 新FMT を報告案件版で本番
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  const name = meeting.replace(/\//g, '') + '_新FMT_RX Business Meeting用資料_報告案件版.pdf';
+  assert.ok(gas.driveFiles.some(f => f.name === name), '報告案件版の PDF がある');
+  assert.strictEqual(g.mtgStoredPdf_(gas.ss, '新FMT', meeting).getName(), name);
+  const fetched = gas.fetches.length;
+  gas.promptAnswers = ['10/23', '1', ''];
+  g.notifySubBusinessMtgSummaries();
+  const sent = gas.fetches.slice(fetched);
+  assert.strictEqual(sent.length, 1, '送れる（「送れるシートがありません」にならない）');
+  assert.ok(plain(cardLines(sentCard(sent[0])))[1].indexOf('事前資料：' + name) >= 0, 'ファイル名は報告案件版');
+  // 統合版を作れるかの確かめでも、報告案件版の資料を本番の資料として数える
+  assert.ok(g.mtgMeetingPending_(gas.ss, meeting).indexOf('新FMT') < 0);
+  // 試作（ファイル名に「_試作」）は本番の資料として数えない
+  assert.strictEqual(g.mtgStoredPdfNames_('新FMT', meeting).some(n => /試作/.test(n)), false);
 });
 
 test('mtgNotifyScheduled（前の版の自動通知）：トリガーが残っていても何も送らず、そのトリガーを外す', () => {

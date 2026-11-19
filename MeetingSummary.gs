@@ -2163,8 +2163,11 @@ function mtgSubChatSend_(kind) {
       return {name, message: mtgSubChatMessage_('remind', name, meeting, {now, sheet: mtgSheetLink_(ss, name), stats: mtgUpdateStats_(ss, name, now), past,
         title: titleText})};
     }
+    // 本番の事前資料（会議サマリか報告案件版の PDF）
     const pdf = mtgStoredPdf_(ss, name, meeting.date);
-    if (!pdf) return {name, skip: '会議日 ' + meeting.date + ' の本番の事前資料（PDF）が無い（createBusinessMtgSummaries() で作る）'};
+    if (!pdf) {
+      return {name, skip: '会議日 ' + meeting.date + ' の本番の事前資料（PDF）が無い（createBusinessMtgSummaries() か createBusinessMtgReportSummaries() で作る）'};
+    }
     return {name, message: mtgSubChatMessage_('summary', name, meeting, {file: {name: pdf.getName(), url: pdf.getUrl()}, past, title: titleText})};
   });
   const sending = plans.filter(p => p.message);
@@ -2636,14 +2639,45 @@ function mtgCombinedStart_(meeting, point, overwrite, cancelJob) {
 
 /** サブインダストリー（name）の、会議日（meeting）の本番の資料（PDF）。会議のフォルダ（無ければ保存先のフォルダ）にあるもの。無ければ null */
 function mtgStoredPdf_(ss, name, meeting) {
-  const fileName = mtgFileName_(name, meeting, true) + '.pdf';
   const target = mtgMeetingFolder_(name, meeting, true);
   const folders = [target.folder, mtgFolder_(ss)].filter(Boolean);
   for (let i = 0; i < folders.length; i++) {
-    const files = folders[i].getFilesByName(fileName);
-    if (files.hasNext()) return files.next();
+    const pdf = mtgFindStoredPdf_(folders[i], name, meeting);
+    if (pdf) return pdf;
   }
   return null;
+}
+
+/**
+ * 本番の事前資料（PDF）の名前の候補：会議サマリ（「yyyyMMdd_シート名_…用資料.pdf」。mtgFileName_）と、報告案件版（後ろに report.fileSuffix「_報告案件版」。
+ * MeetingReport.gs。会議日ごとにどちらか一方で作る）。2026/11/20 から（前は会議サマリの名前だけを探し、報告案件版で作った会議日は「資料が無い」になった）
+ */
+function mtgStoredPdfNames_(name, meeting) {
+  const base = mtgFileName_(name, meeting, true);
+  const report = MTG_OPTIONS.report && MTG_OPTIONS.report.fileSuffix;
+  return [base + '.pdf'].concat(report && name !== MTG_OPTIONS.combined.name ? [base + report + '.pdf'] : []);
+}
+
+/** フォルダ（folder）の中の、シート name・会議日 meeting の本番の事前資料（mtgStoredPdfNames_ のどれか。両方あれば更新の新しいほう）。無ければ null */
+function mtgFindStoredPdf_(folder, name, meeting) {
+  const found = [];
+  mtgStoredPdfNames_(name, meeting).forEach(fileName => {
+    const files = folder.getFilesByName(fileName);
+    while (files.hasNext()) {
+      const file = files.next();
+      if (typeof file.isTrashed === 'function' && file.isTrashed()) continue;
+      found.push(file);
+    }
+  });
+  if (!found.length) return null;
+  const time = file => {
+    try {
+      return file.getLastUpdated().getTime();
+    } catch (_) {
+      return 0;
+    }
+  };
+  return found.sort((a, b) => time(b) - time(a))[0];
 }
 
 /** 統合版の結果の知らせ（終わりの画面の行） */
@@ -2764,20 +2798,21 @@ function storeBusinessMtgSummaries() {
   if (!meeting) throw new Error('「' + text + '」を会議日として読めません。10/23 か 2026/10/23 のように入力してください。');
   const folder = mtgFolder_(ss);
   const lines = names.map(name => {
-    const fileName = mtgFileName_(name, meeting, true) + '.pdf';
-    const files = folder.getFilesByName(fileName);
-    const pdf = files.hasNext() ? files.next() : null;
+    // 本番の資料（会議サマリか報告案件版。mtgStoredPdfNames_）
+    const fileName = mtgStoredPdfNames_(name, meeting).join('・');
+    const pdf = mtgFindStoredPdf_(folder, name, meeting);
     let stored;
     if (pdf) {
       stored = mtgStoreToMeetingFolder_(name, meeting, pdf);
     } else {
       // 保存先に無ければ、もう会議のフォルダにある（格納済み）か見る。あればインデックスだけ書き直す
       const target = mtgMeetingFolder_(name, meeting, true);
-      const inside = target.folder ? target.folder.getFilesByName(fileName) : null;
-      if (!inside || !inside.hasNext()) {
-        return '「' + name + '」：本番の資料（' + fileName + '）が保存先・会議のフォルダにありません。createBusinessMtgSummaries() で作ってください。';
+      const inside = target.folder ? mtgFindStoredPdf_(target.folder, name, meeting) : null;
+      if (!inside) {
+        return '「' + name + '」：本番の資料（' + fileName + '）が保存先・会議のフォルダにありません。' +
+          'createBusinessMtgSummaries() か createBusinessMtgReportSummaries() で作ってください。';
       }
-      stored = {folder: target.folder, file: DriveApp.getFileById(inside.next().getId()), already: true};
+      stored = {folder: target.folder, file: DriveApp.getFileById(inside.getId()), already: true};
     }
     if (stored.error) return '「' + name + '」：格納できませんでした（' + stored.error + '）。';
     const index = mtgWriteIndex_(name, meeting, stored);
@@ -3550,8 +3585,8 @@ function mtgStoredDecks_(name) {
     if (folder.isTrashed()) continue;
     const meeting = mtgMeetingOfFolder_(String(folder.getName()));
     if (!meeting) continue;
-    const files = folder.getFilesByName(mtgFileName_(name, meeting, true) + '.pdf');
-    if (files.hasNext()) decks.push({meeting, folder, file: DriveApp.getFileById(files.next().getId())});
+    const pdf = mtgFindStoredPdf_(folder, name, meeting);   // 会議サマリか報告案件版
+    if (pdf) decks.push({meeting, folder, file: DriveApp.getFileById(pdf.getId())});
   }
   decks.sort((a, b) => (a.meeting < b.meeting ? -1 : a.meeting > b.meeting ? 1 : 0));
   return {decks};
