@@ -15,6 +15,8 @@ const HEAD = ['', '', '', '得意先', '案件名', '案件ステータス'];
 function setup() {
   const gas = createGas();
   const g = gas.global;
+  // インデックスのシートが無いときに作る形：このファイルのテストは前の形（行＝会議日）で確かめる（列＝会議日の形は「インデックス（列＝会議日の形）」のテスト）
+  gas.get('MTG_OPTIONS').index.newLayout = 'rows';
   ['新FMT', '新FMT2'].forEach(name => {
     gas.addSheet(name, [[name], HEAD, ['', '', '', 'A社', 'アプリ刷新', '提案中']], {rows: 10, columns: 6});
   });
@@ -176,7 +178,7 @@ test('会議日程は「INDEX_会議資料」の控え（ドキュメントの�
   assert.deepStrictEqual(dates().map(d => d[0]), [y + '/10/09', y + '/10/23', y + '/11/06'], 'refreshMeetingIndexCache() で読み直す');
   // 終わりは待たない通知（toast）で知らせる。ui.alert は OK を押すまで実行が終わらない（エディタからの実行が「実行中」のままになる）
   assert.strictEqual(gas.alerts.length, 0, 'refreshMeetingIndexCache() は確かめの画面を出さない');
-  assert.ok(gas.toasts.some(t => /3行）を読み直しました（.*秒/.test(t.message)), '読んだ行の数とかかった時間を通知する');
+  assert.ok(gas.toasts.some(t => /会議日（3件）を読み直しました（.*秒/.test(t.message)), '読んだ会議日の数とかかった時間を通知する');
   // スクリプトが書いたら控えも直す（カレンダーから足した行・資料を書いたセル）。シートは読み直さない
   assert.ok(!g.mtgIndexEnsureRows_([{date: y + '/11/20', kind: 'RX Business Meeting'}]).error);
   const stored = {file: {getUrl: () => 'https://drive.google.com/file/d/PDF00001/view', getName: () => '20261023_新FMT_RX Business Meeting用資料.pdf',

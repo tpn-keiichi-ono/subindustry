@@ -34,7 +34,8 @@
  *   1回の実行の6分に収まらなければ区切り、1回きりのトリガー（continueServiceMtgSummaries）で続ける（結果は showServiceMtgSummariesResult()）。
  * - 本番は、会議日とその時点のリクエストの判断・タスクの状況・サブインダストリーごとの件数をドキュメントのプロパティ（SMTG_OPTIONS.meetingsKey）に残し、
  *   次の会議の資料に「前回以降の動き」（新規リクエスト・判断の変更・完了したタスク・新しいタスク）と前回比を出す。
- *   本番の PDF は会議資料のインデックス（MTG_OPTIONS.index.sheet）の、種別が SMTG_OPTIONS.index.kind の行の、そのサブインダストリーの列に書く。
+ *   本番の PDF は会議資料のインデックス（MTG_OPTIONS.index.sheet）の、会議名が SMTG_OPTIONS.index.kind の会議日の、そのサブインダストリーのセルに書く
+ *   （列＝会議日の形なら「会議資料」の列 × サブインダストリーの行、前の形なら行 × 列）。
  * - データが無いうちは、サンプルデータ.gs の addServiceMtgSampleData() でサンプルのリクエスト・タスクを入れて試す
  *   （removeServiceMtgSampleData() で消す。サンプルを含む資料には【サンプルデータを含む】と出す）。
  */

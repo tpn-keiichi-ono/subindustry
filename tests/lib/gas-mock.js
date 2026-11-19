@@ -611,6 +611,8 @@ class Sheet {
   activate() { this.gas.selection = {sheet: this, range: this.getRange('A1')}; return this; }
   isSheetHidden() { return this.hidden; }
   setFrozenRows(n) { this.frozenRows = n; return this; }
+  setFrozenColumns(n) { this.frozenColumns = n; return this; }
+  getFrozenColumns() { return this.frozenColumns || 0; }
   getFrozenRows() { return this.frozenRows; }
   setColumnWidth(col, width) { this.widths[col] = width; return this; }
   setColumnWidths(start, count, width) {

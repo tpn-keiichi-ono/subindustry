@@ -72,7 +72,7 @@ const MTG_OPTIONS = {
   // 見出しの行に「日付」（会議日。結合したセルは右の列にも同じ日付）・「会議名」・「サブインダストリー」（その行の各列は「会議資料」「宿題」など）。
   // 今の会議日より前の、いちばん新しい RX Business Meeting（index.kind）の「宿題」の列から、その資料のサブインダストリーの行を読む。
   // 宿題のセルは改行で1件ずつ。読むシートは sheet、無ければ名前が index.sheet で始まるシート（「INDEX_会議資料_」など）のうち「宿題」の列があるもの
-  // （今の INDEX_会議資料は行＝会議日の形なので読まない。将来 INDEX と1つにしても、そのまま読める）
+  // （INDEX_会議資料 が列＝会議日の形（2026/11/19 から）なら、そこから読む。行＝会議日の形なら読まない）
   homework: {
     sheet: '宿題事項',
     dateLabel: '日付',
@@ -209,7 +209,8 @@ const MTG_OPTIONS = {
     readMode: 'api', sheetsPerRead: 3, copyFixMs: 60000, sourceName: '資料作成用コピー', sourceKeepHours: 6,
     // 前の版の続きのトリガーの関数（2026/10/17 に関数名を改めた）。残っていれば、区切る・やめる・続けるときに一緒に外す
     legacyHandlers: ['continueMeetingSummaries']},
-  // 会議資料のインデックス（このスプレッドシートのシート）。会議のフォルダに格納したら、行＝会議日・列＝サブインダストリー（1行目の見出しがシート名）の
+  // 会議資料のインデックス（このスプレッドシートのシート）。2026/11/19 からは列＝会議日・行＝サブインダストリーの形（docLabel の説明）。
+  // 前の形（行＝会議日・列＝サブインダストリー）のシートにも書ける。会議のフォルダに格納したら、行＝会議日・列＝サブインダストリー（1行目の見出しがシート名）の
   // セルに、PDF のファイルをスマートチップ（chip。Sheets API の拡張サービスが要る）で書く。チップにできないときは、ファイル名のリンクで書く。
   // link を 'folder' にすると会議のフォルダ。シートが無ければ作る。書けなかったときは storeBusinessMtgSummaries() で書き直す。
   // 前の形式（行＝サブインダストリー・列＝会議日）のシートや、書き漏れは rebuildBusinessMtgIndex() で作り直す
@@ -226,6 +227,9 @@ const MTG_OPTIONS = {
     // （会議日ごとに「会議資料」「宿題」の2列）、その下の行の A列にサブインダストリー（統合版は combined.name「全サブインダストリー」）。
     // A列の見出しは homework の dateLabel・kindLabel・nameLabel、会議資料の列の見出しは docLabel、宿題の列の見出しは homework.column
     docLabel: '会議資料',
+    // シートが無いときに作る形：'matrix' 列＝会議日（2026/11/19 から）・'rows' 行＝会議日（前の形）。列＝会議日の形の宿題の列の幅（px）
+    newLayout: 'matrix',
+    homeworkWidth: 300,
     link: 'file',
     chip: true,
     dateFormat: 'yyyy/m/d',
@@ -2589,12 +2593,12 @@ function mtgCombinedCheck_(meeting, point, cancelJob) {
   }
   const names = mtgTrackedNames_(ss);
   if (!names.length) return {error: '追跡しているシート（test.gs の DIFF_RULES）が見つかりません。'};
-  // 実行の条件：すべてのサブインダストリーの、この会議日の本番の資料（PDF）ができている（インデックスのその会議日の行に空のセルが無い）。満たさなければ作らずに終える
+  // 実行の条件：すべてのサブインダストリーの、この会議日の本番の資料（PDF）ができている（会議日の記録と会議のフォルダの PDF で確かめる）。満たさなければ作らずに終える
   const missing = mtgMeetingPending_(ss, meeting);
   if (missing.length) {
     return {error: '統合版を作れません。会議日 ' + meeting + ' の本番の資料が、まだできていないサブインダストリーがあります（' + missing.length + '件）：\n' +
       missing.map(name => '・' + name).join('\n') + '\n\n' +
-      'createBusinessMtgSummaries() で、すべてのサブインダストリーの本番の資料を作ってから（「' + MTG_OPTIONS.index.sheet + '」のその会議日の行に空のセルが無くなってから）、' +
+      'createBusinessMtgSummaries() で、すべてのサブインダストリーの本番の資料を作ってから（「' + MTG_OPTIONS.index.sheet + '」のその会議日の資料がそろってから）、' +
       'もう一度実行してください。'};
   }
   return {text: '「' + o.name + '」の資料（' + names.length + 'サブインダストリーを1つにまとめた統合版）を、今のシートの値で作ります。\n\n' +
@@ -2987,7 +2991,9 @@ function mtgOutputFolderId_(setting, label) {
 }
 
 /**
- * 会議資料のインデックス（このスプレッドシートの MTG_OPTIONS.index.sheet）の、行＝会議日（meeting）・列＝サブインダストリー（name。統合版は combined.name）のセルに、
+ * 会議資料のインデックス（このスプレッドシートの MTG_OPTIONS.index.sheet）に、資料を書く。列＝会議日の形（2026/11/19 から。mtgIndexMatrix_）なら、
+ * 会議日 meeting・会議名 kind の「会議資料」の列 × サブインダストリー（name。統合版は combined.name「全サブインダストリー」）の行のセル（列・行が無ければ足す）。
+ * 前の形（行＝会議日）なら、以下のとおり行＝会議日（meeting）・列＝サブインダストリー（name。統合版は combined.name）のセルに、
  * PDF（stored.file。index.link が 'folder' なら会議のフォルダ）をスマートチップで書く（できなければファイル名のリンク）。
  * シートが無ければ作り、1行目に見出し（日付・種別・統合版・追跡シートの名前（DIFF_RULES の順））を書く。
  * kind は種別の列の値（省けば MTG_OPTIONS.index.kind。RX Service Meeting の資料は、その種別の行の統合版の列に書く）。
@@ -3056,8 +3062,10 @@ function mtgIndexPrepare_(ss) {
   const sheet = mtgIndexSheet_(ss);
   const layout = mtgIndexLayout_(sheet);
   if (!layout) {
-    const error = new Error('1行目に「' + o.dateHeader + '」の見出しがありません');
-    error.hint = '前の形式（行がサブインダストリー）のシートは、エディタで rebuildBusinessMtgIndex() を実行すると、今の形式で作り直します。';
+    const H = MTG_OPTIONS.homework;
+    const error = new Error('A列に「' + H.dateLabel + '」「' + H.kindLabel + '」「' + H.nameLabel + '」の見出し（列＝会議日の形）も、1行目に「' + o.dateHeader +
+      '」の見出し（行＝会議日の形）もありません');
+    error.hint = '見出しを直すか、エディタで rebuildBusinessMtgIndex() を実行すると、シートを作り直します（中身を消します）。';
     throw error;
   }
   if (!layout.matrix && layout.kind && layout.kindStale) sheet.getRange(1, layout.kind).setValue(credText_(o.kindHeader));
@@ -3106,8 +3114,9 @@ function mtgIndexRow_(sheet, layout, meeting, kind) {
 }
 
 /**
- * 会議の日程（会議日・会議名）の行を、インデックスに先に足す（Google カレンダーから読んだ日程。MeetingSchedule.gs）。ある行はそのまま。
- * entries = [{date: 'yyyy/MM/dd', kind: 会議名}]。{added, existing, url} か {error}
+ * 会議の日程（会議日・会議名）を、インデックスに先に足す（Google カレンダーから読んだ日程。MeetingSchedule.gs）。前の形（行＝会議日）なら行、
+ * 列＝会議日の形なら「会議資料」「宿題」の2列（mtgIndexMatrixEnsure_）。あるものはそのまま。
+ * entries = [{date: 'yyyy/MM/dd', kind: 会議名}]。{added, existing, url, matrix: 列＝会議日の形か} か {error}
  */
 function mtgIndexEnsureRows_(entries) {
   const o = MTG_OPTIONS.index;
@@ -3130,7 +3139,7 @@ function mtgIndexEnsureRows_(entries) {
         }
         mtgIndexCacheUpdate_(e.date, e.kind, false);
       });
-      return {added, existing: entries.length - added, url: ss.getUrl() + '#gid=' + sheet.getSheetId()};
+      return {added, existing: entries.length - added, url: ss.getUrl() + '#gid=' + sheet.getSheetId(), matrix: !!current.matrix};
     } finally {
       lock.releaseLock();
     }
@@ -3222,7 +3231,8 @@ function mtgIndexCacheUpdate_(date, kind, filled) {
 }
 
 /**
- * 会議日の行の控えを、インデックスのシートから読み直す（エディタから実行する。インデックスの行を手で足した・消した・会議名を直したときに）。
+ * 会議日の控えを、インデックスのシートから読み直す（エディタから実行する。インデックスの会議日（列＝会議日の形なら列、前の形なら行）を手で足した・消した・
+ * 会議名を直したとき、シートの形を置き換えたときに）。
  * 資料を作る画面の会議日程・比べる時点は、この控えを読む
  */
 function refreshMeetingIndexCache() {
@@ -3231,7 +3241,7 @@ function refreshMeetingIndexCache() {
   timer.lap('「' + MTG_OPTIONS.index.sheet + '」を読む');
   mtgIndexCacheSave_(rows);
   timer.lap('控えを保存');
-  const message = '「' + MTG_OPTIONS.index.sheet + '」の会議日の行（' + rows.length + '行）を読み直しました（' + timer.text() + '）。資料を作る画面の会議日程は、これを使います。';
+  const message = '「' + MTG_OPTIONS.index.sheet + '」の会議日（' + rows.length + '件）を読み直しました（' + timer.text() + '）。資料を作る画面の会議日程は、これを使います。';
   console.log(message);
   // 終わりの知らせは、待たない通知（toast）にする。ui.alert はスプレッドシートのタブに出て、OK を押すまで実行が終わらない
   // （エディタから実行すると、スプレッドシートのタブを見ていない間ずっと「実行中」のままになっていた）
@@ -3255,6 +3265,20 @@ function mtgIndexSheet_(ss) {
     if (active) active.activate();   // insertSheet は作ったシートを開くので、開いていたシートに戻す
   }
   if (sheet.getLastRow() > 0) return sheet;
+  // 列＝会議日の形（newLayout: 'matrix'。2026/11/19 から）：A列に見出し（日付・会議名・サブインダストリー）と、全サブインダストリー・追跡シートの名前（DIFF_RULES の順）。
+  // 会議日の列は、資料を書くとき・カレンダーから読み込むときに足す（mtgIndexMatrixEnsure_）
+  if (o.newLayout !== 'rows') {
+    const H = MTG_OPTIONS.homework;
+    const labels = [H.dateLabel, H.kindLabel, H.nameLabel, MTG_OPTIONS.combined.name].concat(Object.keys(DIFF_RULES));
+    diffEnsureGrid_(sheet, labels.length, 1);
+    mtgIndexFormat_(sheet.getRange(1, 1, labels.length, 1).setValues(labels.map(v => [credText_(v)])));
+    sheet.setColumnWidth(1, o.widths.kind);
+    sheet.setFrozenRows(3);
+    sheet.setFrozenColumns(1);
+    if (o.tabColor) sheet.setTabColor(o.tabColor);
+    diffTrimGrid_(sheet, 1, labels.length);
+    return sheet;
+  }
   const headers = [o.dateHeader, o.kindHeader, MTG_OPTIONS.combined.name].concat(Object.keys(DIFF_RULES));
   diffEnsureGrid_(sheet, 2, headers.length);
   mtgIndexFormat_(sheet.getRange(1, 1, 1, headers.length).setValues([headers.map(credText_)]));
@@ -3389,9 +3413,17 @@ function mtgIndexMatrixEnsure_(sheet, layout, meeting, kind) {
       }
     }
   }
+  if (!template) {
+    // ひな形の列が無い（作ったばかりのシート）：字の書式（太字・黒・上下中央）と列の幅（会議資料・宿題）だけ
+    mtgIndexFormat_(sheet.getRange(1, at, height, 2));
+    sheet.getRange(layout.date, at, layout.head - layout.date + 1, 2).setHorizontalAlignment('center');
+    sheet.setColumnWidth(at, o.widths.sheet);
+    sheet.setColumnWidth(at + 1, o.homeworkWidth || 300);
+  }
   const date = Utilities.parseDate(meeting, Session.getScriptTimeZone(), 'yyyy/MM/dd');
   sheet.getRange(layout.date, at, 1, 2).merge();
   sheet.getRange(layout.date, at).setValue(date);
+  if (!template) sheet.getRange(layout.date, at).setNumberFormat(o.dateFormat);
   if (layout.kind) {
     sheet.getRange(layout.kind, at, 1, 2).merge();
     sheet.getRange(layout.kind, at).setValue(credText_(kind));
@@ -3459,7 +3491,8 @@ function rebuildBusinessMtgIndex() {
   const current = ss.getSheetByName(o.sheet);
   const old = !!current && current.getLastRow() > 0 && !mtgIndexLayout_(current);
   const answer = ui.alert(CRED_OPTIONS.menuTitle, '各サブインダストリーの会議のフォルダにある事前資料（PDF）から、「' + o.sheet + '」シートを書き直します。' +
-    (old ? '\n今のシートは前の形式（行がサブインダストリー）なので、中身を消して、行＝会議日・列＝サブインダストリーの形式で作り直します。' : '') +
+    (old ? '\n今のシートは見出しが読めない（前の形式など）ので、中身を消して、' +
+      (o.newLayout === 'rows' ? '行＝会議日・列＝サブインダストリー' : '列＝会議日・行＝サブインダストリー') + 'の形式で作り直します。' : '') +
     '\nよろしいですか？', ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return;
   if (old) {

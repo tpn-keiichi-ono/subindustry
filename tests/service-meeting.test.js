@@ -32,6 +32,8 @@ function row(values) {
 function setup() {
   const gas = createGas();
   const g = gas.global;
+  // インデックスのシートが無いときに作る形：このファイルのテストは前の形（行＝会議日）で確かめる（列＝会議日の形は「インデックス（列＝会議日の形）」のテスト）
+  gas.get('MTG_OPTIONS').index.newLayout = 'rows';
   ['新FMT', '新FMT2'].forEach(name => {
     gas.addSheet(name, [row({customer: name}), row(HEADERS)].concat(DEALS.map(d => row({sub: '食品スーパー', customer: d[0], project: d[1],
       status: d[2], amount: d[3], weighted: d[4], owner: d[5]}))), {rows: 20, columns: WIDTH});

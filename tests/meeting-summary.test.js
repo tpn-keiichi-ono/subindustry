@@ -55,6 +55,8 @@ function setup(options) {
   const o = options || {};
   const gas = createGas(o.gas);
   const g = gas.global;
+  // インデックスのシートが無いときに作る形：このファイルのテストは前の形（行＝会議日）で確かめる（列＝会議日の形は「インデックス（列＝会議日の形）」のテスト）
+  gas.get('MTG_OPTIONS').index.newLayout = 'rows';
   ['新FMT', '新FMT2'].forEach(name => {
     const deals = name === '新FMT' ? DEALS : DEALS.slice(0, 2);
     const lines = [row({customer: name}), row(HEADERS)].concat(deals.map(d => row({
@@ -1515,6 +1517,28 @@ test('インデックス（列＝会議日の形。2026/11/19 から）：サブ
   assert.strictEqual(g.mtgHomeworkOf_(gas.ss, '新FMT', year + '/11/10').date, year + '/11/06');
 });
 
+test('インデックス（列＝会議日の形）：シートが無ければ列＝会議日の形で作り（A列に見出しとサブインダストリー）、資料を書くときに会議日の2列を足す', () => {
+  const {gas, g} = setup();
+  gas.get('MTG_OPTIONS').index.newLayout = 'matrix';
+  const year = g.mtgParseDate_('1/1', new Date()).slice(0, 4);
+  const at = url => ({folder: {getUrl: () => 'folder', getName: () => 'folder'}, file: {getUrl: () => url, getName: () => url}});
+  assert.ok(g.mtgWriteIndex_('新FMT', year + '/11/20', at('u-1120')).url);
+  const sheet = gas.ss.getSheetByName('INDEX_会議資料');
+  assert.deepStrictEqual(plain(sheet.getRange(1, 1, 6, 3).getDisplayValues()), [
+    ['日付', year + '/11/20', ''], ['会議名', 'RX Business Meeting', ''], ['サブインダストリー', '会議資料', '宿題'],
+    ['全サブインダストリー', '', ''], ['新FMT', 'u-1120', ''], ['新FMT2', '', '']]);
+  assert.deepStrictEqual([sheet.getFrozenRows(), sheet.getFrozenColumns()], [3, 1]);
+  assert.ok(sheet.merges.indexOf('B1:C1') >= 0 && sheet.merges.indexOf('B2:C2') >= 0);
+  assert.deepStrictEqual([sheet.widths[2], sheet.widths[3]], [138, 300], '会議資料・宿題の列の幅');
+  // 次の会議日は、前の会議日の列の書式・幅に合わせて右に足す
+  g.mtgWriteIndex_('新FMT2', year + '/11/27', at('u-1127'));
+  assert.deepStrictEqual(plain(sheet.getRange(1, 4, 3, 2).getDisplayValues()), [[year + '/11/27', ''], ['RX Business Meeting', ''], ['会議資料', '宿題']]);
+  assert.strictEqual(sheet.getRange(6, 4).getDisplayValue(), 'u-1127');
+  // 会議日の控えを読み直したときの知らせは、会議日の数
+  g.refreshMeetingIndexCache();
+  assert.match(gas.toasts ? gas.toasts[gas.toasts.length - 1].message || '' : '会議日（2件）', /会議日（2件）/);
+});
+
 test('インデックス（列＝会議日の形）：カレンダーから読んだ会議日は、会議日の2列（会議資料・宿題）を足す（ある列はそのまま）', () => {
   const {gas, g} = setup();
   const year = g.mtgParseDate_('1/1', new Date()).slice(0, 4);
@@ -1533,6 +1557,11 @@ test('インデックス（列＝会議日の形）：カレンダーから読�
     ['会議名', 'RX Business Meeting', '', 'RX Service Meeting', '', 'RX Business Meeting', ''],
     ['サブインダストリー', '会議資料', '宿題', '会議資料', '宿題', '会議資料', '宿題']]);
   assert.strictEqual(sheet.getLastRow(), 5, '行は足さない');
+  // カレンダーから読み込むときの知らせ：会議日の列（会議資料・宿題）を足した数
+  const now = new Date();
+  gas.calendarEvents = [{title: 'RX Business Meeting', start: new Date(now.getTime() + 7 * 86400000), end: new Date(now.getTime() + 7 * 86400000)}];
+  g.importMeetingSchedules();
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「INDEX_会議資料」に、会議日の列（会議資料・宿題）を 1日分足しました（すでにある 0日分はそのまま）：/);
 });
 
 test('インデックス：前の形式（行＝サブインダストリー）のシートには書かずに知らせ、rebuildBusinessMtgIndex() で会議のフォルダの資料から今の形式に作り直す', () => {
@@ -1541,7 +1570,7 @@ test('インデックス：前の形式（行＝サブインダストリー）�
   const old = gas.addSheet('INDEX_会議資料', [['サブインダストリー', year + '/10/23'], ['新FMT', '前のチップ']], {rows: 2, columns: 2});
   const at = {folder: {getUrl: () => 'f', getName: () => 'f'}, file: {getUrl: () => 'u', getName: () => 'u'}};
   const r = g.mtgWriteIndex_('新FMT', year + '/10/23', at);
-  assert.match(r.error, /「INDEX_会議資料」シートに書き込めませんでした（1行目に「日付」の見出しがありません）。前の形式（行がサブインダストリー）のシートは、エディタで rebuildBusinessMtgIndex\(\) を実行すると、今の形式で作り直します。/);
+  assert.match(r.error, /「INDEX_会議資料」シートに書き込めませんでした（A列に「日付」「会議名」「サブインダストリー」の見出し（列＝会議日の形）も、1行目に「日付」の見出し（行＝会議日の形）もありません）。見出しを直すか、エディタで rebuildBusinessMtgIndex\(\) を実行すると、シートを作り直します（中身を消します）。/);
   assert.strictEqual(old.getRange(2, 2).getValue(), '前のチップ', '前の形式のシートは書き換えない');
 
   // 会議のフォルダ（全サブインダストリー共通の格納先の中）：新FMT は 10/16・10/23（10/30 は資料なし）、新FMT2 は資料なし
@@ -1557,7 +1586,7 @@ test('インデックス：前の形式（行＝サブインダストリー）�
 
   gas.confirmAnswer = 'NO';
   g.rebuildBusinessMtgIndex();
-  assert.match(gas.alerts[0].message, /今のシートは前の形式（行がサブインダストリー）なので、中身を消して、行＝会議日・列＝サブインダストリーの形式で作り直します。/);
+  assert.match(gas.alerts[0].message, /今のシートは見出しが読めない（前の形式など）ので、中身を消して、行＝会議日・列＝サブインダストリーの形式で作り直します。/);
   assert.strictEqual(old.getRange(2, 2).getValue(), '前のチップ', '「いいえ」なら何もしない');
 
   gas.confirmAnswer = 'YES';
@@ -2605,7 +2634,7 @@ test('createBusinessMtgCombinedSummary：すべてのシートに会議日の本
   gas.promptAnswers = ['10/23'];
   g.createBusinessMtgCombinedSummary();
   assert.strictEqual(gas.alerts.length, alerts0 + 1, '確かめの画面も出さずに終える');
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版を作れません。会議日 \d{4}\/10\/23 の本番の資料が、まだできていないサブインダストリーがあります（1件）：\n・新FMT2\n\ncreateBusinessMtgSummaries\(\) で、すべてのサブインダストリーの本番の資料を作ってから（「INDEX_会議資料」のその会議日の行に空のセルが無くなってから）、もう一度実行してください。$/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版を作れません。会議日 \d{4}\/10\/23 の本番の資料が、まだできていないサブインダストリーがあります（1件）：\n・新FMT2\n\ncreateBusinessMtgSummaries\(\) で、すべてのサブインダストリーの本番の資料を作ってから（「INDEX_会議資料」のその会議日の資料がそろってから）、もう一度実行してください。$/);
   assert.strictEqual(gas.decks.length, decks0, '試作も作らない');
   // 本番の記録があっても、PDF が無ければ作らない（消した・名前を変えたなど）
   gas.promptAnswers = ['2', '10/23'];

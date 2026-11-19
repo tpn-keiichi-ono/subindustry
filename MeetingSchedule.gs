@@ -5,7 +5,7 @@
  * 仕組み
  * - 管理者がエディタで importMeetingSchedules() を実行すると、Google カレンダー（MSCH_OPTIONS.calendarId。空なら実行する人の既定のカレンダー）の予定から、
  *   RX Business Meeting・RX Service Meeting の予定（予定の名前に MSCH_OPTIONS.titles の言葉を含むもの）を探し、会議資料のインデックス
- *   （MTG_OPTIONS.index.sheet）に、会議日と会議名の行を先に足す（ある行はそのまま。資料ができたら、その行のセルに書く）。
+ *   （MTG_OPTIONS.index.sheet）に、会議日と会議名を先に足す（列＝会議日の形なら「会議資料」「宿題」の2列、前の形なら行。あるものはそのまま。資料ができたら、そこに書く）。
  * - 資料を作る関数（createBusinessMtgSummaries()・previewBusinessMtgSummaries()・createBusinessMtgCombinedSummary()・
  *   createBusinessMtgReportingSummary()・createServiceMtgSummaries()・previewServiceMtgSummaries()）は、画面（MeetingRunDialog）を開く。画面で、インデックスにある会議日程を
  *   プルダウンで選び、作るシート（サブインダストリー）を選んで、確かめてから作る。前回の会議からの変化を出す（前回の資料の記録が無ければ、
@@ -37,7 +37,7 @@ const MSCH_OPTIONS = {
 /* ---------------- エディタから実行する ---------------- */
 
 /**
- * Google カレンダーから RX Business Meeting・RX Service Meeting の日程を読み、「INDEX_会議資料」に会議日と会議名の行を足す（エディタから実行）。
+ * Google カレンダーから RX Business Meeting・RX Service Meeting の日程を読み、「INDEX_会議資料」に会議日と会議名を足す（列＝会議日の形なら2列、前の形なら行。エディタから実行）。
  * 何度実行してもよい（ある行はそのまま。カレンダーで日を変えた会議は、新しい日の行を足し、前の日の行は残す（資料が無ければ消してかまいません））
  */
 function importMeetingSchedules() {
@@ -119,7 +119,10 @@ function mschImport_() {
     const n = next(key);
     return '・' + mschKindName_(key) + '：次回 ' + (n ? mtgDateLabel_(n.date) + '（' + n.title + '）' : 'なし');
   });
-  return {message: head + '\n「' + MTG_OPTIONS.index.sheet + '」に ' + result.added + '行を足しました（すでにある ' + result.existing + '行はそのまま）：' + result.url +
+  // 列＝会議日の形（2026/11/19 から）は会議日の列（会議資料・宿題の2列）、前の形は会議日の行
+  const added = result.matrix ? '、会議日の列（会議資料・宿題）を ' + result.added + '日分足しました（すでにある ' + result.existing + '日分はそのまま）'
+    : ' ' + result.added + '行を足しました（すでにある ' + result.existing + '行はそのまま）';
+  return {message: head + '\n「' + MTG_OPTIONS.index.sheet + '」に' + added + '：' + result.url +
     '\n\n' + lines.join('\n'), added: result.added, found: {business: count('business'), service: count('service')}};
 }
 

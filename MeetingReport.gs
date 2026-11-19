@@ -144,7 +144,7 @@ function mtgColumnLetter_(n) {
 function mtgHomeworkOf_(ss, name, meeting) {
   const H = MTG_OPTIONS.homework;
   // 読むシート：homework.sheet、無ければ名前が index.sheet（INDEX_会議資料）で始まるシートのうち、「宿題」の列が読めるもの（シートの並びの順）。
-  // 今の INDEX_会議資料（行＝会議日の形）は「サブインダストリー」の見出しの行が無いので読まずに次へ
+  // INDEX_会議資料 が列＝会議日の形（2026/11/19 から）ならそこから読む。行＝会議日の形は「サブインダストリー」の見出しの行が無いので読まずに次へ
   // シートの名前の一覧（Sheets API で読んだ入れ物は持っている一覧。SpreadsheetApp ならシートから。API の呼び出しを増やさない）
   const titles = typeof ss.getSheetNames === 'function' ? ss.getSheetNames() : ss.getSheets().map(sh => sh.getName());
   const names = [H.sheet].concat(titles.filter(t => t !== H.sheet && String(t).indexOf(MTG_OPTIONS.index.sheet) === 0));
