@@ -1539,6 +1539,22 @@ test('インデックス（列＝会議日の形）：シートが無ければ�
   assert.match(gas.toasts ? gas.toasts[gas.toasts.length - 1].message || '' : '会議日（2件）', /会議日（2件）/);
 });
 
+test('インデックス（列＝会議日の形）：チャットの通知（事前資料のご案内など）の会議日は、空欄なら列＝会議日の形のシートの次の RX Business Meeting', () => {
+  const {gas, g} = setup();
+  const now = new Date();
+  const ymd = days => g.Utilities.formatDate(new Date(now.getTime() + days * 86400000), 'Asia/Tokyo', 'yyyy/MM/dd');
+  gas.addSheet('INDEX_会議資料', [
+    ['日付', ymd(-7), '', ymd(3), '', ymd(10), ''],
+    ['会議名', 'RX Business Meeting', '', 'RX Service Meeting', '', 'RX Business Meeting', ''],
+    ['サブインダストリー', '会議資料', '宿題', '会議資料', '宿題', '会議資料', '宿題'],
+    ['新FMT', '', '', '', '', '', '']
+  ], {rows: 4, columns: 7});
+  g.refreshMeetingIndexCache();
+  gas.promptAnswers = [''];
+  const meeting = plain(g.mtgSubChatMeeting_(g.SpreadsheetApp.getUi(), '事前資料のご案内'));
+  assert.strictEqual(meeting.date, ymd(10), 'RX Service Meeting の列・過去の列は選ばない');
+});
+
 test('インデックス（列＝会議日の形）：カレンダーから読んだ会議日は、会議日の2列（会議資料・宿題）を足す（ある列はそのまま）', () => {
   const {gas, g} = setup();
   const year = g.mtgParseDate_('1/1', new Date()).slice(0, 4);
