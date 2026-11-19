@@ -99,7 +99,7 @@
     }
   </style>
 </head>
-<!-- data-kind：'business' 会議サマリ・'report' 報告案件版・'combined' 統合版・'compact' 統合版（報告用）・'service' RX Service Meeting。data-final：本番なら true（MeetingSchedule.gs の mschOpenRunDialog_ が入れる。統合版（報告用）の変化のあった案件だけは 'changes'） -->
+<!-- data-kind：'business' 会議サマリ・'report' 報告案件版・'combined' 統合版・'compact' 統合版（報告用）・'service' RX Service Meeting。data-final：本番なら true（MeetingSchedule.gs の mschOpenRunDialog_ が入れる。統合版（報告用）の変化のあった案件だけは 'changes'、統合版の報告案件版は 'report'） -->
 <body data-kind="<?= kind ?>" data-final="<?= final ?>">
   <div class="loading" id="loading" role="status" aria-live="polite">
     <div class="spinner"></div>
@@ -176,10 +176,12 @@
   <script>
     const $ = id => document.getElementById(id);
     const KIND = document.body.dataset.kind;
-    const FINAL = document.body.dataset.final === 'true';
+    // 統合版の報告案件版（createBusinessMtgReportCombinedSummary()）。本番として作る。サーバーには final の代わりに 'report' を渡す（FINAL_ARG）
+    const REPORT = KIND === 'combined' && document.body.dataset.final === 'report';
+    const FINAL = document.body.dataset.final === 'true' || REPORT;
     // 統合版（報告用）の変化のあった案件だけ（createBusinessMtgReportingChanges()）。サーバーには final の代わりに 'changes' を渡す（FINAL_ARG）
     const CHANGES = KIND === 'compact' && document.body.dataset.final === 'changes';
-    const FINAL_ARG = CHANGES ? 'changes' : FINAL;
+    const FINAL_ARG = CHANGES ? 'changes' : REPORT ? 'report' : FINAL;
     const MANUAL = '__manual__';
     const TIME = '__time__';
     let data = null;

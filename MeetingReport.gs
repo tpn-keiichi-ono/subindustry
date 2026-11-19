@@ -266,7 +266,7 @@ function mtgReportCheckText_() {
  * 報告案件版のスライドの並び：表紙 → 前回の宿題事項 → 数字のページ（mtgSlides_ と同じ部品）→ 報告案件（1件1枚。無ければ「報告案件なし」の1枚）
  * → 前回から変化のある案件（会議サマリと同じ表を全件。入らなければ「（続き）」のページ）。Appendix は入れない
  */
-function mtgReportSlides_(s) {
+function mtgReportSlides_(s, start) {
   const o = MTG_OPTIONS;
   // サマリーは「現在の状態（進行中案件）」（受注月超過・停滞・商談記録未登録）の表を出さない（報告案件版は Appendix の確認事項も無いため）。
   // 表の金額の列は期待値、4つ目の数字はシナリオ見込額（mtgSummarySlide_ の options）
@@ -278,7 +278,8 @@ function mtgReportSlides_(s) {
   // 報告フラグのある案件は、それぞれのページがあるので表に載せない（2026/11/11）
   const moves = mtgMovesSlide_(s, false, {all: true, exclude: new Set(reported.map(item => item.key))});
   // 表紙のあと、サマリーの前に前回の会議の宿題事項
-  return mtgNumberSlides_(mtgSheetFrame_(s), [mtgCoverSlide_(s)].concat(mtgHomeworkSlides_(s), main, reports, moves));
+  // start：前に入るページの数（統合版の報告案件版。ページ番号を資料全体の通し番号にする）
+  return mtgNumberSlides_(mtgSheetFrame_(s), [mtgCoverSlide_(s)].concat(mtgHomeworkSlides_(s), main, reports, moves), start || 0);
 }
 
 /**

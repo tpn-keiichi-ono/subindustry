@@ -1357,7 +1357,7 @@ function mtgJobPendingText_() {
   const at = Utilities.formatDate(new Date(job.savedAt || job.now), Session.getScriptTimeZone(), 'M/d HH:mm');
   if (mtgDeckJob_(job)) {
     // 統合版は「統合版（全サブインダストリー。会議日 …」、統合版（報告用）は「統合版（報告用）（全サブインダストリー）（会議日 …」
-    const what = job.kind === 'combined' ? '統合版（' + MTG_OPTIONS.combined.name + '。' : mtgDeckJob_(job).label + '（';
+    const what = job.kind === 'combined' ? mtgCombinedLabel_(job.variant) + '（' + MTG_OPTIONS.combined.name + '。' : mtgDeckJob_(job).label + '（';
     return '前に始めた' + what + '会議日 ' + job.meeting + '。' + job.items.length + '/' + job.names.length + 'サブインダストリーのページ。' +
       at + ' に区切り）を、自動で続けている途中です。やめて新しく作るときは「やめて新しく作る」にチェックを入れてください' +
       '（作りかけの' + (job.kind === 'combined' ? '統合版' : '資料') + 'はゴミ箱に移します。続きが終わったら showBusinessMtgSummariesResult() で結果を見られます）。';
@@ -2480,7 +2480,7 @@ function mtgCombinedRun_(ss, job, started) {
   mtgRequireSlides_();
   const folder = mtgFolder_(ss);
   job.folderUrl = folder.getUrl();
-  const fileName = mtgFileName_(o.combined.name, job.meeting, true);
+  const fileName = mtgCombinedFileName_(job.meeting, job.variant);
   if (!job.deck) {
     job.deck = mtgDeckStart_(fileName, folder);
     mtgJobCheckpoint_(job);
@@ -2495,8 +2495,9 @@ function mtgCombinedRun_(ss, job, started) {
     for (let i = 0; i < summaries.length; i++) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
       const summary = summaries[i];
-      const timer = mschTimer_('統合版のスライド（' + summary.name + '）', true);
-      const slides = mtgSlides_(summary, job.page, {appendix: false});
+      const timer = mschTimer_(mtgCombinedLabel_(job.variant) + 'のスライド（' + summary.name + '）', true);
+      // 報告案件版（variant 'report'）は、各サブインダストリーの報告案件版のページ（mtgReportSlides_）
+      const slides = job.variant === 'report' ? mtgReportSlides_(summary, job.page) : mtgSlides_(summary, job.page, {appendix: false});
       mtgDeckAdd_(job.deck, slides, job.page);
       timer.lap('スライドを足す（' + slides.length + '枚）');
       job.items.push({name: summary.name, start: job.page + 1, pages: slides.length, lite: mtgCombinedLite_(summary)});
@@ -2518,7 +2519,7 @@ function mtgCombinedRun_(ss, job, started) {
     const existing = job.overwrite ? mtgExistingPdf_(fileName, o.combined.name, job.meeting, true, folder) : null;
     const out = mtgDeckFinish_(job.deck, fileName, folder, existing);
     timer.lap('並べて PDF に保存');
-    const result = {name: o.combined.name, file: out.pdf, pages: job.page, overwritten: !!out.overwritten};
+    const result = {name: o.combined.name, file: out.pdf, pages: job.page, overwritten: !!out.overwritten, variant: job.variant || ''};
     // 会議のフォルダに格納し、インデックスの統合版の列に書く（できなくても止めない）
     const stored = mtgStoreToMeetingFolder_(o.combined.name, job.meeting, out.pdf);
     if (stored.error) result.storeError = stored.error;
@@ -2564,7 +2565,7 @@ function mtgCombinedMessage_(job, done) {
     return ['時間がかかるため、ここで区切りました（Apps Script の1回の実行は6分まで）。残りは約' + Math.round(MTG_OPTIONS.run.continueAfterMs / 60000) +
       '分後に自動で続けます：' + left.join('・') + '。',
     '続きが終わったら、エディタで showBusinessMtgSummariesResult() を実行すると結果が出ます（実行ログにも出ます）。終わるまで、会議サマリの関数は実行しないでください。',
-    '', '統合版（' + MTG_OPTIONS.combined.name + '）：' + job.items.length + '/' + job.names.length + 'サブインダストリーのページを作りました。',
+    '', mtgCombinedLabel_(job.variant) + '（' + MTG_OPTIONS.combined.name + '）：' + job.items.length + '/' + job.names.length + 'サブインダストリーのページを作りました。',
     '', '保存先：' + job.folderUrl].join('\n');
   }
   return mtgCombinedLines_(job.result).concat(['', '保存先：' + job.folderUrl], mtgSourceNote_(job)).join('\n');
@@ -2582,8 +2583,28 @@ function createBusinessMtgCombinedSummary() {
   mschOpenRunDialog_('combined', true);
 }
 
+/**
+ * 統合版の報告案件版（全サブインダストリー。2026/11/20）を作る（エディタから実行）。統合版と同じ作り方・同じ前のページ（表紙・目次・全サブインダストリーの状況・
+ * 計画に対する積み上げ）で、各サブインダストリーの資料を報告案件版のページ（表紙・前回の宿題事項・数字のページ・報告案件（1件1枚）・前回から変化のある案件。
+ * mtgReportSlides_）にしたもの。ファイル名の後ろに report.fileSuffix（「_報告案件版」）。会議のフォルダに格納し、インデックスの全サブインダストリーに書く。
+ * 実行の条件は統合版と同じ（すべてのサブインダストリーに、その会議日の本番の記録と PDF（会議サマリか報告案件版）があること）
+ */
+function createBusinessMtgReportCombinedSummary() {
+  mschOpenRunDialog_('combined', 'report');
+}
+
+/** 統合版の名前（知らせ・確かめの文）。variant 'report' なら「統合版・報告案件版」 */
+function mtgCombinedLabel_(variant) {
+  return variant === 'report' ? '統合版・報告案件版' : '統合版';
+}
+
+/** 統合版のファイル名（variant 'report' なら後ろに report.fileSuffix「_報告案件版」） */
+function mtgCombinedFileName_(meeting, variant) {
+  return mtgFileName_(MTG_OPTIONS.combined.name, meeting, true) + (variant === 'report' ? MTG_OPTIONS.report.fileSuffix : '');
+}
+
 /** 統合版を作れるか（作れなければ {error: 理由}、作れれば {text: 確かめの文}） */
-function mtgCombinedCheck_(meeting, point, cancelJob) {
+function mtgCombinedCheck_(meeting, point, cancelJob, variant) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const o = MTG_OPTIONS.combined;
   if (!o.enabled) return {error: '統合版を使わない設定です（MeetingSummary.gs の MTG_OPTIONS.combined.enabled）。'};
@@ -2599,12 +2620,15 @@ function mtgCombinedCheck_(meeting, point, cancelJob) {
   // 実行の条件：すべてのサブインダストリーの、この会議日の本番の資料（PDF）ができている（会議日の記録と会議のフォルダの PDF で確かめる）。満たさなければ作らずに終える
   const missing = mtgMeetingPending_(ss, meeting);
   if (missing.length) {
-    return {error: '統合版を作れません。会議日 ' + meeting + ' の本番の資料が、まだできていないサブインダストリーがあります（' + missing.length + '件）：\n' +
+    return {error: mtgCombinedLabel_(variant) + 'を作れません。会議日 ' + meeting + ' の本番の資料が、まだできていないサブインダストリーがあります（' + missing.length + '件）：\n' +
       missing.map(name => '・' + name).join('\n') + '\n\n' +
-      'createBusinessMtgSummaries() で、すべてのサブインダストリーの本番の資料を作ってから（「' + MTG_OPTIONS.index.sheet + '」のその会議日の資料がそろってから）、' +
+      'createBusinessMtgSummaries()（報告案件版は createBusinessMtgReportSummaries()）で、すべてのサブインダストリーの本番の資料を作ってから（「' +
+      MTG_OPTIONS.index.sheet + '」のその会議日の資料がそろってから）、' +
       'もう一度実行してください。'};
   }
-  return {text: '「' + o.name + '」の資料（' + names.length + 'サブインダストリーを1つにまとめた統合版）を、今のシートの値で作ります。\n\n' +
+  return {text: '「' + o.name + '」の資料（' + names.length + 'サブインダストリーを1つにまとめた' + mtgCombinedLabel_(variant) + '）を、今のシートの値で作ります。\n\n' +
+    (variant === 'report' ? '各サブインダストリーのページは報告案件版（前回の宿題事項・報告案件・前回から変化のある案件）です。ファイル名の後ろに「' +
+      MTG_OPTIONS.report.fileSuffix + '」が付きます。\n\n' : '') +
     '会議日 ' + mtgDateLabel_(meeting) + ' の本番の資料として作り、会議のフォルダに格納します（会議日の記録・時点コピーは変えません）。\n' +
     '比べる時点：' + (point ? mtgChosenText_(point) + '（全シート共通）' : '前回の会議（シートごと）')};
 }
@@ -2613,14 +2637,15 @@ function mtgCombinedCheck_(meeting, point, cancelJob) {
  * 統合版を作り始める（画面の「作成する」から。作れるかは先に mtgCombinedCheck_ で確かめる）。時間がかかれば区切って続ける（mtgCombinedRun_。
  * 続きは個別の資料と同じトリガー continueBusinessMtgSummaries）。戻り値は終わり（区切ったとき）の知らせ
  */
-function mtgCombinedStart_(meeting, point, overwrite, cancelJob) {
+function mtgCombinedStart_(meeting, point, overwrite, cancelJob, variant) {
   const started = mtgNow_();   // 6分の上限は、この実行を始めたときから
   if (cancelJob) mtgJobCancel_();   // 「やめて新しく作る」：作っている途中の仕事をやめる
-  const check = mtgCombinedCheck_(meeting, point);
+  const check = mtgCombinedCheck_(meeting, point, false, variant);
   if (check.error) throw new Error(check.error);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const job = {kind: 'combined', final: true, meeting, now: Date.now(), names: mtgTrackedNames_(ss), point: point || null, items: [],
-    page: mtgCombinedFrontCount_(), deck: null, result: null, folderUrl: '', sourceError: '', overwrite: !!overwrite};
+    page: mtgCombinedFrontCount_(), deck: null, result: null, folderUrl: '', sourceError: '', overwrite: !!overwrite,
+    variant: variant === 'report' ? 'report' : ''};   // 'report'：統合版の報告案件版（createBusinessMtgReportCombinedSummary()）
   mtgJobSafetyTrigger_();   // 実行が強制終了されたら（メモリ不足など）、最後に保存した進み具合から続ける
   let done;
   try {
@@ -2684,11 +2709,12 @@ function mtgFindStoredPdf_(folder, name, meeting) {
 function mtgCombinedLines_(combined) {
   const name = MTG_OPTIONS.combined.name;
   if (!combined) return [];
+  const label = mtgCombinedLabel_(combined.variant);
   if (!combined.fileName) {
-    return ['※ 統合版（' + name + '）は作りませんでした（理由：' + combined.error + '）。' +
-      'エディタで createBusinessMtgCombinedSummary() を実行すると、統合版だけを作ります。'];
+    return ['※ ' + label + '（' + name + '）は作りませんでした（理由：' + combined.error + '）。' +
+      'エディタで ' + (combined.variant === 'report' ? 'createBusinessMtgReportCombinedSummary()' : 'createBusinessMtgCombinedSummary()') + ' を実行すると、' + label + 'だけを作ります。'];
   }
-  return ['「' + name + '」（統合版）：' + combined.fileName + '（' + combined.pages + 'ページ）\n　' + combined.fileUrl +
+  return ['「' + name + '」（' + label + '）：' + combined.fileName + '（' + combined.pages + 'ページ）\n　' + combined.fileUrl +
     (combined.overwritten ? '（前の資料に上書き。リンクはそのまま）' : '') +
     (combined.folderName ? '\n　会議のフォルダ「' + combined.folderName + '」' + (combined.created ? 'を作って' : 'に') + '格納しました：' + combined.folderUrl : '') +
     (combined.indexError ? '\n　※ ' + combined.indexError : '') +
@@ -2700,7 +2726,7 @@ function mtgCombinedLines_(combined) {
 function mtgCombinedPlain_(c) {
   return {fileName: c.file.getName(), fileUrl: c.file.getUrl(), pages: c.pages, overwritten: !!c.overwritten,
     folderName: c.stored ? c.stored.folder.getName() : '', folderUrl: c.stored ? c.stored.folder.getUrl() : '', created: !!(c.stored && c.stored.created),
-    indexError: c.index && c.index.error || '', storeError: c.storeError || ''};
+    indexError: c.index && c.index.error || '', storeError: c.storeError || '', variant: c.variant || ''};
 }
 
 /**
@@ -2710,7 +2736,8 @@ function mtgCombinedPlain_(c) {
 function mtgDeckJob_(job) {
   if (!job) return null;
   if (job.kind === 'combined') {
-    return {label: '統合版（' + MTG_OPTIONS.combined.name + '）', again: 'createBusinessMtgCombinedSummary()', run: mtgCombinedRun_,
+    return {label: mtgCombinedLabel_(job.variant) + '（' + MTG_OPTIONS.combined.name + '）',
+      again: job.variant === 'report' ? 'createBusinessMtgReportCombinedSummary()' : 'createBusinessMtgCombinedSummary()', run: mtgCombinedRun_,
       message: mtgCombinedMessage_, front: mtgCombinedFrontCount_};
   }
   if (job.kind === 'compact') {
@@ -5174,10 +5201,11 @@ function mtgSlides_(summary, start, options) {
  * 統合版のスライドの並び：表紙（全サブインダストリー）・目次（mtgContentsSlide_）・全サブインダストリーの状況（mtgOverviewSlide_）のあとに、各サブインダストリーの資料
  * （mtgSlides_。表紙から本編まで。Appendix は入れない。summaries の順）をそのまま続ける。ページ番号は資料全体の通し番号にする
  */
-function mtgCombinedSlides_(summaries, meeting, final) {
+function mtgCombinedSlides_(summaries, meeting, final, variant) {
   let page = mtgCombinedFrontCount_();
   const sections = summaries.map(s => {
-    const slides = mtgSlides_(s, page, {appendix: false});
+    // variant 'report'：統合版の報告案件版（各サブインダストリーの資料を報告案件版のページにする。mtgReportSlides_。2026/11/20）
+    const slides = variant === 'report' ? mtgReportSlides_(s, page) : mtgSlides_(s, page, {appendix: false});
     const section = {summary: s, start: page + 1, slides};
     page += slides.length;
     return section;

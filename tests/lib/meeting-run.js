@@ -16,6 +16,7 @@ const RUNS = {
   createBusinessMtgReportSummaries: ['report', true],
   previewBusinessMtgReportSummaries: ['report', false],
   createBusinessMtgCombinedSummary: ['combined', true],
+  createBusinessMtgReportCombinedSummary: ['combined', 'report'],
   createBusinessMtgReportingSummary: ['compact', true],
   createBusinessMtgReportingOverview: ['compact', false],
   createBusinessMtgReportingChanges: ['compact', 'changes'],
@@ -63,7 +64,7 @@ function emulate(gas, kind, final) {
     gas.alerts.push({title: 'MeetingRunDialog', message: check.error});
     return;
   }
-  if (final === true) {   // 画面は本番（data-final が true）のときだけ「作成してよろしいですか？」と確かめる
+  if (final === true || final === 'report') {   // 画面は本番（data-final が true。統合版の報告案件版も本番）のときだけ「作成してよろしいですか？」と確かめる
     gas.alerts.push({title: 'MeetingRunDialog', message: check.text});
     if (gas.confirmAnswer !== 'YES') return;
   }

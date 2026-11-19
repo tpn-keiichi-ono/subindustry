@@ -145,7 +145,8 @@ function mschOpenRunDialog_(kind, final) {
   const template = HtmlService.createTemplateFromFile(o.dialogTemplate);
   template.kind = mschCheckKind_(kind);
   // 統合版（報告用）の変化のあった案件だけ（createBusinessMtgReportingChanges()）は 'changes'（mtgCompactPart_）
-  template.final = kind === 'compact' && final === 'changes' ? 'changes' : !!final;
+  // 統合版の報告案件版（createBusinessMtgReportCombinedSummary()）は 'report'（本番として作る）
+  template.final = kind === 'compact' && final === 'changes' ? 'changes' : kind === 'combined' && final === 'report' ? 'report' : !!final;
   ui.showModalDialog(template.evaluate().setWidth(o.dialogSize.width).setHeight(o.dialogSize.height), ' ');
 }
 
@@ -195,7 +196,8 @@ function getMeetingRunData(kind, final) {
     timer.lap('比べる時点（' + MTG_OPTIONS.copyName + ' ' + points.length + '件）');
   }
   console.log('資料を作る画面の読み込み：' + timer.text());
-  const titles = {business: '会議サマリ（' + meetingName + '）', report: '会議サマリ・報告案件版（' + meetingName + '）', combined: '統合版（' + MTG_OPTIONS.combined.name + '）',
+  const titles = {business: '会議サマリ（' + meetingName + '）', report: '会議サマリ・報告案件版（' + meetingName + '）',
+    combined: mtgCombinedLabel_(final === 'report' ? 'report' : '') + '（' + MTG_OPTIONS.combined.name + '）',
     compact: mtgCompactLabel_(mtgCompactPart_(final)), service: meetingName + ' の事前資料'};
   // 直前の「作成する」（画面が読み込み直されたとき・開き直したときに、作っている途中なら待ち、終わっていれば結果を出す）
   const run = getMeetingRunState(kind);
@@ -454,7 +456,7 @@ function checkMeetingRun(kind, final, meeting, names, point, cancelJob) {
   const date = mschCheckInput_(kind, meeting, names);
   if (kind === 'service') return {text: smtgRunCheckText_(!!final, date, names, smtgCheckPoint_(point))};
   const resolved = mtgResolvePoint_(point);
-  if (kind === 'combined') return mtgCombinedCheck_(date, resolved, !!cancelJob);
+  if (kind === 'combined') return mtgCombinedCheck_(date, resolved, !!cancelJob, final === 'report' ? 'report' : '');
   // final でなければ全体サマリだけ（'changes' なら変化のあった案件だけ。mtgCompactPart_）
   if (kind === 'compact') return mtgCompactCheck_(date, resolved, !!cancelJob, mtgCompactPart_(final));
   const text = mtgRunCheckText_(!!final, names, date, resolved);
@@ -474,7 +476,7 @@ function runMeetingMaterials(kind, final, meeting, names, cancelJob, point, over
     throw new Error(Utilities.formatDate(new Date(running.at), Session.getScriptTimeZone(), 'H:mm') +
       ' から資料を作っている途中です。終わるまでお待ちください（画面を開き直すと、作っている途中の知らせか結果が出ます）。');
   }
-  const base = {kind, final: final === true, meeting: date, at: Date.now()};
+  const base = {kind, final: final === true || final === 'report', meeting: date, at: Date.now()};
   mschRunStateSave_(Object.assign({status: 'running'}, base));
   try {
     let message;
@@ -482,7 +484,7 @@ function runMeetingMaterials(kind, final, meeting, names, cancelJob, point, over
       message = smtgRunStart_(!!final, date, names, !!cancelJob, smtgCheckPoint_(point), !!overwrite);
     } else {
       const resolved = mtgResolvePoint_(point);
-      message = kind === 'combined' ? mtgCombinedStart_(date, resolved, !!overwrite, !!cancelJob)
+      message = kind === 'combined' ? mtgCombinedStart_(date, resolved, !!overwrite, !!cancelJob, final === 'report' ? 'report' : '')
         : kind === 'compact' ? mtgCompactStart_(date, resolved, !!overwrite, !!cancelJob, mtgCompactPart_(final))
         : mtgRunStart_(!!final, date, names, !!cancelJob, resolved, !!overwrite, kind === 'report' ? 'report' : '');
     }

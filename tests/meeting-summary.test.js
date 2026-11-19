@@ -2658,6 +2658,41 @@ test('統合版：createBusinessMtgSummaries() では作らず、すべてのシ
   assert.match(gas.alerts[gas.alerts.length - 1].message, /・全サブインダストリー：1件/);
 });
 
+test('createBusinessMtgReportCombinedSummary（統合版の報告案件版）：前のページは統合版と同じで、各サブインダストリーは報告案件版のページ（宿題・報告案件・変化のある案件）。ファイル名に「_報告案件版」、会議のフォルダに格納', () => {
+  const {gas, g} = setup();
+  const o = gas.get('MTG_OPTIONS');
+  const meeting = g.mtgParseDate_('10/23', new Date());
+  meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
+  o.combined.enabled = true;
+  gas.confirmAnswer = 'YES';
+  gas.promptAnswers = ['1,2', '10/23'];
+  g.createBusinessMtgReportSummaries();   // 両シートとも報告案件版で本番
+  const data = g.getMeetingRunData('combined', 'report');
+  assert.strictEqual(data.title, '統合版・報告案件版（全サブインダストリー）を作る');
+  gas.promptAnswers = ['10/23'];
+  g.createBusinessMtgReportCombinedSummary();
+  assert.match(gas.alerts[gas.alerts.length - 2].message, /1つにまとめた統合版・報告案件版）を、今のシートの値で作ります。\n\n各サブインダストリーのページは報告案件版/);
+  const deck = gas.decks[gas.decks.length - 1];
+  assert.match(deck.title, /\d{8}_全サブインダストリー_RX Business Meeting用資料_報告案件版$/);
+  assert.ok(gas.driveFiles.some(f => /_全サブインダストリー_RX Business Meeting用資料_報告案件版\.pdf$/.test(f.name) && f.folder === 'meeting-folder-0'),
+    '会議のフォルダに格納');
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「全サブインダストリー」（統合版・報告案件版）：\d{8}_全サブインダストリー_RX Business Meeting用資料_報告案件版\.pdf/);
+  // 中身：前のページ（表紙・目次・状況・計画）のあとに、各サブインダストリーの報告案件版（表紙・前回の宿題事項・…・前回から変化のある案件）
+  const texts = deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
+  assert.ok(texts.indexOf('目次') >= 0 && texts.indexOf('全サブインダストリーの状況') >= 0);
+  assert.ok(texts.indexOf('前回の宿題事項') >= 0, '報告案件版のページ');
+  assert.ok(texts.indexOf('期待値上位案件の状況・課題') < 0, '会議サマリのページ（期待値上位案件）は入れない');
+  // 一度に作ったときと同じ並び（mtgCombinedSlides_ の variant 'report'）
+  const one = plain(g.mtgCombinedSlides_([summarize(g, '新FMT'), summarize(g, '新FMT2')], meeting, true, 'report'));
+  assert.strictEqual(deck.slides.length, one.length);
+  assert.deepStrictEqual(one.slice(5, 7).map(sl => sl.title), [gas.get('MTG_TITLES').cover, '前回の宿題事項'], '各サブインダストリーは表紙・前回の宿題事項から');
+  one.forEach((sl, i) => {
+    const page = sl.elements.find(e => e.role === 'page');
+    if (page) assert.strictEqual(page.text, String(i + 1), 'ページ番号は通し（表紙には出さない）');
+  });
+  assert.ok(one.filter(sl => sl.elements.some(e => e.role === 'page')).length >= one.length - 3);
+});
+
 test('createBusinessMtgCombinedSummary：すべてのシートに会議日の本番の資料（記録と PDF）があるときだけ作る（無ければ何も作らずに終える）。会議日・コピーは記録しない', () => {
   const {gas, g} = setup();
   const o = gas.get('MTG_OPTIONS');
@@ -2673,7 +2708,7 @@ test('createBusinessMtgCombinedSummary：すべてのシートに会議日の本
   gas.promptAnswers = ['10/23'];
   g.createBusinessMtgCombinedSummary();
   assert.strictEqual(gas.alerts.length, alerts0 + 1, '確かめの画面も出さずに終える');
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版を作れません。会議日 \d{4}\/10\/23 の本番の資料が、まだできていないサブインダストリーがあります（1件）：\n・新FMT2\n\ncreateBusinessMtgSummaries\(\) で、すべてのサブインダストリーの本番の資料を作ってから（「INDEX_会議資料」のその会議日の資料がそろってから）、もう一度実行してください。$/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版を作れません。会議日 \d{4}\/10\/23 の本番の資料が、まだできていないサブインダストリーがあります（1件）：\n・新FMT2\n\ncreateBusinessMtgSummaries\(\)（報告案件版は createBusinessMtgReportSummaries\(\)）で、すべてのサブインダストリーの本番の資料を作ってから（「INDEX_会議資料」のその会議日の資料がそろってから）、もう一度実行してください。$/);
   assert.strictEqual(gas.decks.length, decks0, '試作も作らない');
   // 本番の記録があっても、PDF が無ければ作らない（消した・名前を変えたなど）
   gas.promptAnswers = ['2', '10/23'];
