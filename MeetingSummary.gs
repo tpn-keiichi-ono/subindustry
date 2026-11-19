@@ -2496,7 +2496,9 @@ function mtgCombinedRun_(ss, job, started) {
       if (i > 0 && !fits(R.deckMs)) return mtgJobPause_(job);
       const summary = summaries[i];
       const timer = mschTimer_(mtgCombinedLabel_(job.variant) + 'のスライド（' + summary.name + '）', true);
-      // 報告案件版（variant 'report'）は、各サブインダストリーの報告案件版のページ（mtgReportSlides_）
+      // 報告案件版（variant 'report'）は、各サブインダストリーの報告案件版のページ（mtgReportSlides_）。前回の会議の宿題事項も読む
+      // （個別の報告案件版と同じ。読まないと、どのサブインダストリーも「前の RX Business Meeting の宿題の列が無い」になった。2026/11/20）
+      if (job.variant === 'report') summary.homework = mtgHomeworkOf_(source, summary.name, job.meeting);
       const slides = job.variant === 'report' ? mtgReportSlides_(summary, job.page) : mtgSlides_(summary, job.page, {appendix: false});
       mtgDeckAdd_(job.deck, slides, job.page);
       timer.lap('スライドを足す（' + slides.length + '枚）');

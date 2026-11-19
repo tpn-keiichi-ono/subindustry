@@ -2664,6 +2664,16 @@ test('createBusinessMtgReportCombinedSummary（統合版の報告案件版）：
   const meeting = g.mtgParseDate_('10/23', new Date());
   meetingFolders(gas, [yymmdd(meeting) + '_第5回会議']);
   o.combined.enabled = true;
+  // 前回の宿題事項：INDEX_会議資料（列＝会議日の形）の「宿題」の列
+  const year = meeting.slice(0, 4);
+  gas.addSheet('INDEX_会議資料', [
+    ['日付', year + '/10/09', ''],
+    ['会議名', 'RX Business Meeting', ''],
+    ['サブインダストリー', '会議資料', '宿題'],
+    ['全サブインダストリー', '', ''],
+    ['新FMT', '', '①新FMTの宿題その1\n②新FMTの宿題その2'],
+    ['新FMT2', '', '①新FMT2の宿題']
+  ], {rows: 6, columns: 3});
   gas.confirmAnswer = 'YES';
   gas.promptAnswers = ['1,2', '10/23'];
   g.createBusinessMtgReportSummaries();   // 両シートとも報告案件版で本番
@@ -2681,6 +2691,9 @@ test('createBusinessMtgReportCombinedSummary（統合版の報告案件版）：
   const texts = deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
   assert.ok(texts.indexOf('目次') >= 0 && texts.indexOf('全サブインダストリーの状況') >= 0);
   assert.ok(texts.indexOf('前回の宿題事項') >= 0, '報告案件版のページ');
+  // 各サブインダストリーの宿題を読んで載せる（統合版でも、個別の報告案件版と同じ）
+  ['新FMTの宿題その1', '新FMTの宿題その2', '新FMT2の宿題'].forEach(t => assert.ok(texts.indexOf(t) >= 0, t + ' が載る'));
+  assert.ok(texts.indexOf('宿題の列が無い') < 0, '「宿題の列が無い」にならない');
   assert.ok(texts.indexOf('期待値上位案件の状況・課題') < 0, '会議サマリのページ（期待値上位案件）は入れない');
   // 一度に作ったときと同じ並び（mtgCombinedSlides_ の variant 'report'）
   const one = plain(g.mtgCombinedSlides_([summarize(g, '新FMT'), summarize(g, '新FMT2')], meeting, true, 'report'));
