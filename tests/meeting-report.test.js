@@ -98,7 +98,12 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   const normal = plain(g.mtgSlides_(s));
   const slides = plain(g.mtgReportSlides_(s));
   const titles = slides.map(sl => sl.title);
-  const numbers = normal.slice(0, normal.findIndex(sl => sl.title === gas.get('MTG_TITLES').progress)).map(sl => sl.title);
+  // 数字のページは会議サマリと同じ。ただし計画に対する積み上げは2枚（FY26売上と計画・計画を入れない期待値。2026/11/20）
+  const planTitle = gas.get('MTG_TITLES').plan;
+  const fy = 'FY' + g.mtgFiscalYearKey_(s.now);
+  const numbers = [].concat.apply([], normal.slice(0, normal.findIndex(sl => sl.title === gas.get('MTG_TITLES').progress))
+    .map(sl => (sl.title === planTitle ? [planTitle + '（' + fy + '売上）', '期待値の積み上げ'] : [sl.title])));
+  assert.ok(numbers.indexOf('期待値の積み上げ') > 0);
   // 表紙のあと・サマリーの前に「前回の宿題事項」（宿題事項のシートが無いので「データなし」の1枚）
   assert.deepStrictEqual(titles.slice(0, numbers.length + 1), [numbers[0], '前回の宿題事項'].concat(numbers.slice(1)), '表紙・宿題・数字のページ');
   assert.deepStrictEqual(titles.slice(numbers.length + 1), ['RXシナリオ進捗における報告案件①：A社／店舗DX基盤の刷新', 'RXシナリオ進捗における報告案件②：C社／販促最適化',
@@ -178,6 +183,40 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.deepStrictEqual(up.spans.map(sp => [up.text.slice(sp.start, sp.end), sp.color]), [['70', '#1A1A1A'], ['　+20', '#0070C0']], '増えたら青の字（減ったら赤）');
   assert.ok(!byRole(a, 'report-delta').length, 'バッジにしない');
   assert.ok(a.elements.every(el => el.shape !== 'ROUND_RECTANGLE'), '角の丸い四角は使わない');
+});
+
+test('報告案件版の計画に対する積み上げは2枚：FY26売上（受注月に置いた今年度の売上）と計画・計画を入れない期待値の積み上げ', () => {
+  const {gas, g} = setup();
+  const s = summarize(g, '新FMT');
+  const fy = 'FY' + g.mtgFiscalYearKey_(s.now);
+  const roles = sl => sl.elements.map(el => el.role);
+  // 受注月で積み上げたもの（今年度の売上・期待値。ここでは同じ案件で作り、ページの形を確かめる）
+  const year = g.mtgFiscalYearKey_(s.now);
+  const deals = [{status: 'C-提案中(50%)', weighted: 30, planMonth: g.mtgPlanMonth_('20' + year + '/12')},
+    {status: 'B-クロージング中(70%)', weighted: 45, planMonth: g.mtgPlanMonth_('20' + (Number(year) + 1) + '/02')}];
+  const p = g.mtgPlanOf_(deals, '新FMT', s.now, null, 'weighted');
+  const [sales, weighted] = plain(g.mtgReportPlanSlides_(Object.assign({}, s, {planSalesByMonth: p, plan: p})));
+  assert.strictEqual(sales.title, '計画に対する積み上げ（' + fy + '売上）');
+  assert.ok(['plan-plan', 'plan-line', 'plan-gap'].every(r => roles(sales).indexOf(r) >= 0), '計画の棒・線・不足：' + sales.lead + JSON.stringify(roles(sales)));
+  assert.match(sales.lead, new RegExp('^今年度（.+）の' + fy + '売上の積み上げは .+計画 .+百万円に対して'));
+  assert.strictEqual(weighted.title, '期待値の積み上げ');
+  assert.ok(['plan-plan', 'plan-line', 'plan-gap'].every(r => roles(weighted).indexOf(r) < 0), '計画は入れない');
+  assert.ok(!weighted.elements.some(el => el.role === 'legend' && el.text === '計画'), '凡例に計画が無い');
+  assert.ok(weighted.elements.some(el => el.role === 'plan-label' && el.text === '合計'));
+  assert.match(weighted.lead, new RegExp('^今年度（.+）の期待値の積み上げは .+百万円（計画との比べは ' + fy + '売上のページ）。'));
+  assert.ok(!/達成率|不足/.test(weighted.lead));
+  // 計画を入れないときは、12か月と合計の13本で図の幅を使う（計画・不足の分の幅も棒に）
+  const width = sl => sl.elements.find(el => el.role === 'plan-month' || el.role === 'plan-total').w;
+  assert.ok(width(weighted) >= width(sales), '棒は狭くならない');
+  // 今年度の売上の列が無いシートは「データなし」（期待値のページは出す）
+  const [gap, still] = plain(g.mtgReportPlanSlides_(s));
+  assert.ok(gap.lead.indexOf(gas.get('MTG_OPTIONS').gapText) >= 0, gap.lead);
+  assert.strictEqual(still.title, '期待値の積み上げ');
+  // 報告案件版の資料に2枚とも入る（前の版は期待値と計画の1枚のまま）
+  const titles = plain(g.mtgReportSlides_(s)).map(sl => sl.title);
+  assert.ok(titles.indexOf('計画に対する積み上げ（' + fy + '売上）') >= 0 && titles.indexOf('期待値の積み上げ') === titles.indexOf('計画に対する積み上げ（' + fy + '売上）') + 1);
+  const normal = plain(g.mtgSlides_(s)).map(sl => sl.title);
+  assert.ok(normal.indexOf('計画に対する積み上げ') >= 0 && normal.indexOf('期待値の積み上げ') < 0);
 });
 
 test('報告案件のスライド：受注月の枠を左右に分け、右半分に売上（今年度から3年度分。年度ごとの前半期＋後半期）。列が無いシートは「データなし」', () => {

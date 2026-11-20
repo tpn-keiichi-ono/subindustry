@@ -270,7 +270,7 @@ function mtgReportSlides_(s, start) {
   const o = MTG_OPTIONS;
   // サマリーは「現在の状態（進行中案件）」（受注月超過・停滞・商談記録未登録）の表を出さない（報告案件版は Appendix の確認事項も無いため）。
   // 表の金額の列は期待値、4つ目の数字はシナリオ見込額（mtgSummarySlide_ の options）
-  const main = [mtgSummarySlide_(s, {states: false, weighted: true, scenarioTile: true})].concat(o.plan.enabled ? [mtgPlanSlide_(s.plan, s.now)] : [], [mtgBridgeSlide_(s)],
+  const main = [mtgSummarySlide_(s, {states: false, weighted: true, scenarioTile: true})].concat(o.plan.enabled ? mtgReportPlanSlides_(s) : [], [mtgBridgeSlide_(s)],
     o.portfolio.enabled ? mtgPortfolioSlides_(s.portfolio) : []);
   const reported = s.reported || [];
   const reports = reported.length ? reported.map((item, i) => mtgReportSlide_(s, item, i + 1)) : [mtgReportEmptySlide_(s)];
@@ -297,6 +297,19 @@ function mtgReportItems_(table, changed) {
     return Object.assign({}, d, {hasOwner: !!table.has.owner, hasBx: !!table.has.bx, isNew: !base, prevStatus: base ? base.status || '' : '', prevWeighted: base ? base.weighted : null,
       prevMonthText: base ? base.monthText || '' : '', prevActivity: text('activity'), prevIssue: text('issue'), prevNextAction: text('nextAction')});
   });
+}
+
+/**
+ * 報告案件版の計画に対する積み上げ（2026/11/20 から2枚）：① 計画に対する積み上げ（FY26売上）：案件の今年度の売上（前半期＋後半期の列）を
+ * 受注月の月に置いて積み上げ、計画（目標）と比べる（統合版（報告用）と同じ mtgSalesPlanByMonthOf_）。② 期待値の積み上げ：期待値を受注月で
+ * 積み上げる（計画は入れない。noPlan）。前の版（mtgSlides_）は期待値と計画を比べる1枚のまま
+ */
+function mtgReportPlanSlides_(s) {
+  const fy = 'FY' + mtgFiscalYearKey_(s.now);
+  const measure = fy + '売上';
+  const sales = s.planSalesByMonth || mtgSalesPlanByMonthOf_([], s.name, s.now, {});
+  return [mtgPlanSlide_(sales, s.now, null, {measure, title: MTG_TITLES.plan + '（' + measure + '）'}),
+    mtgPlanSlide_(s.plan, s.now, null, {noPlan: true, title: MTG_OPTIONS.report.weightedPlanTitle})];
 }
 
 /** 報告フラグのセルの値がチェック（TRUE）か（チェックボックスの true・文字の「TRUE」） */

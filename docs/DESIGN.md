@@ -985,6 +985,7 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
   `mtgMovesSlide_` の `options.all` で、上から `mainRows.changes`（7件）までにせず全件を載せ（入らなければ「（続き）」のページ）、リード文に「全件は Appendix ① を参照」と書きません。
   報告フラグにチェックした案件は、報告案件のスライドがあるので表に載せない（`options.exclude`。報告案件のキー。リード文に「（報告案件 N件を除く）」。2026/11/11 から）。前の版・統合版の表は今のまま（7件まで。報告案件も載せる）。
   報告案件のスライドの受注月の枠は左右に分け、右に「年度別売上（百万）」（`report.salesLabel`。右の枠は見出しが1行に入る幅。`mtgReportSales_`。今年度から `report.salesYears` 年度分の、年度別の売上の列の前半期＋後半期。`summary.salesYears` に列のある年度）。
+- 報告案件版の計画に対する積み上げは2枚（`mtgReportPlanSlides_`。2026/11/20）：FY26売上（`summary.planSalesByMonth`。`mtgSalesPlanByMonthOf_`）と計画、計画を入れない期待値（`mtgPlanSlide_` の `noPlan`。凡例の計画・計画の点線・計画と不足の棒を出さず、12か月と合計の13本で幅を使う。見出しは `report.weightedPlanTitle`）。
 - 作り方は会議サマリと同じ仕事（`mtgRunStart_`・`mtgJobRun_`）で、仕事に `variant: 'report'` を持たせて、スライドの並び（`mtgReportSlides_`）と
   ファイル名（`mtgFileName_` の後ろに `report.fileSuffix`「_報告案件版」）だけを変えます。本番なら、時点コピー・会議日の記録・会議のフォルダ・インデックスも同じように書きます
   （同じ会議日に両方の本番を作ると、あとで作ったほうが会議日の記録・インデックスになる。本番は会議日ごとにどちらか一方で）。
