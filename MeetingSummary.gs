@@ -7338,6 +7338,9 @@ function mtgPlanSlide_(p, now, name, options) {
   const what = only ? options.label + 'の' + measure : measure;
   // options.titleNote：見出しの名前の後ろに足す言葉（「FY26売上」。同じ名前のページと見分ける）
   const note = options && options.titleNote || '';
+  // options.noPlan：計画（目標）を入れずに積み上げる（計画の線・計画と不足の棒・凡例の計画を出さない。リード文も計画と比べない。
+  // 報告案件版の期待値の積み上げ。計画との比べはFY26売上のページ。2026/11/20）
+  const noPlan = !!(options && options.noPlan);
   // options.title：タイトルをそのまま使う（統合版（報告用）。括弧書きを付けない。2026/11/10）
   const title = options && options.title ? options.title
     : MTG_TITLES.plan + (name || only || note ? '（' + [name, note, only ? options.label : ''].filter(Boolean).join('・') + '）' : '');
@@ -7367,8 +7370,9 @@ function mtgPlanSlide_(p, now, name, options) {
   const asideCount = asides.reduce((sum, a) => sum + p[a.key].count, 0);
   const asideValue = asides.reduce((sum, a) => sum + p[a.key].value, 0);
   // options.shortLead：期間（「今年度（26/4〜27/3）の」）を書かない（図の見出しにあるので。統合版（報告用）で、リード文を折り返さない長さにするため）
-  const lead = (options && options.shortLead ? what : '今年度（' + period + '）の' + what) + 'の積み上げは ' + mtgAmount_(p.total) + '百万円。計画 ' + mtgAmount_(p.plan) + '百万円に対して ' +
-    mtgSigned_(diff) + (rate == null ? '' : '（' + (only ? '進捗率' : '達成率') + ' ' + rate + '%）') + '。\n' +
+  const lead = (options && options.shortLead ? what : '今年度（' + period + '）の' + what) + 'の積み上げは ' + mtgAmount_(p.total) + '百万円' +
+    (noPlan ? '（計画との比べは FY' + mtgFiscalYearKey_(now) + '売上のページ）' : '。計画 ' + mtgAmount_(p.plan) + '百万円に対して ' +
+      mtgSigned_(diff) + (rate == null ? '' : '（' + (only ? '進捗率' : '達成率') + ' ' + rate + '%）')) + '。\n' +
     (peak && peak.total > 0 ? '最大は' + peak.m + '月の ' + mtgAmount_(peak.total) + '（積み上げの ' + share(peak.total) + '）' +
       (only ? '。' : '、確度A・B は ' + mtgAmount_(sure) + '（' + share(sure) + '）。') : '今年度に' + monthName + 'がある案件の' + what + 'はなし。') +
     (asideCount ? '積み上げに含まない ' + asideCount + '件（' + mtgAmount_(asideValue) + '）は右に表示。' : '') +
@@ -7378,8 +7382,8 @@ function mtgPlanSlide_(p, now, name, options) {
   const w = S.w;
   const y = S.top;
   const el = [mtgBox_(x, y - 2, 420, 20, heading, {size: 10.5, bold: true, color: c.ink})];
-  // 凡例：確度の色（右端を図の右端にそろえる）と、計画の枠
-  const legend = ranks.map(r => ({label: r.key, color: r.color})).concat([{label: '計画', color: c.white, line: c.dark}]);
+  // 凡例：確度の色（右端を図の右端にそろえる）と、計画の枠（計画を入れないときは無し）
+  const legend = ranks.map(r => ({label: r.key, color: r.color})).concat(noPlan ? [] : [{label: '計画', color: c.white, line: c.dark}]);
   legend.forEach(item => { item.bw = mtgTextWidth_(item.label, 8.5) + 16; });
   let lx = x + w - legend.reduce((sum, item) => sum + 6 + item.bw, 0) - (legend.length - 1) * (8 - 7.2 - 1.6);
   legend.forEach(item => {
@@ -7388,19 +7392,22 @@ function mtgPlanSlide_(p, now, name, options) {
     lx += 6 + item.bw + 8 - 7.2 - 1.6;
   });
   // 棒：12か月（前の月までの積み上げから浮かせる）・合計・計画・差（15本。幅 unit）。少しあけて、積み上げに含まない案件（参考。0 から。確度別。
-  // 名前が長いので幅は unit × 1.3）
-  const top = y + 40;
+  // 名前が長いので幅は unit × 1.3）。図の上は、一番高い棒の数（隣と重なるときは1行上げる）が凡例・「積み上げに含まない（参考）」の
+  // 見出しに重ならないだけあける
+  const top = y + 54;
   const axis = S.bottom - 30;
-  const unit = w / (15 + 0.5 + asides.length * 1.3);
+  // 列：12か月・合計（・計画・差）。計画を入れないとき（noPlan）は13本
+  const main = noPlan ? 13 : 15;
+  const unit = w / (main + 0.5 + asides.length * 1.3);
   const lefts = [];
   const widths = [];
-  for (let i = 0; i < 15 + asides.length; i++) {
-    lefts.push(i < 15 ? x + unit * i : x + unit * (15.5 + (i - 15) * 1.3));
-    widths.push(i < 15 ? unit : unit * 1.3);
+  for (let i = 0; i < main + asides.length; i++) {
+    lefts.push(i < main ? x + unit * i : x + unit * (main + 0.5 + (i - main) * 1.3));
+    widths.push(i < main ? unit : unit * 1.3);
   }
   const bw = Math.min(30, unit * 0.66);
   const bx = i => lefts[i] + (widths[i] - bw) / 2;
-  const max = Math.max.apply(null, [p.total, p.plan, 1].concat(asides.map(a => p[a.key].value)));
+  const max = Math.max.apply(null, [p.total, noPlan ? 0 : p.plan, 1].concat(asides.map(a => p[a.key].value)));
   const scale = (axis - top) / max;
   const ypos = v => axis - v * scale;
   // 棒の上の数：100 以上は整数に丸める（隣の棒の数と重ならないように。リード文は丸めない）。金額を繰り上げるとき（amountCeil）は、
@@ -7435,7 +7442,7 @@ function mtgPlanSlide_(p, now, name, options) {
   };
   el.push({type: 'box', x, y: axis, w, h: 0.75, fill: c.faint, shape: 'RECTANGLE'});
   // 計画の高さの横線（点線。12か月と合計の上に重ねる。どの月で計画に届くかが分かる）
-  el.push({type: 'line', x, y: ypos(p.plan), w: unit * 13, h: 0, color: c.dark, weight: 1, dash: true, role: 'plan-line'});
+  if (!noPlan) el.push({type: 'line', x, y: ypos(p.plan), w: unit * 13, h: 0, color: c.dark, weight: 1, dash: true, role: 'plan-line'});
   let level = 0;
   p.months.forEach((mo, i) => {
     stack(i, level, mo.values, 'plan-month');
@@ -7446,22 +7453,24 @@ function mtgPlanSlide_(p, now, name, options) {
   stack(12, 0, p.byRank, 'plan-total');
   value(12, p.total, num(p.total));
   label(12, '合計');
-  el.push({type: 'box', x: bx(13), y: ypos(p.plan), w: bw, h: Math.max(p.plan * scale, 0.75), fill: c.white, line: c.dark, lineWeight: 1,
-    shape: 'RECTANGLE', role: 'plan-plan'});
-  value(13, p.plan, num(p.plan));
-  label(13, '計画');
-  const lo = Math.min(p.total, p.plan);
-  const hi = Math.max(p.total, p.plan);
-  el.push({type: 'box', x: bx(14), y: ypos(hi), w: bw, h: Math.max((hi - lo) * scale, 0.75), fill: diff < 0 ? c.graySoft : c.up,
-    line: diff < 0 ? c.down : undefined, lineWeight: diff < 0 ? 0.75 : undefined, dash: diff < 0, shape: 'RECTANGLE', role: 'plan-gap'});
-  value(14, hi, num(diff, true));
-  label(14, diff < 0 ? '不足' : '超過');
+  if (!noPlan) {
+    el.push({type: 'box', x: bx(13), y: ypos(p.plan), w: bw, h: Math.max(p.plan * scale, 0.75), fill: c.white, line: c.dark, lineWeight: 1,
+      shape: 'RECTANGLE', role: 'plan-plan'});
+    value(13, p.plan, num(p.plan));
+    label(13, '計画');
+    const lo = Math.min(p.total, p.plan);
+    const hi = Math.max(p.total, p.plan);
+    el.push({type: 'box', x: bx(14), y: ypos(hi), w: bw, h: Math.max((hi - lo) * scale, 0.75), fill: diff < 0 ? c.graySoft : c.up,
+      line: diff < 0 ? c.down : undefined, lineWeight: diff < 0 ? 0.75 : undefined, dash: diff < 0, shape: 'RECTANGLE', role: 'plan-gap'});
+    value(14, hi, num(diff, true));
+    label(14, diff < 0 ? '不足' : '超過');
+  }
   // 積み上げに含まない案件（参考）：区切りの縦線と見出し、0 からの確度別の棒、名前と件数（2行。小さめの字）
-  el.push({type: 'box', x: x + unit * 15.25, y: top - 6, w: 0.75, h: axis - top + 6, fill: c.line, shape: 'RECTANGLE', role: 'plan-divider'});
-  el.push(mtgBox_(lefts[15] - pad / 2, y + 21, x + w - lefts[15] + pad / 2, 14, '積み上げに含まない（参考）',
+  el.push({type: 'box', x: x + unit * (main + 0.25), y: top - 6, w: 0.75, h: axis - top + 6, fill: c.line, shape: 'RECTANGLE', role: 'plan-divider'});
+  el.push(mtgBox_(lefts[main] - pad / 2, y + 21, x + w - lefts[main] + pad / 2, 14, '積み上げに含まない（参考）',
     {size: 8, color: c.muted, align: 'CENTER', role: 'plan-aside-title'}));
   asides.forEach((a, k) => {
-    const i = 15 + k;
+    const i = main + k;
     const b = p[a.key];
     stack(i, 0, b.values, 'plan-aside');
     value(i, b.value, num(b.value));
