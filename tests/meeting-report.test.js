@@ -542,13 +542,27 @@ test('報告案件：RXシナリオは右の列のいちばん上の低い帯に
   const lower = frames.find(el => el.text === '活動状況');
   assert.ok(Math.abs(value.y - lower.y) < 0.01 && Math.abs(month.y + month.h - (lower.y + lower.h)) < 0.01, '下の段の高さにそろえる');
 
-  // 1行に入らなければ、字は小さくしすぎずに（subSize まで）折り返す（4件なら 8pt のまま2行）
+  // 1行に入らなければ2行にする（4件なら 8pt のまま2行）
   const four = Object.assign({}, deal, {scenario: ['01-01.顧客情報活用パッケージ', '01-02.店舗オペレーション効率化', '01-03.需要予測パッケージ', '01-04.会員データ統合'].join(', ')});
   const s4 = setup({edits: false, deals: [four]});
   const names4 = byRole(plain(s4.g.mtgReportSlides_(summarize(s4.g, '新FMT'))).find(sl => /報告案件①/.test(sl.title)), 'report-scenario');
   assert.strictEqual(new Set(names4.map(el => el.y)).size, 2, '2行');
   assert.ok(names4.every(el => el.size === 8), '8pt のまま：' + names4.map(el => el.size));
-  // 3行に入らないほど多ければ字を小さくする（scenarioMinSize まで。省略しない）。戦略の枠はその分低く
+  // 帯を高くしない：6件でも2行（見出しと見込金額を左に2段に積み、字を小さくする。scenarioMinSize まで）。帯は約 30pt まで
+  const six = Object.assign({}, deal, {scenario: ['01-01.顧客情報活用パッケージ', '01-02.店舗オペレーション効率化', '01-03.需要予測パッケージ', '01-04.会員データ統合',
+    '01-05.在庫最適化', '01-06.店舗DXパッケージ'].join(', ')});
+  const s6 = setup({edits: false, deals: [six]});
+  const slide6 = plain(s6.g.mtgReportSlides_(summarize(s6.g, '新FMT'))).find(sl => /報告案件①/.test(sl.title));
+  const names6 = byRole(slide6, 'report-scenario');
+  const band6 = byRole(slide6, 'report-band')[0];
+  assert.strictEqual(new Set(names6.map(el => el.y)).size, 2, '2行');
+  assert.ok(band6.h <= 31, '帯は低いまま：' + band6.h);
+  assert.ok(names6.every(el => el.size >= s6.gas.get('MTG_OPTIONS').report.scenarioMinSize));
+  const head6 = byRole(slide6, 'report-band-head')[0];
+  const amount6 = byRole(slide6, 'report-amount')[0];
+  assert.ok(head6.y + head6.h <= amount6.y + 0.01 && head6.x === amount6.x, '見出しの下に見込金額（2段）');
+  [head6, amount6].concat(names6).forEach(el => assert.ok(el.y >= band6.y - 0.01 && el.y + el.h <= band6.y + band6.h + 0.01, el.text + ' が帯の外'));
+  // それでも2行に入らないほど多ければ、下限の字のまま行を増やす（省略しない）。戦略の枠はその分低く
   const many = Object.assign({}, deal, {scenario: Array.from({length: 12}, (_, i) => '0' + (i % 9 + 1) + '-0' + (i % 7 + 1) + ' とても長いシナリオの名前' + i).join(', ')});
   const s2 = setup({edits: false, deals: [many]});
   const slide2 = plain(s2.g.mtgReportSlides_(summarize(s2.g, '新FMT'))).find(sl => /報告案件①/.test(sl.title));
