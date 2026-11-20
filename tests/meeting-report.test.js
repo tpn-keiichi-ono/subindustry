@@ -565,6 +565,14 @@ test('報告案件：RXシナリオは右の列のいちばん上の低い帯に
   assert.ok(cols6 >= 3, '列の数：' + cols6);
   chips6.forEach((el, i) => assert.ok(Math.abs(el.x - chips6[i % cols6].x) < 0.01 && Math.abs(el.w - chips6[0].w) < 0.01, 'バッジの列：' + el.text));
   names6.forEach((el, i) => assert.ok(Math.abs(el.x - names6[i % cols6].x) < 0.01, '名前の列：' + el.text));
+  // バッジはコンパクト（地の四角は字の幅＋左右 3pt ずつ）で、名前の字はバッジから 5pt あける
+  const pad6 = s6.gas.get('MTG_SLIDE').padX;
+  const fills6 = byRole(slide6, 'report-chip-fill');
+  assert.strictEqual(fills6.length, 6);
+  fills6.forEach((f, i) => {
+    assert.ok(f.w <= Math.ceil(s6.g.mtgTextWidth_(chips6[i].text, chips6[i].size) / 0.92) + 6 + 0.01, 'コンパクト：' + f.w);
+    assert.ok(Math.abs(names6[i].x + pad6 / 2 - (f.x + f.w + 5)) < 0.01, '名前はバッジから 5pt');
+  });
   const head6 = byRole(slide6, 'report-band-head')[0];
   const amount6 = byRole(slide6, 'report-amount')[0];
   assert.ok(head6.y + head6.h <= amount6.y + 0.01 && head6.x === amount6.x, '見出しの下に見込金額（2段）');

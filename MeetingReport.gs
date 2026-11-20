@@ -739,13 +739,14 @@ function mtgReportScenarioBand_(b, item, hasColumn) {
   const right = b.x + b.w - 6;
   // size の字で並べたときの置き場所：表のように列をそろえる（2026/11/20）。番号のバッジの幅はすべて同じ（いちばん広い番号に合わせる）にして
   // 名前の左端もそろえ、列の幅はその列のいちばん広いシナリオに合わせる。列の数は、幅に入るいちばん多い数（行の数がいちばん少ない）。
-  // 番号のバッジと名前の間は 2pt、列の間は 6pt（名前の箱の右の余白と合わせて約 13pt）
+  // 列の間は 6pt（名前の箱の右の余白と合わせて約 13pt）
   const layout = (size, stacked) => {
     const x0 = divOf(stacked) + 8;
     const room = right - x0;
     const chipH = size + 4;
-    const nw = Math.max.apply(null, items.map(it => (it.no ? fitW(it.no, size) : 0)).concat([0]));
-    const lead = nw ? nw + 2 - S.padX / 2 : -S.padX / 2;   // 名前の箱の左端（シナリオの左端から）
+    // 番号のバッジ（地の四角）は字の幅＋左右 3pt ずつのコンパクトな幅（字の箱は余白の分だけ広く、地の四角の中央に重ねる）。名前はバッジから 5pt あける
+    const nw = Math.max.apply(null, items.map(it => (it.no ? Math.ceil(mtgTextWidth_(it.no, size) / 0.92) + 6 : 0)).concat([0]));
+    const lead = nw ? nw + 5 - S.padX / 2 : -S.padX / 2;   // 名前の箱の左端（シナリオの左端から。箱の左の余白の分だけ左に）
     const widthOf = it => lead + fitW(it.name, size);
     const colGap = 6;
     let cols = items.length;
@@ -802,8 +803,11 @@ function mtgReportScenarioBand_(b, item, hasColumn) {
   const top0 = mid - chipsH / 2;
   fit.placed.forEach(p => {
     const top = top0 + p.row * (fit.chipH + gap);
-    if (p.it.no) el.push(mtgBox_(p.x, top, p.nw, fit.chipH, p.it.no, {size: fit.size, bold: true, align: 'CENTER', valign: 'MIDDLE',
-      shape: 'RECTANGLE', fill: c.greenSoft, color: c.greenDark, role: 'report-chip'}));
+    if (p.it.no) {
+      el.push({type: 'box', x: p.x, y: top, w: p.nw, h: fit.chipH, fill: c.greenSoft, shape: 'RECTANGLE', role: 'report-chip-fill'});
+      el.push(mtgBox_(p.x - S.padX / 2, top, p.nw + S.padX, fit.chipH, p.it.no, {size: fit.size, bold: true, align: 'CENTER', valign: 'MIDDLE',
+        color: c.greenDark, role: 'report-chip'}));
+    }
     // 名前の箱は、左の余白（padX の半分）の分だけバッジに寄せる（字がバッジから 2pt あくように。番号の無いシナリオも同じ列の名前の左端にそろえる）
     el.push(mtgBox_(p.x + p.lead, top, p.tw, fit.chipH, p.it.name,
       {size: fit.size, color: c.ink, valign: 'MIDDLE', role: 'report-scenario'}));
