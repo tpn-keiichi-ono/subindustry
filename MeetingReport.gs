@@ -339,8 +339,13 @@ function mtgReportSlide_(s, item, no) {
   const el = mtgReportHeader_(item, mtgReportStaff_(item), no);
   const blank = o.blankText;
   // 右の列：文章の枠（字の大きさは枠ごとに、入るいちばん大きい字。見出しより大きくしない）
+  // 右の列のいちばん上：RXシナリオ（選んだシナリオを番号と名前の全文で。2026/11/20）。その分、戦略の枠を低くする（左の案件・得意先情報の枠は、
+  // RXシナリオと戦略の枠を合わせた高さのまま）
+  const band = mtgReportScenarioBand_({x: L.right.x, y: L.top, w: L.right.w}, item, s.scenarioColumn);
+  el.push.apply(el, band.elements);
+  const strategyY = L.top + band.h + L.gap;
   const texts = [
-    {key: 'strategy', label: o.columns.strategy, x: L.right.x, y: L.top, w: L.right.w, h: L.strategyH, fill: c.greenSoft, line: null},
+    {key: 'strategy', label: o.columns.strategy, x: L.right.x, y: strategyY, w: L.right.w, h: L.top + L.strategyH - strategyY, fill: c.greenSoft, line: null},
     {key: 'valueCase', label: o.columns.valueCase, x: L.right.x, y: L.top + L.strategyH + L.gap, w: L.right.w, h: L.valueH},
     // 下の段は 活動における課題 → 活動状況 → 次回アクション（活動状況と次回アクションを隣に並べる）
     {key: 'issue', label: o.columns.issue, x: L.right.x, y: L.rowY, w: L.rowW, h: L.rowH},
@@ -357,7 +362,7 @@ function mtgReportSlide_(s, item, no) {
       {size: fit.sizes[i], color: b.text ? c.ink : c.faint, valign: 'TOP', role: 'report-text'}));
     if (withPrev[b.key]) el.push.apply(el, mtgReportPrevious_(b, item, item[withPrev[b.key]], fit.sizes[i], mtgReportPrevLabel_(s)));
   });
-  // 左の列：先方・ステータス・期待値・受注月・RXシナリオ
+  // 左の列：先方・ステータス・期待値・受注月・シナリオ見込金額
   const box = k => ({x: L.left.x, y: L.top + L.leftH.slice(0, k).reduce((sum, h) => sum + h + L.gap, 0), w: L.left.w, h: L.leftH[k]});
   el.push.apply(el, mtgReportClient_(box(0), item));
   el.push.apply(el, mtgReportStatus_(box(1), item));
@@ -598,8 +603,9 @@ function mtgReportSales_(b, item, s) {
     return el;
   }
   // 年度ごとの行（左に「FY26」、右に値）。見出しの下を年度の数で等分する（行の高さは 12pt まで）
-  const top = b.y + L.head + 1;
-  const rowH = Math.min(12, (b.y + b.h - 2 - top) / years.length);
+  // 1行目は枠の見出しから少し離す（見出しの字の下端は枠の上から約 19pt。スライドの箱の上の余白 7.2pt と spaceAbove の分）
+  const top = b.y + L.head + 3.5;
+  const rowH = Math.min(12, (b.y + b.h - 1 - top) / years.length);
   years.forEach((y, k) => {
     const v = (item.sales || {})[y];
     const ry = top + rowH * k;
@@ -704,52 +710,94 @@ function mtgReportMonth_(b, item) {
 }
 
 /**
- * 左の列の5つ目：RXシナリオ（1行目に見込金額、その下に選んだシナリオの番号を角の丸い枠（バッジ）で並べる）。
- * 省略しない：すべてのバッジを並べ、枠に入らなければバッジの字を小さくする（chipSize から minSize まで）
+ * 左の列の5つ目：シナリオ見込金額（百万円。1行目に金額・2行目に選んだシナリオの件数）。シナリオの番号と名前は、右の列のいちばん上の
+ * RXシナリオの帯（mtgReportScenarioBand_）に書く（2026/11/20 から。前の版はこの枠に番号のバッジを並べていた）
  */
 function mtgReportScenario_(b, item, hasColumn) {
   const o = MTG_OPTIONS;
   const c = o.colors;
   const R = o.report;
-  const S = MTG_SLIDE;
   const L = mtgReportLayout_();
-  const el = [mtgReportFrame_(b.x, b.y, b.w, b.h, 'RXシナリオ')];
-  const amount = '見込金額：' + (item.scenarioAmount == null ? o.blankText : mtgAmount_(item.scenarioAmount) + '百万円');
-  el.push(mtgBox_(b.x, b.y + L.head, b.w, R.subSize * S.lineFactor + S.padY, amount, {size: R.subSize, color: c.muted, valign: 'TOP', role: 'report-value'}));
-  // シナリオは番号だけ（「01-05」など。名前は長いので。番号が無ければ名前のまま。mtgScenarioNumber_）
-  const names = (item.scenarios || []).map(mtgScenarioNumber_);
-  const top = b.y + L.head + S.padY / 2 + R.subSize * S.lineFactor + 3;
-  if (!hasColumn || !names.length) {
-    el.push(mtgBox_(b.x, top - S.padY / 2, b.w, b.y + b.h - top + S.padY / 2, hasColumn ? o.blankText : o.gapText,
-      {size: R.subSize, color: c.faint, valign: 'TOP', role: 'report-value'}));
-    return el;
-  }
-  const x0 = b.x + 7;
-  const right = b.x + b.w - 7;
+  const blank = item.scenarioAmount == null;
+  const count = (item.scenarios || []).length;
+  const rowH = 13;
+  const y1 = b.y + L.head + 5;   // 期待値の枠と同じ位置
+  return [mtgReportFrame_(b.x, b.y, b.w, b.h, R.scenarioAmountLabel),
+    mtgBox_(b.x, y1, b.w, rowH, blank ? o.blankText : mtgAmount_(item.scenarioAmount),
+      {size: R.boxSize, bold: !blank, color: blank ? c.faint : c.ink, valign: 'MIDDLE', role: 'report-value'}),
+    mtgBox_(b.x, y1 + rowH, b.w, rowH, 'RXシナリオ：' + (!hasColumn ? o.gapText : count ? count + '件' : o.blankText),
+      {size: R.subSize, color: c.muted, valign: 'MIDDLE', role: 'report-value'})];
+}
+
+/**
+ * 右の列のいちばん上の RXシナリオの帯：見出し「RXシナリオ」の右に、選んだシナリオを「番号のバッジ＋名前（全文）」で横に並べる
+ * （「01-04.顧客情報活用パッケージ」→［01-04］顧客情報活用パッケージ。番号が無ければ名前だけ）。b = {x, y, w}。{elements, h}（帯の高さ）。
+ * 省略しない：1行に入らなければ折り返して行を増やし（帯を高く。字は report.subSize まで小さくしてよい）、3行に入らなければ字を小さくする（scenarioMinSize まで）。
+ * 列が無ければ「データなし」、選んでいなければ「未入力」
+ */
+function mtgReportScenarioBand_(b, item, hasColumn) {
+  const o = MTG_OPTIONS;
+  const c = o.colors;
+  const R = o.report;
+  const S = MTG_SLIDE;
+  const head = 'RXシナリオ';
+  const x0 = b.x + mtgReportHeadWidth_(head) + S.padX + 8;   // 見出しの右から
+  const right = b.x + b.w - 6;
+  const cy = R.headTop + S.padY / 2 + 8 * S.lineFactor / 2;   // 見出しの字の上下の中央（帯の上端から）
+  const items = (item.scenarios || []).map(mtgCompactScenarioItem_);
   const gap = 3;
+  if (!hasColumn || !items.length) {
+    const h = Math.ceil(cy * 2);
+    return {h, elements: [mtgReportFrame_(b.x, b.y, b.w, h, head),
+      mtgBox_(x0 - S.padX / 2, b.y + cy - 7, right - x0 + S.padX / 2, 14, hasColumn ? o.blankText : o.gapText,
+        {size: R.subSize, color: c.faint, valign: 'MIDDLE', role: 'report-scenario'})]};
+  }
+  // size の字で並べたときの置き場所（行・左端・幅）。番号のバッジと名前の間は 2pt、シナリオの間は 10pt
   const layout = size => {
-    const h = size + 4.5;
-    // 幅は文字の幅に箱の左右の余白（MTG_SLIDE.padX）を足す（足りないと「01-05」が2行に折り返す）
-    const width = text => Math.min(right - x0, Math.ceil(mtgTextWidth_(text, size) / 0.92 + S.padX + 4));
+    const chipH = size + 5;
+    const textW = t => Math.ceil(mtgTextWidth_(t, size) / 0.92 + S.padX + 2);   // 箱の左右の余白の分も（足りないと折り返す）
     const placed = [];
     let x = x0;
     let row = 0;
-    names.forEach(name => {
-      const w = width(name);
+    items.forEach(it => {
+      const nw = it.no ? textW(it.no) : 0;
+      const tw = Math.min(right - x0 - nw, textW(it.name));
+      const w = nw + (it.no ? 2 : 0) + tw - S.padX / 2;
       if (x + w > right && x > x0) {
         row++;
         x = x0;
       }
-      placed.push({text: name, x, row, w});
-      x += w + gap;
+      placed.push({it, x, row, nw, tw});
+      x += w + 10;
     });
-    return {size, h, placed, height: (row + 1) * (h + gap) - gap};
+    return {size, chipH, placed, rows: row + 1};
   };
-  let fit = layout(R.chipSize);
-  while (fit.size > R.minSize && top + fit.height > b.y + b.h - 4) fit = layout(fit.size - 0.5);
-  fit.placed.forEach(p => el.push(mtgBox_(p.x, top + p.row * (fit.h + gap), p.w, fit.h, p.text, {size: fit.size, align: 'CENTER', valign: 'MIDDLE',
-    shape: 'RECTANGLE', fill: c.greenSoft, color: c.greenDark, role: 'report-chip'})));
-  return el;
+  // 字の大きさと行の数：まず補足の字（subSize）までの大きさで、行の少ない順（3行まで）にいちばん大きい字。それでも入らなければ、
+  // 3行に入るまで小さくする（scenarioMinSize まで。下限でも入らなければ下限のまま行を増やす）
+  let fit = null;
+  for (let rows = 1; rows <= 3 && !fit; rows++) {
+    for (let size = R.maxSize; size >= R.subSize - 1e-9 && !fit; size -= 0.5) {
+      const f = layout(size);
+      if (f.rows <= rows) fit = f;
+    }
+  }
+  for (let size = R.subSize - 0.5; size >= R.scenarioMinSize - 1e-9 && !fit; size -= 0.5) {
+    const f = layout(size);
+    if (f.rows <= 3) fit = f;
+  }
+  if (!fit) fit = layout(R.scenarioMinSize);
+  const rowStep = fit.chipH + gap;
+  const h = Math.ceil(cy * 2 + (fit.rows - 1) * rowStep);
+  const el = [mtgReportFrame_(b.x, b.y, b.w, h, head)];
+  fit.placed.forEach(p => {
+    const top = b.y + cy - fit.chipH / 2 + p.row * rowStep;
+    if (p.it.no) el.push(mtgBox_(p.x, top, p.nw, fit.chipH, p.it.no, {size: fit.size, bold: true, align: 'CENTER', valign: 'MIDDLE',
+      shape: 'RECTANGLE', fill: c.greenSoft, color: c.greenDark, role: 'report-chip'}));
+    // 名前の箱は、左の余白（padX の半分）の分だけバッジに寄せる（字がバッジから 2pt あくように）
+    el.push(mtgBox_(p.x + (p.it.no ? p.nw + 2 - S.padX / 2 : -S.padX / 2), top, p.tw, fit.chipH, p.it.name,
+      {size: fit.size, color: c.ink, valign: 'MIDDLE', role: 'report-scenario'}));
+  });
+  return {h, elements: el};
 }
 
 /**

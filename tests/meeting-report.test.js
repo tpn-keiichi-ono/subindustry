@@ -134,7 +134,7 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.strictEqual(g.mtgReportTitle_('X', 21), 'RXシナリオ進捗における報告案件(21)：X');
   const all = texts(a).join('\n');
   ['案件・得意先情報', '店舗DX基盤の刷新\n \nA社\n経営企画部／部長', 'B-クロージング中(70%)', '前回：C-提案中(50%)', '前回：50　／　想定売上：100', '2027/02', '前回：2026/12（延期）',
-    'RXシナリオ', '見込金額：80百万円', '店舗オペレーション効率化', '需要予測', '提案を勝ち取るための戦略・差異化要素', '業務設計から運用定着まで一括で提案する',
+    'RXシナリオ', 'シナリオ見込金額（百万円）', '80\nRXシナリオ：2件', '店舗オペレーション効率化', '需要予測', '提案を勝ち取るための戦略・差異化要素', '業務設計から運用定着まで一括で提案する',
     '想定される価値創出のケース／期待される導入効果', '11/2 役員向けに最終提案', '情報システム部門の稼働が逼迫', '11/15 稟議資料の事前確認']
     .forEach(t => assert.ok(all.indexOf(t) >= 0, t + ' が無い：\n' + all));
   const staff = byRole(a, 'report-staff')[0];
@@ -499,12 +499,70 @@ test('報告案件：商談記録の「格納先リンク」は、セルのリ�
     [['https://drive.google.com/drive/folders/abc']], '文字の中の URL');
 });
 
-test('報告案件：RXシナリオは番号だけ。案件・得意先情報は、長い得意先名・部門／役職も全文（入らなければ字を小さくする。省略しない）', () => {
+test('報告案件：RXシナリオは右の列のいちばん上に、番号と名前の全文で（戦略・差異化要素の枠の上。左の枠は見込金額と件数）', () => {
+  const deal = Object.assign({}, DEALS[0], {scenario: '01-05 店舗オペレーション効率化, 02-03.需要予測パッケージ'});
+  const {gas, g} = setup({edits: false, deals: [deal]});
+  const pad = gas.get('MTG_SLIDE').padX;
+  const slide = plain(g.mtgReportSlides_(summarize(g, '新FMT'))).find(sl => /報告案件①/.test(sl.title));
+  const L = plain(g.mtgReportLayout_());
+  assert.deepStrictEqual(byRole(slide, 'report-chip').map(el => el.text), ['01-05', '02-03'], '番号はバッジ');
+  const names = byRole(slide, 'report-scenario');
+  assert.deepStrictEqual(names.map(el => el.text), ['店舗オペレーション効率化', '需要予測パッケージ'], '名前は全文（番号の後ろの「.」・空白は除く）');
+  const frames = byRole(slide, 'report-frame');
+  const band = frames.find(el => el.text === 'RXシナリオ');
+  const strategy = frames.find(el => /戦略・差異化要素/.test(el.text));
+  assert.ok(band && strategy, '帯と戦略の枠がある');
+  assert.ok(band.x === L.right.x && band.w === L.right.w && band.y === L.top, '右の列のいちばん上（幅は右の列いっぱい）');
+  assert.ok(Math.abs(strategy.y - (band.y + band.h + L.gap)) < 0.01, '戦略の枠は帯のすぐ下');
+  assert.ok(Math.abs(strategy.y + strategy.h - (L.top + L.strategyH)) < 0.01, '戦略の枠の下端は前と同じ（左の案件・得意先情報の枠とそろう）');
+  const client = frames.find(el => el.text === '案件・得意先情報');
+  assert.ok(Math.abs(client.y + client.h - (strategy.y + strategy.h)) < 0.01);
+  // 1行に入る数なら1行（字は 8pt）。バッジと名前は帯の中で、互いに重ならない
+  const parts = byRole(slide, 'report-chip').concat(names);
+  assert.ok(new Set(parts.map(el => el.y)).size === 1 && parts.every(el => el.size === 8), '1行・8pt');
+  parts.forEach(el => assert.ok(el.x >= band.x && el.x + el.w <= band.x + band.w + 0.01 && el.y >= band.y && el.y + el.h <= band.y + band.h + 0.01, el.text + ' が帯の外'));
+  const sorted = parts.slice().sort((a, b) => a.x - b.x);
+  sorted.slice(1).forEach((el, k) => assert.ok(sorted[k].x + sorted[k].w - pad / 2 <= el.x + pad / 2 + 0.01, '重ならない：' + el.text));
+  // 名前の箱は1行に入る幅（折り返さない）
+  names.forEach(el => assert.strictEqual(g.mtgWrap_(el.text, el.w, el.size, 9).length, 1, el.text));
+  // 左の5つ目の枠：シナリオ見込金額と件数
+  const amount = frames.find(el => /シナリオ見込金額/.test(el.text));
+  assert.strictEqual(amount.text, 'シナリオ見込金額（百万円）');
+  const values = byRole(slide, 'report-value').filter(el => el.y > amount.y && el.y < amount.y + amount.h).map(el => el.text);
+  assert.deepStrictEqual(values, ['80', 'RXシナリオ：2件']);
+
+  // 1行に入らなければ、字は小さくしすぎずに（subSize まで）折り返す（4件なら 8pt のまま2行）
+  const four = Object.assign({}, deal, {scenario: ['01-01.顧客情報活用パッケージ', '01-02.店舗オペレーション効率化', '01-03.需要予測パッケージ', '01-04.会員データ統合'].join(', ')});
+  const s4 = setup({edits: false, deals: [four]});
+  const names4 = byRole(plain(s4.g.mtgReportSlides_(summarize(s4.g, '新FMT'))).find(sl => /報告案件①/.test(sl.title)), 'report-scenario');
+  assert.strictEqual(new Set(names4.map(el => el.y)).size, 2, '2行');
+  assert.ok(names4.every(el => el.size === 8), '8pt のまま：' + names4.map(el => el.size));
+  // 3行に入らないほど多ければ字を小さくする（scenarioMinSize まで。省略しない）。戦略の枠はその分低く
+  const many = Object.assign({}, deal, {scenario: Array.from({length: 12}, (_, i) => '0' + (i % 9 + 1) + '-0' + (i % 7 + 1) + ' とても長いシナリオの名前' + i).join(', ')});
+  const s2 = setup({edits: false, deals: [many]});
+  const slide2 = plain(s2.g.mtgReportSlides_(summarize(s2.g, '新FMT'))).find(sl => /報告案件①/.test(sl.title));
+  const names2 = byRole(slide2, 'report-scenario');
+  assert.strictEqual(names2.length, 12, 'すべて');
+  assert.ok(names2.every(el => el.size === s2.gas.get('MTG_OPTIONS').report.scenarioMinSize), '下限まで小さく');
+  assert.ok(new Set(names2.map(el => el.y)).size > 1, '折り返す');
+  const band2 = byRole(slide2, 'report-frame').find(el => el.text === 'RXシナリオ');
+  const strategy2 = byRole(slide2, 'report-frame').find(el => /戦略・差異化要素/.test(el.text));
+  assert.ok(band2.h > band.h && Math.abs(strategy2.y - (band2.y + band2.h + L.gap)) < 0.01, '帯を高くし、戦略の枠をその分下げる');
+  names2.concat(byRole(slide2, 'report-chip')).forEach(el => assert.ok(el.y + el.h <= band2.y + band2.h + 0.01, '帯の中'));
+
+  // 選んでいなければ「未入力」、列が無ければ「データなし」
+  const none = setup({edits: false, deals: [Object.assign({}, deal, {scenario: ''})]});
+  const slide3 = plain(none.g.mtgReportSlides_(summarize(none.g, '新FMT'))).find(sl => /報告案件①/.test(sl.title));
+  assert.deepStrictEqual(byRole(slide3, 'report-scenario').map(el => el.text), ['未入力']);
+  assert.ok(byRole(slide3, 'report-value').some(el => el.text === 'RXシナリオ：未入力'));
+});
+
+test('報告案件：RXシナリオのバッジは番号。案件・得意先情報は、長い得意先名・部門／役職も全文（入らなければ字を小さくする。省略しない）', () => {
   const long = Object.assign({}, DEALS[0], {customer: '株式会社サンプルリテールホールディングスジャパン', clientDept: 'デジタルマーケティング本部 本部長室',
     clientTitle: '本部長', scenario: '01-05 店舗オペレーション効率化, 02-03 需要予測'});
   const {gas, g} = setup({edits: false, deals: [long]});
   const slide = plain(g.mtgReportSlides_(summarize(g, '新FMT'))).find(sl => /報告案件①/.test(sl.title));
-  assert.deepStrictEqual(byRole(slide, 'report-chip').map(el => el.text), ['01-05', '02-03'], 'シナリオは番号だけ');
+  assert.deepStrictEqual(byRole(slide, 'report-chip').map(el => el.text), ['01-05', '02-03'], 'バッジは番号（名前は隣の箱）');
   const client = byRole(slide, 'report-value')[0].text;
   assert.ok(client.indexOf('…') < 0, '切らない：' + client);
   assert.strictEqual(client.replace(/\n/g, ''), '店舗DX基盤の刷新 株式会社サンプルリテールホールディングスジャパンデジタルマーケティング本部 本部長室／本部長');
