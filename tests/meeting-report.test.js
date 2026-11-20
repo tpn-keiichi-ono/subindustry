@@ -558,6 +558,13 @@ test('報告案件：RXシナリオは右の列のいちばん上の低い帯に
   assert.strictEqual(new Set(names6.map(el => el.y)).size, 2, '2行');
   assert.ok(band6.h <= 31, '帯は低いまま：' + band6.h);
   assert.ok(names6.every(el => el.size >= s6.gas.get('MTG_OPTIONS').report.scenarioMinSize));
+  // 列をそろえる：2行目のバッジ・名前の左端は、1行目の同じ列とそろう（バッジの幅もすべて同じ）
+  const chips6 = byRole(slide6, 'report-chip');
+  const rows6 = [...new Set(chips6.map(el => el.y))];
+  const cols6 = chips6.filter(el => el.y === rows6[0]).length;
+  assert.ok(cols6 >= 3, '列の数：' + cols6);
+  chips6.forEach((el, i) => assert.ok(Math.abs(el.x - chips6[i % cols6].x) < 0.01 && Math.abs(el.w - chips6[0].w) < 0.01, 'バッジの列：' + el.text));
+  names6.forEach((el, i) => assert.ok(Math.abs(el.x - names6[i % cols6].x) < 0.01, '名前の列：' + el.text));
   const head6 = byRole(slide6, 'report-band-head')[0];
   const amount6 = byRole(slide6, 'report-amount')[0];
   assert.ok(head6.y + head6.h <= amount6.y + 0.01 && head6.x === amount6.x, '見出しの下に見込金額（2段）');

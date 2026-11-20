@@ -737,25 +737,31 @@ function mtgReportScenarioBand_(b, item, hasColumn) {
   // 区切りの縦線の位置：横に並べる（inline）なら見出し・見込金額の右、2段に積むなら広いほうの右
   const divOf = stacked => (stacked ? b.x + Math.max(headW, amountW) : b.x + headW - S.padX / 2 + 2 + amountW) - S.padX / 2 + 6;
   const right = b.x + b.w - 6;
-  // size の字で並べたときの置き場所（行・左端・幅）。番号のバッジと名前の間は 2pt、シナリオの間は 4pt（名前の箱の右の余白と合わせて約 11pt）
+  // size の字で並べたときの置き場所：表のように列をそろえる（2026/11/20）。番号のバッジの幅はすべて同じ（いちばん広い番号に合わせる）にして
+  // 名前の左端もそろえ、列の幅はその列のいちばん広いシナリオに合わせる。列の数は、幅に入るいちばん多い数（行の数がいちばん少ない）。
+  // 番号のバッジと名前の間は 2pt、列の間は 6pt（名前の箱の右の余白と合わせて約 13pt）
   const layout = (size, stacked) => {
     const x0 = divOf(stacked) + 8;
+    const room = right - x0;
     const chipH = size + 4;
-    const placed = [];
-    let x = x0;
-    let row = 0;
-    items.forEach(it => {
-      const nw = it.no ? fitW(it.no, size) : 0;
-      const tw = Math.min(right - x0 - nw, fitW(it.name, size));
-      const w = nw + (it.no ? 2 : 0) + tw - S.padX / 2;
-      if (x + w > right && x > x0) {
-        row++;
-        x = x0;
-      }
-      placed.push({it, x, row, nw, tw});
-      x += w + 4;
-    });
-    return {size, stacked, chipH, placed, rows: row + 1};
+    const nw = Math.max.apply(null, items.map(it => (it.no ? fitW(it.no, size) : 0)).concat([0]));
+    const lead = nw ? nw + 2 - S.padX / 2 : -S.padX / 2;   // 名前の箱の左端（シナリオの左端から）
+    const widthOf = it => lead + fitW(it.name, size);
+    const colGap = 6;
+    let cols = items.length;
+    let widths = [];
+    for (; cols >= 1; cols--) {
+      widths = Array.from({length: cols}, (_, k) => Math.max.apply(null, items.filter((_, i) => i % cols === k).map(widthOf)));
+      if (widths.reduce((sum, w) => sum + w, 0) + colGap * (cols - 1) <= room) break;
+    }
+    if (cols < 1) {   // 1列でも入らない（とても長い名前）：1列にし、名前は折り返さない範囲で箱いっぱい
+      cols = 1;
+      widths = [room];
+    }
+    const lefts = widths.map((_, k) => x0 + widths.slice(0, k).reduce((sum, w) => sum + w + colGap, 0));
+    const placed = items.map((it, i) => ({it, x: lefts[i % cols], row: Math.floor(i / cols), nw: it.no ? nw : 0, lead,
+      tw: Math.min(fitW(it.name, size), x0 + room - lefts[i % cols] - lead)}));
+    return {size, stacked, chipH, placed, rows: Math.ceil(items.length / cols)};
   };
   const search = (from, to, stacked, rows) => {
     for (let size = from; size >= to - 1e-9; size -= 0.5) {
@@ -798,8 +804,8 @@ function mtgReportScenarioBand_(b, item, hasColumn) {
     const top = top0 + p.row * (fit.chipH + gap);
     if (p.it.no) el.push(mtgBox_(p.x, top, p.nw, fit.chipH, p.it.no, {size: fit.size, bold: true, align: 'CENTER', valign: 'MIDDLE',
       shape: 'RECTANGLE', fill: c.greenSoft, color: c.greenDark, role: 'report-chip'}));
-    // 名前の箱は、左の余白（padX の半分）の分だけバッジに寄せる（字がバッジから 2pt あくように）
-    el.push(mtgBox_(p.x + (p.it.no ? p.nw + 2 - S.padX / 2 : -S.padX / 2), top, p.tw, fit.chipH, p.it.name,
+    // 名前の箱は、左の余白（padX の半分）の分だけバッジに寄せる（字がバッジから 2pt あくように。番号の無いシナリオも同じ列の名前の左端にそろえる）
+    el.push(mtgBox_(p.x + p.lead, top, p.tw, fit.chipH, p.it.name,
       {size: fit.size, color: c.ink, valign: 'MIDDLE', role: 'report-scenario'}));
   });
   return {h, elements: el};
