@@ -570,7 +570,7 @@ test('報告案件：RXシナリオは右の列のいちばん上の低い帯に
   const fills6 = byRole(slide6, 'report-chip-fill');
   assert.strictEqual(fills6.length, 6);
   fills6.forEach((f, i) => {
-    assert.ok(f.w <= Math.ceil(s6.g.mtgTextWidth_(chips6[i].text, chips6[i].size) / 0.92) + 6 + 0.01, 'コンパクト：' + f.w);
+    assert.ok(f.w <= Math.max.apply(null, chips6.map(ch => Math.ceil(s6.g.mtgTextWidth_(ch.text, ch.size) / 0.92))) + 6 + 0.01, 'コンパクト（いちばん広い番号に合わせる）：' + f.w);
     assert.ok(Math.abs(names6[i].x + pad6 / 2 - (f.x + f.w + 5)) < 0.01, '名前はバッジから 5pt');
   });
   const head6 = byRole(slide6, 'report-band-head')[0];
