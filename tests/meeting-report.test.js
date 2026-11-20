@@ -134,7 +134,7 @@ test('報告案件版のスライド：表紙と数字のページは会議サ�
   assert.strictEqual(g.mtgReportTitle_('X', 21), 'RXシナリオ進捗における報告案件(21)：X');
   const all = texts(a).join('\n');
   ['案件・得意先情報', '店舗DX基盤の刷新\n \nA社\n経営企画部／部長', 'B-クロージング中(70%)', '前回：C-提案中(50%)', '前回：50　／　想定売上：100', '2027/02', '前回：2026/12（延期）',
-    'RXシナリオ', 'シナリオ見込金額（百万円）', '80\nRXシナリオ：2件', '店舗オペレーション効率化', '需要予測', '提案を勝ち取るための戦略・差異化要素', '業務設計から運用定着まで一括で提案する',
+    'RXシナリオ', '見込金額 80百万円', '店舗オペレーション効率化', '需要予測', '提案を勝ち取るための戦略・差異化要素', '業務設計から運用定着まで一括で提案する',
     '想定される価値創出のケース／期待される導入効果', '11/2 役員向けに最終提案', '情報システム部門の稼働が逼迫', '11/15 稟議資料の事前確認']
     .forEach(t => assert.ok(all.indexOf(t) >= 0, t + ' が無い：\n' + all));
   const staff = byRole(a, 'report-staff')[0];
@@ -499,7 +499,7 @@ test('報告案件：商談記録の「格納先リンク」は、セルのリ�
     [['https://drive.google.com/drive/folders/abc']], '文字の中の URL');
 });
 
-test('報告案件：RXシナリオは右の列のいちばん上に、番号と名前の全文で（戦略・差異化要素の枠の上。左の枠は見込金額と件数）', () => {
+test('報告案件：RXシナリオは右の列のいちばん上の低い帯に、見込金額と、番号と名前の全文で（戦略・差異化要素の枠の上。左の列は4つの枠）', () => {
   const deal = Object.assign({}, DEALS[0], {scenario: '01-05 店舗オペレーション効率化, 02-03.需要予測パッケージ'});
   const {gas, g} = setup({edits: false, deals: [deal]});
   const pad = gas.get('MTG_SLIDE').padX;
@@ -509,10 +509,14 @@ test('報告案件：RXシナリオは右の列のいちばん上に、番号と
   const names = byRole(slide, 'report-scenario');
   assert.deepStrictEqual(names.map(el => el.text), ['店舗オペレーション効率化', '需要予測パッケージ'], '名前は全文（番号の後ろの「.」・空白は除く）');
   const frames = byRole(slide, 'report-frame');
-  const band = frames.find(el => el.text === 'RXシナリオ');
+  const band = byRole(slide, 'report-band')[0];
   const strategy = frames.find(el => /戦略・差異化要素/.test(el.text));
   assert.ok(band && strategy, '帯と戦略の枠がある');
   assert.ok(band.x === L.right.x && band.w === L.right.w && band.y === L.top, '右の列のいちばん上（幅は右の列いっぱい）');
+  assert.ok(band.h <= 22, '1行なら低い帯（見出しは枠の上でなく1行目の左）：' + band.h);
+  const head = byRole(slide, 'report-band-head')[0];
+  assert.ok(head.text === 'RXシナリオ' && head.size === 8 && head.bold, '見出しはほかの枠の見出しと同じ字');
+  assert.ok(head && head.y >= band.y && head.y + head.h <= band.y + band.h + 0.01 && head.valign === 'MIDDLE', '見出しは帯の中');
   assert.ok(Math.abs(strategy.y - (band.y + band.h + L.gap)) < 0.01, '戦略の枠は帯のすぐ下');
   assert.ok(Math.abs(strategy.y + strategy.h - (L.top + L.strategyH)) < 0.01, '戦略の枠の下端は前と同じ（左の案件・得意先情報の枠とそろう）');
   const client = frames.find(el => el.text === '案件・得意先情報');
@@ -525,11 +529,18 @@ test('報告案件：RXシナリオは右の列のいちばん上に、番号と
   sorted.slice(1).forEach((el, k) => assert.ok(sorted[k].x + sorted[k].w - pad / 2 <= el.x + pad / 2 + 0.01, '重ならない：' + el.text));
   // 名前の箱は1行に入る幅（折り返さない）
   names.forEach(el => assert.strictEqual(g.mtgWrap_(el.text, el.w, el.size, 9).length, 1, el.text));
-  // 左の5つ目の枠：シナリオ見込金額と件数
-  const amount = frames.find(el => /シナリオ見込金額/.test(el.text));
-  assert.strictEqual(amount.text, 'シナリオ見込金額（百万円）');
-  const values = byRole(slide, 'report-value').filter(el => el.y > amount.y && el.y < amount.y + amount.h).map(el => el.text);
-  assert.deepStrictEqual(values, ['80', 'RXシナリオ：2件']);
+  // 見込金額は見出しの右（シナリオの左。区切りの縦線の左）
+  const amount = byRole(slide, 'report-amount')[0];
+  assert.strictEqual(amount.text, '見込金額 80百万円');
+  const divider = byRole(slide, 'report-band-divider')[0];
+  assert.ok(head.x + head.w <= amount.x + pad + 0.01 && amount.x + amount.w - pad / 2 <= divider.x && divider.x < Math.min.apply(null, parts.map(el => el.x)));
+  assert.ok(g.mtgTextWidth_('見込金額 ', 7) + g.mtgTextWidth_('80百万円', 8) <= (amount.w - pad) * 0.92 + 0.01, '見込金額は1行に入る幅');
+  // 左の列は4つの枠（案件・得意先情報・ステータス・期待値・受注月）。シナリオ見込金額の枠は無い。期待値と受注月で下の段を2つに分ける
+  assert.ok(!frames.some(el => /見込金額/.test(el.text)));
+  const value = frames.find(el => /^期待値/.test(el.text));
+  const month = frames.find(el => el.text === '受注月');
+  const lower = frames.find(el => el.text === '活動状況');
+  assert.ok(Math.abs(value.y - lower.y) < 0.01 && Math.abs(month.y + month.h - (lower.y + lower.h)) < 0.01, '下の段の高さにそろえる');
 
   // 1行に入らなければ、字は小さくしすぎずに（subSize まで）折り返す（4件なら 8pt のまま2行）
   const four = Object.assign({}, deal, {scenario: ['01-01.顧客情報活用パッケージ', '01-02.店舗オペレーション効率化', '01-03.需要予測パッケージ', '01-04.会員データ統合'].join(', ')});
@@ -545,7 +556,7 @@ test('報告案件：RXシナリオは右の列のいちばん上に、番号と
   assert.strictEqual(names2.length, 12, 'すべて');
   assert.ok(names2.every(el => el.size === s2.gas.get('MTG_OPTIONS').report.scenarioMinSize), '下限まで小さく');
   assert.ok(new Set(names2.map(el => el.y)).size > 1, '折り返す');
-  const band2 = byRole(slide2, 'report-frame').find(el => el.text === 'RXシナリオ');
+  const band2 = byRole(slide2, 'report-band')[0];
   const strategy2 = byRole(slide2, 'report-frame').find(el => /戦略・差異化要素/.test(el.text));
   assert.ok(band2.h > band.h && Math.abs(strategy2.y - (band2.y + band2.h + L.gap)) < 0.01, '帯を高くし、戦略の枠をその分下げる');
   names2.concat(byRole(slide2, 'report-chip')).forEach(el => assert.ok(el.y + el.h <= band2.y + band2.h + 0.01, '帯の中'));
@@ -554,7 +565,7 @@ test('報告案件：RXシナリオは右の列のいちばん上に、番号と
   const none = setup({edits: false, deals: [Object.assign({}, deal, {scenario: ''})]});
   const slide3 = plain(none.g.mtgReportSlides_(summarize(none.g, '新FMT'))).find(sl => /報告案件①/.test(sl.title));
   assert.deepStrictEqual(byRole(slide3, 'report-scenario').map(el => el.text), ['未入力']);
-  assert.ok(byRole(slide3, 'report-value').some(el => el.text === 'RXシナリオ：未入力'));
+  assert.ok(byRole(slide3, 'report-band')[0].h <= 22);
 });
 
 test('報告案件：RXシナリオのバッジは番号。案件・得意先情報は、長い得意先名・部門／役職も全文（入らなければ字を小さくする。省略しない）', () => {
