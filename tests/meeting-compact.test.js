@@ -1176,6 +1176,31 @@ test('diagnoseBusinessMtgTotals：今年度（P・Q列）と3年度分の売上�
   assert.ok(text.indexOf('　　案件として数えない行（得意先・案件名・ステータス・想定売上・期待値が空）にある売上（足していません）：10行目 9') >= 0);
 });
 
+test('diagnoseBusinessMtgTotals：状況・計画進捗の FY26（A〜D）と同じ数え方（受注月が今年度の行だけ）の合計と、FY26売上があるのに受注月で外した行（空・月として読めない・今年度の外）を出す', () => {
+  const {gas, g, sheet} = setup();
+  const fy = fiscalYear();
+  // 積み上げる月の列（plan.monthColumn）。テストでは売上開始月（M列）。資料では受注月
+  const month = g.mtgPlanMonthName_();
+  assert.strictEqual(month, '売上開始月');
+  sheet.getRange('M4').setValue('FY' + fy + '後半期');   // 月として読めない文字
+  sheet.getRange('M5').setValue('');                      // 空
+  const s1 = summarize(g, '新FMT');
+  assert.deepStrictEqual(plain(s1.salesOutlook.byYear[fy]), {A: 70, B: 0, C: 0, D: 0}, '資料は月が今年度の行だけ');
+  gas.promptAnswers = ['1'];
+  g.diagnoseBusinessMtgTotals();
+  const text = gas.alerts[gas.alerts.length - 1].message;
+  assert.ok(text.indexOf('　状況・計画進捗の FY' + fy + '（' + month + 'が今年度の行だけ。A〜D）：A 70・B 0・C 0・D 0（確定（A＋B）70）') >= 0, text);
+  assert.ok(text.indexOf('　　FY' + fy + 'の売上があるのに' + month + 'で外した行 2行（40。うち確定（A＋B）40）：') >= 0, text);
+  assert.ok(text.indexOf('　　　4行目 B 30（' + month + '「FY' + fy + '後半期」：月として読めない（「2026/04」の形か日付で入れると読みます））') >= 0, text);
+  assert.ok(text.indexOf('　　　5行目 B 10（' + month + '「」：' + month + 'が空）') >= 0, text);
+  assert.ok(!/A社|B社|C社/.test(text.split(month + 'で外した行')[1]), '得意先名は出さない');
+  // 受注月がすべて今年度なら「なし」
+  const fresh = setup();
+  fresh.gas.promptAnswers = ['1'];
+  fresh.g.diagnoseBusinessMtgTotals();
+  assert.ok(fresh.gas.alerts[fresh.gas.alerts.length - 1].message.indexOf('　　' + month + 'で外した行：なし') >= 0);
+});
+
 test('状況・計画進捗（FY売上）：今年度の売上の列が無いシートは、棒の場所に「データなし」と理由', () => {
   const {g} = setup();
   const s1 = summarize(g, '新FMT');

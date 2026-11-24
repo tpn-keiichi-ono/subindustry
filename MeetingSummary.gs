@@ -5889,6 +5889,9 @@ function mtgTotalsSalesLines_(table) {
     out.push('　　　' + status + '：' + mtgAmount_(st.value) + '（' + st.rows.length + '件：' + st.rows.slice(0, 20).join('・') +
       (st.rows.length > 20 ? ' ほか' + (st.rows.length - 20) + '件' : '') + '）');
   });
+  // 状況・計画進捗の FY26（A〜D）と FY26売上の積み上げは、受注月（plan.monthColumn）が今年度の月の行だけを足す。ここで同じ数え方の合計と、
+  // FY26売上があるのに受注月で外した行（受注月が空・月として読めない・今年度の外）を出す（シートの式と合わないときに、どの行の違いかを見る。2026/11/24）
+  out.push.apply(out, mtgTotalsMonthLines_(deals, keys));
   // 数値でない値（文字・エラー。足していない）
   const texts = [];
   span.forEach(sc => {
@@ -5907,6 +5910,48 @@ function mtgTotalsSalesLines_(table) {
       skipped.slice(0, 10).map(x => x.row + '行目 ' + mtgAmount_(span.reduce((t, sc) => t + (x.salesHalves[sc.key] || 0), 0))).join('・') +
       (skipped.length > 10 ? ' ほか' + (skipped.length - 10) + '行' : ''));
   }
+  return out;
+}
+
+/**
+ * diagnoseBusinessMtgTotals の、受注月で数える今年度の売上の行（mtgTotalsSalesLines_ から）：状況・計画進捗の FY26（A〜D）と同じ数え方
+ * （mtgSalesOutlookOf_：失注を除き、確度 A〜D、受注月が今年度の月の行の今年度の売上）の確度別の合計と、確定（A＋B）。
+ * A〜D で今年度の売上があるのに足していない行を、行番号・金額・受注月のセルの文字・理由で出す（得意先名は出さない）
+ */
+function mtgTotalsMonthLines_(deals, keys) {
+  const o = MTG_OPTIONS;
+  const ranks = (o.compact && o.compact.outlookRanks) || ['A', 'B', 'C', 'D'];
+  const sure = (o.compact && o.compact.sureRanks) || ['A', 'B'];
+  const now = new Date();
+  const start = mtgFiscalStart_(now);
+  const year = mtgFiscalYearKey_(now);
+  const monthName = mtgPlanMonthName_();
+  const sumOf = d => keys.reduce((t, k) => t + ((d.salesHalves || {})[k] || 0), 0);
+  const byRank = ranks.reduce((m, r) => (m[r] = 0, m), {});
+  const skipped = [];
+  deals.forEach(d => {
+    if (mtgExcludedStatus_(d.status)) return;
+    const rank = mtgPlanRank_(d.status);
+    if (ranks.indexOf(rank) < 0) return;
+    const v = sumOf(d);
+    if (!v) return;
+    const i = mtgSalesMonthIndex_(d.planMonth, start);
+    if (i != null && i >= 0 && i < 12) {
+      byRank[rank] += v;
+      return;
+    }
+    const text = String(d[o.plan.monthColumn + 'Text'] || '').trim();   // 積み上げる月の列のセルの文字（受注月なら orderMonthText）
+    const why = !text ? monthName + 'が空' : i == null ? '月として読めない（「2026/04」の形か日付で入れると読みます）' : '今年度の外';
+    skipped.push({row: d.row, rank, value: v, text, why});
+  });
+  const out = ['　状況・計画進捗の FY' + year + '（' + monthName + 'が今年度の行だけ。A〜D）：' + ranks.map(r => r + ' ' + mtgAmount_(byRank[r])).join('・') +
+    '（確定（' + sure.join('＋') + '）' + mtgAmount_(sure.reduce((t, r) => t + (byRank[r] || 0), 0)) + '）'];
+  if (!skipped.length) return out.concat(['　　' + monthName + 'で外した行：なし']);
+  const sureSkipped = skipped.filter(x => sure.indexOf(x.rank) >= 0);
+  out.push('　　FY' + year + 'の売上があるのに' + monthName + 'で外した行 ' + skipped.length + '行（' + mtgAmount_(skipped.reduce((t, x) => t + x.value, 0)) +
+    '。うち確定（' + sure.join('＋') + '）' + mtgAmount_(sureSkipped.reduce((t, x) => t + x.value, 0)) + '）：');
+  skipped.slice(0, 30).forEach(x => out.push('　　　' + x.row + '行目 ' + x.rank + ' ' + mtgAmount_(x.value) + '（' + monthName + '「' + x.text + '」：' + x.why + '）'));
+  if (skipped.length > 30) out.push('　　　ほか' + (skipped.length - 30) + '行');
   return out;
 }
 
