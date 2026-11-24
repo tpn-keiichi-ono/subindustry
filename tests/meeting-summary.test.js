@@ -3081,9 +3081,17 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
   const o = gas.get('MTG_OPTIONS').plan;
   const now = new Date(Date.UTC(2026, 9, 19, 3));   // 2026/10/19（今年度は 2026/4〜2027/3）
   const date = (y, m) => new gas.Date(Date.UTC(y, m - 1, 1, -9 + 12));
-  // 売上開始月：日付か「yyyy/MM」の文字だけ（33シナリオ ダッシュボード・パイプライン管理シートと同じ）
-  assert.deepStrictEqual(plain([g.mtgPlanMonth_(date(2026, 9)), g.mtgPlanMonth_('2026/12'), g.mtgPlanMonth_('2026/9'), g.mtgPlanMonth_('26/09'),
-    g.mtgPlanMonth_('2026年9月'), g.mtgPlanMonth_(12), g.mtgPlanMonth_('')]), [{y: 2026, m: 9}, {y: 2026, m: 12}, null, null, null, null, null]);
+  // 売上開始月：月の分かる書き方を読む（シートで FY26 の売上を集計している式と同じ。2026/11/24 から）
+  const months = {
+    '2026/12': {y: 2026, m: 12}, '2026/9': {y: 2026, m: 9}, '2026/09': {y: 2026, m: 9}, '26/09': {y: 2026, m: 9}, '27/1': {y: 2027, m: 1},
+    '2026年9月': {y: 2026, m: 9}, '2026年10月頃': {y: 2026, m: 10}, '2026年10頃': null, '2026-10': {y: 2026, m: 10}, '2026.10': {y: 2026, m: 10}, '2026/10/15': {y: 2026, m: 10},
+    ' 2026/11 ': {y: 2026, m: 11}, '2026/13': null, '2026/10以降': null, '2026/10（未定）': null, '未定': null, '不明': null, 'FY26後半期': null,
+    '2026年度': null, '26下期': null, '10/15': null, '': null
+  };
+  Object.keys(months).forEach(text => assert.deepStrictEqual(plain(g.mtgPlanMonth_(text)), months[text], '「' + text + '」'));
+  assert.deepStrictEqual(plain(g.mtgPlanMonth_(date(2026, 9))), {y: 2026, m: 9}, '日付');
+  assert.deepStrictEqual(plain(g.mtgPlanMonth_(46296)), {y: 2026, m: 10}, '日付のシリアル値（2026/10/01）');
+  assert.strictEqual(g.mtgPlanMonth_(12), null, '2000〜2099年の範囲でない数値は日付とみなさない');
   assert.deepStrictEqual(['A-受注済み(100%)', 'C-提案中(50%)', '創注-仮検討(10%)', 'Ｂ－クロージング中(70%)', '受注', ''].map(g.mtgPlanRank_),
     ['A', 'C', '創注', 'B', '未設定', '未設定']);
   const deal = (status, kind, weighted, month) => ({status, kind, weighted, planMonth: month ? g.mtgPlanMonth_(month) : null});
@@ -3094,7 +3102,7 @@ test('計画に対する積み上げ：今年度の売上開始月ごとの期�
     deal('創注-仮検討(10%)', 'active', 1, '2027/03'),
     deal('提案中', 'active', 4, '2026/06'),          // 確度の分からないステータスは「未設定」
     deal('D-ヒアリング中(20%)', 'active', null, '2026/12'),   // 期待値が空は 0
-    deal('C-提案中(50%)', 'active', 6, '26/09'),       // 読めない月
+    deal('C-提案中(50%)', 'active', 6, 'FY26後半期'),  // 月の無い書き方（時期未定）
     deal('D-ヒアリング中(20%)', 'active', 8, '2026/03'),   // 今年度より前
     deal('C-提案中(50%)', 'active', 9, '2027/05'),     // 来年度以降
     deal('失注', 'lost', 0, '2026/10'),

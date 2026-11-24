@@ -5941,7 +5941,7 @@ function mtgTotalsMonthLines_(deals, keys) {
       return;
     }
     const text = String(d[o.plan.monthColumn + 'Text'] || '').trim();   // 積み上げる月の列のセルの文字（受注月なら orderMonthText）
-    const why = !text ? monthName + 'が空' : i == null ? '月として読めない（「2026/04」の形か日付で入れると読みます）' : '今年度の外';
+    const why = !text ? monthName + 'が空' : i == null ? '月として読めない（日付か「2026/4」「26/10」「2026年10月」のように年と月を入れると読みます）' : '今年度の外';
     skipped.push({row: d.row, rank, value: v, text, why});
   });
   const out = ['　状況・計画進捗の FY' + year + '（' + monthName + 'が今年度の行だけ。A〜D）：' + ranks.map(r => r + ' ' + mtgAmount_(byRank[r])).join('・') +
@@ -7008,13 +7008,27 @@ function mtgPortfolioMapSlide_(p, t, prevT) {
 /* ---------------- 計画に対する積み上げ ---------------- */
 
 /**
- * 計画に対する積み上げの月（MTG_OPTIONS.plan.monthColumn の列。今は受注月）。日付か「yyyy/MM」の文字（2000年以降）のときだけ月とみなす（33シナリオ ダッシュボード・パイプライン管理シートと同じ。
- * 「26/09」「2026年度後半期」などは時期未定）。{y, m} か null
+ * 計画に対する積み上げの月（MTG_OPTIONS.plan.monthColumn の列。今は受注月）。{y, m} か null（時期未定）。
+ * 月の分かる書き方を読む（2026/11/24 から。シートで FY26 の売上を集計している式（REGEXMATCH）と同じ。前は日付と「yyyy/MM」だけ）：
+ * 日付・日付のシリアル値（数値）、文字は「2026/4」「2026/04」「26/10」「2026年10月」「2026-10」「2026.10」「2026/10/15」のように、
+ * 年（4桁か下2桁。下2桁は 20xx）・区切り（/ 年 . -）・月（1〜2桁）で始まり、月のあとが区切り（/ 月 . -）か終わり。
+ * 「未定」「未確定」「不明」「以降」「以後」を含む文字は時期未定（「2026/10以降」も）。月の無い書き方（「FY26後半期」「2026年度」）も時期未定
  */
 function mtgPlanMonth_(value) {
   if (value && typeof value.getTime === 'function') return mtgMonth_(value);
-  const m = /^(\d{4})\/(\d{2})$/.exec(String(value == null ? '' : value).trim());
-  return m && Number(m[1]) >= 2000 && Number(m[2]) >= 1 && Number(m[2]) <= 12 ? {y: Number(m[1]), m: Number(m[2])} : null;
+  // 数値は日付のシリアル値（1900/12/30 からの日数）とみなす（2000〜2099年の範囲だけ。シートの式の ISNUMBER と同じ）
+  if (typeof value === 'number' && isFinite(value)) {
+    if (value < 36526 || value >= 73051) return null;
+    const d = new Date(Math.round((value - 25569) * 86400000));
+    return {y: d.getUTCFullYear(), m: d.getUTCMonth() + 1};
+  }
+  const text = String(value == null ? '' : value).trim();
+  if (!text || /未定|未確定|不明|以降|以後/.test(text)) return null;
+  const m = /^(\d{4}|\d{2})[/年.-](\d{1,2})(?:[/月.-]|$)/.exec(text);
+  if (!m) return null;
+  const y = m[1].length === 2 ? 2000 + Number(m[1]) : Number(m[1]);
+  const mo = Number(m[2]);
+  return y >= 2000 && mo >= 1 && mo <= 12 ? {y, m: mo} : null;
 }
 
 /** 積み上げる月の名前（「受注月」。plan.monthColumn の列の短い名前） */

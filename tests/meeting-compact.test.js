@@ -1191,7 +1191,7 @@ test('diagnoseBusinessMtgTotals：状況・計画進捗の FY26（A〜D）と同
   const text = gas.alerts[gas.alerts.length - 1].message;
   assert.ok(text.indexOf('　状況・計画進捗の FY' + fy + '（' + month + 'が今年度の行だけ。A〜D）：A 70・B 0・C 0・D 0（確定（A＋B）70）') >= 0, text);
   assert.ok(text.indexOf('　　FY' + fy + 'の売上があるのに' + month + 'で外した行 2行（40。うち確定（A＋B）40）：') >= 0, text);
-  assert.ok(text.indexOf('　　　4行目 B 30（' + month + '「FY' + fy + '後半期」：月として読めない（「2026/04」の形か日付で入れると読みます））') >= 0, text);
+  assert.ok(text.indexOf('　　　4行目 B 30（' + month + '「FY' + fy + '後半期」：月として読めない（日付か「2026/4」「26/10」「2026年10月」のように年と月を入れると読みます））') >= 0, text);
   assert.ok(text.indexOf('　　　5行目 B 10（' + month + '「」：' + month + 'が空）') >= 0, text);
   assert.ok(!/A社|B社|C社/.test(text.split(month + 'で外した行')[1]), '得意先名は出さない');
   // 受注月がすべて今年度なら「なし」
