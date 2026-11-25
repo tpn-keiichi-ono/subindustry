@@ -185,7 +185,8 @@ const MTG_OPTIONS = {
     // 状況・計画進捗（FY26〜28売上）（②）のあとに足すパターンのページ（2026/11/25）：'withSouchu' は FY26 に創注まで入れたもの（outlookRanks に創注が
     // 入っていれば作らない）、'merged' は FY26 を確度で分けない（合算の1色）もの。[] なら足さない
     // 'laterSure' は FY27〜28 を確定（A＋B）の案件だけにしたもの（FY26 は②と同じ）、'fy27Sure' は FY27（確定（A＋B）の案件だけ）までにしたもの
-    outlookSpanPatterns: ['withSouchu', 'merged', 'laterSure', 'fy27Sure'],
+    // 'fy26_27Sure' は FY26・FY27 とも確定（A＋B）の案件だけ（FY28 は入れない）
+    outlookSpanPatterns: ['withSouchu', 'merged', 'laterSure', 'fy27Sure', 'fy26_27Sure'],
     // FY26〜28 のページの、来年度以降の売上の色（確度によらない。今年度の確度の緑と分ける）：[来年度（FY27）, 再来年度（FY28）]。
     // 年度ごとに通期で1色（今年度の緑から色相環の順に、青 → 紫。同じ明るさ）。累計の棒では、年度の中の前半期・後半期の境目に白い点線（2026/11/12）
     laterColors: ['#5B9BD5', '#966BC7'],

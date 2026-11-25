@@ -361,6 +361,11 @@ function mtgCompactSpanPatterns_() {
   return (C.outlookSpanPatterns || []).map(name => {
     if (name === 'withSouchu') return souchu.length ? {keys: keys.concat(souchu), titleNote: souchu.join('・') + 'を含む'} : null;
     if (name === 'merged') return {merged: true, titleNote: 'FY' + mtgFiscalYearKey_(new Date()) + '合算'};
+    if (name === 'fy26_27Sure') {
+      const y = Number(mtgFiscalYearKey_(new Date()));
+      const sure = C.sureRanks || ['A', 'B'];
+      return {keys: sure, laterSure: true, oneYear: true, titleNote: 'FY' + ('0' + (y % 100)).slice(-2) + '〜' + ('0' + ((y + 1) % 100)).slice(-2) + 'は' + sure.join('＋')};
+    }
     if (name === 'fy27Sure') {
       const y = Number(mtgFiscalYearKey_(new Date()));
       return {laterSure: true, oneYear: true, titleNote: 'FY' + ('0' + ((y + 1) % 100)).slice(-2) + 'は' + (C.sureRanks || ['A', 'B']).join('＋')};
@@ -404,7 +409,8 @@ function mtgCompactOutlookSpanSlide_(summaries, options) {
   const last = ('0' + ((Number(year) + 2) % 100)).slice(-2);
   const endY = oneYear ? next : last;   // 全体合計の最後の年度
   const fy = y => 'FY' + y;
-  const range = keys[0] + '〜' + keys[keys.length - 1];
+  // 確度の範囲の書き方（「A〜D」。2つなら「A＋B」）
+  const range = keys.length === 2 ? keys.join('＋') : keys[0] + '〜' + keys[keys.length - 1];
   const thisOf = p => keys.reduce((t, k) => t + (((p.byYear || {})[year] || {})[k] || 0), 0);
   const laterOf = (p, y) => ((laterSure ? p.laterSure : p.later) || {})[y] || 0;
   const rowOf = (name, p, total) => ({name, total, p, gap: p.gap, plan: p.plan || 0, v0: thisOf(p), v1: laterOf(p, next), v2: oneYear ? 0 : laterOf(p, last)});
