@@ -943,7 +943,10 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
   右の列は計画・進捗率（A＋B）・確定（A＋B）・見込（C）・見込（D）（FY26）。FY27 以降は②。
   ②（FY26〜28売上。`mtgCompactOutlookSpanSlide_`）横棒は今年度の A〜D（①と同じ色の内訳）に、FY27〜28 の売上の合計（受注月・確度によらない。薄いグレー
   `compact.laterBarColor`）を続けた総額（右に総額）。FY26 の計画の位置に点線（棒の下に描く。総額の数が点線にかかれば点線の右）。
-  ①の見込の列は `outlookRanks` のうち確定（`sureRanks`）でない確度ごと（創注を入れれば「見込（創注）」も）。右の列は売上（FY26・A〜D の合算）・売上（FY27）・売上（FY28）・合計（FY27〜28）・全体合計（FY26〜28）。
+  ①の見込の列は `outlookRanks` のうち確定（`sureRanks`）でない確度ごと（創注を入れれば「見込（創注）」も）。
+  ②のあとにパターンのページ（`compact.outlookSpanPatterns`。`mtgCompactSpanPatterns_` → `mtgCompactOutlookSpanSlide_(summaries, {keys | merged, titleNote})`）：
+  'withSouchu'（FY26 に創注まで。`salesOutlook.byYear` には創注も残す。全体合計 `all` は `outlookRanks` だけ）・'merged'（FY26 は合算の1色 `compact.thisYearColor`）。
+  ページの数は `mtgCompactFrontCount_` に足す。右の列は売上（FY26・A〜D の合算）・売上（FY27）・売上（FY28）・合計（FY27〜28）・全体合計（FY26〜28）。
   件数は出さない。中身は `summary.salesOutlook` = `mtgSalesOutlookOf_`
   （{year, years, plan, byYear: {'26': {A, B, C, D}}, later: {'27', '28'}, halves: [{year, half, value}], all, gap}。`mtgCombinedLite_` にも入れる）。
   売上・受注月の列が無いシートは「データなし」、合計は ※。

@@ -77,7 +77,7 @@ function mtgCompactFrontCount_(part) {
   const kinds = (C.salesPage ? 1 : 0) + (mtgCompactAmountOn_() ? 1 : 0);
   // 売上のページを FY26〜28 のページにする（outlookPage）ときは、状況・計画進捗が2枚（①FY26の内訳・②FY26〜28。2026/11/25 から。前は1枚）で、
   // 計画に対する積み上げは FY26だけの2枚と FY26〜28 の2枚
-  const outlook = C.salesPage && C.outlookPage ? (MTG_OPTIONS.plan.enabled ? 2 : 0) : 0;
+  const outlook = C.salesPage && C.outlookPage ? (MTG_OPTIONS.plan.enabled ? 2 : 0) + mtgCompactSpanPatterns_().length : 0;
   return 1 + kinds * (MTG_OPTIONS.plan.enabled ? 4 : 2) + outlook;
 }
 
@@ -188,6 +188,7 @@ function mtgCompactFront_(summaries, meeting, final, now, part) {
     // 売上のページ：FY26〜28 のページ（outlookPage。2026/11/12 から）か、前の今年度の売上の2枚（FY26売上・見込（C）を含む）
     // FY26〜28 の版は、①FY26の内訳（確度 A〜D と計画）と②FY26〜28（FY26 は合算・FY27・FY28・総額）の2枚（2026/11/25 に1枚から分けた）
     const status = [].concat(!C.salesPage ? [] : C.outlookPage ? [mtgCompactOutlookSlide_(summaries), mtgCompactOutlookSpanSlide_(summaries)]
+      .concat(mtgCompactSpanPatterns_().map(pt => mtgCompactOutlookSpanSlide_(summaries, pt)))
       : [mtgCompactOverviewSlide_(summaries, {sales: true}), mtgCompactOverviewSlide_(summaries, {sales: true, withC: true})],
       amountOn ? [mtgCompactOverviewSlide_(summaries), mtgCompactOverviewSlide_(summaries, {withC: true})] : []);
     return mtgNumberSlides_(mtgCombinedFrame_(summaries, meeting, final),
@@ -344,19 +345,40 @@ function mtgCompactOutlookSlide_(summaries) {
 }
 
 /**
+ * 状況・計画進捗（FY26〜28売上）（②）のあとに足すパターンのページの options（compact.outlookSpanPatterns の順）：
+ * 'withSouchu' → FY26 に創注まで入れる {keys, titleNote: '創注を含む'}（outlookRanks に創注が入っていれば作らない）、'merged' → FY26 を確度で分けない
+ * {merged, titleNote: 'FY26合算'}。titleNote はタイトルの括弧の中に足す（「（FY26〜28売上・創注を含む）」。1行に入る長さ）
+ */
+function mtgCompactSpanPatterns_() {
+  const o = MTG_OPTIONS;
+  const C = o.compact;
+  const keys = C.outlookRanks || ['A', 'B', 'C', 'D'];
+  const souchu = o.plan.ranks.map(r => r.key).filter(k => keys.indexOf(k) < 0);
+  return (C.outlookSpanPatterns || []).map(name => {
+    if (name === 'withSouchu') return souchu.length ? {keys: keys.concat(souchu), titleNote: souchu.join('・') + 'を含む'} : null;
+    if (name === 'merged') return {merged: true, titleNote: 'FY' + mtgFiscalYearKey_(new Date()) + '合算'};
+    return null;
+  }).filter(Boolean);
+}
+
+/**
  * 全サブインダストリーの状況・計画進捗（FY26〜28売上）（②。2026/11/25）：横棒は今年度の売上（確度 A〜D の内訳。①と同じ色）に、
  * FY27〜28 の売上の合計（受注月・確度によらない。薄いグレー）を続けた棒（右に総額）。右の列：売上（FY26。A〜D の合算）・売上（FY27）・売上（FY28）｜
  * FY27〜28 の合計｜全体合計（FY26〜28。棒の長さと同じ。状況・計画進捗の全体合計）。計画は今年度だけの目標なので入れない（①のページ）。
  * 並びはシートの順、いちばん下に合計。中身は summary.salesOutlook。列が無いシートは、棒の場所に「データなし」と理由（合計はそのシートを除いて ※）
  */
-function mtgCompactOutlookSpanSlide_(summaries) {
+function mtgCompactOutlookSpanSlide_(summaries, options) {
   const S = MTG_SLIDE;
   const o = MTG_OPTIONS;
   const c = o.colors;
   const G = o.gapText;
   const C = o.compact;
   const now = summaries.length && summaries[0].now ? new Date(summaries[0].now) : new Date();
-  const keys = C.outlookRanks || ['A', 'B', 'C', 'D'];
+  // options（パターンのページ。mtgCompactSpanPatterns_）：keys は FY26 に入れる確度（創注まで入れる）、merged は FY26 を確度で分けない（合算の1色）、
+  // titleNote はタイトルの後ろ（「：創注を含む」）
+  const opt = options || {};
+  const keys = opt.keys || C.outlookRanks || ['A', 'B', 'C', 'D'];
+  const merged = !!opt.merged;
   const outlookOf = s => s.salesOutlook || mtgSalesOutlookOf_([], s.name, now, {});
   const items = summaries.map(s => ({name: s.name, p: outlookOf(s)}));
   const ok = items.filter(z => !z.p.gap);
@@ -376,14 +398,17 @@ function mtgCompactOutlookSpanSlide_(summaries) {
   const marked = ok.length < items.length;
   const laterWord = fy(next) + '〜' + last;
   const lead = fy(year) + '〜' + last + 'の売上の全体合計は ' + mtgAmount_(sum.all) + '百万円（失注除く）。' + fy(year) + ' ' + mtgAmount_(sum.v0) + '（' + range +
-    '）・' + laterWord + ' ' + mtgAmount_(sum.later) + '。\n' + '棒は ' + fy(year) + ' の ' + range + ' に ' + laterWord + ' の合計（グレー。' + mtgPlanMonthName_() +
+    '）・' + laterWord + ' ' + mtgAmount_(sum.later) + '。\n' + '棒は ' + fy(year) + ' の ' + range + (merged ? '（合算）' : '') + ' に ' + laterWord + ' の合計（グレー。' + mtgPlanMonthName_() +
     '・確度によらない）を続けた総額。点線は ' + fy(year) + 'の計画。';
   // 棒の色：今年度は確度 A〜D の色で内訳を残し（①と同じ）、FY27〜28 は薄いグレー（compact.laterBarColor。受注月・確度によらない売上なので確度の色と分ける）
   const light = {C: true, D: true, '創注': true};   // 薄い色の確度は、棒の中の値を濃い緑の字に
-  const segs = keys.map(k => o.plan.ranks.find(r => r.key === k)).filter(Boolean)
-    .map(r => ({key: r.key, label: r.key, color: r.color, text: light[r.key] ? c.greenDark : c.white}))
+  // merged なら今年度は合算の1色（compact.thisYearColor）
+  const segs = (merged ? [{key: 'v0', label: fy(year) + '（' + range + '）', color: C.thisYearColor || '#70AD47', text: c.white}]
+    : keys.map(k => o.plan.ranks.find(r => r.key === k)).filter(Boolean)
+      .map(r => ({key: r.key, label: r.key, color: r.color, text: light[r.key] ? c.greenDark : c.white})))
     .concat([{key: 'later', label: laterWord, color: C.laterBarColor || '#D9D9D9', text: c.sub}]);
-  const segValue = (r, key) => (key === 'later' ? r.later : ((r.p || {}).byYear || {})[year] ? (r.p.byYear[year][key] || 0) : 0);
+  const segValue = (r, key) => (key === 'later' ? r.later : key === 'v0' ? r.v0
+    : ((r.p || {}).byYear || {})[year] ? (r.p.byYear[year][key] || 0) : 0);
   const x = S.x;
   const w = S.w;
   const y = S.top;
@@ -478,8 +503,8 @@ function mtgCompactOutlookSpanSlide_(summaries) {
         {size: gap ? 7.5 : 8, bold: !gap && (!!r.total || strong), color: gap ? c.muted : c.ink, align: 'END', role: 'compact-value'}));
     });
   });
-  return Object.assign({title: MTG_TITLES.compactOverview + '（' + fy(year) + '〜' + last + '売上）', lead, elements: el},
-    marked ? {note: '※ のある合計は「' + G + '」のシートを除く'} : {});
+  return Object.assign({title: MTG_TITLES.compactOverview + '（' + fy(year) + '〜' + last + '売上' + (opt.titleNote ? '・' + opt.titleNote : '') + '）', lead,
+    elements: el}, marked ? {note: '※ のある合計は「' + G + '」のシートを除く'} : {});
 }
 
 /**
