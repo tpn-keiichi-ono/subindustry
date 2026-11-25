@@ -279,6 +279,9 @@ const MTG_OPTIONS = {
   // ひな形のページの、置き換える文字。文字の枠ごとに書き換える（見出しとその下の文字が同じ「XXXXX」なので、文字の大きい順・上から順に
   // 見出し → その下の文字に当てる。5文字以上の X は同じとみなす。mtgTemplateTextRequests_）
   templateTexts: {title: 'XXXXX', subtitle: 'XXXXX', date: '2026年 4月 17日', name: 'XXXX'},
+  // ひな形の白紙のレイアウトにスライド番号の枠があれば、表紙・扉でないスライドはその枠（自動の番号。ページを足す・消すと Google スライド・PDF・PowerPoint で
+  // 振り直す）を残し、資料が描く文字のページ番号は消す（2026/11/25。前は枠を消して文字のページ番号だけにしていた）。false なら前のまま
+  layoutSlideNumber: true,
   meetingsKeyPrefix: 'MTG_MEETINGS_', // シートごとの会議日と資料を作った日時（ドキュメントのプロパティ。後ろにシート名）
   draftKeyPrefix: 'MTG_DRAFT_',       // シートごとの、会議日ごとの最初の試作の入力内容のチェックの結果（解消した件数を出す用）
   lastKeyPrefix: 'MTG_LAST_',         // 前の版の「前回の作成日時」（会議日の記録が無いときだけ使う）
@@ -9402,7 +9405,9 @@ function mtgExportDeck_(name, slides, folder, options) {
       requests = requests.concat(add);
     });
     flush();
-    const extra = mtgPlaceholderRequests_(Slides.Presentations.get(deck.presentationId, {fields: F.placeholders}), slides.map((slide, i) => 'mtg_p' + (i + 1)));
+    const numbers = {};
+    slides.forEach((slide, i) => { if (!plan.pageOf[i] && mtgPageNumberId_(slide, 'mtg_p' + (i + 1))) numbers['mtg_p' + (i + 1)] = mtgPageNumberId_(slide, 'mtg_p' + (i + 1)); });
+    const extra = mtgPlaceholderRequests_(Slides.Presentations.get(deck.presentationId, {fields: F.placeholders}), slides.map((slide, i) => 'mtg_p' + (i + 1)), numbers);
     // ページへのリンク（目次）：リンク先のスライドができてから付ける（部品の ID は「mtg_p{ページ}_{部品の番号}」）
     const pageId = i => plan.pageOf[i] || 'mtg_p' + (i + 1);
     slides.forEach((slide, i) => slide.elements.forEach((el, n) => {
@@ -9569,6 +9574,9 @@ function mtgDeckAdd_(state, slides, offset) {
     } else {
       add = mtgSlideRequests_(slide, own, i, {scale: state.scale});
       if (slide.cover || slide.divider) state.covers.push({id: own, tone: mtgCoverTone_(slide)});
+      // 文字のページ番号の部品（仕上げで、レイアウトのスライド番号の枠があれば消す。mtgPlaceholderRequests_）
+      const num = mtgPageNumberId_(slide, own);
+      if (num) (state.numbers = state.numbers || {})[own] = num;
     }
     // ページへのリンク（目次）は、仕上げで付ける（リンク先のスライドができてから）
     slide.elements.forEach((el, n) => {
@@ -9594,7 +9602,7 @@ function mtgDeckFinish_(state, name, folder, existing) {
   const pageId = i => (state.dups.indexOf(i) >= 0 ? 'mtg_t' : 'mtg_p') + (i + 1);
   const extra = state.templated ? state.pages.map(id => ({deleteObject: {objectId: id}})) : [];
   extra.push.apply(extra, mtgPlaceholderRequests_(Slides.Presentations.get(state.id, {fields: MTG_SLIDES_FIELDS.placeholders}),
-    index.map(i => 'mtg_p' + (i + 1))));
+    index.map(i => 'mtg_p' + (i + 1)), state.numbers || {}));
   state.links.forEach(link => {
     if (link.to < 0 || link.to >= state.added) return;
     extra.push({updateTextStyle: {objectId: link.id, textRange: {type: 'ALL'}, style: {link: {pageObjectId: pageId(link.to)},
@@ -9654,15 +9662,30 @@ function mtgPdfFitLinks_(blob) {
 }
 
 /**
- * 足したスライド（pageIds）に付いたレイアウトのプレースホルダ（ページ番号・日付・フッターの枠）を消すリクエスト。
- * ひな形のレイアウトにはページ番号の枠があり、白紙のスライドにも付くと、mtgFrame_ のページ番号と2つ出るため。表紙・扉（ひな形のページ）はそのまま
+ * 足したスライド（pageIds）のレイアウトの枠（プレースホルダ）を消すリクエスト。numbers = {スライドの ID: 文字のページ番号の部品の ID}（表紙・扉でないスライド）：
+ * そのスライドにレイアウトのスライド番号の枠（SLIDE_NUMBER。ひな形の白紙のレイアウトにある）があれば、その枠を残して文字のページ番号のほうを消す
+ * （スライド番号は自動の番号なので、Google スライド・PDF・PowerPoint で、ページを足す・消すと振り直す。2026/11/25。MTG_OPTIONS.layoutSlideNumber）。
+ * スライド番号の枠が無ければ、文字のページ番号のまま。表紙・扉のスライド番号の枠・フッターなどの枠は消す
  */
-function mtgPlaceholderRequests_(deck, pageIds) {
+function mtgPlaceholderRequests_(deck, pageIds, numbers) {
   const own = new Set(pageIds);
+  const keepNumber = MTG_OPTIONS.layoutSlideNumber !== false;
   const requests = [];
-  (deck.slides || []).filter(sl => own.has(sl.objectId)).forEach(sl => (sl.pageElements || [])
-    .filter(el => el.shape && el.shape.placeholder).forEach(el => requests.push({deleteObject: {objectId: el.objectId}})));
+  (deck.slides || []).filter(sl => own.has(sl.objectId)).forEach(sl => {
+    const holders = (sl.pageElements || []).filter(el => el.shape && el.shape.placeholder);
+    const text = keepNumber && numbers && numbers[sl.objectId];
+    const kept = text ? holders.find(el => el.shape.placeholder.type === 'SLIDE_NUMBER') : null;
+    holders.filter(el => el !== kept).forEach(el => requests.push({deleteObject: {objectId: el.objectId}}));
+    if (kept) requests.push({deleteObject: {objectId: text}});
+  });
   return requests;
+}
+
+/** 表紙・扉でないスライドの、文字のページ番号の部品の ID（mtgPlaceholderRequests_ の numbers に入れる。無ければ null） */
+function mtgPageNumberId_(slide, own) {
+  if (slide.cover || slide.divider) return null;
+  const n = (slide.elements || []).findIndex(el => el.role === 'page');
+  return n >= 0 ? own + '_' + n : null;
 }
 
 /**

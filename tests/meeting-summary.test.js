@@ -1918,11 +1918,25 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   assert.strictEqual(gas.fetches.length, fetched, '.pptx を更新していなければ、変換し直さない');
   const deck = gas.decks.find(d => d.template === id);
   const r = plain(deck.requests);
-  assert.deepStrictEqual(r.filter(q => q.deleteObject && /_ph\d$/.test(q.deleteObject.objectId)).map(q => q.deleteObject.objectId),
-    ['mtg_p2_ph0', 'mtg_p2_ph1', 'mtg_p3_ph0', 'mtg_p3_ph1', 'mtg_p4_ph0', 'mtg_p4_ph1', 'mtg_p5_ph0', 'mtg_p5_ph1', 'mtg_p6_ph0', 'mtg_p6_ph1',
-      'mtg_p7_ph0', 'mtg_p7_ph1', 'mtg_p9_ph0', 'mtg_p9_ph1', 'mtg_p10_ph0', 'mtg_p10_ph1', 'mtg_p11_ph0', 'mtg_p11_ph1', 'mtg_p12_ph0', 'mtg_p12_ph1'],
-    '足したスライドのレイアウトの枠（ページ番号など）は消す（ページ番号が2つ出ないように）');
-  assert.ok(deck.slides.every(sl => !(sl.pageElements || []).some(el => el.shape && el.shape.placeholder)));
+  // 足したスライドのレイアウトの枠：スライド番号の枠（自動の番号。ページを足す・消すと振り直す）は残し、資料が描く文字のページ番号のほうを消す
+  // （ページ番号が2つ出ないように。2026/11/25 から。前は枠を消していた）。フッターなどの枠は消す
+  const added = ['mtg_p2', 'mtg_p3', 'mtg_p4', 'mtg_p5', 'mtg_p6', 'mtg_p7', 'mtg_p9', 'mtg_p10', 'mtg_p11', 'mtg_p12'];
+  assert.deepStrictEqual(r.filter(q => q.deleteObject && /_ph\d$/.test(q.deleteObject.objectId)).map(q => q.deleteObject.objectId), added.map(p => p + '_ph1'));
+  const pageTexts = r.filter(q => q.insertText && /^mtg_p\d+_\d+$/.test(q.insertText.objectId) && /^\d+$/.test(q.insertText.text));
+  const removed = r.filter(q => q.deleteObject && /^mtg_p\d+_\d+$/.test(q.deleteObject.objectId)).map(q => q.deleteObject.objectId);
+  assert.deepStrictEqual(removed, added.map(p => pageTexts.find(q => q.insertText.objectId.indexOf(p + '_') === 0).insertText.objectId), '文字のページ番号を消す');
+  assert.ok(deck.slides.filter(sl => added.indexOf(sl.objectId) >= 0).every(sl => sl.pageElements.filter(el => el.shape && el.shape.placeholder)
+    .map(el => el.shape.placeholder.type).join() === 'SLIDE_NUMBER'), 'スライド番号の枠だけ残る');
+  // 設定（layoutSlideNumber: false）で前のまま（枠を消して文字のページ番号）
+  assert.strictEqual(plain(g.mtgPlaceholderRequests_({slides: [{objectId: 'a', pageElements: [{objectId: 'a_ph0', shape: {placeholder: {type: 'SLIDE_NUMBER'}}}]}]},
+    ['a'], {a: 'a_9'})).map(q => q.deleteObject.objectId).join(), 'a_9');
+  gas.get('MTG_OPTIONS').layoutSlideNumber = false;
+  assert.strictEqual(plain(g.mtgPlaceholderRequests_({slides: [{objectId: 'a', pageElements: [{objectId: 'a_ph0', shape: {placeholder: {type: 'SLIDE_NUMBER'}}}]}]},
+    ['a'], {a: 'a_9'})).map(q => q.deleteObject.objectId).join(), 'a_ph0');
+  gas.get('MTG_OPTIONS').layoutSlideNumber = true;
+  // スライド番号の枠が無いレイアウトなら、文字のページ番号のまま
+  assert.strictEqual(plain(g.mtgPlaceholderRequests_({slides: [{objectId: 'a', pageElements: [{objectId: 'a_ph0', shape: {placeholder: {type: 'FOOTER'}}}]}]},
+    ['a'], {a: 'a_9'})).map(q => q.deleteObject.objectId).join(), 'a_ph0');
   assert.deepStrictEqual(r[0], {deleteObject: {objectId: 'g_combined'}}, '使わないページ（統合版の表紙）は消す');
   assert.deepStrictEqual(deck.batches[0], 1, '先に消して（複製して）から、ひな形のページを読み直す');
   assert.ok(!r.some(q => q.duplicateObject || q.replaceAllText), '1回ずつなので複製しない。同じ文字の枠が2つあるので replaceAllText は使わない');

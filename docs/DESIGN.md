@@ -992,6 +992,9 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
   `mtgMovesSlide_` の `options.all` で、上から `mainRows.changes`（7件）までにせず全件を載せ（入らなければ「（続き）」のページ）、リード文に「全件は Appendix ① を参照」と書きません。
   報告フラグにチェックした案件は、報告案件のスライドがあるので表に載せない（`options.exclude`。報告案件のキー。リード文に「（報告案件 N件を除く）」。2026/11/11 から）。前の版・統合版の表は今のまま（7件まで。報告案件も載せる）。
   報告案件のスライドの受注月の枠は左右に分け、右に「年度別売上（百万）」（`report.salesLabel`。右の枠は見出しが1行に入る幅。`mtgReportSales_`。今年度から `report.salesYears` 年度分の、年度別の売上の列の前半期＋後半期。`summary.salesYears` に列のある年度）。
+- ページ番号（2026/11/25）：足したスライドに付くひな形の白紙のレイアウトのスライド番号の枠（SLIDE_NUMBER のプレースホルダ。自動の番号）を残し、
+  `mtgFrame_` の文字のページ番号（role 'page'）を消す（`mtgPlaceholderRequests_` の numbers。`mtgPageNumberId_`。区切って作るときは `state.numbers`）。
+  前は枠を消して文字のページ番号にしていた（ページを足しても番号が変わらなかった）。枠が無いレイアウト・`layoutSlideNumber: false` なら文字のページ番号。
 - PowerPoint（`mtgExportPptx_`）は、書き出したファイルのページ番号を PowerPoint のスライド番号のフィールド（`<a:fld type="slidenum">`）に置き換える
   （`mtgPptxSlideNumbers_`。zip を開いて各スライドの右下の数字だけの箱の文字を置き換え、zip に戻す。できなければ書き出したまま。2026/11/25）。
   Slides API では自動のページ番号を入れられないので、Google スライド・PDF は文字のまま。
