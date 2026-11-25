@@ -184,7 +184,8 @@ const MTG_OPTIONS = {
     outlookRanks: ['A', 'B', 'C', 'D'],
     // 状況・計画進捗（FY26〜28売上）（②）のあとに足すパターンのページ（2026/11/25）：'withSouchu' は FY26 に創注まで入れたもの（outlookRanks に創注が
     // 入っていれば作らない）、'merged' は FY26 を確度で分けない（合算の1色）もの。[] なら足さない
-    outlookSpanPatterns: ['withSouchu', 'merged'],
+    // 'laterSure' は FY27〜28 を確定（A＋B）の案件だけにしたもの（FY26 は②と同じ）
+    outlookSpanPatterns: ['withSouchu', 'merged', 'laterSure'],
     // FY26〜28 のページの、来年度以降の売上の色（確度によらない。今年度の確度の緑と分ける）：[来年度（FY27）, 再来年度（FY28）]。
     // 年度ごとに通期で1色（今年度の緑から色相環の順に、青 → 紫。同じ明るさ）。累計の棒では、年度の中の前半期・後半期の境目に白い点線（2026/11/12）
     laterColors: ['#5B9BD5', '#966BC7'],
@@ -7192,7 +7193,7 @@ function mtgSalesOutlookOf_(deals, name, now, table) {
   // 今年度の確度別は、創注も足しておく（状況・計画進捗（FY26〜28売上）の「創注まで入れたパターン」のページ。2026/11/25）。全体合計（all）は ranks だけ
   const kept = ranks.concat(o.plan.ranks.map(r => r.key).filter(k => ranks.indexOf(k) < 0));
   const out = {year, years, plan: mtgPlanAmount_(name), byYear: {[year]: kept.reduce((m, k) => (m[k] = 0, m), {})},
-    later: {[years[1]]: 0, [years[2]]: 0}, halves: [years[1], years[2]].reduce((list, y) => list.concat(['前', '後'].map(h => ({year: y, half: h, value: 0}))), []),
+    later: {[years[1]]: 0, [years[2]]: 0}, laterSure: {[years[1]]: 0, [years[2]]: 0}, halves: [years[1], years[2]].reduce((list, y) => list.concat(['前', '後'].map(h => ({year: y, half: h, value: 0}))), []),
     all: 0, gap: ''};
   const has = (table.salesYears || []).indexOf(year) >= 0;
   const noMonth = table.has && !table.has[o.plan.monthColumn];
@@ -7202,13 +7203,15 @@ function mtgSalesOutlookOf_(deals, name, now, table) {
   const start = mtgFiscalStart_(now);
   deals.forEach(d => {
     if (mtgExcludedStatus_(d.status)) return;
-    // 来年度以降：受注月・確度によらない
+    // 来年度以降：受注月・確度によらない（laterSure は確定（A＋B。compact.sureRanks）の案件だけ。パターンのページ。2026/11/25）
+    const rank = mtgPlanRank_(d.status);
+    const sureRank = ((o.compact && o.compact.sureRanks) || ['A', 'B']).indexOf(rank) >= 0;
     out.halves.forEach(h => {
       const v = (d.salesHalves || {})[h.year + h.half] || 0;
       h.value += v;
       out.later[h.year] += v;
+      if (sureRank) out.laterSure[h.year] += v;
     });
-    const rank = mtgPlanRank_(d.status);
     if (kept.indexOf(rank) < 0) return;
     const i = mtgSalesMonthIndex_(d.planMonth, start);
     if (i == null || i < 0 || i >= 12) return;

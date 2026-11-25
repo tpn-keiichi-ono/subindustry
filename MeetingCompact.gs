@@ -357,6 +357,10 @@ function mtgCompactSpanPatterns_() {
   return (C.outlookSpanPatterns || []).map(name => {
     if (name === 'withSouchu') return souchu.length ? {keys: keys.concat(souchu), titleNote: souchu.join('・') + 'を含む'} : null;
     if (name === 'merged') return {merged: true, titleNote: 'FY' + mtgFiscalYearKey_(new Date()) + '合算'};
+    if (name === 'laterSure') {
+      const y = Number(mtgFiscalYearKey_(new Date()));
+      return {laterSure: true, titleNote: 'FY' + ('0' + ((y + 1) % 100)).slice(-2) + '〜' + ('0' + ((y + 2) % 100)).slice(-2) + 'は' + (C.sureRanks || ['A', 'B']).join('＋')};
+    }
     return null;
   }).filter(Boolean);
 }
@@ -379,6 +383,9 @@ function mtgCompactOutlookSpanSlide_(summaries, options) {
   const opt = options || {};
   const keys = opt.keys || C.outlookRanks || ['A', 'B', 'C', 'D'];
   const merged = !!opt.merged;
+  // laterSure：FY27〜28 は確定（A＋B）の案件の売上だけ（salesOutlook.laterSure。前の版の中身に無ければ 0）
+  const laterSure = !!opt.laterSure;
+  const sure = C.sureRanks || ['A', 'B'];
   const outlookOf = s => s.salesOutlook || mtgSalesOutlookOf_([], s.name, now, {});
   const items = summaries.map(s => ({name: s.name, p: outlookOf(s)}));
   const ok = items.filter(z => !z.p.gap);
@@ -388,7 +395,7 @@ function mtgCompactOutlookSpanSlide_(summaries, options) {
   const fy = y => 'FY' + y;
   const range = keys[0] + '〜' + keys[keys.length - 1];
   const thisOf = p => keys.reduce((t, k) => t + (((p.byYear || {})[year] || {})[k] || 0), 0);
-  const laterOf = (p, y) => (p.later || {})[y] || 0;
+  const laterOf = (p, y) => ((laterSure ? p.laterSure : p.later) || {})[y] || 0;
   const rowOf = (name, p, total) => ({name, total, p, gap: p.gap, plan: p.plan || 0, v0: thisOf(p), v1: laterOf(p, next), v2: laterOf(p, last)});
   const rows = items.map(z => rowOf(z.name, z.p, false));
   const sum = {name: '合計', total: true, gap: '', v0: 0, v1: 0, v2: 0};
@@ -396,10 +403,10 @@ function mtgCompactOutlookSpanSlide_(summaries, options) {
   rows.push(sum);
   rows.forEach(r => { r.later = r.v1 + r.v2; r.all = r.v0 + r.later; });
   const marked = ok.length < items.length;
-  const laterWord = fy(next) + '〜' + last;
+  const laterWord = fy(next) + '〜' + last + (laterSure ? '（' + sure.join('＋') + '）' : '');
   const lead = fy(year) + '〜' + last + 'の売上の全体合計は ' + mtgAmount_(sum.all) + '百万円（失注除く）。' + fy(year) + ' ' + mtgAmount_(sum.v0) + '（' + range +
     '）・' + laterWord + ' ' + mtgAmount_(sum.later) + '。\n' + '棒は ' + fy(year) + ' の ' + range + (merged ? '（合算）' : '') + ' に ' + laterWord + ' の合計（グレー。' + mtgPlanMonthName_() +
-    '・確度によらない）を続けた総額。点線は ' + fy(year) + 'の計画。';
+    (laterSure ? 'によらない' : '・確度によらない') + '）を続けた総額。点線は ' + fy(year) + 'の計画。';
   // 棒の色：今年度は確度 A〜D の色で内訳を残し（①と同じ）、FY27〜28 は薄いグレー（compact.laterBarColor。受注月・確度によらない売上なので確度の色と分ける）
   const light = {C: true, D: true, '創注': true};   // 薄い色の確度は、棒の中の値を濃い緑の字に
   // merged なら今年度は合算の1色（compact.thisYearColor）
@@ -416,9 +423,14 @@ function mtgCompactOutlookSpanSlide_(summaries, options) {
   const nameW = 96;
   // FY26 の列は、期間（「（FY26・A〜創注）」など）が 6.5pt で1行に入る幅
   const v0Period = '（' + fy(year) + '・' + range + '）';
-  const cols = [{key: 'v0', label: '売上', period: v0Period, w: Math.max(62, Math.ceil(mtgTextWidth_(v0Period, 6.5)) + 2)},
-    {key: 'v1', label: '売上', period: '（' + fy(next) + '）', w: 52},
-    {key: 'v2', label: '売上', period: '（' + fy(last) + '）', w: 52}, {key: 'later', label: '合計', period: '（' + laterWord + '）', w: 58},
+  // 期間は 6.5pt で1行に入る幅（確定（A＋B）の案件だけのときも期間は同じ。タイトル・凡例・リード文に「A＋B」と書く）
+  const fit = (text, min) => Math.max(min, Math.ceil(mtgTextWidth_(text, 6.5)) + 2);
+  const p1 = '（' + fy(next) + '）';
+  const p2 = '（' + fy(last) + '）';
+  const pL = '（' + fy(next) + '〜' + last + '）';
+  const cols = [{key: 'v0', label: '売上', period: v0Period, w: fit(v0Period, 62)},
+    {key: 'v1', label: '売上', period: p1, w: fit(p1, 52)},
+    {key: 'v2', label: '売上', period: p2, w: fit(p2, 52)}, {key: 'later', label: '合計', period: pL, w: fit(pL, 58)},
     {key: 'all', label: '全体合計', period: '（' + fy(year) + '〜' + last + '）', w: 62}];
   const colsW = cols.reduce((t, col) => t + col.w, 0);
   const barX = x + nameW + 6;

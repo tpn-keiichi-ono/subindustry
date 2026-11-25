@@ -108,7 +108,9 @@ test('統合版（報告用）のスライド：表紙（統合版と同じひ�
   // 計画に対する積み上げは FY26だけの2枚（タイトルに「（FY26売上）」）のあとに FY26〜28 の2枚
   // 状況・計画進捗は①FY26の内訳と②FY26〜28 の2枚（2026/11/25 から）
   // ②のあとにパターンのページ（創注を含む・FY26合算。compact.outlookSpanPatterns。2026/11/25）
-  const patterns = ['全サブインダストリーの状況・計画進捗（' + span + '売上・創注を含む）', '全サブインダストリーの状況・計画進捗（' + span + '売上・' + fy + '合算）'];
+  const y1 = String(Number(g.mtgFiscalYearKey_(new Date())) + 1);
+  const patterns = ['全サブインダストリーの状況・計画進捗（' + span + '売上・創注を含む）', '全サブインダストリーの状況・計画進捗（' + span + '売上・' + fy + '合算）',
+    '全サブインダストリーの状況・計画進捗（' + span + '売上・FY' + y1 + '〜' + (Number(y1) + 1) + 'はA＋B）'];
   assert.deepStrictEqual(slides.map(s => s.title), [T.cover, '全サブインダストリーの状況・計画進捗（' + fy + '売上）', '全サブインダストリーの状況・計画進捗（' + span + '売上）'].concat(patterns, [
     T.plan + '（' + fy + '売上）', T.plan + '（' + fy + '売上）：確定（A＋B）',
     T.plan + '（' + span + '売上）', T.plan + '（' + span + '売上）：確定（A＋B）',
@@ -119,7 +121,7 @@ test('統合版（報告用）のスライド：表紙（統合版と同じひ�
     [T.cover, '全サブインダストリーの状況・計画進捗（' + fy + '売上）', '全サブインダストリーの状況・計画進捗（' + span + '売上）'].concat(patterns, ['全サブインダストリーの状況・計画進捗', '全サブインダストリーの状況・計画進捗（見込（C）を含む）',
       T.plan + '（' + fy + '売上）', T.plan + '（' + fy + '売上）：確定（A＋B）', T.plan + '（' + span + '売上）', T.plan + '（' + span + '売上）：確定（A＋B）',
       T.plan + '：想定売上', T.plan + '：想定売上・確定（A＋B）', '変化のあった案件：新FMT', '変化のあった案件：新FMT2']));
-  assert.strictEqual(g.mtgCompactFrontCount_(), 13);
+  assert.strictEqual(g.mtgCompactFrontCount_(), 14);
   assert.strictEqual(g.mtgCompactFrontCount_('changes'), 1, '変化のあった案件だけは表紙の1枚');
   gas.get('MTG_OPTIONS').compact.amountPages = false;
   // 表紙は統合版と同じひな形。見出しの下は「事前資料」ではなく「報告資料」
@@ -129,7 +131,7 @@ test('統合版（報告用）のスライド：表紙（統合版と同じひ�
   assert.ok(slides[0].cover && slides[0].combined);
   assert.ok(!slides.some(s => s.title === T.contents || s.title === T.overview), '目次・統合版の状況のページは無い');
   // ページ番号は表紙から通し（表紙には出さない）
-  assert.deepStrictEqual(slides.slice(1).map(s => s.elements.find(e => e.role === 'page').text), ['2', '3', '4', '5', '6', '7', '8', '9', '10', '11']);
+  assert.deepStrictEqual(slides.slice(1).map(s => s.elements.find(e => e.role === 'page').text), ['2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12']);
   assert.match(texts(slides[1]).join('\n'), /全サブインダストリー（11\/13 会議資料）　金額の単位：百万円/);
 });
 
@@ -310,18 +312,18 @@ test('RXシナリオ一覧は、統合版（報告用）と変化のあった案
       message: gas.alerts[gas.alerts.length - 1].message};
   };
   const full = run('createBusinessMtgReportingSummary', 'YES');
-  assert.match(full.message, /_報告用\.pdf（12ページ）/, '前の11ページ ＋ RXシナリオ一覧');
-  assert.deepStrictEqual([full.at, full.firstChange], [9, 10], '積み上げのページの次、変化のあった案件の前');
+  assert.match(full.message, /_報告用\.pdf（13ページ）/, '前の12ページ ＋ RXシナリオ一覧');
+  assert.deepStrictEqual([full.at, full.firstChange], [10, 11], '積み上げのページの次、変化のあった案件の前');
   assert.ok(/1件/.test(full.text), '数は変化のあった案件から');
   const split = run('createBusinessMtgReportingSummary', 'YES', 150000);
-  assert.deepStrictEqual([split.at, split.firstChange, split.pages], [9, 10, 12], '区切って作っても同じ');
+  assert.deepStrictEqual([split.at, split.firstChange, split.pages], [10, 11, 13], '区切って作っても同じ');
   assert.deepStrictEqual(split.ids, full.ids);
   const changes = run('createBusinessMtgReportingChanges');
   assert.match(changes.message, /_報告用_変化のあった案件\.pdf（4ページ）/, '表紙 ＋ RXシナリオ一覧 ＋ 変化のあった案件2ページ');
   assert.deepStrictEqual([changes.at, changes.firstChange], [1, 2]);
   const overview = run('createBusinessMtgReportingOverview');
   assert.strictEqual(overview.at, -1, '全体サマリには入れない');
-  assert.match(overview.message, /_報告用_全体サマリ\.pdf（9ページ）/);
+  assert.match(overview.message, /_報告用_全体サマリ\.pdf（10ページ）/);
 });
 
 test('統合版（報告用）のどのページも、リード文・表の見出しが途中で折り返さない（リード文は書いた行のまま、見出しは太字の余裕をとって1行ずつ入る）', () => {
@@ -487,11 +489,11 @@ test('createBusinessMtgReportingSummary：会議日を選んで作り、ファ�
   const check = gas.alerts[gas.alerts.length - 2].message;
   assert.match(check, /^「全サブインダストリー」の統合版（報告用）（2サブインダストリーの状況・計画進捗と、変化のあった案件）を、今のシートの値で作ります。/);
   const done = gas.alerts[gas.alerts.length - 1].message;
-  assert.match(done, /^「統合版（報告用）（全サブインダストリー）」：\d{8}_全サブインダストリー_RX Business Meeting用資料_報告用\.pdf（11ページ）/);
+  assert.match(done, /^「統合版（報告用）（全サブインダストリー）」：\d{8}_全サブインダストリー_RX Business Meeting用資料_報告用\.pdf（12ページ）/);
   assert.match(done, /会議のフォルダ「\d{6}_第6回会議」に格納しました/);
   assert.ok(gas.driveFiles.some(f => f.folder === 'meeting-folder-0' && /_報告用\.pdf$/.test(f.name)));
   const deck = gas.decks[gas.decks.length - 1];
-  assert.deepStrictEqual(deck.slides.map(sl => sl.objectId), ['mtg_p1', 'mtg_p2', 'mtg_p3', 'mtg_p4', 'mtg_p5', 'mtg_p6', 'mtg_p7', 'mtg_p8', 'mtg_p9', 'mtg_p10', 'mtg_p11'], '前のページは最後に足して、番号の順に並べる');
+  assert.deepStrictEqual(deck.slides.map(sl => sl.objectId), ['mtg_p1', 'mtg_p2', 'mtg_p3', 'mtg_p4', 'mtg_p5', 'mtg_p6', 'mtg_p7', 'mtg_p8', 'mtg_p9', 'mtg_p10', 'mtg_p11', 'mtg_p12'], '前のページは最後に足して、番号の順に並べる');
   const index = gas.ss.getSheetByName(o.index.sheet);
   assert.ok(!index || !/_報告用/.test(JSON.stringify(index.getDataRange().getDisplayValues())), 'インデックスには書かない');
   assert.strictEqual(g.PropertiesService.getScriptProperties().getProperty('MTG_JOB'), null);
@@ -509,11 +511,11 @@ test('createBusinessMtgReportingOverview：全体サマリだけ（表紙・状�
   gas.promptAnswers = ['11/13'];
   g.createBusinessMtgReportingOverview();
   const done = gas.alerts[gas.alerts.length - 1].message;
-  assert.match(done, /^「統合版（報告用）の全体サマリ（全サブインダストリー）」：\d{8}_全サブインダストリー_RX Business Meeting用資料_報告用_全体サマリ\.pdf（9ページ）/);
+  assert.match(done, /^「統合版（報告用）の全体サマリ（全サブインダストリー）」：\d{8}_全サブインダストリー_RX Business Meeting用資料_報告用_全体サマリ\.pdf（10ページ）/);
   assert.ok(!/会議のフォルダ/.test(done), '会議のフォルダには格納しない');
   assert.ok(!gas.driveFiles.some(f => f.folder === 'meeting-folder-0'));
   const deck = gas.decks[gas.decks.length - 1];
-  assert.deepStrictEqual(deck.slides.map(sl => sl.objectId), ['mtg_p1', 'mtg_p2', 'mtg_p3', 'mtg_p4', 'mtg_p5', 'mtg_p6', 'mtg_p7', 'mtg_p8', 'mtg_p9']);
+  assert.deepStrictEqual(deck.slides.map(sl => sl.objectId), ['mtg_p1', 'mtg_p2', 'mtg_p3', 'mtg_p4', 'mtg_p5', 'mtg_p6', 'mtg_p7', 'mtg_p8', 'mtg_p9', 'mtg_p10']);
   const texts = deck.requests.filter(r => r.insertText).map(r => r.insertText.text).join('\n');
   assert.ok(texts.indexOf('全サブインダストリーの状況・計画進捗（FY') >= 0);
   assert.ok(texts.indexOf('変化のあった案件：') < 0, '変化のあった案件のページは作らない');
@@ -601,6 +603,7 @@ test('状況・計画進捗（FY26〜28売上）の中身：今年度は受注�
   const out = plain(g.mtgSalesOutlookOf_(deals, '新FMT', new Date(), table));
   assert.deepStrictEqual(out.byYear, {[y0]: {A: 30, B: 0, C: 0, D: 8, '創注': 100}}, '創注も今年度の確度別に残す（パターンのページ用）。全体合計には入れない');
   assert.deepStrictEqual(out.later, {[y1]: 90, [y2]: 19});
+  assert.deepStrictEqual(out.laterSure, {[y1]: 69, [y2]: 19}, '確定（A＋B）の案件だけ（受注月によらない。C・創注・失注は入れない）');
   assert.deepStrictEqual(out.halves.map(h => [h.year + h.half, h.value]), [[y1 + '前', 58], [y1 + '後', 32], [y2 + '前', 19], [y2 + '後', 0]]);
   assert.strictEqual(out.all, 38 + 90 + 19);
   assert.deepStrictEqual([out.year, out.years, out.plan, out.gap], [y0, [y0, y1, y2], 200, '']);
@@ -692,7 +695,14 @@ test('状況・計画進捗は2枚：①FY26（棒は今年度の A〜D・計画
   assert.ok(nearTotal.x + 14.4 / 2 >= nearPlan.x + 3 - 0.01, '総額 125 は計画 130 の点線の右');
   // パターンのページ（compact.outlookSpanPatterns）：創注を含む（FY26 の棒に創注も）・FY26合算（FY26 は確度で分けず1色）
   const pats = plain(g.mtgCompactSpanPatterns_());
-  assert.deepStrictEqual(pats.map(pt => pt.titleNote), ['創注を含む', 'FY' + y0 + '合算']);
+  assert.deepStrictEqual(pats.map(pt => pt.titleNote), ['創注を含む', 'FY' + y0 + '合算', 'FY' + y1 + '〜' + y2 + 'はA＋B']);
+  // FY27〜28 は確定（A＋B）の案件だけ（salesOutlook.laterSure）。FY26 は②と同じ A〜D
+  const sureLater = (a0, l1, l2, s1, s2) => Object.assign(outlook(200, a0, 0, 0, 0, l1, l2), {laterSure: {[y1]: s1, [y2]: s2}});
+  const pS = plain(g.mtgCompactOutlookSpanSlide_([{name: '新FMT', now, salesOutlook: sureLater(70, 50, 20, 30, 5)}], pats[2]));
+  assert.strictEqual(pS.title, '全サブインダストリーの状況・計画進捗（' + span + '売上・FY' + y1 + '〜' + y2 + 'はA＋B）');
+  assert.deepStrictEqual(pS.elements.filter(e => e.role === 'compact-value').map(e => e.text).slice(0, 5), ['70', '30', '5', '35', '105']);
+  assert.deepStrictEqual(pS.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text), ['A', 'B', 'C', 'D', 'FY' + y1 + '〜' + y2 + '（A＋B）']);
+  assert.match(pS.lead, /^FY\d+〜\d+の売上の全体合計は 105百万円（失注除く）。FY\d+ 70（A〜D）・FY\d+〜\d+（A＋B） 35。\n/);
   const withSouchu = (a0, e0) => ({year: y0, years: [y0, y1, y2], plan: 200, all: a0 + 50, gap: '', byYear: {[y0]: {A: a0, B: 0, C: 0, D: 0, '創注': e0}},
     later: {[y1]: 50, [y2]: 0}});
   const pE = plain(g.mtgCompactOutlookSpanSlide_([{name: '新FMT', now, salesOutlook: withSouchu(70, 15)}], pats[0]));
@@ -810,7 +820,7 @@ test('createBusinessMtgReportingSummary：時間がかかれば区切り、続�
   g.createBusinessMtgReportingSummary();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /^時間がかかるため、ここで区切りました（Apps Script の1回の実行は6分まで）。残りは約1分後に自動で続けます：変化のあった案件のページ 1件（新FMT2）・/);
   const saved = JSON.parse(sprops.getProperty('MTG_JOB'));
-  assert.deepStrictEqual([saved.kind, saved.page, saved.no], ['compact', 10, 2]);
+  assert.deepStrictEqual([saved.kind, saved.page, saved.no], ['compact', 11, 2]);
   // 途中：ほかの資料・統合版はすぐには作らない。結果の画面に途中と出す
   g.showBusinessMtgSummariesResult();
   assert.match(gas.alerts[gas.alerts.length - 1].message, /^統合版（報告用）（全サブインダストリー）を作っている途中です（会議日 \d{4}\/11\/13。1\/2サブインダストリーのページ）。/);
@@ -830,7 +840,7 @@ test('createBusinessMtgReportingSummary：時間がかかれば区切り、続�
   assert.deepStrictEqual(deck.requests.filter(r => r.insertText).map(r => r.insertText.text).filter(t => !/\d{1,2}:\d{2}/.test(t)).sort(), once.texts,
     '区切らずに作ったときと同じ文字');
   g.showBusinessMtgSummariesResult();
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /「統合版（報告用）（全サブインダストリー）」：.*_報告用\.pdf（11ページ）/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /「統合版（報告用）（全サブインダストリー）」：.*_報告用\.pdf（12ページ）/);
 });
 
 test('シートと記録を読むのに時間がかかっても、1回の実行で必ず1シート以上進める（読んだあとに区切ると、続きも同じだけ読んで区切り、終わらなかった）', () => {
@@ -854,7 +864,7 @@ test('シートと記録を読むのに時間がかかっても、1回の実行�
   assert.ok(runs.length <= 2, '実行ごとに進む：' + JSON.stringify(runs));
   assert.match(gas.alerts[gas.alerts.length - 1].message, /全体サマリ/);
   g.showBusinessMtgSummariesResult();
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /_報告用_全体サマリ\.pdf（9ページ）/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /_報告用_全体サマリ\.pdf（10ページ）/);
 });
 
 test('統合版（報告用）：作っている途中で止まったら、作りかけの資料をゴミ箱に移し、createBusinessMtgReportingSummary() での作り直しを案内する', () => {
@@ -906,7 +916,7 @@ test('統合版（報告用）：続きの実行をキャンセルして止ま�
   assert.ok(gas.alerts.some(a => /^前に始めた統合版（報告用）/.test(a.message)), '作っている途中の知らせ');
   assert.ok(gas.trashed.indexOf(first) >= 0, '作りかけの資料はゴミ箱へ');
   assert.strictEqual(sprops.getProperty('MTG_JOB'), null, '新しく作り終えた');
-  assert.match(gas.alerts[gas.alerts.length - 1].message, /_報告用\.pdf（11ページ）/);
+  assert.match(gas.alerts[gas.alerts.length - 1].message, /_報告用\.pdf（12ページ）/);
   assert.notStrictEqual(gas.decks[gas.decks.length - 1].id, first);
 });
 
