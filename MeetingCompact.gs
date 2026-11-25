@@ -75,8 +75,9 @@ function mtgCompactFrontCount_(part) {
   if (part === 'changes') return 1;
   const C = MTG_OPTIONS.compact;
   const kinds = (C.salesPage ? 1 : 0) + (mtgCompactAmountOn_() ? 1 : 0);
-  // 売上のページを FY26〜28 のページにする（outlookPage）ときは、状況・計画進捗が1枚で、計画に対する積み上げは FY26だけの2枚と FY26〜28 の2枚
-  const outlook = C.salesPage && C.outlookPage ? (MTG_OPTIONS.plan.enabled ? 2 : 0) - 1 : 0;
+  // 売上のページを FY26〜28 のページにする（outlookPage）ときは、状況・計画進捗が2枚（①FY26の内訳・②FY26〜28。2026/11/25 から。前は1枚）で、
+  // 計画に対する積み上げは FY26だけの2枚と FY26〜28 の2枚
+  const outlook = C.salesPage && C.outlookPage ? (MTG_OPTIONS.plan.enabled ? 2 : 0) : 0;
   return 1 + kinds * (MTG_OPTIONS.plan.enabled ? 4 : 2) + outlook;
 }
 
@@ -185,7 +186,8 @@ function mtgCompactFront_(summaries, meeting, final, now, part) {
     }
     // 状況・計画進捗：今年度の売上（と見込（C）を含む）のあとに、想定売上（同じ2枚。amountPages のとき）
     // 売上のページ：FY26〜28 のページ（outlookPage。2026/11/12 から）か、前の今年度の売上の2枚（FY26売上・見込（C）を含む）
-    const status = [].concat(!C.salesPage ? [] : C.outlookPage ? [mtgCompactOutlookSlide_(summaries)]
+    // FY26〜28 の版は、①FY26の内訳（確度 A〜D と計画）と②FY26〜28（FY26 は合算・FY27・FY28・総額）の2枚（2026/11/25 に1枚から分けた）
+    const status = [].concat(!C.salesPage ? [] : C.outlookPage ? [mtgCompactOutlookSlide_(summaries), mtgCompactOutlookSpanSlide_(summaries)]
       : [mtgCompactOverviewSlide_(summaries, {sales: true}), mtgCompactOverviewSlide_(summaries, {sales: true, withC: true})],
       amountOn ? [mtgCompactOverviewSlide_(summaries), mtgCompactOverviewSlide_(summaries, {withC: true})] : []);
     return mtgNumberSlides_(mtgCombinedFrame_(summaries, meeting, final),
@@ -194,9 +196,9 @@ function mtgCompactFront_(summaries, meeting, final, now, part) {
 }
 
 /**
- * 全サブインダストリーの状況・計画進捗（FY26〜28売上）（2026/11/12）：今年度の売上の状況・計画進捗の2枚のあとのページ。
+ * 全サブインダストリーの状況・計画進捗（FY26売上）（①。2026/11/12 の FY26〜28 の1枚を、2026/11/25 に①FY26の内訳と②FY26〜28 に分けた）。
  * 横棒は今年度の売上（受注月が今年度の案件）を確度 A〜D（compact.outlookRanks）で積み上げ（棒の中に値。右に合計）、計画の位置に点線（compact.planLine）。
- * 右の列：計画・進捗率（A＋B）・確定（A＋B）・見込（C）・見込（D）（FY26）｜売上（FY27）・売上（FY28）（受注月・確度によらない）｜全体合計（FY26 の A〜D ＋ FY27 ＋ FY28）。
+ * 右の列：計画・進捗率（A＋B）・確定（A＋B）・見込（C）・見込（D）（FY26）。FY27 以降は②（mtgCompactOutlookSpanSlide_）。
  * 件数は出さない。並びはシートの順（ほかのページと同じ）、いちばん下に合計。中身は summary.salesOutlook
  * （mtgSalesOutlookOf_）。売上・受注月の列が無いシートは、棒の場所に「データなし」と理由（合計はそのシートを除いて ※）
  */
@@ -232,26 +234,20 @@ function mtgCompactOutlookSlide_(summaries) {
   const marked = ok.length < items.length;
   const totalRate = ok.length ? rateOf(total.p) : null;
   const range = keys[0] + '〜' + keys[keys.length - 1];
-  // 来年度以降（FY27・FY28）は受注月・確度によらない売上（受注月・営業ステータスは今年度の受注を見込んだ列のため。2026/11/12）
-  // リード文は2行（金額が5桁でも折り返さない長さ。2026/11/16）：1行目に今年度、2行目に来年度以降と棒の説明
+  // リード文は2行（金額が5桁でも折り返さない長さ。2026/11/16）：1行目に今年度、2行目に棒の説明と次のページ
   const lead = fy(year) + ' の' + sureWord + 'は ' + mtgAmount_(sumOf(total.p, year, sure)) + '百万円（計画比 ' + (totalRate == null ? '—' : Math.round(totalRate) + '%') +
     '）、' + range + ' の合計は ' + mtgAmount_(sumOf(total.p, year, keys)) + '百万円（失注除く）。\n' +
-    fy(next) + ' ' + mtgAmount_(laterOf(total.p, next)) + '・' + fy(last) + ' ' + mtgAmount_(laterOf(total.p, last)) + '百万円（' + mtgPlanMonthName_() +
-    '・確度によらない）。棒は ' + fy(year) + '売上を ' + range + ' で積み上げ。';
-  // 全体合計の数え方は出典の行に（リード文を2行に収めるため）
-  const sumNote = '※ 全体合計 ＝ ' + fy(year) + '（' + range + '）＋' + fy(next) + '＋' + fy(last);
+    '棒は ' + fy(year) + '売上（' + mtgPlanMonthName_() + 'が ' + fy(year) + 'の案件）を ' + range + ' で積み上げ、点線は計画。' + fy(next) + '以降は次のページ。';
   const x = S.x;
   const w = S.w;
   const y = S.top;
   const el = [mtgBox_(x, y - 2, 480, 20, fy(year) + ' の売上の確度別（' + keys[0] + '〜' + keys[keys.length - 1] + '）と計画（百万円）',
     {size: 10.5, bold: true, color: c.ink})];
   const nameW = 96;
-  // 列：今年度（計画・進捗率・確定（A＋B）・見込（C））｜来年度・再来年度の売上（受注月・確度によらない）｜全体合計
-  const cols = [{key: 'plan', label: '計画', period: '（' + fy(year) + '）', w: 40}, {key: 'rate', label: '進捗率（A＋B）', period: '（' + fy(year) + '）', w: 56},
-    {key: 'ab0', label: sureWord, period: '（' + fy(year) + '）', w: 56}, {key: 'c0', label: '見込（C）', period: '（' + fy(year) + '）', w: 50},
-    {key: 'd0', label: '見込（D）', period: '（' + fy(year) + '）', w: 50},
-    {key: 'y1', label: '売上', period: '（' + fy(next) + '）', w: 48}, {key: 'y2', label: '売上', period: '（' + fy(last) + '）', w: 48},
-    {key: 'all', label: '全体合計', period: '（' + fy(year) + '〜' + last + '）', w: 56}];
+  // 列：今年度（計画・進捗率・確定（A＋B）・見込（C）・見込（D））。棒を広くとる（来年度以降の列は②のページ）
+  const cols = [{key: 'plan', label: '計画', period: '（' + fy(year) + '）', w: 48}, {key: 'rate', label: '進捗率（A＋B）', period: '（' + fy(year) + '）', w: 62},
+    {key: 'ab0', label: sureWord, period: '（' + fy(year) + '）', w: 62}, {key: 'c0', label: '見込（C）', period: '（' + fy(year) + '）', w: 56},
+    {key: 'd0', label: '見込（D）', period: '（' + fy(year) + '）', w: 56}];
   const colsW = cols.reduce((t, col) => t + col.w, 0);
   const barX = x + nameW + 6;
   const barW = w - nameW - 6 - colsW - 10;
@@ -331,18 +327,145 @@ function mtgCompactOutlookSlide_(summaries) {
     const amount = v => (none ? G : mtgAmount_(v) + mark);
     const rate = none ? null : rateOf(p);
     const values = {plan: amount(p.plan || 0), rate: rate == null ? '—' : Math.round(rate) + '%', ab0: amount(sumOf(p, year, sure)),
-      c0: amount(sumOf(p, year, ['C'])), d0: amount(sumOf(p, year, ['D'])), y1: amount(laterOf(p, next)), y2: amount(laterOf(p, last)), all: amount(p.all || 0)};
+      c0: amount(sumOf(p, year, ['C'])), d0: amount(sumOf(p, year, ['D']))};
     cols.forEach(col => {
       const text = values[col.key];
       const gap = text === G;
-      const strong = col.key === 'rate' || col.key === 'ab0' || col.key === 'all';
+      const strong = col.key === 'rate' || col.key === 'ab0';
       el.push(mtgBox_(col.x - S.padX / 2, ry, col.w + S.padX, rowH, text,
         {size: gap ? 7.5 : col.key === 'rate' ? 9 : 8, bold: !gap && (!!item.total || strong),
           color: gap ? c.muted : col.key === 'rate' && rate != null && rate >= 100 ? c.greenDark : c.ink, align: 'END', role: 'compact-value'}));
     });
   });
-  return {title: MTG_TITLES.compactOverview + '（' + fy(year) + '〜' + last + '売上）', lead, elements: el,
-    note: sumNote + (marked ? '。※ のある合計は「' + G + '」のシートを除く' : '')};
+  return Object.assign({title: MTG_TITLES.compactOverview + '（' + fy(year) + '売上）', lead, elements: el},
+    marked ? {note: '※ のある合計は「' + G + '」のシートを除く'} : {});
+}
+
+/**
+ * 全サブインダストリーの状況・計画進捗（FY26〜28売上）（②。2026/11/25）：横棒は今年度の売上（確度 A〜D の内訳。①と同じ色）に、
+ * FY27〜28 の売上の合計（受注月・確度によらない。薄いグレー）を続けた棒（右に総額）。右の列：売上（FY26。A〜D の合算）・売上（FY27）・売上（FY28）｜
+ * FY27〜28 の合計｜全体合計（FY26〜28。棒の長さと同じ。状況・計画進捗の全体合計）。計画は今年度だけの目標なので入れない（①のページ）。
+ * 並びはシートの順、いちばん下に合計。中身は summary.salesOutlook。列が無いシートは、棒の場所に「データなし」と理由（合計はそのシートを除いて ※）
+ */
+function mtgCompactOutlookSpanSlide_(summaries) {
+  const S = MTG_SLIDE;
+  const o = MTG_OPTIONS;
+  const c = o.colors;
+  const G = o.gapText;
+  const C = o.compact;
+  const now = summaries.length && summaries[0].now ? new Date(summaries[0].now) : new Date();
+  const keys = C.outlookRanks || ['A', 'B', 'C', 'D'];
+  const outlookOf = s => s.salesOutlook || mtgSalesOutlookOf_([], s.name, now, {});
+  const items = summaries.map(s => ({name: s.name, p: outlookOf(s)}));
+  const ok = items.filter(z => !z.p.gap);
+  const year = (ok[0] || items[0] || {p: {}}).p.year || mtgFiscalYearKey_(now);
+  const next = ('0' + ((Number(year) + 1) % 100)).slice(-2);
+  const last = ('0' + ((Number(year) + 2) % 100)).slice(-2);
+  const fy = y => 'FY' + y;
+  const range = keys[0] + '〜' + keys[keys.length - 1];
+  const thisOf = p => keys.reduce((t, k) => t + (((p.byYear || {})[year] || {})[k] || 0), 0);
+  const laterOf = (p, y) => (p.later || {})[y] || 0;
+  const rowOf = (name, p, total) => ({name, total, p, gap: p.gap, v0: thisOf(p), v1: laterOf(p, next), v2: laterOf(p, last)});
+  const rows = items.map(z => rowOf(z.name, z.p, false));
+  const sum = {name: '合計', total: true, gap: '', v0: 0, v1: 0, v2: 0};
+  rows.filter(r => !r.gap).forEach(r => { sum.v0 += r.v0; sum.v1 += r.v1; sum.v2 += r.v2; });
+  rows.push(sum);
+  rows.forEach(r => { r.later = r.v1 + r.v2; r.all = r.v0 + r.later; });
+  const marked = ok.length < items.length;
+  const laterWord = fy(next) + '〜' + last;
+  const lead = fy(year) + '〜' + last + 'の売上の全体合計は ' + mtgAmount_(sum.all) + '百万円（失注除く）。' + fy(year) + ' ' + mtgAmount_(sum.v0) + '（' + range +
+    '）・' + laterWord + ' ' + mtgAmount_(sum.later) + '。\n' + '棒は ' + fy(year) + ' の ' + range + ' に ' + laterWord + ' の合計（グレー。' + mtgPlanMonthName_() +
+    '・確度によらない）を続けた総額。';
+  // 棒の色：今年度は確度 A〜D の色で内訳を残し（①と同じ）、FY27〜28 は薄いグレー（compact.laterBarColor。受注月・確度によらない売上なので確度の色と分ける）
+  const light = {C: true, D: true};   // 薄い色の確度は、棒の中の値を濃い緑の字に
+  const segs = keys.map(k => o.plan.ranks.find(r => r.key === k)).filter(Boolean)
+    .map(r => ({key: r.key, label: r.key, color: r.color, text: light[r.key] ? c.greenDark : c.white}))
+    .concat([{key: 'later', label: laterWord, color: C.laterBarColor || '#D9D9D9', text: c.sub}]);
+  const segValue = (r, key) => (key === 'later' ? r.later : ((r.p || {}).byYear || {})[year] ? (r.p.byYear[year][key] || 0) : 0);
+  const x = S.x;
+  const w = S.w;
+  const y = S.top;
+  const el = [mtgBox_(x, y - 2, 480, 20, fy(year) + '〜' + last + 'の売上（百万円）', {size: 10.5, bold: true, color: c.ink})];
+  const nameW = 96;
+  const cols = [{key: 'v0', label: '売上', period: '（' + fy(year) + '・' + range + '）', w: 62}, {key: 'v1', label: '売上', period: '（' + fy(next) + '）', w: 52},
+    {key: 'v2', label: '売上', period: '（' + fy(last) + '）', w: 52}, {key: 'later', label: '合計', period: '（' + laterWord + '）', w: 58},
+    {key: 'all', label: '全体合計', period: '（' + fy(year) + '〜' + last + '）', w: 62}];
+  const colsW = cols.reduce((t, col) => t + col.w, 0);
+  const barX = x + nameW + 6;
+  const barW = w - nameW - 6 - colsW - 10;
+  const headY = y + 36;
+  const labelH = 12;
+  const periodH = 10;
+  const headH = labelH + periodH;
+  const rowH = Math.min(22, (S.bottom - headY - headH - 2) / rows.length);
+  let size = 7.5;
+  while (cols.some(col => mtgTextWidth_(col.label, size) > col.w * 0.9) && size > 6) size -= 0.5;
+  let periodSize = 6.5;
+  while (cols.some(col => mtgTextWidth_(col.period, periodSize) > col.w) && periodSize > 5.5) periodSize -= 0.5;
+  let cx = barX + barW + 10;
+  cols.forEach(col => {
+    el.push(mtgBox_(cx - S.padX / 2, headY, col.w + S.padX, labelH, col.label, {size, color: c.sub, align: 'CENTER', valign: 'BOTTOM', role: 'compact-head'}));
+    el.push(mtgBox_(cx - S.padX / 2, headY + labelH, col.w + S.padX, periodH, col.period,
+      {size: periodSize, color: c.muted, align: 'CENTER', valign: 'MIDDLE', role: 'compact-head-period'}));
+    col.x = cx;
+    cx += col.w;
+  });
+  // 凡例（棒のすぐ上）：A〜D（FY26）・FY27〜28
+  let lx = barX;
+  segs.forEach(sg => {
+    const ly = headY + headH - periodH / 2 - 4;
+    el.push({type: 'box', x: lx, y: ly, w: 8, h: 8, fill: sg.color, shape: 'RECTANGLE', role: 'legend'});
+    const bw = mtgTextWidth_(sg.label, 8.5) + S.padX + 2;
+    el.push(mtgBox_(lx + 13 - S.padX / 2, ly - 4, bw, 16, sg.label, {size: 8.5, color: c.sub, role: 'legend'}));
+    lx += 13 + bw - S.padX + 10;
+  });
+  // 目盛り：いちばん長い棒（総額）を、右の総額の数の分をあけて棒の幅いっぱいに
+  const max = Math.max.apply(null, [1].concat(rows.filter(r => !r.total && !r.gap).map(r => r.all)));
+  const scale = (barW - 34) / max;
+  rows.forEach((r, i) => {
+    const ry = headY + headH + 2 + rowH * i;
+    if (r.total) el.push({type: 'box', x, y: ry, w, h: 0.75, fill: c.line, shape: 'RECTANGLE'});
+    else if (i % 2 === 1) el.push({type: 'box', x, y: ry, w, h: rowH, fill: c.greenSoft, alpha: 0.35, shape: 'RECTANGLE', role: 'compact-band'});
+    el.push(mtgBox_(x, ry, nameW, rowH, r.name, {size: 8.5, bold: true, color: c.ink, role: 'compact-name'}));
+    if (!r.total && !r.gap) {
+      const bh = Math.max(rowH - 6, 6);
+      const by = ry + (rowH - bh) / 2;
+      let level = 0;
+      segs.forEach(sg => {
+        const v = segValue(r, sg.key);
+        if (!v) return;
+        const bx = barX + level * scale;
+        const bw = Math.max(v * scale, 0.75);
+        el.push({type: 'box', x: bx, y: by, w: bw, h: bh, fill: sg.color, line: c.white, lineWeight: 0.5, shape: 'RECTANGLE', role: 'compact-bar'});
+        const label = mtgAmount_(v);
+        let pt = 7;
+        while (mtgTextWidth_(label, pt) + 3 > bw && pt > 6) pt -= 0.5;
+        if (mtgTextWidth_(label, pt) + 3 <= bw) {
+          el.push(mtgBox_(bx - S.padX / 2, ry, bw + S.padX, rowH, label, {size: pt, bold: true, color: sg.text, align: 'CENTER', role: 'compact-bar-label'}));
+        }
+        level += v;
+      });
+      // 棒の右に総額
+      if (level) {
+        const text = mtgAmount_(level);
+        el.push(mtgBox_(barX + level * scale + 2 - S.padX / 2, ry, mtgTextWidth_(text, 7.5) + S.padX + 2, rowH, text,
+          {size: 7.5, bold: true, color: c.sub, role: 'compact-bar-total'}));
+      }
+    } else if (!r.total) {
+      el.push(mtgBox_(barX, ry, barW, rowH, mtgWrap_(G + '（' + r.gap + '）', barW, 7.5, 1)[0], {size: 7.5, color: c.muted, role: 'compact-gap'}));
+    }
+    const none = r.gap || (r.total && !ok.length);
+    const mark = r.total && marked ? '※' : '';
+    cols.forEach(col => {
+      const text = none ? G : mtgAmount_(r[col.key]) + mark;
+      const gap = text === G;
+      const strong = col.key === 'later' || col.key === 'all';
+      el.push(mtgBox_(col.x - S.padX / 2, ry, col.w + S.padX, rowH, text,
+        {size: gap ? 7.5 : 8, bold: !gap && (!!r.total || strong), color: gap ? c.muted : c.ink, align: 'END', role: 'compact-value'}));
+    });
+  });
+  return Object.assign({title: MTG_TITLES.compactOverview + '（' + fy(year) + '〜' + last + '売上）', lead, elements: el},
+    marked ? {note: '※ のある合計は「' + G + '」のシートを除く'} : {});
 }
 
 /**
