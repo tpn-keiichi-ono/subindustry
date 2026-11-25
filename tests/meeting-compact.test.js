@@ -639,14 +639,15 @@ test('状況・計画進捗は2枚：①FY26（棒は今年度の A〜D・計画
   // ① FY26 の内訳（FY27 以降の列は無い）
   const slide = plain(g.mtgCompactOutlookSlide_(summaries));
   assert.strictEqual(slide.title, '全サブインダストリーの状況・計画進捗（FY' + y0 + '売上）');
-  assert.deepStrictEqual(slide.elements.filter(e => e.role === 'compact-head').map(e => e.text), ['計画', '進捗率（A＋B）', '確定（A＋B）', '見込（C）', '見込（D）']);
-  assert.ok(slide.elements.filter(e => e.role === 'compact-head-period').every(e => e.text === '（FY' + y0 + '）'));
+  assert.deepStrictEqual(slide.elements.filter(e => e.role === 'compact-head').map(e => e.text), ['計画', '進捗率（A＋B）', '確定（A＋B）', '見込（C）', '見込（D）', '合計']);
+  assert.deepStrictEqual(slide.elements.filter(e => e.role === 'compact-head-period').map(e => e.text),
+    ['（FY' + y0 + '）', '（FY' + y0 + '）', '（FY' + y0 + '）', '（FY' + y0 + '）', '（FY' + y0 + '）', '（FY' + y0 + '・A〜D）'], 'いちばん右に今年度の合計');
   oneLine(slide);
   const values = slide.elements.filter(e => e.role === 'compact-value').map(e => e.text);
-  assert.deepStrictEqual(values.slice(0, 5), ['200', '55%', '110', '10', '5'], '新FMT の行（件数は出さない）');
-  assert.deepStrictEqual(values.slice(5, 10), ['100', '10%', '10', '0', '0'], '新FMT2 の行');
-  assert.deepStrictEqual(values.slice(10, 15), [G, '—', G, G, G], '列の無いシート');
-  assert.deepStrictEqual(values.slice(15), ['300※', '40%', '120※', '10※', '5※'], '合計は作れたシートの分だけ（※）');
+  assert.deepStrictEqual(values.slice(0, 6), ['200', '55%', '110', '10', '5', '125'], '新FMT の行（件数は出さない。合計は棒の長さ）');
+  assert.deepStrictEqual(values.slice(6, 12), ['100', '10%', '10', '0', '0', '10'], '新FMT2 の行');
+  assert.deepStrictEqual(values.slice(12, 18), [G, '—', G, G, G, G], '列の無いシート');
+  assert.deepStrictEqual(values.slice(18), ['300※', '40%', '120※', '10※', '5※', '135※'], '合計は作れたシートの分だけ（※）');
   assert.strictEqual(slide.note, '※ のある合計は「' + G + '」のシートを除く');
   // 棒：今年度の A〜D を積み上げ（新FMT は A・B・C・D の4本、新FMT2 は B の1本）。棒の右に A〜D の合計。計画線は2本
   assert.strictEqual(slide.elements.filter(e => e.role === 'compact-bar').length, 5);
@@ -721,8 +722,8 @@ test('状況・計画進捗は2枚：①FY26（棒は今年度の A〜D・計画
   const withE = (a0, e0) => ({year: y0, years: [y0, y1, y2], plan: 200, all: a0 + e0 + 50, gap: '', byYear: {[y0]: {A: a0, B: 0, C: 0, D: 0, '創注': e0}},
     later: {[y1]: 50, [y2]: 0}});
   const e1 = plain(g.mtgCompactOutlookSlide_([{name: '新FMT', now, salesOutlook: withE(70, 15)}]));
-  assert.deepStrictEqual(e1.elements.filter(e => e.role === 'compact-head').map(e => e.text), ['計画', '進捗率（A＋B）', '確定（A＋B）', '見込（C）', '見込（D）', '見込（創注）']);
-  assert.deepStrictEqual(e1.elements.filter(e => e.role === 'compact-value').map(e => e.text).slice(0, 6), ['200', '35%', '70', '0', '0', '15']);
+  assert.deepStrictEqual(e1.elements.filter(e => e.role === 'compact-head').map(e => e.text), ['計画', '進捗率（A＋B）', '確定（A＋B）', '見込（C）', '見込（D）', '見込（創注）', '合計']);
+  assert.deepStrictEqual(e1.elements.filter(e => e.role === 'compact-value').map(e => e.text).slice(0, 7), ['200', '35%', '70', '0', '0', '15', '85']);
   assert.deepStrictEqual(e1.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text), ['A', 'B', 'C', 'D', '創注']);
   oneLine(e1);
   const e2 = plain(g.mtgCompactOutlookSpanSlide_([{name: '新FMT', now, salesOutlook: withE(70, 15)}]));

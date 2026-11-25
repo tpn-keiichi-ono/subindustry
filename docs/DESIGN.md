@@ -940,7 +940,7 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
   受注月・営業ステータスは FY26 の受注を見込んだ列なので、FY27 以降には使わない（2026/11/12）。受注月が空・今年度の外の案件の FY26売上は入れず、note に金額。
   状況・計画進捗は2枚（2026/11/25 に1枚から分けた）：
   ①（FY26売上。`mtgCompactOutlookSlide_`）横棒は今年度の売上（受注月が今年度の案件）を確度 A〜D（`compact.outlookRanks`）で積み上げ（棒の中に値・右に合計）と計画の点線。
-  右の列は計画・進捗率（A＋B）・確定（A＋B）・見込（C）・見込（D）（FY26）。FY27 以降は②。
+  右の列は計画・進捗率（A＋B）・確定（A＋B）・見込（C）・見込（D）（FY26）・いちばん右に合計（FY26・A〜D）。FY27 以降は②。
   ②（FY26〜28売上。`mtgCompactOutlookSpanSlide_`）横棒は今年度の A〜D（①と同じ色の内訳）に、FY27〜28 の売上の合計（受注月・確度によらない。薄いグレー
   `compact.laterBarColor`）を続けた総額（右に総額）。FY26 の計画の位置に点線（棒の下に描く。総額の数が点線にかかれば点線の右）。
   ①の見込の列は `outlookRanks` のうち確定（`sureRanks`）でない確度ごと（創注を入れれば「見込（創注）」も）。
@@ -992,6 +992,9 @@ Appendix の番号は ①〜③（A〜C ではない）。前の版にあった 
   `mtgMovesSlide_` の `options.all` で、上から `mainRows.changes`（7件）までにせず全件を載せ（入らなければ「（続き）」のページ）、リード文に「全件は Appendix ① を参照」と書きません。
   報告フラグにチェックした案件は、報告案件のスライドがあるので表に載せない（`options.exclude`。報告案件のキー。リード文に「（報告案件 N件を除く）」。2026/11/11 から）。前の版・統合版の表は今のまま（7件まで。報告案件も載せる）。
   報告案件のスライドの受注月の枠は左右に分け、右に「年度別売上（百万）」（`report.salesLabel`。右の枠は見出しが1行に入る幅。`mtgReportSales_`。今年度から `report.salesYears` 年度分の、年度別の売上の列の前半期＋後半期。`summary.salesYears` に列のある年度）。
+- PowerPoint（`mtgExportPptx_`）は、書き出したファイルのページ番号を PowerPoint のスライド番号のフィールド（`<a:fld type="slidenum">`）に置き換える
+  （`mtgPptxSlideNumbers_`。zip を開いて各スライドの右下の数字だけの箱の文字を置き換え、zip に戻す。できなければ書き出したまま。2026/11/25）。
+  Slides API では自動のページ番号を入れられないので、Google スライド・PDF は文字のまま。
 - 報告案件版の計画に対する積み上げは2枚（`mtgReportPlanSlides_`。2026/11/20）：FY26売上（`summary.planSalesByMonth`。`mtgSalesPlanByMonthOf_`）と計画、計画を入れない期待値（`mtgPlanSlide_` の `noPlan`。凡例の計画・計画の点線・計画と不足の棒を出さず、12か月と合計の13本で幅を使う。見出しは `report.weightedPlanTitle`）。
 - 作り方は会議サマリと同じ仕事（`mtgRunStart_`・`mtgJobRun_`）で、仕事に `variant: 'report'` を持たせて、スライドの並び（`mtgReportSlides_`）と
   ファイル名（`mtgFileName_` の後ろに `report.fileSuffix`「_報告案件版」）だけを変えます。本番なら、時点コピー・会議日の記録・会議のフォルダ・インデックスも同じように書きます

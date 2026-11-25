@@ -251,6 +251,9 @@ function mtgCompactOutlookSlide_(summaries) {
   const cols = [{key: 'plan', label: '計画', period: '（' + fy(year) + '）', w: 48}, {key: 'rate', label: '進捗率（A＋B）', period: '（' + fy(year) + '）', w: 62},
     {key: 'ab0', label: sureWord, period: '（' + fy(year) + '）', w: 62}]
     .concat(prospects.map(k => ({key: 'r_' + k, rank: k, label: '見込（' + k + '）', period: '（' + fy(year) + '）', w: k.length > 1 ? 62 : 56})));
+  // いちばん右に今年度の合計（棒の長さ。A〜D。2026/11/25）
+  const sumPeriod = '（' + fy(year) + '・' + range + '）';
+  cols.push({key: 'sum', label: '合計', period: sumPeriod, w: Math.max(62, Math.ceil(mtgTextWidth_(sumPeriod, 6.5)) + 2)});
   const colsW = cols.reduce((t, col) => t + col.w, 0);
   const barX = x + nameW + 6;
   const barW = w - nameW - 6 - colsW - 10;
@@ -329,12 +332,13 @@ function mtgCompactOutlookSlide_(summaries) {
     const mark = item.total && marked ? '※' : '';
     const amount = v => (none ? G : mtgAmount_(v) + mark);
     const rate = none ? null : rateOf(p);
-    const values = {plan: amount(p.plan || 0), rate: rate == null ? '—' : Math.round(rate) + '%', ab0: amount(sumOf(p, year, sure))};
+    const values = {plan: amount(p.plan || 0), rate: rate == null ? '—' : Math.round(rate) + '%', ab0: amount(sumOf(p, year, sure)),
+      sum: amount(sumOf(p, year, keys))};
     prospects.forEach(k => { values['r_' + k] = amount(sumOf(p, year, [k])); });
     cols.forEach(col => {
       const text = values[col.key];
       const gap = text === G;
-      const strong = col.key === 'rate' || col.key === 'ab0';
+      const strong = col.key === 'rate' || col.key === 'ab0' || col.key === 'sum';
       el.push(mtgBox_(col.x - S.padX / 2, ry, col.w + S.padX, rowH, text,
         {size: gap ? 7.5 : col.key === 'rate' ? 9 : 8, bold: !gap && (!!item.total || strong),
           color: gap ? c.muted : col.key === 'rate' && rate != null && rate >= 100 ? c.greenDark : c.ink, align: 'END', role: 'compact-value'}));

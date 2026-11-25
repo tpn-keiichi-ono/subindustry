@@ -9682,10 +9682,53 @@ function mtgExportPptx_(id, name, folder) {
     });
     const code = response.getResponseCode();
     if (code !== 200) return {error: 'PowerPoint に書き出せませんでした（' + code + '：' + String(response.getContentText()).slice(0, 200) + '）'};
-    return {file: folder.createFile(response.getBlob().setName(name + '.pptx'))};
+    let blob = response.getBlob();
+    // ページ番号を PowerPoint のスライド番号（自動で振り直す）にする（2026/11/25。できなければ書き出したまま）
+    try {
+      blob = mtgPptxSlideNumbers_(blob).blob;
+    } catch (error) {
+      console.warn('PowerPoint のページ番号をスライド番号にできませんでした：' + (error && error.message || error));
+    }
+    return {file: folder.createFile(blob.setName(name + '.pptx'))};
   } catch (error) {
     return {error: 'PowerPoint に書き出せませんでした（' + (error && error.message || error) + '）'};
   }
+}
+
+/**
+ * 書き出した PowerPoint（blob）のページ番号を、PowerPoint のスライド番号のフィールド（<a:fld type="slidenum">。スライドを足す・消すと自動で振り直す）にする
+ * （2026/11/25）。Google スライドには自動のページ番号を API で入れられないので、資料にはページ番号を文字で書き、PowerPoint のファイルだけを直す。
+ * 各スライド（ppt/slides/slideN.xml）の、右下（区切り線より下・右端から 120pt の中）にある、数字だけの文字の箱（mtgFrame_ のページ番号）の文字を
+ * フィールドに置き換える（字の大きさ・色はそのまま）。{blob: 直したファイル（直すところが無ければ元の blob）, count: 直したスライドの数}
+ */
+function mtgPptxSlideNumbers_(blob) {
+  const S = MTG_SLIDE;
+  const EMU = 12700;   // 1pt
+  const minX = (S.x + S.w - 120) * EMU;
+  const minY = S.ruleY * EMU;
+  const files = Utilities.unzip(blob);
+  let count = 0;
+  const out = files.map(f => {
+    const name = f.getName();
+    if (!/^ppt\/slides\/slide\d+\.xml$/.test(name)) return f;
+    let done = false;
+    const xml = f.getDataAsString('UTF-8').replace(/<p:sp\b[^>]*>[\s\S]*?<\/p:sp>/g, sp => {
+      if (done) return sp;
+      const off = /<a:off x="(-?\d+)" y="(-?\d+)"\s*\/>/.exec(sp);
+      if (!off || Number(off[1]) < minX || Number(off[2]) < minY) return sp;
+      const text = (sp.match(/<a:t(?:\s[^>]*)?>[^<]*<\/a:t>/g) || []).map(t => t.replace(/<[^>]+>/g, '')).join('').trim();
+      if (!/^\d+$/.test(text)) return sp;
+      const fixed = sp.replace(/<a:r>((?:<a:rPr\b[^>]*\/>|<a:rPr\b[^>]*>[\s\S]*?<\/a:rPr>)?)<a:t(?:\s[^>]*)?>(\d+)<\/a:t><\/a:r>/,
+        (m, rPr, num) => '<a:fld id="{B6F15528-21DE-4FAA-801E-634DDDAF4B2B}" type="slidenum">' + rPr + '<a:t>' + num + '</a:t></a:fld>');
+      done = fixed !== sp;
+      return fixed;
+    });
+    if (!done) return f;
+    count++;
+    return Utilities.newBlob(xml, 'application/xml', name);
+  });
+  if (!count) return {blob, count: 0};
+  return {blob: Utilities.zip(out, blob.getName()).setContentType(MimeType.MICROSOFT_POWERPOINT), count};
 }
 
 function mtgTrashOld_(folder, names, keep) {

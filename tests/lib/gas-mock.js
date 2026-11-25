@@ -729,6 +729,8 @@ function createGas(options) {
     calendarEvents: [],
     calendarReads: [],        // getEvents で読んだ期間 [{calendar, start, end}]
     fetches: [],              // UrlFetchApp.fetch の記録
+    fetchFiles: null,         // UrlFetchApp の応答を zip にするときの中のファイル [{name, text}]（PowerPoint の書き出し）
+    zips: [],                 // Utilities.zip の記録
     fetchStatus: 200,
     fetchStatuses: [],        // 続けて呼ばれるときの応答のコード（先頭から使う。空になったら fetchStatus）
     fetchText: '{}',          // 応答の本文
@@ -958,11 +960,25 @@ function createGas(options) {
       return new gas.Date(utc - (shownUtc - utc));
     },
     sleep() {},
-    /** バイト列の Blob（表紙の背景の画像など）。getBytes は渡したバイト列 */
+    /** バイト列の Blob（表紙の背景の画像など）。getBytes は渡したバイト列。文字を渡したら getDataAsString で返す */
     newBlob(data, contentType, name) {
-      const bytes = Array.from(data);
-      return {getBytes: () => bytes.slice(), getContentType: () => contentType, getName: () => name,
-        setName(n) { name = String(n); return this; }};
+      const text = typeof data === 'string' ? data : null;
+      const bytes = text != null ? Array.from(Buffer.from(text, 'utf8')) : Array.from(data);
+      return {getBytes: () => bytes.slice(), getContentType: () => contentType, getName: () => name, getDataAsString: () => (text != null ? text : ''),
+        setName(n) { name = String(n); return this; }, setContentType(t) { contentType = t; return this; }};
+    },
+    /** zip の中のファイル（モックの Blob の _files。{name, text}）を、名前と文字の Blob に */
+    unzip(blob) {
+      if (!blob._files) throw new Error('zip ではありません');
+      return blob._files.map(f => Utilities.newBlob(f.text, 'application/octet-stream', f.name));
+    },
+    /** Blob をまとめた zip（モックは _files に名前と文字を残す） */
+    zip(blobs, name) {
+      gas.zips.push(name);
+      let type = 'application/zip';
+      return {_files: blobs.map(b => ({name: b.getName(), text: b.getDataAsString()})), name: name || 'archive.zip',
+        getName() { return this.name; }, setName(n) { this.name = String(n); return this; },
+        getContentType: () => type, setContentType(t) { type = t; return this; }};
     }
   };
 
@@ -1256,6 +1272,8 @@ function createGas(options) {
       const code = gas.fetchStatuses.length ? gas.fetchStatuses.shift() : gas.fetchStatus;
       const blob = {name: '', setName(n) { this.name = String(n); return this; }, getName() { return this.name; },
         getContentType: () => 'application/pdf'};
+      // 書き出しの中身（PowerPoint の zip の中のファイル）。gas.fetchFiles があれば zip として返す
+      if (gas.fetchFiles) blob._files = gas.fetchFiles.map(f => Object.assign({}, f));
       return {getResponseCode: () => code, getContentText: () => gas.fetchText, getBlob: () => blob};
     }
   };

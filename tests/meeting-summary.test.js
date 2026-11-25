@@ -3493,6 +3493,52 @@ test('PowerPoint も作る（exportPptx）：PDF と同じ名前の .pptx を Dr
   assert.ok(!gas.driveFiles.some(f => f.name === base + '_試作.pptx'));
 });
 
+test('PowerPoint のページ番号は、PowerPoint のスライド番号（<a:fld type="slidenum">）にする：右下の数字だけの箱の文字だけを置き換え、ほかの箱・表紙は変えない', () => {
+  const {gas, g} = setup({edits: false});
+  const S = gas.get('MTG_SLIDE');
+  const emu = pt => Math.round(pt * 12700);
+  const shape = (x, y, body) => '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Google Shape;55;p2"/></p:nvSpPr><p:spPr><a:xfrm><a:off x="' + emu(x) + '" y="' + emu(y) +
+    '"/><a:ext cx="762000" cy="228600"/></a:xfrm></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr algn="r"/>' + body + '</a:p></p:txBody></p:sp>';
+  const run = text => '<a:r><a:rPr lang="ja" sz="1050"><a:solidFill><a:srgbClr val="1A1A1A"/></a:solidFill></a:rPr><a:t>' + text + '</a:t></a:r>';
+  const pageBox = n => shape(S.x + S.w - 60, S.footY - 1, run(n));
+  const slide = (n, extra) => '<?xml version="1.0"?><p:sld><p:cSld><p:spTree>' + shape(S.x, S.top, run('12')) + extra + pageBox(n) + '</p:spTree></p:cSld></p:sld>';
+  const files = [
+    {name: '[Content_Types].xml', text: '<Types/>'},
+    {name: 'ppt/slides/slide1.xml', text: '<?xml version="1.0"?><p:sld><p:cSld><p:spTree>' + shape(S.x, S.top, run('表紙')) + '</p:spTree></p:cSld></p:sld>'},
+    {name: 'ppt/slides/slide2.xml', text: slide(2, shape(S.x + S.w - 200, S.footY, run('商談記録：格納先リンク')))},
+    {name: 'ppt/slides/slide3.xml', text: slide(3, '')}
+  ];
+  const blob = {_files: files, getName: () => 'x.pptx'};
+  const out = g.mtgPptxSlideNumbers_(blob);
+  assert.strictEqual(out.count, 2, '表紙（ページ番号なし）は変えない');
+  const text = name => out.blob._files.find(f => f.name === name).text;
+  assert.strictEqual(text('ppt/slides/slide1.xml'), files[1].text);
+  const s2 = text('ppt/slides/slide2.xml');
+  assert.ok(s2.indexOf('<a:fld id="{B6F15528-21DE-4FAA-801E-634DDDAF4B2B}" type="slidenum"><a:rPr lang="ja" sz="1050"><a:solidFill><a:srgbClr val="1A1A1A"/></a:solidFill></a:rPr><a:t>2</a:t></a:fld>') >= 0,
+    'ページ番号はスライド番号のフィールド（字の大きさ・色はそのまま）');
+  assert.strictEqual((s2.match(/type="slidenum"/g) || []).length, 1);
+  assert.ok(s2.indexOf(run('12')) >= 0, '本文の数字（右下でない）は変えない');
+  assert.ok(s2.indexOf(run('商談記録：格納先リンク')) >= 0, '右下でも数字でない箱は変えない');
+  assert.strictEqual(text('[Content_Types].xml'), '<Types/>', 'ほかのファイルはそのまま');
+  assert.strictEqual(out.blob.getContentType(), 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+  // 直すところが無ければ元のまま（zip を作り直さない）
+  const none = g.mtgPptxSlideNumbers_({_files: files.slice(0, 2), getName: () => 'y.pptx'});
+  assert.strictEqual(none.count, 0);
+  // 書き出しから：会議のフォルダの .pptx は直したもの
+  gas.get('MTG_OPTIONS').exportPptx = true;
+  gas.fetchFiles = files;
+  meetingFolders(gas, []);
+  gas.promptAnswers = ['1', '10/23'];
+  g.createBusinessMtgSummaries();
+  const pptx = gas.driveFiles.find(f => /\.pptx$/.test(f.name));
+  assert.ok(pptx && pptx.blob._files.find(f => f.name === 'ppt/slides/slide3.xml').text.indexOf('type="slidenum"') >= 0);
+  // zip として読めないとき（中身が違う）も、書き出したファイルはそのまま作る
+  gas.fetchFiles = null;
+  gas.promptAnswers = ['1', '10/23'];
+  g.previewBusinessMtgSummaries();
+  assert.ok(gas.driveFiles.some(f => /_試作\.pptx$/.test(f.name)), 'ページ番号を直せなくても PowerPoint は作る');
+});
+
 test('PowerPoint を作るかは、スクリプトのプロパティ MTG_EXPORT_PPTX が優先（true/false など）。無い・読めない値ならコードの exportPptx。showOutputFolders に今の設定を出す', () => {
   const {gas, g} = setup({edits: false});
   const o = gas.get('MTG_OPTIONS');
