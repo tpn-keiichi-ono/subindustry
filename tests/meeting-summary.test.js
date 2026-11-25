@@ -1927,16 +1927,24 @@ test('setMeetingTemplate・ひな形：登録した Google スライドをコピ
   assert.deepStrictEqual(removed, added.map(p => pageTexts.find(q => q.insertText.objectId.indexOf(p + '_') === 0).insertText.objectId), '文字のページ番号を消す');
   assert.ok(deck.slides.filter(sl => added.indexOf(sl.objectId) >= 0).every(sl => sl.pageElements.filter(el => el.shape && el.shape.placeholder)
     .map(el => el.shape.placeholder.type).join() === 'SLIDE_NUMBER'), 'スライド番号の枠だけ残る');
+  // 残した枠は右下の角（中身の右端・出典の行の高さ）に動かす
+  const moved = plain(g.mtgPlaceholderRequests_({slides: [{objectId: 'a', pageElements: [{objectId: 'a_ph0', size: {width: {magnitude: 2743200, unit: 'EMU'},
+    height: {magnitude: 365125, unit: 'EMU'}}, shape: {placeholder: {type: 'SLIDE_NUMBER'}}}]}]}, ['a'], {a: 'a_9'}, 960 / 720));
+  const S = gas.get('MTG_SLIDE');
+  const t = moved.find(q => q.updatePageElementTransform).updatePageElementTransform;
+  assert.strictEqual(t.objectId, 'a_ph0');
+  assert.strictEqual(t.transform.translateX + 2743200, Math.round((S.x + S.w) * 960 / 720 * 12700), '右端は中身の右端');
+  assert.ok(t.transform.translateY >= S.ruleY * 960 / 720 * 12700, '区切り線より下（中身に重ならない）');
   // 設定（layoutSlideNumber: false）で前のまま（枠を消して文字のページ番号）
   assert.strictEqual(plain(g.mtgPlaceholderRequests_({slides: [{objectId: 'a', pageElements: [{objectId: 'a_ph0', shape: {placeholder: {type: 'SLIDE_NUMBER'}}}]}]},
-    ['a'], {a: 'a_9'})).map(q => q.deleteObject.objectId).join(), 'a_9');
+    ['a'], {a: 'a_9'})).filter(q => q.deleteObject).map(q => q.deleteObject.objectId).join(), 'a_9');
   gas.get('MTG_OPTIONS').layoutSlideNumber = false;
   assert.strictEqual(plain(g.mtgPlaceholderRequests_({slides: [{objectId: 'a', pageElements: [{objectId: 'a_ph0', shape: {placeholder: {type: 'SLIDE_NUMBER'}}}]}]},
-    ['a'], {a: 'a_9'})).map(q => q.deleteObject.objectId).join(), 'a_ph0');
+    ['a'], {a: 'a_9'})).filter(q => q.deleteObject).map(q => q.deleteObject.objectId).join(), 'a_ph0');
   gas.get('MTG_OPTIONS').layoutSlideNumber = true;
   // スライド番号の枠が無いレイアウトなら、文字のページ番号のまま
   assert.strictEqual(plain(g.mtgPlaceholderRequests_({slides: [{objectId: 'a', pageElements: [{objectId: 'a_ph0', shape: {placeholder: {type: 'FOOTER'}}}]}]},
-    ['a'], {a: 'a_9'})).map(q => q.deleteObject.objectId).join(), 'a_ph0');
+    ['a'], {a: 'a_9'})).filter(q => q.deleteObject).map(q => q.deleteObject.objectId).join(), 'a_ph0');
   assert.deepStrictEqual(r[0], {deleteObject: {objectId: 'g_combined'}}, '使わないページ（統合版の表紙）は消す');
   assert.deepStrictEqual(deck.batches[0], 1, '先に消して（複製して）から、ひな形のページを読み直す');
   assert.ok(!r.some(q => q.duplicateObject || q.replaceAllText), '1回ずつなので複製しない。同じ文字の枠が2つあるので replaceAllText は使わない');

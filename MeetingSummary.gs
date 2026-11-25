@@ -9407,7 +9407,7 @@ function mtgExportDeck_(name, slides, folder, options) {
     flush();
     const numbers = {};
     slides.forEach((slide, i) => { if (!plan.pageOf[i] && mtgPageNumberId_(slide, 'mtg_p' + (i + 1))) numbers['mtg_p' + (i + 1)] = mtgPageNumberId_(slide, 'mtg_p' + (i + 1)); });
-    const extra = mtgPlaceholderRequests_(Slides.Presentations.get(deck.presentationId, {fields: F.placeholders}), slides.map((slide, i) => 'mtg_p' + (i + 1)), numbers);
+    const extra = mtgPlaceholderRequests_(Slides.Presentations.get(deck.presentationId, {fields: F.placeholders}), slides.map((slide, i) => 'mtg_p' + (i + 1)), numbers, scale);
     // ページへのリンク（目次）：リンク先のスライドができてから付ける（部品の ID は「mtg_p{ページ}_{部品の番号}」）
     const pageId = i => plan.pageOf[i] || 'mtg_p' + (i + 1);
     slides.forEach((slide, i) => slide.elements.forEach((el, n) => {
@@ -9602,7 +9602,7 @@ function mtgDeckFinish_(state, name, folder, existing) {
   const pageId = i => (state.dups.indexOf(i) >= 0 ? 'mtg_t' : 'mtg_p') + (i + 1);
   const extra = state.templated ? state.pages.map(id => ({deleteObject: {objectId: id}})) : [];
   extra.push.apply(extra, mtgPlaceholderRequests_(Slides.Presentations.get(state.id, {fields: MTG_SLIDES_FIELDS.placeholders}),
-    index.map(i => 'mtg_p' + (i + 1)), state.numbers || {}));
+    index.map(i => 'mtg_p' + (i + 1)), state.numbers || {}, state.scale));
   state.links.forEach(link => {
     if (link.to < 0 || link.to >= state.added) return;
     extra.push({updateTextStyle: {objectId: link.id, textRange: {type: 'ALL'}, style: {link: {pageObjectId: pageId(link.to)},
@@ -9634,7 +9634,7 @@ function mtgDeckDiscard_(state) {
 const MTG_SLIDES_FIELDS = {
   deck: 'presentationId,pageSize,slides/objectId',
   texts: 'slides(objectId,pageElements(objectId,transform/translateY,shape/text/textElements/textRun(content,style/fontSize)))',
-  placeholders: 'slides(objectId,pageElements(objectId,shape/placeholder/type))',
+  placeholders: 'slides(objectId,pageElements(objectId,size,shape/placeholder/type))',
   count: 'slides/objectId'
 };
 
@@ -9667,7 +9667,7 @@ function mtgPdfFitLinks_(blob) {
  * （スライド番号は自動の番号なので、Google スライド・PDF・PowerPoint で、ページを足す・消すと振り直す。2026/11/25。MTG_OPTIONS.layoutSlideNumber）。
  * スライド番号の枠が無ければ、文字のページ番号のまま。表紙・扉のスライド番号の枠・フッターなどの枠は消す
  */
-function mtgPlaceholderRequests_(deck, pageIds, numbers) {
+function mtgPlaceholderRequests_(deck, pageIds, numbers, scale) {
   const own = new Set(pageIds);
   const keepNumber = MTG_OPTIONS.layoutSlideNumber !== false;
   const requests = [];
@@ -9676,9 +9676,25 @@ function mtgPlaceholderRequests_(deck, pageIds, numbers) {
     const text = keepNumber && numbers && numbers[sl.objectId];
     const kept = text ? holders.find(el => el.shape.placeholder.type === 'SLIDE_NUMBER') : null;
     holders.filter(el => el !== kept).forEach(el => requests.push({deleteObject: {objectId: el.objectId}}));
-    if (kept) requests.push({deleteObject: {objectId: text}});
+    if (kept) {
+      requests.push({deleteObject: {objectId: text}});
+      // 枠は、文字のページ番号と同じ右下の角（区切り線の下・出典の行の高さ。中身・区切り線に重ならないように。右端は中身の右端）に動かす
+      const S = MTG_SLIDE;
+      const k = scale || 1;
+      const emu = pt => Math.round(pt * k * 12700);
+      const size = kept.size || {};
+      const w = size.width && size.width.magnitude ? mtgEmu_(size.width) : emu(60);
+      const h = size.height && size.height.magnitude ? mtgEmu_(size.height) : emu(18);
+      requests.push({updatePageElementTransform: {objectId: kept.objectId, applyMode: 'ABSOLUTE', transform: {scaleX: 1, scaleY: 1, shearX: 0, shearY: 0,
+        translateX: emu(S.x + S.w) - w, translateY: Math.round(emu(S.footY + 8) - h / 2), unit: 'EMU'}}});
+    }
   });
   return requests;
+}
+
+/** Slides API の大きさ（{magnitude, unit}）を EMU に */
+function mtgEmu_(d) {
+  return d.unit === 'PT' ? Math.round(d.magnitude * 12700) : Math.round(d.magnitude);
 }
 
 /** 表紙・扉でないスライドの、文字のページ番号の部品の ID（mtgPlaceholderRequests_ の numbers に入れる。無ければ null） */
