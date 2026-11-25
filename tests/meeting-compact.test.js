@@ -673,11 +673,35 @@ test('状況・計画進捗は2枚：①FY26（棒は今年度の A〜D・計画
   assert.ok(Math.abs(bars[4].x - (bars[3].x + bars[3].w)) < 0.01, 'FY26 の右に続ける');
   assert.ok(Math.abs(bars[0].w / bars[4].w - 70 / 70) < 0.01, '長さは金額の比');
   assert.deepStrictEqual(span2.elements.filter(e => e.role === 'compact-bar-total').map(e => e.text), ['195', '15'], '棒の右は総額');
-  assert.ok(!span2.elements.some(e => e.role === 'compact-plan'));
+  // 今年度の計画の位置に点線（①と同じ。列の無いシートには引かない）
+  const plans = span2.elements.filter(e => e.role === 'compact-plan');
+  assert.strictEqual(plans.length, 2);
+  assert.ok(Math.abs((plans[0].x - bars[0].x) / bars[0].w - 200 / 70) < 0.01, '新FMT の計画 200 の位置');
   assert.deepStrictEqual(span2.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text), ['A', 'B', 'C', 'D', 'FY' + y1 + '〜' + y2]);
   assert.strictEqual(span2.lead, span + 'の売上の全体合計は 210百万円（失注除く）。FY' + y0 + ' 135（A〜D）・FY' + y1 + '〜' + y2 + ' 75。\n' +
-    '棒は FY' + y0 + ' の A〜D に FY' + y1 + '〜' + y2 + ' の合計（グレー。' + g.mtgPlanMonthName_() + '・確度によらない）を続けた総額。');
+    '棒は FY' + y0 + ' の A〜D に FY' + y1 + '〜' + y2 + ' の合計（グレー。' + g.mtgPlanMonthName_() + '・確度によらない）を続けた総額。点線は FY' + y0 + 'の計画。');
   assert.strictEqual(span2.note, '※ のある合計は「' + G + '」のシートを除く');
+  // 計画の点線は棒の下に描く（棒の中の数に線が重ならないように）。棒の右の総額が点線にかかるときは、点線の右に出す
+  const order = span2.elements.map(e => e.role);
+  assert.ok(order.indexOf('compact-plan') < order.indexOf('compact-bar'), '点線は棒より先（下）');
+  const near = plain(g.mtgCompactOutlookSpanSlide_([{name: '新FMT', now, salesOutlook: outlook(130, 70, 40, 10, 5, 0, 0)}]));
+  const nearPlan = near.elements.find(e => e.role === 'compact-plan');
+  const nearTotal = near.elements.find(e => e.role === 'compact-bar-total');
+  assert.ok(nearTotal.x + 14.4 / 2 >= nearPlan.x + 3 - 0.01, '総額 125 は計画 130 の点線の右');
+  // FY26 に創注まで入れるパターン（compact.outlookRanks に「創注」を足す）：①の右の列に見込（創注）、②の FY26 の列は「A〜創注」
+  const C2 = gas.get('MTG_OPTIONS').compact;
+  C2.outlookRanks = ['A', 'B', 'C', 'D', '創注'];
+  const withE = (a0, e0) => ({year: y0, years: [y0, y1, y2], plan: 200, all: a0 + e0 + 50, gap: '', byYear: {[y0]: {A: a0, B: 0, C: 0, D: 0, '創注': e0}},
+    later: {[y1]: 50, [y2]: 0}});
+  const e1 = plain(g.mtgCompactOutlookSlide_([{name: '新FMT', now, salesOutlook: withE(70, 15)}]));
+  assert.deepStrictEqual(e1.elements.filter(e => e.role === 'compact-head').map(e => e.text), ['計画', '進捗率（A＋B）', '確定（A＋B）', '見込（C）', '見込（D）', '見込（創注）']);
+  assert.deepStrictEqual(e1.elements.filter(e => e.role === 'compact-value').map(e => e.text).slice(0, 6), ['200', '35%', '70', '0', '0', '15']);
+  assert.deepStrictEqual(e1.elements.filter(e => e.role === 'legend' && e.text).map(e => e.text), ['A', 'B', 'C', 'D', '創注']);
+  oneLine(e1);
+  const e2 = plain(g.mtgCompactOutlookSpanSlide_([{name: '新FMT', now, salesOutlook: withE(70, 15)}]));
+  assert.strictEqual(e2.elements.find(e => e.role === 'compact-head-period').text, '（FY' + y0 + '・A〜創注）');
+  assert.deepStrictEqual(e2.elements.filter(e => e.role === 'compact-value').map(e => e.text).slice(0, 5), ['85', '50', '0', '50', '135']);
+  oneLine(e2);
 });
 
 test('計画に対する積み上げ（FY26〜28売上）：今年度は受注月の四半期ごとに確度 A〜D を続けて積み上げ（累計を状況・計画進捗の全体合計とそろえる）、合計・計画・不足。来年度以降は半期ごと（受注月・確度によらない。年度ごとに通期で1色、累計の棒に半期の境目の点線）に今年度の合計から続けて積み上げ、累計。確定（A＋B）だけのページも', () => {
